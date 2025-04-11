@@ -145,6 +145,6 @@ html_extra_path = ['_copyover']
 extensions += ['autoapi.extension']
 
 autoapi_type = 'python'
-autoapi_dirs = ["../../coco-pipe"]
+autoapi_dirs = ["../../coco_pipe"]
 
 extensions += ['sphinx.ext.viewcode'] #see https://github.com/readthedocs/sphinx-autoapi/issues/422
