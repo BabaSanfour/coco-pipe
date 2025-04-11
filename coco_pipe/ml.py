@@ -561,9 +561,9 @@ class MLPipeline:
         if scoring is None:
             scoring = self.scoring
 
-        fs_results = self._feature_selection(num_features, scoring)["selected_features"]
+        fs_results = self._feature_selection(num_features, model_name, scoring)["selected_features"]
         combined_results = {}
-        for k, fs_result in fs_results[model_name].items():
+        for k, fs_result in fs_results.items():
             logging.info(f"Performing HP search on {k} selected features for {model_name}")
             selected_features = fs_result["selected_features"]
             X_selected = self.X.iloc[:, selected_features] if isinstance(self.X, pd.DataFrame) else self.X[:, selected_features]
