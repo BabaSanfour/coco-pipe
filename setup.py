@@ -17,7 +17,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'run-coco-pipe=scripts.run_pipeline:main',
+            'run-coco-pipe=scripts.run_ml:main',
         ],
     },
     classifiers=[
