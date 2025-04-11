@@ -124,10 +124,10 @@ def test_feature_selection_hp_search(dummy_data):
     X, y = dummy_data
     pipeline = MLPipeline(X, y, models="Random Forest", scoring="f1-score")
     num_features = 3
-    fs_hp_result = pipeline.feature_selection_hp_search(num_features, "Random Forest")
-    assert "selected_features" in fs_hp_result
-    combined_results = fs_hp_result["selected_features"]
-    for k, result in combined_results.items():
+    fs_hp_result = pipeline.feature_selection_hp_search(num_features)
+    assert "combined_results" in fs_hp_result
+    rf_results = fs_hp_result["combined_results"]["Random Forest"]
+    for k, result in rf_results.items():
         assert isinstance(k, int)
         assert "selected_features" in result
         assert "best_params" in result
@@ -156,11 +156,11 @@ def test_wrapper_functions(dummy_data):
 
     # HP search wrapper test
     hp_result = pipeline_HP_search(X, y, models="SVC", scoring="accuracy")
-    assert "best_score" in hp_result
+    assert "best_score" in hp_result['hp_results']['SVC']
 
     # Feature selection HP search wrapper test
     fs_hp_result = pipeline_feature_selection_HP_search(X, y, num_features=2, models="SVC", scoring="accuracy")
-    assert "selected_features" in fs_hp_result
+    assert "combined_results" in fs_hp_result
 
     # Unsupervised wrapper test: using pipeline_unsupervised returns tuple (silhouette_score, cluster_labels)
     unsup_score, unsup_labels = pipeline_unsupervised(X, y, n_clusters=2)
