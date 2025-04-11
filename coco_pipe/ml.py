@@ -434,33 +434,17 @@ class MLPipeline:
 
     def _hp_search(self, model_name, scoring=None):
         """
-        Perform hyperparameter search using GridSearchCV for a given model on stored X and y.
-
-        Parameters
-        ----------
-        model_name : str
-            The model to optimize.
-        scoring : str, optional
-            The scoring metric to use. If not provided, the default from the instance is used.
-
-        Returns
-        -------
-        dict
-            A dictionary containing the best score, best hyperparameters, the best estimator,
-            and feature importances if available.
+        Internal method to perform hyperparameter search for a specified model using stored X and y.
         """
         from sklearn.model_selection import GridSearchCV
 
         if scoring is None:
             scoring = self.scoring
-
-        if model_name not in self.models:
-            raise ValueError(f"Model '{model_name}' is not available for HP search.")
+        scorer = CUSTOM_SCORERS.get(scoring, scoring)
 
         base_model = clone(self.models[model_name]["estimator"])
         param_grid = self.models[model_name]["params"]
         cv = self.get_cv()
-        scorer = CUSTOM_SCORERS.get(scoring, scoring)
         search = GridSearchCV(
             base_model,
             param_grid=param_grid,
@@ -508,7 +492,7 @@ class MLPipeline:
             hp_result = self._hp_search(model_name, scoring)
             all_hp_results[model_name] = hp_result
 
-        return {"hp_results": all_hp_results}
+        return all_hp_results
 
     def _fs_hp_search(self, num_features, model_name, scoring=None):
         """

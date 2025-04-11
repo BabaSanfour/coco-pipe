@@ -113,7 +113,7 @@ def test_hp_search(dummy_data):
     pipeline = MLPipeline(X, y, models="SVC", scoring="accuracy")
     hp_result = pipeline.hp_search()
     for key in ["best_score", "best_params", "fitted_model"]:
-        assert key in hp_result['hp_results']["SVC"]
+        assert key in hp_result["SVC"]
 
 def test_feature_selection_hp_search(dummy_data):
     X, y = dummy_data
@@ -152,7 +152,7 @@ def test_wrapper_functions(dummy_data):
 
     # HP search wrapper test
     hp_result = pipeline_HP_search(X, y, models="SVC", scoring="accuracy")
-    assert "best_score" in hp_result['hp_results']['SVC']
+    assert "best_score" in hp_result['SVC']
 
     # Feature selection HP search wrapper test
     fs_hp_result = pipeline_feature_selection_HP_search(X, y, num_features=2, models="SVC", scoring="accuracy")
