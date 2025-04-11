@@ -1,0 +1,49 @@
+# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+name: python-tests
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.9]
+        node:  [18] # might need to update this manually?
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    # - name: Use Node.js ${{ matrix.node }}
+    #   uses: actions/setup-node@v1
+    #   with:
+    #     node-version: ${{ matrix.node }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install pytest
+        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+#        pip install -e .,already inside requirements-dev.txt
+    - name: Test with pytest
+      run: |
+          pytest tests/ --cov=coco_pipe/ --cov-report=xml --verbose -s
+      # pytest --cov-branch --cov-report=xml
+    # - name: Build docs
+    #   run: |
+    #     cd docs
+    #     make clean
+    #     make html
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: BabaSanfour/coco-pipe    
+    # - name : Test with web-validator
+    #   run: |
+    #     /bin/bash tests/test_web_validator.sh

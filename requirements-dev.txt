@@ -1,0 +1,7 @@
+pytest-cov
+pyyaml
+numpy
+pandas
+scikit-learn
+matplotlib
+-e .
