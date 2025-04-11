@@ -27,4 +27,5 @@ analysis:
     num_features: 3
     models: ["Logistic Regression"]
     scoring: "accuracy"
+output_dir: "results" 
 output: "toy_results"

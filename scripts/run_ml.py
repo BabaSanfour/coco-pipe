@@ -484,7 +484,7 @@ def main():
     analyses = config.get("analysis", [])
     all_combined_results = {}
     analysis_id = config.get("ID", "defaultID")
-
+    output_dir = config.get("output_dir", "results")
     for analysis in analyses:
         analysis_name = analysis.get("name", "UnnamedAnalysis")
         analysis_type = analysis.get("type")
@@ -510,14 +510,17 @@ def main():
 
         # Save the subanalysis result in its own pickle file.
         pickle_filename = f"{analysis_id}_{analysis_name}_{analysis_type}_results.pickle"
-        save_results_pickle(result, pickle_filename)
+        output_file = os.path.join(output_dir, pickle_filename)
+        save_results_pickle(result, output_file)
 
         all_combined_results[analysis_name] = result
         logging.info(f"Completed analysis: {analysis_name}")
 
     # Save combined results as YAML.
+
     combined_results_file = config.get("output", f"{analysis_id}_results.yaml")
-    with open(combined_results_file, "w") as outfile:
+    output_file = os.path.join(output_dir, combined_results_file)
+    with open(output_file, "w") as outfile:
         yaml.dump(all_combined_results, outfile)
     logging.info(f"Combined analysis results saved to: {combined_results_file}")
 
