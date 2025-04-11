@@ -1,5 +1,8 @@
 # CoCo Pipe
 
+![Codecov](https://img.shields.io/codecov/c/github/BabaSanfour/coco-pipe)
+[![Test Status](https://img.shields.io/github/actions/workflow/status/BabaSanfour/coco-pipe/python-tests.yml?branch=main&label=tests)](https://github.com/BabaSanfour/coco-pipe/actions?query=workflow%3Apython-tests)
+
 CoCo Pipe is a modular pipeline framework for processing Bio M/EEG data with both traditional machine learning and deep learning components. The project includes tools for configuration, data processing, feature extraction, experiment design, visualization, and reporting, making it easy for users to run end-to-end experiments.
 
 ## Installation
