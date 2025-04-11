@@ -134,22 +134,14 @@ def load_data(data_config):
     data_file = data_config.get("file")
     if not data_file:
         raise ValueError("Data file path must be provided in the config (data:file).")
-    df = pd.read_csv(data_file)
+    df = pd.read_csv(data_file, index_col=0)
+    df.drop(columns=["subject"], inplace=True, errors="ignore")
     target_col = data_config.get("target")
     if not target_col or target_col not in df.columns:
         raise ValueError("A valid target column must be specified and must exist in the data.")
     y = df[target_col]
     X = df.drop(columns=[target_col])
-
-    if "features_groups" in data_config:
-        feature_mapping = data_config["features_groups"]
-    else:
-        feature_mapping = {
-            "groups": [],
-            "features": list(X.columns),
-            "global": list(X.columns)
-        }
-    return X, y, feature_mapping
+    return X, y
 
 
 def save_results_pickle(results, output_file):
@@ -178,13 +170,14 @@ def run_baseline(X, y, subset, analysis_name, models, scoring, feature_mapping):
     Edge case: If the mapping is missing or incomplete, all columns are treated as global.
     """
     # Fallback: if mapping is missing or incomplete.
-    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
-        logging.info("No complete feature mapping provided; using all columns as global.")
-        feature_mapping = {
-            "groups": [],
-            "features": list(X.columns),
-            "global": list(X.columns)
-        }
+    feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
+    # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
+    #     logging.info("No complete feature mapping provided; using all columns as global.")
+    #     feature_mapping = {
+    #         "groups": [],
+    #         "features": list(X.columns),
+    #         "global": list(X.columns)
+    #     }
 
     results = {}
 
@@ -478,8 +471,10 @@ def main():
 
     # Load configuration and data.
     config = load_config(args.config)
-    X, y, feature_mapping = load_data(config["data"])
-
+    # X, y, feature_mapping = load_data(config["data"])
+    data = config["data"]
+    X, y = load_data(data)
+    feature_mapping = data.get("features_groups", {})
     analyses = config.get("analysis", [])
     all_combined_results = {}
     analysis_id = config.get("ID", "defaultID")
