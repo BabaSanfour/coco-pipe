@@ -127,10 +127,10 @@ class MLPipeline:
         A dictionary of all available models with their default estimator instances and hyperparameter grids.
     models : dict
         A dictionary of selected models (a subset or all of :attr:`all_models`) according to
-        the input parameter ``selected_models``.
+        the input parameter ``models``.
     """
 
-    def __init__(self, X, y, selected_models="all", scoring="accuracy", random_state=42, n_jobs=-1):
+    def __init__(self, X, y, models="all", scoring="accuracy", random_state=42, n_jobs=-1):
         self.X = X
         self.y = y
         self.scoring = scoring
@@ -203,31 +203,31 @@ class MLPipeline:
                 "params": {},
             },
         }
-        self._selected_models = selected_models
+        self._models = models
 
-        if selected_models == "all":
+        if models == "all":
             self.models = self.all_models.copy()
-        elif isinstance(selected_models, str):
-            if selected_models in self.all_models:
-                self.models = {selected_models: self.all_models[selected_models]}
+        elif isinstance(models, str):
+            if models in self.all_models:
+                self.models = {models: self.all_models[models]}
             else:
-                raise ValueError(f"Model '{selected_models}' is not available.")
-        elif isinstance(selected_models, list):
-            if all(isinstance(x, int) for x in selected_models):
+                raise ValueError(f"Model '{models}' is not available.")
+        elif isinstance(models, list):
+            if all(isinstance(x, int) for x in models):
                 all_keys = list(self.all_models.keys())
                 self.models = {all_keys[i]: self.all_models[all_keys[i]]
-                               for i in selected_models if i < len(all_keys)}
-            elif all(isinstance(x, str) for x in selected_models):
+                               for i in models if i < len(all_keys)}
+            elif all(isinstance(x, str) for x in models):
                 self.models = {}
-                for model in selected_models:
+                for model in models:
                     if model in self.all_models:
                         self.models[model] = self.all_models[model]
                     else:
                         raise ValueError(f"Model '{model}' is not available.")
             else:
-                raise ValueError("selected_models list must contain all integers or all strings.")
+                raise ValueError("models list must contain all integers or all strings.")
         else:
-            raise ValueError("selected_models must be 'all', a string, or a list of strings/integers.")
+            raise ValueError("models must be 'all', a string, or a list of strings/integers.")
 
     # === Utility Functions ===
 
@@ -279,7 +279,7 @@ class MLPipeline:
             logging.info(f"Model '{model_name}' already exists. Use update_model_params to modify it.")
         else:
             self.all_models[model_name] = {"estimator": estimator, "params": param_grid}
-            if self._selected_models == "all":
+            if self._models == "all":
                 self.models[model_name] = self.all_models[model_name]
             logging.info(f"Model '{model_name}' added successfully.")
 
@@ -567,7 +567,7 @@ class MLPipeline:
             logging.info(f"Performing HP search on {k} selected features for {model_name}")
             selected_features = fs_result["selected_features"]
             X_selected = self.X.iloc[:, selected_features] if isinstance(self.X, pd.DataFrame) else self.X[:, selected_features]
-            hp_result = self.__class__(X_selected, self.y, selected_models=model_name,
+            hp_result = self.__class__(X_selected, self.y, models=model_name,
                                        scoring=scoring, random_state=self.random_state, n_jobs=self.n_jobs)._hp_search(model_name, scoring)
             logging.info(f"{model_name} - Best parameters with {k} features: {hp_result['best_params']}")
             logging.info(f"{model_name} - Best {scoring} with {k} features: {hp_result['best_score']:.4f}")
@@ -633,7 +633,7 @@ class MLPipeline:
 
 # === Wrapper functions for easy access ===
 
-def pipeline_baseline(X, y, scoring="accuracy", selected_models="all", random_state=42, n_jobs=-1):
+def pipeline_baseline(X, y, scoring="accuracy", models="all", random_state=42, n_jobs=-1):
     """
     Wrapper for running the baseline pipeline.
 
@@ -645,7 +645,7 @@ def pipeline_baseline(X, y, scoring="accuracy", selected_models="all", random_st
         Labels.
     scoring : str, optional
         Scoring metric (default is "accuracy").
-    selected_models : {"all", str, list}, optional
+    models : {"all", str, list}, optional
         Models to include in the baseline (default is "all").
     random_state : int, optional
         Random state for reproducibility.
@@ -657,10 +657,10 @@ def pipeline_baseline(X, y, scoring="accuracy", selected_models="all", random_st
     dict
         The results of the baseline pipeline.
     """
-    pipeline = MLPipeline(X, y, selected_models=selected_models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
+    pipeline = MLPipeline(X, y, models=models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
     return pipeline.baseline()
 
-def pipeline_feature_selection(X, y, num_features, selected_models="all", scoring="accuracy", random_state=42, n_jobs=-1):
+def pipeline_feature_selection(X, y, num_features, models="all", scoring="accuracy", random_state=42, n_jobs=-1):
     """
     Wrapper for running feature selection for a given model.
 
@@ -672,7 +672,7 @@ def pipeline_feature_selection(X, y, num_features, selected_models="all", scorin
         Labels.
     num_features : int
         Maximum number of features to select.
-    selected_models : {"all", str, list}, optional
+    models : {"all", str, list}, optional
         Models to include in the baseline (default is "all").
     scoring : str, optional
         Scoring metric (default is "accuracy").
@@ -686,10 +686,10 @@ def pipeline_feature_selection(X, y, num_features, selected_models="all", scorin
     dict
         The feature selection results.
     """
-    pipeline = MLPipeline(X, y, selected_models=selected_models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
+    pipeline = MLPipeline(X, y, models=models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
     return pipeline.feature_selection(num_features)
 
-def pipeline_HP_search(X, y, selected_models, scoring="accuracy", random_state=42, n_jobs=-1):
+def pipeline_HP_search(X, y, models, scoring="accuracy", random_state=42, n_jobs=-1):
     """
     Wrapper for performing hyperparameter search for a given model.
 
@@ -699,7 +699,7 @@ def pipeline_HP_search(X, y, selected_models, scoring="accuracy", random_state=4
         Feature set.
     y : array-like
         Labels.
-    selected_models : {"all", str, list}, optional
+    models : {"all", str, list}, optional
         Models to include in the baseline (default is "all").
     scoring : str, optional
         Scoring metric (default is "accuracy").
@@ -713,10 +713,10 @@ def pipeline_HP_search(X, y, selected_models, scoring="accuracy", random_state=4
     dict
         The hyperparameter search results.
     """
-    pipeline = MLPipeline(X, y, selected_models=selected_models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
+    pipeline = MLPipeline(X, y, models=models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
     return pipeline.hp_search()
 
-def pipeline_feature_selection_HP_search(X, y, num_features, selected_models, scoring="accuracy", random_state=42, n_jobs=-1):
+def pipeline_feature_selection_HP_search(X, y, num_features, models, scoring="accuracy", random_state=42, n_jobs=-1):
     """
     Wrapper for running combined feature selection and hyperparameter search for a given model.
 
@@ -728,7 +728,7 @@ def pipeline_feature_selection_HP_search(X, y, num_features, selected_models, sc
         Labels.
     num_features : int
         Maximum number of features to select.
-    selected_models : {"all", str, list}, optional
+    models : {"all", str, list}, optional
         Models to include in the baseline (default is "all").
     scoring : str, optional
         Scoring metric (default is "accuracy").
@@ -742,7 +742,7 @@ def pipeline_feature_selection_HP_search(X, y, num_features, selected_models, sc
     dict
         The combined feature selection and HP search results.
     """
-    pipeline = MLPipeline(X, y, selected_models=selected_models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
+    pipeline = MLPipeline(X, y, models=models, scoring=scoring, random_state=random_state, n_jobs=n_jobs)
     return pipeline.feature_selection_hp_search(num_features)
 
 def pipeline_unsupervised(X, y, n_clusters=2, random_state=42, n_jobs=-1):
