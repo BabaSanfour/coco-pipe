@@ -344,8 +344,6 @@ class MLPipeline:
             scoring = self.scoring
         cv = self.get_cv()
         results = {}
-        saved_models = {}
-        last_score_mean = None
 
         scorer = CUSTOM_SCORERS.get(scoring, scoring)
         for model_name, model_dict in self.models.items():
@@ -353,22 +351,11 @@ class MLPipeline:
             scores = cross_val_score(estimator, self.X, self.y, cv=cv, scoring=scorer, n_jobs=self.n_jobs)
             score_mean = scores.mean()
             logging.info(f"{model_name} {scoring}: {score_mean:.4f}")
-            estimator.fit(self.X, self.y)
-            results[model_name] = score_mean
-            saved_models[model_name] = estimator
-            last_score_mean = score_mean
+            results[model_name] = {
+                "mean_score": score_mean,
+            }
 
-        return {
-            "results": results,
-            "saved_models": saved_models,
-            "selected_features": None,
-            "best_score": last_score_mean,
-            "best_params": None,
-            "fitted_model": None,
-            "feature_importances": None,
-            "cluster_labels": None,
-            "silhouette_score": None,
-        }
+        return results
 
     def _feature_selection(self, num_features, model_name, scoring=None):
         """

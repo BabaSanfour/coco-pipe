@@ -92,10 +92,7 @@ def test_baseline(dummy_data):
     X, y = dummy_data
     pipeline = MLPipeline(X, y, models="SVC", scoring="accuracy")
     result = pipeline.baseline()
-    assert "results" in result
-    assert "saved_models" in result
-    # Check that at least one result is a float.
-    for score in result["results"].values():
+    for score in result["SVC"].values():
         assert isinstance(score, float)
 
 def test_feature_selection(dummy_data):
@@ -148,7 +145,8 @@ def test_wrapper_functions(dummy_data):
     X, y = dummy_data
     # Baseline wrapper test
     baseline_result = pipeline_baseline(X, y, scoring="accuracy", models="SVC")
-    assert "results" in baseline_result
+    for score in baseline_result["SVC"].values():
+        assert isinstance(score, float)
 
     # Feature selection wrapper test
     fs_result = pipeline_feature_selection(X, y, num_features=2, models="SVC", scoring="f1-score")
