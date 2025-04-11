@@ -248,13 +248,15 @@ def run_feature_selection(X, y, subset, analysis_name, models, scoring, num_feat
     Subset options are the same as in run_baseline.
     """
     # Fallback if mapping is missing or incomplete.
-    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
-        logging.info("No complete feature mapping provided; using all columns as global.")
-        feature_mapping = {
-            "groups": [],
-            "features": list(X.columns),
-            "global": list(X.columns)
-        }
+    feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
+
+    # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
+    #     logging.info("No complete feature mapping provided; using all columns as global.")
+    #     feature_mapping = {
+    #         "groups": [],
+    #         "features": list(X.columns),
+    #         "global": list(X.columns)
+    #     }
 
     results = {}
 
@@ -323,13 +325,15 @@ def run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping)
 
     Subset options are the same as in run_baseline.
     """
-    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
-        logging.info("No complete feature mapping provided; using all columns as global.")
-        feature_mapping = {
-            "groups": [],
-            "features": list(X.columns),
-            "global": list(X.columns)
-        }
+    feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
+
+    # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
+    #     logging.info("No complete feature mapping provided; using all columns as global.")
+    #     feature_mapping = {
+    #         "groups": [],
+    #         "features": list(X.columns),
+    #         "global": list(X.columns)
+    #     }
 
     results = {}
 
@@ -398,13 +402,15 @@ def run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_features,
       
     Subset options are the same as in the other functions.
     """
-    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
-        logging.info("No complete feature mapping provided; using all columns as global.")
-        feature_mapping = {
-            "groups": [],
-            "features": list(X.columns),
-            "global": list(X.columns)
-        }
+    feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
+
+    # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
+    #     logging.info("No complete feature mapping provided; using all columns as global.")
+    #     feature_mapping = {
+    #         "groups": [],
+    #         "features": list(X.columns),
+    #         "global": list(X.columns)
+    #     }
 
     results = {}
 
