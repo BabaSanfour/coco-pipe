@@ -494,29 +494,15 @@ class MLPipeline:
 
         return all_hp_results
 
-    def _fs_hp_search(self, num_features, model_name, scoring=None):
+    def _fs_hp_search(self, num_features, model_name, scoring=None, direction="forward"):
         """
-        Combine feature selection and hyperparameter search for a specified model using stored X and y.
-
-        Parameters
-        ----------
-        num_features : int
-            Maximum number of features to select.
-        model_name : str
-            The model for which to perform the combined search.
-        scoring : str, optional
-            The scoring metric to use. If not provided, the default from the instance is used.
-
-        Returns
-        -------
-        dict
-            A dictionary with keys representing the number of features selected and values
-            containing the results of the hyperparameter search on that subset.
+        Internal method to perform combined feature selection and hyperparameter search
+        for a specified model using stored X and y.
         """
         if scoring is None:
             scoring = self.scoring
 
-        fs_results = self._feature_selection(num_features, model_name, scoring)["selected_features"]
+        fs_results = self._feature_selection(num_features, model_name, scoring, direction=direction)
         combined_results = {}
         for k, fs_result in fs_results.items():
             logging.info(f"Performing HP search on {k} selected features for {model_name}")
@@ -533,9 +519,9 @@ class MLPipeline:
                 "fitted_model": hp_result["fitted_model"],
                 "feature_importances": hp_result["feature_importances"],
             }
-        return {"selected_features": combined_results}
+        return combined_results
     
-    def feature_selection_hp_search(self, num_features, scoring=None):
+    def feature_selection_hp_search(self, num_features, scoring=None, direction="forward"):
         """
         Run combined feature selection and hyperparameter search for each selected model using stored X and y.
 
@@ -545,6 +531,8 @@ class MLPipeline:
             Maximum number of features to select.
         scoring : str, optional
             The scoring metric to use. If not provided, the default from the instance is used.
+        direction : {"forward", "backward"}, optional
+            The direction of feature selection (default is "forward").
 
         Returns
         -------
@@ -557,10 +545,10 @@ class MLPipeline:
         all_combined_results = {}
         for model_name in self.models:
             logging.info(f"Performing combined feature selection and HP search for {model_name}")
-            combined_result = self._fs_hp_search(num_features, model_name, scoring)
-            all_combined_results[model_name] = combined_result["selected_features"]
+            combined_result = self._fs_hp_search(num_features, model_name, scoring, direction=direction)
+            all_combined_results[model_name] = combined_result
 
-        return {"combined_results": all_combined_results}
+        return all_combined_results
     
     # === Unsupervised Clustering ===
 
