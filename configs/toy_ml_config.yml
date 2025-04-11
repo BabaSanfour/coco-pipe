@@ -1,0 +1,30 @@
+ID: "toy_example_01"
+data:
+  file: "data/toy_dataset.csv"
+  target: "label"
+  features_groups:
+    groups: ["sensor1", "sensor2"]
+    features: ["feat1", "feat2", "feat3", "feat4", "feat5"]
+analysis:
+  - name: "Baseline Global"
+    type: "baseline"
+    subset: "all_features_all_groups"
+    models: "all"
+    scoring: "accuracy"
+  - name: "Baseline Per Group"
+    type: "baseline"
+    subset: "all_features_per_group"
+    models: "all"
+    scoring: "accuracy"
+  - name: "Single Feature Global"
+    type: "baseline"
+    subset: "single_feature_all_groups"
+    models: "all"
+    scoring: "f1-score"
+  - name: "FS + HP Search Global"
+    type: "fs_hp"
+    subset: "all_features_all_groups"
+    num_features: 3
+    models: ["Logistic Regression"]
+    scoring: "accuracy"
+output: "toy_results"
