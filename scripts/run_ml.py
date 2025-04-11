@@ -1,157 +1,525 @@
 #!/usr/bin/env python3
 """
-Command-line script to run ML pipelines for various classification and clustering analyses.
+run_ml.py
+
+Command-line interface for running various machine learning analyses based on
+a YAML configuration file with flexible feature grouping definitions.
+
+This script supports cases ranging from multiple sensors (each with several features)
+to edge cases (e.g., mixed behavioural measures) where no explicit grouping is provided.
+The analyses use an ML pipeline defined in ml.py (located in the coco_pipe folder)
+with the following supported modes and subset options:
+
+Analysis Modes and Subset Options:
+  - Baseline:
+      * all_features_all_groups: Analyze on the entire feature set.
+      * all_features_per_group:   For each group, analyze the subset of features whose
+                                  column names contain the group name.
+      * single_feature_all_groups: For each feature (as defined in the mapping),
+                                   analyze over all matching columns.
+      * single_feature_per_group:  For each group, analyze each individual feature.
+  - Feature Selection (FS):
+      * (Same subset options as Baseline; for single-feature analyses, num_features is set to 1)
+  - Hyperparameter Search (HP search):
+      * (Same subset options as Baseline)
+  - Combined FS + HP Search:
+      * (Same subset options as Baseline)
+
+Results for every subanalysis are saved into their own pickle file with names:
+    <ID>_<AnalysisName>_<AnalysisType>_results.pickle
 
 Usage:
-    python run_ml.py --analysis 1 --analysis_type all_ages
+    python run_ml.py --config path/to/config.yml
+
+Adapted YAML configuration example:
+-----------------------------------------------------------
+ID: "example_analysis_01"
+data:
+  file: "data/dataset.csv"
+  target: "target"
+  # Provide feature_groups mapping. If not provided, the entire feature set is used as a single global group.
+  features_groups:
+    groups: ["sensor1", "sensor2"]
+    features: ["feat1", "feat2", "feat3", "feat4", "feat5"]
+    global:
+      - "sensor1.feat1"
+      - "sensor1.feat2"
+      - "sensor1.feat3"
+      - "sensor2.feat4"
+      - "sensor2.feat5"
+analysis:
+  - name: "Baseline Global"
+    type: "baseline"
+    subset: "all_features_all_groups"
+    models: "all"
+    scoring: "accuracy"
+  - name: "Baseline Per Group"
+    type: "baseline"
+    subset: "all_features_per_group"
+    models: "all"
+    scoring: "accuracy"
+  - name: "Single Feature Global"
+    type: "baseline"
+    subset: "single_feature_all_groups"
+    models: "all"
+    scoring: "f1-score"
+  - name: "Feature Selection Per Group"
+    type: "fs"
+    subset: "single_feature_per_group"
+    num_features: 1
+    models: ["Random Forest", "SVC"]
+    scoring: "auc"
+  - name: "FS + HP Search Global"
+    type: "fs_hp"
+    subset: "all_features_all_groups"
+    num_features: 3
+    models: ["Logistic Regression"]
+    scoring: "accuracy"
+output: "results"
+-----------------------------------------------------------
+
+Note:
+  If neither group information nor features are provided in the config,
+  all columns are used as a single “global” group.
 """
 
 import os
 import sys
 import argparse
-import pickle
 import logging
+import yaml
 import pandas as pd
+import pickle
 
-# Ensure the package is importable. Adjust the path as needed.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Adjust sys.path to include the coco_pipe folder.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "coco_pipe")))
 
-# Import wrapper functions from the package.
-from coco_pipe.ml import (
+# Import ML pipeline wrappers from ml.py.
+from ml import (
     pipeline_baseline,
     pipeline_feature_selection,
     pipeline_HP_search,
     pipeline_feature_selection_HP_search,
-    pipeline_unsupervised
 )
 
-# Configure logging.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# Configuration for directories. You may replace these with your own config.
-try:
-    from utils.config import data_dir, results_dir
-except ImportError:
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-    results_dir = os.path.join(os.path.dirname(__file__), "..", "results")
 
-def load_and_preprocess_features(analysis_type):
+def load_config(config_path):
+    """Load YAML configuration from the specified file."""
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+    return config
+
+
+def load_data(data_config):
     """
-    Load the features CSV file, filter by age group if required, and drop unneeded columns.
+    Load the dataset and determine the feature mapping.
+
+    Expects:
+      - 'file': CSV file path.
+      - 'target': Target column name.
+      - Optionally, 'features_groups': mapping with keys:
+           "groups": list of group names,
+           "features": list of feature names,
+           "global": list of all feature column names formatted so that group names are embedded.
+    If the mapping is absent, returns a default mapping using all columns.
+
+    Returns:
+      X: DataFrame of features.
+      y: Series of target values.
+      feature_mapping: dict with keys "groups", "features", "global".
     """
-    features_file = os.path.join(data_dir, "csv", "features_with_age_group.csv")
-    features = pd.read_csv(features_file)
-    
-    if analysis_type == "adolescent":
-        logging.info("Running analysis for adolescent group.")
-        features = features[features["age_group"] == "adolescent"]
-    elif analysis_type == "child":
-        logging.info("Running analysis for child group.")
-        features = features[features["age_group"] == "child"]
+    data_file = data_config.get("file")
+    if not data_file:
+        raise ValueError("Data file path must be provided in the config (data:file).")
+    df = pd.read_csv(data_file)
+    target_col = data_config.get("target")
+    if not target_col or target_col not in df.columns:
+        raise ValueError("A valid target column must be specified and must exist in the data.")
+    y = df[target_col]
+    X = df.drop(columns=[target_col])
+
+    if "features_groups" in data_config:
+        feature_mapping = data_config["features_groups"]
     else:
-        logging.info("Running analysis for all ages.")
-    
-    drop_cols = ["dataset", "id", "age", "sex", "task", "subject", "age_group"]
-    features = features.drop(columns=drop_cols)
-    features["group"] = features["group"].replace({"PAT": 1, "CTR": 0})
-    return features
-
-def get_clean_features(columns):
-    """Return a list of simplified feature names."""
-    seen = set()
-    clean_features = []
-    for col in columns:
-        feat = col.split(".spaces-")[0].replace("feature-", "")
-        if feat not in seen and feat != "group":
-            seen.add(feat)
-            clean_features.append(feat)
-    return clean_features
-
-def get_columns_for_feature(columns, feature):
-    """Return a list of columns that include the given feature substring."""
-    return [col for col in columns if feature in col]
-
-def save_results(results, fname):
-    """Save results as a pickle file."""
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
-    with open(os.path.join(results_dir, fname), "wb") as f:
-        pickle.dump(results, f)
-
-# Analysis functions (examples)
-
-def run_analysis0(features, analysis_type):
-    """Baseline: run a separate baseline per sensor (i.e. per feature)."""
-    X = features.drop("group", axis=1)
-    y = features["group"]
-    feature_results = {}
-    for feature in X.columns:
-        logging.info(f"Running baseline pipeline for feature: {feature}")
-        result = pipeline_baseline(X[[feature]], y)
-        feature_results[feature] = result["results"]
-    fname = f"single_feature_baseline_results_{analysis_type}.pkl"
-    save_results(feature_results, fname)
-    logging.info("Completed analysis 0!")
-
-def run_analysis1(features, analysis_type):
-    """HP search for each sensor (per feature)."""
-    X = features.drop("group", axis=1)
-    y = features["group"]
-    model_results = {}
-    for model in ["Decision Tree", "Random Forest", "Gradient Boosting", "K-Nearest Neighbors"]:
-        logging.info(f"Running HP search for model: {model}")
-        feature_results = {}
-        for feature in X.columns:
-            logging.info(f"Running HP search for feature: {feature}")
-            result = pipeline_HP_search(X[[feature]], y, model)
-            feature_results[feature] = result["best_score"]
-        model_results[model] = feature_results
-    fname = f"single_feature_HP_results_{analysis_type}.pkl"
-    save_results(model_results, fname)
-    logging.info("Completed analysis 1!")
-
-def run_analysis9(features, analysis_type):
-    """Unsupervised learning using all features."""
-    X = features.drop("group", axis=1)
-    clusters_results = {}
-    for n_clusters in range(2, 11):
-        logging.info(f"Running unsupervised pipeline for {n_clusters} clusters")
-        silhouette, cluster_labels = pipeline_unsupervised(X, n_clusters)
-        clusters_results[n_clusters] = {
-            "silhouette": silhouette,
-            "cluster_labels": cluster_labels,
+        feature_mapping = {
+            "groups": [],
+            "features": list(X.columns),
+            "global": list(X.columns)
         }
-    fname = f"unsupervised_results_{analysis_type}.pkl"
-    save_results(clusters_results, fname)
-    logging.info("Completed analysis 9!")
+    return X, y, feature_mapping
 
-# Additional analysis functions (e.g., run_analysis2, run_analysis3, etc.) can be added following a similar pattern.
+
+def save_results_pickle(results, output_file):
+    """Save the given results to a pickle file."""
+    with open(output_file, "wb") as f:
+        pickle.dump(results, f)
+    logging.info(f"Results saved to {output_file}")
+
+
+def run_baseline(X, y, subset, analysis_name, models, scoring, feature_mapping):
+    """
+    Run baseline analysis based on the chosen subset option.
+
+    The expected feature_mapping dictionary should include:
+      - 'groups': list of group names (e.g., sensors/regions).
+      - 'features': list of feature names.
+      - 'global': list of all column names in the dataset; ideally, group names are embedded
+                  in these column names (e.g., "sensor1.feat1", "sensor2.feat4").
+
+    Subset options:
+      - "all_features_all_groups": Analyze the entire feature set.
+      - "all_features_per_group":   For each group, analyze the subset of features whose column names contain the group name.
+      - "single_feature_all_groups": For each feature (from feature_mapping['features']), analyze over all matching columns.
+      - "single_feature_per_group":  For each group and for each matching column, analyze that single feature.
+
+    Edge case: If the mapping is missing or incomplete, all columns are treated as global.
+    """
+    # Fallback: if mapping is missing or incomplete.
+    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
+        logging.info("No complete feature mapping provided; using all columns as global.")
+        feature_mapping = {
+            "groups": [],
+            "features": list(X.columns),
+            "global": list(X.columns)
+        }
+
+    results = {}
+
+    if subset == "all_features_all_groups":
+        logging.info(f"{analysis_name}: Running baseline analysis on the entire feature set.")
+        results["global"] = pipeline_baseline(X, y, scoring=scoring, models=models)
+
+    elif subset == "all_features_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running baseline analysis per group.")
+            for group in feature_mapping["groups"]:
+                logging.info(f"Processing group '{group}'.")
+                cols = [col for col in feature_mapping["global"] if group in col]
+                if not cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                results[group] = pipeline_baseline(X[cols], y, scoring=scoring, models=models)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running baseline analysis globally.")
+            results["global"] = pipeline_baseline(X, y, scoring=scoring, models=models)
+
+    elif subset == "single_feature_all_groups":
+        logging.info(f"{analysis_name}: Running single feature baseline analysis (global).")
+        for feat in feature_mapping.get("features", X.columns):
+            logging.info(f"Processing feature '{feat}'.")
+            matched = [col for col in feature_mapping["global"] if feat in col]
+            if not matched and feat in X.columns:
+                matched = [feat]
+            if not matched:
+                logging.warning(f"Feature '{feat}' not found. Skipping.")
+                continue
+            results[feat] = pipeline_baseline(X[matched], y, scoring=scoring, models=models)
+
+    elif subset == "single_feature_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running single feature baseline analysis per group.")
+            for group in feature_mapping["groups"]:
+                group_cols = [col for col in feature_mapping["global"] if group in col]
+                if not group_cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                for col in group_cols:
+                    key = f"{group}_{col}"
+                    logging.info(f"Processing group '{group}', feature '{col}'.")
+                    results[key] = pipeline_baseline(X[[col]], y, scoring=scoring, models=models)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running single feature baseline analysis globally.")
+            for col in feature_mapping["global"]:
+                logging.info(f"Processing feature '{col}'.")
+                results[col] = pipeline_baseline(X[[col]], y, scoring=scoring, models=models)
+
+    else:
+        raise ValueError(f"Unknown subset option '{subset}' for baseline analysis.")
+
+    return results
+
+
+def run_feature_selection(X, y, subset, analysis_name, models, scoring, num_features, feature_mapping):
+    """
+    Run feature selection analysis based on the chosen subset option.
+    For single-feature analyses, num_features is overridden to 1.
+
+    Expected feature_mapping has keys:
+      - 'groups': list of group names.
+      - 'features': list of feature names.
+      - 'global': list of all feature column names.
+
+    Subset options are the same as in run_baseline.
+    """
+    # Fallback if mapping is missing or incomplete.
+    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global")):
+        logging.info("No complete feature mapping provided; using all columns as global.")
+        feature_mapping = {
+            "groups": [],
+            "features": list(X.columns),
+            "global": list(X.columns)
+        }
+
+    results = {}
+
+    if subset in ["all_features_all_groups"]:
+        logging.info(f"{analysis_name}: Running feature selection on the entire feature set.")
+        results["global"] = pipeline_feature_selection(X, y, num_features=num_features, scoring=scoring, models=models)
+
+    elif subset == "all_features_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running feature selection per group.")
+            for group in feature_mapping["groups"]:
+                logging.info(f"Processing group '{group}'.")
+                cols = [col for col in feature_mapping["global"] if group in col]
+                if not cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                results[group] = pipeline_feature_selection(X[cols], y, num_features=num_features, scoring=scoring, models=models)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running global feature selection.")
+            results["global"] = pipeline_feature_selection(X, y, num_features=num_features, scoring=scoring, models=models)
+
+    elif subset == "single_feature_all_groups":
+        logging.info(f"{analysis_name}: Running single feature feature selection (global).")
+        for feat in feature_mapping.get("features", X.columns):
+            logging.info(f"Processing single feature '{feat}'.")
+            matched = [col for col in feature_mapping["global"] if feat in col]
+            if not matched and feat in X.columns:
+                matched = [feat]
+            if not matched:
+                logging.warning(f"Feature '{feat}' not found. Skipping.")
+                continue
+            results[feat] = pipeline_feature_selection(X[matched], y, num_features=1, scoring=scoring, models=models)
+
+    elif subset == "single_feature_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running single feature feature selection per group.")
+            for group in feature_mapping["groups"]:
+                group_cols = [col for col in feature_mapping["global"] if group in col]
+                if not group_cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                for col in group_cols:
+                    key = f"{group}_{col}"
+                    logging.info(f"Processing group '{group}', feature '{col}'.")
+                    results[key] = pipeline_feature_selection(X[[col]], y, num_features=1, scoring=scoring, models=models)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running single feature selection globally.")
+            for col in feature_mapping["global"]:
+                logging.info(f"Processing single feature '{col}'.")
+                results[col] = pipeline_feature_selection(X[[col]], y, num_features=1, scoring=scoring, models=models)
+
+    else:
+        raise ValueError(f"Unknown subset option '{subset}' for feature selection analysis.")
+
+    return results
+
+
+def run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping):
+    """
+    Run hyperparameter search analysis based on the chosen subset option.
+
+    Expected feature_mapping has keys:
+      - 'groups': list of group names.
+      - 'features': list of feature names.
+      - 'global': list of all feature column names.
+
+    Subset options are the same as in run_baseline.
+    """
+    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
+        logging.info("No complete feature mapping provided; using all columns as global.")
+        feature_mapping = {
+            "groups": [],
+            "features": list(X.columns),
+            "global": list(X.columns)
+        }
+
+    results = {}
+
+    if subset == "all_features_all_groups":
+        logging.info(f"{analysis_name}: Running HP search on the entire feature set (global).")
+        results["global"] = pipeline_HP_search(X, y, models=models, scoring=scoring)
+
+    elif subset == "all_features_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running HP search per group.")
+            for group in feature_mapping["groups"]:
+                logging.info(f"Processing group '{group}'.")
+                cols = [col for col in feature_mapping["global"] if group in col]
+                if not cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                results[group] = pipeline_HP_search(X[cols], y, models=models, scoring=scoring)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running HP search globally.")
+            results["global"] = pipeline_HP_search(X, y, models=models, scoring=scoring)
+
+    elif subset == "single_feature_all_groups":
+        logging.info(f"{analysis_name}: Running HP search for each single feature (global).")
+        for feat in feature_mapping["features"]:
+            logging.info(f"Processing single feature '{feat}'.")
+            matched = [col for col in feature_mapping["global"] if feat in col]
+            if not matched and feat in X.columns:
+                matched = [feat]
+            if not matched:
+                logging.warning(f"Feature '{feat}' not found. Skipping.")
+                continue
+            results[feat] = pipeline_HP_search(X[matched], y, models=models, scoring=scoring)
+
+    elif subset == "single_feature_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running HP search for each single feature per group.")
+            for group in feature_mapping["groups"]:
+                group_cols = [col for col in feature_mapping["global"] if group in col]
+                if not group_cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                for col in group_cols:
+                    key = f"{group}_{col}"
+                    logging.info(f"Processing group '{group}', feature '{col}'.")
+                    results[key] = pipeline_HP_search(X[[col]], y, models=models, scoring=scoring)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running HP search for each single feature globally.")
+            for col in feature_mapping["global"]:
+                logging.info(f"Processing single feature '{col}'.")
+                results[col] = pipeline_HP_search(X[[col]], y, models=models, scoring=scoring)
+
+    else:
+        raise ValueError(f"Unknown subset option '{subset}' for HP search analysis.")
+
+    return results
+
+
+def run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_features, feature_mapping):
+    """
+    Run combined feature selection and hyperparameter search (FS + HP search) analysis.
+
+    Expected feature_mapping keys:
+      - 'groups': list of group names.
+      - 'features': list of feature names.
+      - 'global': list of all feature column names.
+      
+    Subset options are the same as in the other functions.
+    """
+    if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
+        logging.info("No complete feature mapping provided; using all columns as global.")
+        feature_mapping = {
+            "groups": [],
+            "features": list(X.columns),
+            "global": list(X.columns)
+        }
+
+    results = {}
+
+    if subset == "all_features_all_groups":
+        logging.info(f"{analysis_name}: Running FS + HP search on the entire feature set (global).")
+        results["global"] = pipeline_feature_selection_HP_search(X, y, num_features=num_features, models=models, scoring=scoring)
+
+    elif subset == "all_features_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running FS + HP search per group.")
+            for group in feature_mapping["groups"]:
+                logging.info(f"Processing group '{group}'.")
+                cols = [col for col in feature_mapping["global"] if group in col]
+                if not cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                results[group] = pipeline_feature_selection_HP_search(X[cols], y, num_features=num_features, models=models, scoring=scoring)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running FS + HP search globally.")
+            results["global"] = pipeline_feature_selection_HP_search(X, y, num_features=num_features, models=models, scoring=scoring)
+
+    elif subset == "single_feature_all_groups":
+        logging.info(f"{analysis_name}: Running FS + HP search for each single feature (global).")
+        for feat in feature_mapping["features"]:
+            logging.info(f"Processing single feature '{feat}'.")
+            matched = [col for col in feature_mapping["global"] if feat in col]
+            if not matched and feat in X.columns:
+                matched = [feat]
+            if not matched:
+                logging.warning(f"Feature '{feat}' not found. Skipping.")
+                continue
+            results[feat] = pipeline_feature_selection_HP_search(X[matched], y, num_features=1, models=models, scoring=scoring)
+
+    elif subset == "single_feature_per_group":
+        if feature_mapping["groups"]:
+            logging.info(f"{analysis_name}: Running FS + HP search for each single feature per group.")
+            for group in feature_mapping["groups"]:
+                group_cols = [col for col in feature_mapping["global"] if group in col]
+                if not group_cols:
+                    logging.warning(f"No columns found for group '{group}'. Skipping.")
+                    continue
+                for col in group_cols:
+                    key = f"{group}_{col}"
+                    logging.info(f"Processing group '{group}', single feature '{col}'.")
+                    results[key] = pipeline_feature_selection_HP_search(X[[col]], y, num_features=1, models=models, scoring=scoring)
+        else:
+            logging.info(f"{analysis_name}: No groups defined; running FS + HP search for each single feature globally.")
+            for col in feature_mapping["global"]:
+                logging.info(f"Processing single feature '{col}'.")
+                results[col] = pipeline_feature_selection_HP_search(X[[col]], y, num_features=1, models=models, scoring=scoring)
+
+    else:
+        raise ValueError(f"Unknown subset option '{subset}' for FS + HP search analysis.")
+
+    return results
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Run ML pipelines analyses.")
-    parser.add_argument("--analysis", type=int, default=0, help="Analysis number to run (e.g., 0, 1, 9).")
-    parser.add_argument("--analysis_type", type=str, default="all_ages", help="Analysis type (adolescent, child, all_ages).")
+    parser = argparse.ArgumentParser(
+        description="Run ML analyses based on a YAML configuration file with flexible feature group definitions."
+    )
+    parser.add_argument("--config", required=True, help="Path to YAML configuration file.")
     args = parser.parse_args()
-    
-    analysis = args.analysis
-    analysis_type = args.analysis_type
-    features = load_and_preprocess_features(analysis_type)
-    
-    # Map analysis numbers to functions. Extend as needed.
-    analysis_map = {
-        0: run_analysis0,
-        1: run_analysis1,
-        9: run_analysis9,
-    }
-    
-    if analysis in analysis_map:
-        analysis_map[analysis](features, analysis_type)
-    else:
-        logging.error("Invalid analysis number provided. Choose a valid analysis.")
+
+    # Load configuration and data.
+    config = load_config(args.config)
+    X, y, feature_mapping = load_data(config["data"])
+
+    analyses = config.get("analysis", [])
+    all_combined_results = {}
+    analysis_id = config.get("ID", "defaultID")
+
+    for analysis in analyses:
+        analysis_name = analysis.get("name", "UnnamedAnalysis")
+        analysis_type = analysis.get("type")
+        subset = analysis.get("subset", "all_features_all_groups")
+        models = analysis.get("models", "all")
+        scoring = analysis.get("scoring", "accuracy")
+
+        logging.info(f"Starting analysis: {analysis_name} (Type: {analysis_type}, Subset: {subset})")
+
+        if analysis_type == "baseline":
+            result = run_baseline(X, y, subset, analysis_name, models, scoring, feature_mapping)
+        elif analysis_type == "fs":
+            num_feats = analysis.get("num_features", 5)
+            result = run_feature_selection(X, y, subset, analysis_name, models, scoring, num_feats, feature_mapping)
+        elif analysis_type == "hp_search":
+            result = run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping)
+        elif analysis_type == "fs_hp":
+            num_feats = analysis.get("num_features", 5)
+            result = run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_feats, feature_mapping)
+        else:
+            logging.error(f"Unknown analysis type: {analysis_type} for {analysis_name}")
+            continue
+
+        # Save the subanalysis result in its own pickle file.
+        pickle_filename = f"{analysis_id}_{analysis_name}_{analysis_type}_results.pickle"
+        save_results_pickle(result, pickle_filename)
+
+        all_combined_results[analysis_name] = result
+        logging.info(f"Completed analysis: {analysis_name}")
+
+    # Save combined results as YAML.
+    combined_results_file = config.get("output", f"{analysis_id}_results.yaml")
+    with open(combined_results_file, "w") as outfile:
+        yaml.dump(all_combined_results, outfile)
+    logging.info(f"Combined analysis results saved to: {combined_results_file}")
+
 
 if __name__ == "__main__":
     main()
