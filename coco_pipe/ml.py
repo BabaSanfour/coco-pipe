@@ -342,10 +342,10 @@ class MLPipeline:
         """
         if scoring is None:
             scoring = self.scoring
+        scorer = CUSTOM_SCORERS.get(scoring, scoring)
         cv = self.get_cv()
         results = {}
 
-        scorer = CUSTOM_SCORERS.get(scoring, scoring)
         for model_name, model_dict in self.models.items():
             estimator = clone(model_dict["estimator"])
             scores = cross_val_score(estimator, self.X, self.y, cv=cv, scoring=scorer, n_jobs=self.n_jobs)
@@ -357,44 +357,26 @@ class MLPipeline:
 
         return results
 
-    def _feature_selection(self, num_features, model_name, scoring=None):
+    def _feature_selection(self, num_features, model_name, scoring=None, direction="forward"):
         """
         Internal method to perform feature selection using SequentialFeatureSelector
         for a specified model.
-
-        Parameters
-        ----------
-        num_features : int
-            The maximum number of features to select.
-        model_name : str
-            The model for which feature selection is performed.
-        scoring : str, optional
-            The scoring metric to use. If not provided, the default from the instance is used.
-
-        Returns
-        -------
-        dict
-            A dictionary containing the selected features (keyed by the number of features)
-            and associated scores.
         """
         from sklearn.feature_selection import SequentialFeatureSelector
         if scoring is None:
             scoring = self.scoring
+        scorer = CUSTOM_SCORERS.get(scoring, scoring)
         cv = self.get_cv()
         selected_features_dict = {}
 
-        if model_name not in self.models:
-            raise ValueError(f"Model '{model_name}' is not available for feature selection.")
-
         base_model = self.models[model_name]["estimator"]
-        scorer = CUSTOM_SCORERS.get(scoring, scoring)
         for k in range(1, num_features + 1):
             logging.info(f"Processing {k} features for {model_name}")
             model_instance = clone(base_model)
             sfs = SequentialFeatureSelector(
                 model_instance,
                 n_features_to_select=k,
-                direction="forward",
+                direction=direction,
                 cv=cv,
                 n_jobs=self.n_jobs,
                 scoring=scorer
@@ -413,9 +395,9 @@ class MLPipeline:
             }
             selected_features_dict[k] = result_dict
 
-        return {"selected_features": selected_features_dict}
+        return selected_features_dict
 
-    def feature_selection(self, num_features, scoring=None):
+    def feature_selection(self, num_features, scoring=None, direction="forward"):
         """
         Run feature selection for each selected model using stored X and y.
 
@@ -425,6 +407,8 @@ class MLPipeline:
             The maximum number of features to select.
         scoring : str, optional
             The scoring metric to use. If not provided, the default from the instance is used.
+        direction : {"forward", "backward"}, optional
+            The direction of feature selection (default is "forward").
 
         Returns
         -------
@@ -443,10 +427,10 @@ class MLPipeline:
         all_fs_results = {}
         for model_name in self.models:
             logging.info(f"Performing feature selection for {model_name}")
-            fs_result = self._feature_selection(num_features, model_name, scoring)
-            all_fs_results[model_name] = fs_result["selected_features"]
+            fs_result = self._feature_selection(num_features, model_name, scoring, direction=direction)
+            all_fs_results[model_name] = fs_result
 
-        return {"selected_features": all_fs_results}
+        return all_fs_results
 
     def _hp_search(self, model_name, scoring=None):
         """

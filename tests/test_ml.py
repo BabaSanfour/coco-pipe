@@ -100,11 +100,9 @@ def test_feature_selection(dummy_data):
     pipeline = MLPipeline(X, y, models="Random Forest", scoring="f1-score")
     num_features = 3
     fs_result = pipeline.feature_selection(num_features)
-    # fs_result should be a dictionary with key "selected_features"
-    assert "selected_features" in fs_result
     # For our single model, "Random Forest" should be present in the dictionary.
-    assert "Random Forest" in fs_result["selected_features"]
-    fs_rf = fs_result["selected_features"]["Random Forest"]
+    assert "Random Forest" in fs_result
+    fs_rf = fs_result["Random Forest"]
     # Check that keys in fs_rf are integers from 1 to num_features
     for k in fs_rf:
         assert isinstance(k, int)
@@ -150,7 +148,7 @@ def test_wrapper_functions(dummy_data):
 
     # Feature selection wrapper test
     fs_result = pipeline_feature_selection(X, y, num_features=2, models="SVC", scoring="f1-score")
-    assert "selected_features" in fs_result
+    assert "SVC" in fs_result
 
     # HP search wrapper test
     hp_result = pipeline_HP_search(X, y, models="SVC", scoring="accuracy")
