@@ -134,7 +134,8 @@ def load_data(data_config):
     data_file = data_config.get("file")
     if not data_file:
         raise ValueError("Data file path must be provided in the config (data:file).")
-    data_file = os.path.abspath(data_file)
+    if not os.path.isabs(data_file):
+        data_file = os.path.abspath(data_file)
     if not os.path.exists(data_file):
         raise ValueError(f"Data file does not exist: {data_file}")
     if not data_file:
