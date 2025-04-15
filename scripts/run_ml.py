@@ -196,7 +196,7 @@ def run_baseline(X, y, subset, analysis_name, models, scoring, feature_mapping):
             logging.info(f"{analysis_name}: Running baseline analysis per group.")
             for group in feature_mapping["groups"]:
                 logging.info(f"Processing group '{group}'.")
-                cols = [col for col in feature_mapping["global"] if group in col]
+                cols = [col for col in feature_mapping["global"] if col.startswith(f"{group}.")]
                 if not cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
@@ -275,7 +275,7 @@ def run_feature_selection(X, y, subset, analysis_name, models, scoring, num_feat
             logging.info(f"{analysis_name}: Running feature selection per group.")
             for group in feature_mapping["groups"]:
                 logging.info(f"Processing group '{group}'.")
-                cols = [col for col in feature_mapping["global"] if group in col]
+                cols = [col for col in feature_mapping["global"] if col.startswith(f"{group}.")]
                 if not cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
@@ -331,6 +331,7 @@ def run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping)
 
     Subset options are the same as in run_baseline.
     """
+    import re  
     feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
 
     # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
@@ -352,7 +353,8 @@ def run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping)
             logging.info(f"{analysis_name}: Running HP search per group.")
             for group in feature_mapping["groups"]:
                 logging.info(f"Processing group '{group}'.")
-                cols = [col for col in feature_mapping["global"] if group in col]
+                pattern = re.compile(rf".*{re.escape(group)}(?!\d).*")
+                cols = [col for col in feature_mapping["global"] if pattern.match(col) ]
                 if not cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
@@ -377,7 +379,8 @@ def run_hp_search(X, y, subset, analysis_name, models, scoring, feature_mapping)
         if feature_mapping["groups"]:
             logging.info(f"{analysis_name}: Running HP search for each single feature per group.")
             for group in feature_mapping["groups"]:
-                group_cols = [col for col in feature_mapping["global"] if group in col]
+                pattern = re.compile(rf".*{re.escape(group)}(?!\d).*")
+                group_cols = [col for col in feature_mapping["global"] if pattern.match(col)]
                 if not group_cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
@@ -408,6 +411,7 @@ def run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_features,
       
     Subset options are the same as in the other functions.
     """
+    import re  
     feature_mapping["global"] = feature_mapping.get("global", list(X.columns))
 
     # if feature_mapping is None or not (feature_mapping.get("groups") and feature_mapping.get("global") and feature_mapping.get("features")):
@@ -429,7 +433,8 @@ def run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_features,
             logging.info(f"{analysis_name}: Running FS + HP search per group.")
             for group in feature_mapping["groups"]:
                 logging.info(f"Processing group '{group}'.")
-                cols = [col for col in feature_mapping["global"] if group in col]
+                pattern = re.compile(rf".*{re.escape(group)}(?!\d).*")
+                cols = [col for col in feature_mapping["global"] if pattern.match(col)]
                 if not cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
@@ -454,7 +459,8 @@ def run_fs_hp_search(X, y, subset, analysis_name, models, scoring, num_features,
         if feature_mapping["groups"]:
             logging.info(f"{analysis_name}: Running FS + HP search for each single feature per group.")
             for group in feature_mapping["groups"]:
-                group_cols = [col for col in feature_mapping["global"] if group in col]
+                pattern = re.compile(rf".*{re.escape(group)}(?!\d).*")
+                group_cols = [col for col in feature_mapping["global"] if pattern.match(col)]
                 if not group_cols:
                     logging.warning(f"No columns found for group '{group}'. Skipping.")
                     continue
