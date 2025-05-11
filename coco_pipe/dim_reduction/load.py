@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Load and reshape EEG embeddings for coco-pipe dim_reduction module.
+Load and reshape embeddings.
 """
 import logging
 from pathlib import Path
