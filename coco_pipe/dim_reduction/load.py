@@ -34,12 +34,12 @@ def load_embeddings(
 
     Args:
         embeddings_root: Root directory containing sub-*/ folders.
-        task:           BIDS task identifier (e.g. "RESTING").
-        run:            BIDS run identifier (e.g. "01").
-        processing:     Suffix after "embeddings" in filename (e.g. "zscoreaxis0seg10").
-        subjects:       If int → process only first N subjects;
-                        if List[int] → process only those IDs;
-                        if None → process all.
+        task:            BIDS task identifier (e.g. "RESTING").
+        run:             BIDS run identifier (e.g. "01").
+        processing:      Suffix after "embeddings" in filename (e.g. "zscoreaxis0seg10").
+        subjects:        If int → process only first N subjects;
+                         if List[int] → process only those IDs;
+                         if None → process all.
 
     Returns:
         embeddings_array:   (n_samples, sensors, time, features)
