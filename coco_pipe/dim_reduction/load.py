@@ -12,7 +12,6 @@ from typing import Tuple, Union, List
 import numpy as np
 from tqdm import tqdm
 
-from coco_pipe.dim_reduction.config import DEFAULT_MAX_SEG
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -25,6 +24,7 @@ def load_embeddings(
     run: str,
     processing: str,
     subjects: Union[int, List[int], None] = None,
+    max_seg: int = 20
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load and extract embeddings stored in BIDS‑style subject folders.
@@ -40,7 +40,7 @@ def load_embeddings(
         subjects:        If int → process only first N subjects;
                          if List[int] → process only those IDs;
                          if None → process all.
-
+        max_seg:        Maximum number of time segments to load (default: 20).
     Returns:
         embeddings_array:   (n_samples, sensors, time, features)
         subjects_array:     (n_samples,)
@@ -65,14 +65,14 @@ def load_embeddings(
     pattern = f"sub-*_task-{task}_run-{run}_embeddings{processing}.pkl"
     emb_list, subj_list, ts_list = [], [], []
 
-    for sub_dir in subs:
+    for sub_dir in tqdm(subs, desc="Processing subjects"):
         sid = sid_from_path(sub_dir)
         files = list(sub_dir.glob(pattern))
         if not files:
             logger.warning(f"No matching files in {sub_dir.name} for pattern {pattern}")
             continue
 
-        for fpath in files:
+        for fpath in tqdm(files, desc=f"Loading files from {sub_dir.name}", leave=False):
             try:
                 with fpath.open("rb") as f:
                     emb_dict = pickle.load(f)
@@ -81,7 +81,7 @@ def load_embeddings(
                 continue
 
             for t_idx, emb in emb_dict.items():
-                if t_idx > DEFAULT_MAX_SEG:
+                if t_idx > max_seg:
                     break
                 emb_list.append(emb)
                 subj_list.append(sid)
