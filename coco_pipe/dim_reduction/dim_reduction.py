@@ -2,17 +2,13 @@
 """
 run_dim_reduction.py
 
-YAML‑driven CLI to run dimensionality reduction jobs using an embedded
-DimReductionPipeline class. Supports EEG, M/EEG embeddings and CSV loaders,
-multiple reducers (sequential or parallel), and outputs a JSON summary.
+DimReductionPipeline: A class to orchestrate dimensionality reduction 
+process for M/EEG, CSV, or Embedding data.
 """
-import argparse
 import json
 import logging
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
-import yaml
 import numpy as np
 
 from coco_pipe.dim_reduction.config import METHODS, METHODS_DICT
@@ -28,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 class DimReductionPipeline:
     """
-    Orchestrates loading, DR, and saving for embeddings, M/EEG or CSV data.
+    DimReductionPipeline: A class to orchestrate the dimensionality reduction
+    process for M/EEG, CSV, or Embedding data.
     """
 
     def __init__(
