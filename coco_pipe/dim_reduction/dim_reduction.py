@@ -76,8 +76,8 @@ class DimReductionPipeline:
         self.base = f"{self.type}_dimred-{self.method}_{self.n_components}d_task-{self.task}_run-{self.run}_proc-{self.processing}"
 
     
-        self.reducer_path = self.output_dir / f"{base}_reducer.joblib"
-        self.meta_path = self.output_dir / f"{base}_meta.json"
+        self.reducer_path = self.output_dir / f"{self.base}_reducer.joblib"
+        self.meta_path = self.output_dir / f"{self.base}_meta.json"
 
     def fit(self, X: np.ndarray, y: np.ndarray = None, save: bool = True) -> None:
         """
