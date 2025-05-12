@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-coco_pipe/dim_reduction/load.py
+coco_pipe/io/embeddings.py
 
 Load and reshape EEG embeddings stored in BIDS‑style subject folders.
 """
