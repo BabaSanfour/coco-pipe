@@ -132,6 +132,26 @@ https://cocopipe.readthedocs.io/en/latest/index.html
 
 Contributions are welcome! If you have suggestions or find any bugs, please open issues or submit pull requests.
 
+### TODO
+
+#### IO Module
+- Implement CSV loading and M/EEG data loading functionalities.
+- Develop comprehensive unit tests.
+
+#### ML Module
+- Restructure to mirror the design of the dim_reduction module.
+- Consolidate scripts within the main pipeline.
+- Add regression support and enhance cross-validation methods.
+- Update and expand unit tests.
+
+#### DL Module
+- Define and implement deep learning functionalities.
+- Create corresponding unit tests.
+
+#### Visualization Module
+- Plan and implement enhancements for visualization features.
+- Integrate new visual components and testing.
+
 ## License
 
 *TODO*
