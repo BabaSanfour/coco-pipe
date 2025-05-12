@@ -17,8 +17,8 @@ import yaml
 import numpy as np
 import pandas as pd
 
-from coco_pipe.io.embeddings import load_embeddings, reshape_embeddings
-from coco_pipe.dim_reduction.config import METHODS, METHODS_DICT, RESULTS_DIR
+from coco_pipe.io.load import load
+from coco_pipe.dim_reduction.config import METHODS, METHODS_DICT
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
 
 # Configure logging
@@ -36,7 +36,7 @@ class DimReductionPipeline:
 
     def __init__(
         self,
-        loader: str,
+        type: str,
         method: str,
         data_path: Path,
         task: str = None,
@@ -48,9 +48,9 @@ class DimReductionPipeline:
         n_components: int = 2,
         reducer_kwargs: dict = None,
     ):
-        self.loader = loader.lower()
-        if self.loader not in {"embeddings", "csv", "meg", "eeg", "meeg"}:
-            raise ValueError(f"Unknown loader '{loader}', choose from 'embeddings', 'csv', 'meg', 'eeg', or 'meeg'")
+        self.type = type.lower()
+        if self.type not in {"embeddings", "csv", "meg", "eeg"}:
+            raise ValueError(f"Unknown data '{type}', choose from 'embeddings', 'csv', 'meg', 'eeg'")
 
         self.method = method.upper()
         if self.method not in METHODS:
@@ -73,23 +73,30 @@ class DimReductionPipeline:
         self.reducer_kwargs = reducer_kwargs or {}
 
         # Prepare output paths
-        self.output_dir = Path(RESULTS_DIR)
+        self.output_dir = Path(data_path).parent / "dim_reduction"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        base = f"{self.method}"
-        if self.loader == "embeddings":
-            base += f"_{task}_run-{run}_{processing}"
-        elif self.loader == "meeg":
-            base += "_meeg"
-        else:
-            base += "_csv"
+        self.base = f"{self.type}_dimred-{self.method}_{self.n_components}d_task-{self.task}_run-{self.run}_proc-{self.processing}"
 
+    
         self.reducer_path = self.output_dir / f"{base}_reducer.joblib"
-        self.embedding_out_path = self.output_dir / f"{base}.npz"
         self.meta_path = self.output_dir / f"{base}_meta.json"
 
+    def fit(self, X: np.ndarray, y: np.ndarray = None, save: bool = True) -> None:
+        """
+        Fit the reducer on the data.
+        """
+        if self.reducer_path.exists():
+            logger.info(f"Loading reducer from {self.reducer_path}")
+            self.reducer = BaseReducer.load(str(self.reducer_path))
+            return
+        logger.info(f"Fitting {self.method} on data shape {X.shape}")
+        self.reducer.fit(X, y=y)
+        if save:
+            logger.info(f"Saving fitted reducer to {self.reducer_path}")
+            self.reducer.save(str(self.reducer_path))
 
-    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray = None, save: bool = True) -> np.ndarray:
         # Load existing reducer if present
         if self.reducer_path.exists():
             logger.info(f"Loading reducer from {self.reducer_path}")
@@ -98,15 +105,16 @@ class DimReductionPipeline:
 
         # Fit and save reducer
         logger.info(f"Fitting {self.method} on data shape {X.shape}")
-        reduced = self.reducer.fit_transform(X)
-        logger.info(f"Saving reducer to {self.reducer_path}")
-        self.reducer.save(str(self.reducer_path))
+        reduced = self.reducer.fit_transform(X, y=y)
+        if save:
+            logger.info(f"Saving fitted reducer to {self.reducer_path}")
+            self.reducer.save(str(self.reducer_path))
         return reduced
 
     def save_outputs(self, reduced: np.ndarray, subjects: np.ndarray, times: np.ndarray):
         logger.info(f"Saving reduced data to {self.embedding_out_path}")
         np.savez_compressed(
-            self.embedding_out_path,
+            self.data_path / f"{self.base}.npz",
             reduced=reduced,
             subjects=subjects,
             time_segments=times,
@@ -123,7 +131,7 @@ class DimReductionPipeline:
             "n_components":     self.n_components,
             "reducer_kwargs":   self.reducer_kwargs,
             "reducer_file":     self.reducer_path.name,
-            "output_file":      self.embedding_out_path.name,
+            "output_file":      self.base + ".npz",
         }
         logger.info(f"Writing metadata to {self.meta_path}")
         with open(self.meta_path, "w") as f:
@@ -144,7 +152,11 @@ def run_job(cfg: dict) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser("run_dim_reduction")
+    # This need to be moved to be moved to scripts
+    parser = argparse.ArgumentParser(
+        description="Run Dim Reduction on M/EEG, CSV, or Embedding data."
+    )
+
     parser.add_argument(
         "--config", "-c", required=True, type=Path, help="Path to YAML config file"
     )
