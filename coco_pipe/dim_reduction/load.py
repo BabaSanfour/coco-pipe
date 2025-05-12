@@ -1,79 +1,95 @@
 #!/usr/bin/env python3
 """
-Load and reshape embeddings.
+coco_pipe/dim_reduction/load.py
+
+Load and reshape EEG embeddings stored in BIDS‑style subject folders.
 """
 import logging
-from pathlib import Path
 import pickle
-from coco_pipe.dim_reduction.config import DEFAULT_SEGMENT_DUR, DEFAULT_Z_SCORE, DEFAULT_AXIS, DEFAULT_MAX_SEG
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Union, List
 
 import numpy as np
 from tqdm import tqdm
 
-from coco_pipe.utils.config import embeddings_dir
+from coco_pipe.dim_reduction.config import DEFAULT_MAX_SEG
 
 # Configure logger
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 def load_embeddings(
-    n_subjects: int,
-    segment_duration: int = 10,
-    z_score: bool = True,
-    z_score_axis: int = 1,
-    n_time_segments: int = 100,
+    embeddings_root: Union[str, Path],
+    task: str,
+    run: str,
+    processing: str,
+    subjects: Union[int, List[int], None] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Load and extract embeddings for all subjects.
+    Load and extract embeddings stored in BIDS‑style subject folders.
+
+    Each folder under `embeddings_root` named sub-XXXX/ contains pickle files:
+      sub-XXXX_task-{task}_run-{run}_embeddings{processing}.pkl
 
     Args:
-        n_subjects: Number of subjects to load.
-        segment_duration: Duration of each segment in seconds.
-        z_score: Whether embeddings were z-scored.
-        z_score_axis: Axis used for z-scoring in the saved file.
-        n_time_segments: Maximum time segments to include per subject.
+        embeddings_root: Root directory containing sub-*/ folders.
+        task:           BIDS task identifier (e.g. "RESTING").
+        run:            BIDS run identifier (e.g. "01").
+        processing:     Suffix after "embeddings" in filename (e.g. "zscoreaxis0seg10").
+        subjects:       If int → process only first N subjects;
+                        if List[int] → process only those IDs;
+                        if None → process all.
 
     Returns:
-        embeddings_array: np.ndarray of shape (n_samples, sensors, time, features)
-        subjects_array: np.ndarray of shape (n_samples,)
-        time_segments_array: np.ndarray of shape (n_samples,)
+        embeddings_array:   (n_samples, sensors, time, features)
+        subjects_array:     (n_samples,)
+        time_segments_array:(n_samples,)
     """
-    embeddings_dict = {}
+    root = Path(embeddings_root)
+    subs = sorted(p for p in root.iterdir() if p.is_dir() and p.name.startswith("sub-"))
 
-    # Load per-subject pickle files
-    for subject_id in tqdm(range(1, n_subjects + 1), desc="Loading embeddings"):
-        file_name = (
-            f"embeddings_sub-{subject_id}"
-            f"_dur-{segment_duration}s"
-            f"_zscore-{z_score}"
-            f"_axis-{z_score_axis}.pkl"
-        )
-        file_path = os.path.join(embeddings_dir, file_name)
+    # filter by `subjects` param
+    def sid_from_path(p: Path) -> Union[int, None]:
         try:
-            with open(file_path, 'rb') as f:
-                embeddings_dict[subject_id] = pickle.load(f)
-        except Exception as e:
-            logger.error(f"Error loading {file_path}: {e}")
+            return int(p.name.split("-")[1])
+        except Exception:
+            return None
 
-    embeddings_list = []
-    subjects_list = []
-    time_list = []
+    if subjects is not None:
+        if isinstance(subjects, int):
+            subs = subs[:subjects]
+        else:
+            subs = [p for p in subs if sid_from_path(p) in subjects]
 
-    # Extract and stack embeddings
-    for subject_id, embed_map in tqdm(embeddings_dict.items(), desc="Processing embeddings"):
-        for t_idx, emb in embed_map.items():
-            if t_idx > n_time_segments:
-                break
-            embeddings_list.append(emb)
-            subjects_list.append(subject_id)
-            time_list.append(t_idx)
+    pattern = f"sub-*_task-{task}_run-{run}_embeddings{processing}.pkl"
+    emb_list, subj_list, ts_list = [], [], []
 
-    embeddings_array = np.array(embeddings_list)
-    subjects_array = np.array(subjects_list)
-    time_segments_array = np.array(time_list)
+    for sub_dir in subs:
+        sid = sid_from_path(sub_dir)
+        files = list(sub_dir.glob(pattern))
+        if not files:
+            logger.warning(f"No matching files in {sub_dir.name} for pattern {pattern}")
+            continue
+
+        for fpath in files:
+            try:
+                with fpath.open("rb") as f:
+                    emb_dict = pickle.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load {fpath.name}: {e}")
+                continue
+
+            for t_idx, emb in emb_dict.items():
+                if t_idx > DEFAULT_MAX_SEG:
+                    break
+                emb_list.append(emb)
+                subj_list.append(sid)
+                ts_list.append(t_idx)
+
+    embeddings_array    = np.stack(emb_list, axis=0)
+    subjects_array      = np.array(subj_list, dtype=int)
+    time_segments_array = np.array(ts_list, dtype=int)
 
     logger.info(
         f"Loaded embeddings: {embeddings_array.shape}, "
@@ -90,18 +106,12 @@ def reshape_embeddings(
     """
     Reshape embeddings for downstream processing.
 
-    Args:
-        embeddings_array: np.ndarray of shape (n_samples, sensors, time, features).
-        sensorwise: If True, reshape to (n_samples, sensors, time*features). Else flatten to (n_samples, -1).
-
-    Returns:
-        reshaped_array: np.ndarray
+    - sensorwise=False → flatten to (n_samples, -1).
+    - sensorwise=True  → (n_samples, sensors, time*features).
     """
-    if sensorwise:
-        # Keep sensor dimension: merge time and feature dims
-        n_samples, n_sensors, n_time, n_feat = embeddings_array.shape
-        return embeddings_array.reshape(n_samples, n_sensors, n_time * n_feat)
-
-    # Flatten sensors, time, and feature dims
     n_samples = embeddings_array.shape[0]
-    return embeddings_array.reshape(n_samples, -1)
+    if sensorwise:
+        n_sensors, n_time, n_feat = embeddings_array.shape[1:]
+        return embeddings_array.reshape(n_samples, n_sensors, n_time * n_feat)
+    else:
+        return embeddings_array.reshape(n_samples, -1)
