@@ -99,7 +99,7 @@ def load_embeddings(
     return embeddings_array, subjects_array, time_segments_array
 
 
-def reshape_embeddings(
+def flatten_embeddings(
     embeddings_array: np.ndarray,
     sensorwise: bool = False
 ) -> np.ndarray:
