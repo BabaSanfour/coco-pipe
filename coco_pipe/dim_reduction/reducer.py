@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-coco_pipe/dim_reduction/processor.py
+coco_pipe/dim_reduction/reducer.py
 
-DimReducer class that takes any (n_samples, n_features) array
-and applies PCA/TSNE/UMAP, with save/load support.
+DimReducer: a simple, method-agnostic dimensionality reducer with optional persistence.
+Supported methods: PCA, TSNE, UMAP (extendable via METHODS_DICT).
 """
 import logging
 from pathlib import Path
@@ -20,8 +20,8 @@ logging.basicConfig(level=logging.INFO)
 
 class DimReducer:
     """
-    Core reducer class. You simply pass it your data array and it
-    handles fit, transform, fit_transform, and optional persistence.
+    Wraps any BaseReducer to provide a unified API for fit, transform,
+    fit_transform, and optional save/load of the reducer state.
     """
 
     def __init__(
@@ -35,12 +35,18 @@ class DimReducer:
         if method not in METHODS:
             raise ValueError(f"Unknown method {method!r}, choose from {METHODS}")
         self.method = method
-        self.reducer: BaseReducer = METHODS_DICT[method](n_components=n_components, **reducer_kwargs)
-        self.save_path = Path(save_path) if save_path is not None else None
+        # instantiate the appropriate reducer
+        ReducerCls = METHODS_DICT[method]
+        self.reducer: BaseReducer = ReducerCls(
+            n_components=n_components,
+            **reducer_kwargs
+        )
+        self.save_path: Optional[Path] = Path(save_path) if save_path is not None else None
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
         """
-        Fit the reducer on X (and optional labels y).
+        Fit the underlying reducer on X (and optional labels y).
+        If save_path is set, persist the fitted reducer to disk.
         """
         logger.info(f"Fitting {self.method} on data shape {X.shape}")
         self.reducer.fit(X, y=y)
@@ -50,32 +56,40 @@ class DimReducer:
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
-        Apply the fitted reducer to X.
+        Transform X using the fitted reducer. If save_path exists and the
+        reducer isn't already loaded, load it first.
         """
-        # if a save_path exists and reducer isn’t loaded yet, load it
-        if self.save_path and self.save_path.exists() and not hasattr(self.reducer, "model") and not hasattr(self.reducer, "embedding_"):
+        # lazy-load if a saved reducer is present
+        if (
+            self.save_path
+            and self.save_path.exists()
+            and not hasattr(self.reducer, 'model')
+            and not hasattr(self.reducer, 'embedding_')
+        ):
             logger.info(f"Loading reducer from {self.save_path}")
             self.reducer = BaseReducer.load(str(self.save_path))
         return self.reducer.transform(X)
 
     def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Fit then transform. 
+        Convenience: fit then transform. Respects reducers that implement
+        fit_transform directly (e.g. TSNE).
         """
-        # Some reducers (TSNE) implement fit_transform directly
-        if hasattr(self.reducer, "fit_transform") and not hasattr(self.reducer, "model"):
+        # if reducer provides a direct fit_transform and no model attr yet
+        if hasattr(self.reducer, 'fit_transform') and not hasattr(self.reducer, 'model'):
             return self.reducer.fit_transform(X)
         self.fit(X, y=y)
         return self.transform(X)
 
     @classmethod
-    def load(cls, load_path: Union[str, Path]) -> "DimReducer":
+    def load(cls, load_path: Union[str, Path]) -> 'DimReducer':
         """
-        Load a previously saved reducer and wrap it.
+        Load a previously saved reducer from disk and wrap it in DimReducer.
+        The method name is inferred from the reducer class name.
         """
-        loaded = BaseReducer.load(str(load_path))
+        loaded: BaseReducer = BaseReducer.load(str(load_path))
         inst = cls.__new__(cls)
-        inst.method   = loaded.__class__.__name__.replace("Reducer","").upper()
-        inst.reducer  = loaded
-        inst.save_path= Path(load_path)
+        inst.method = loaded.__class__.__name__.replace('Reducer','').upper()
+        inst.reducer = loaded
+        inst.save_path = Path(load_path)
         return inst
