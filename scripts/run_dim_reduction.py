@@ -23,7 +23,6 @@ def run_job(cfg: dict) -> dict:
     return {"method": pipeline.method, "output": str(out)}
 
 def main():
-    # This need to be moved to be moved to scripts
     parser = argparse.ArgumentParser(
         description="Run Dim Reduction on M/EEG, CSV, or Embedding data."
     )
@@ -32,6 +31,9 @@ def main():
         "--config", "-c", required=True, type=Path, help="Path to YAML config file"
     )
     args = parser.parse_args()
+    if not args.config.exists():
+        logger.error(f"Config file {args.config} does not exist.")
+        return
 
     cfg = yaml.safe_load(args.config.read_text())
     data_cfg = cfg.get("data", {})
