@@ -12,4 +12,5 @@ sphinx-copybutton
 sphinxcontrib-mermaid
 sphinx-autoapi
 myst-parser
+umap-learn
 -e .
