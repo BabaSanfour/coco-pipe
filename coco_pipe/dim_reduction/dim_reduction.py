@@ -13,6 +13,7 @@ import numpy as np
 
 from coco_pipe.dim_reduction.config import METHODS, METHODS_DICT
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
+from coco_pipe.io.load import load
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +39,7 @@ class DimReductionPipeline:
         processing: str = None,
         subjects: list = None,
         max_seg: int = None,
+        flatten: bool = False,
         sensorwise: bool = False,
         n_components: int = 2,
         reducer_kwargs: dict = None,
@@ -62,6 +64,7 @@ class DimReductionPipeline:
         self.processing = processing
         self.subjects = subjects
         self.max_seg = max_seg
+        self.flatten = flatten
         self.sensorwise = sensorwise
         self.n_components = n_components
         self.reducer_kwargs = reducer_kwargs or {}
@@ -114,7 +117,7 @@ class DimReductionPipeline:
             time_segments=times,
         )
         meta = {
-            "loader":           self.loader,
+            "type":             self.type,
             "method":           self.method,
             "task":             self.task,
             "run":              self.run,
@@ -131,9 +134,10 @@ class DimReductionPipeline:
         with open(self.meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
-    def run(self) -> Path:
-        X, subj, times = self.load_and_preprocess()
+    def execute(self) -> Path:
+        X, subj, times = load(self.type, self.data_path, self.task, self.run, self.processing, self.subjects, self.max_seg, self.flatten, self.sensorwise)
         reduced = self.fit_transform(X)
         self.save_outputs(reduced, subj, times)
         logger.info("Pipeline complete.")
-        return self.embedding_out_path
+        # Return the output file path where reduced data was saved
+        return self.data_path / f"{self.base}.npz"

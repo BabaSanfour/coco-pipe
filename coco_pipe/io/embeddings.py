@@ -106,5 +106,7 @@ def flatten_embeddings(
     n_samples = embeddings_array.shape[0]
     if sensorwise:
         n_sensors, n_time, n_feat = embeddings_array.shape[1:]
+        logger.info(f"Flattening to (n_samples, n_sensors, n_time * n_feat): {embeddings_array.shape}")
         return embeddings_array.reshape(n_samples, n_sensors, n_time * n_feat)
+    logger.info(f"Flattening to (n_samples, -1): {embeddings_array.shape}")
     return embeddings_array.reshape(n_samples, -1)
