@@ -41,31 +41,43 @@ class DimReducer:
             n_components=n_components,
             **reducer_kwargs
         )
-        self.save_path: Optional[Path] = Path(save_path) if save_path is not None else None
+        if save_path is not None:
+            # Resolve to an absolute path and check that it's within the allowed directory
+            resolved_save_path = Path(save_path).resolve()
+            allowed_dir = Path('/path/to/allowed/directory').resolve()
+            if not str(resolved_save_path).startswith(str(allowed_dir)):
+                raise ValueError('save_path must be within allowed directory')
+            self.save_path: Optional[Path] = resolved_save_path
+        else:
+            self.save_path: Optional[Path] = None
 
     def fit(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> None:
         """
         Fit the underlying reducer on X (and optional labels y).
         If save_path is set, persist the fitted reducer to disk.
         """
-        logger.info(f"Fitting {self.method} on data shape {X.shape}")
+        logger.info("Fitting reducer", extra={"method": self.method, "input_shape": X.shape})
         self.reducer.fit(X, y=y)
         if self.save_path:
             logger.info(f"Saving fitted reducer to {self.save_path}")
             self.reducer.save(str(self.save_path))
+    
+    # lazy-load if a saved reducer is present
+    def _needs_loading(self) -> bool:
+        return (
+            self.save_path
+            and self.save_path.exists()
+            and not hasattr(self.reducer, 'model')
+            and not hasattr(self.reducer, 'embedding_')
+        )
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
         Transform X using the fitted reducer. If save_path exists and the
         reducer isn't already loaded, load it first.
         """
-        # lazy-load if a saved reducer is present
-        if (
-            self.save_path
-            and self.save_path.exists()
-            and not hasattr(self.reducer, 'model')
-            and not hasattr(self.reducer, 'embedding_')
-        ):
+
+        if self._needs_loading():
             logger.info(f"Loading reducer from {self.save_path}")
             self.reducer = BaseReducer.load(str(self.save_path))
         return self.reducer.transform(X)
