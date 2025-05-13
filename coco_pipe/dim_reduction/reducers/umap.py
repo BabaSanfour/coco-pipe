@@ -34,6 +34,7 @@ class UMAPReducer(BaseReducer):
         """Fit UMAP on X."""
         self.model = umap.UMAP(**self.params)
         self.model.fit(X)
+        self.model.n_features_in_ = X.shape[1]
         return self
 
     def transform(self, X):
