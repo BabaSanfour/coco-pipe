@@ -109,9 +109,9 @@ class DimReductionPipeline:
         return reduced
 
     def save_outputs(self, reduced: np.ndarray, subjects: np.ndarray, times: np.ndarray):
-        logger.info(f"Saving reduced data to {self.embedding_out_path}")
+        logger.info(f"Saving reduced data to {self.output_dir}")
         np.savez_compressed(
-            self.data_path / f"{self.base}.npz",
+            self.output_dir / f"{self.base}.npz",
             reduced=reduced,
             subjects=subjects,
             time_segments=times,
