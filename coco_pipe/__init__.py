@@ -18,5 +18,6 @@ from .dim_reduction import (
     PCAReducer,
     TSNEReducer,
     UMAPReducer,
-    BaseReducer
+    BaseReducer,
+    DimReductionPipeline
 )
