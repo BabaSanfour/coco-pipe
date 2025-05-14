@@ -1,15 +1,15 @@
-ID: decoding_multi_feature_region_wise
+ID: decoding_test
 description: Decoding Multi feature every regions
 data:
-  file: /Users/hamzaabdelhedi/Projects/data/df_fooof_ML.csv
-  target: label
+  file: /Users/hamzaabdelhedi/Projects/data/EEG_psychostimulant_data/EEG_psychostimulants_2025-02/csv/demo_psychostim_vs_none.csv
+  target: target
   features_groups:
-    groups: [region_0, region_1, region_2, region_3, region_4, region_5, region_6, region_7, region_8, region_9, region_10, region_11, region_12, region_13, region_14, region_15, region_16, region_17, region_18, region_19, region_20, region_21, region_22, region_23, region_24, region_25, region_26, region_27, region_28, region_29, region_30, region_31, region_32, region_33, region_34, region_35, region_36, region_37, region_38, region_39, region_40, region_41, region_42, region_43, region_44, region_45, region_46, region_47, region_48, region_49, region_50, region_51, region_52, region_53, region_54, region_55, region_56, region_57, region_58, region_59, region_60, region_61, region_62, region_63, region_64, region_65, region_66, region_67, region_68, region_69, region_70, region_71, region_72, region_73, region_74, region_75, region_76, region_77, region_78, region_79, region_80, region_81, region_82, region_83, region_84, region_85, region_86, region_87, region_88, region_89, region_90, region_91, region_92, region_93, region_94, region_95, region_96, region_97, region_98, region_99, region_100, region_101, region_102, region_103, region_104, region_105, region_106, region_107, region_108, region_109, region_110, region_111, region_112, region_113, region_114, region_115, region_116, region_117, region_118, region_119, region_120, region_121, region_122, region_123, region_124, region_125, region_126, region_127, region_128, region_129, region_130, region_131, region_132, region_133, region_134, region_135, region_136, region_137, region_138, region_139, region_140, region_141, region_142, region_143, region_144, region_145, region_146, region_147, region_148, region_149, region_150, region_151, region_152, region_153, region_154, region_155, region_156, region_157, region_158, region_159, region_160, region_161, region_162, region_163, region_164, region_165, region_166, region_167, region_168, region_169, region_170, region_171, region_172, region_173, region_174, region_175, region_176, region_177, region_178, region_179, region_180, region_181, region_182, region_183, region_184, region_185, region_186, region_187, region_188, region_189, region_190, region_191, region_192, region_193, region_194, region_195, region_196, region_197, region_198, region_199, region_200, region_201, region_202, region_203, region_204, region_205, region_206, region_207, region_208, region_209, region_210, region_211, region_212, region_213, region_214, region_215, region_216, region_217, region_218, region_219, region_220, region_221, region_222, region_223, region_224, region_225, region_226, region_227, region_228, region_229, region_230, region_231, region_232, region_233, region_234, region_235, region_236, region_237, region_238, region_239, region_240, region_241, region_242, region_243, region_244, region_245, region_246, region_247, region_248, region_249, region_250, region_251, region_252, region_253, region_254, region_255, region_256, region_257, region_258, region_259, region_260, region_261, region_262, region_263, region_264, region_265, region_266, region_267, region_268, region_269, region_270, region_271, region_272, region_273, region_274, region_275, region_276, region_277, region_278, region_279, region_280, region_281, region_282, region_283, region_284, region_285, region_286, region_287, region_288, region_289, region_290, region_291, region_292, region_293, region_294, region_295, region_296, region_297, region_298, region_299, region_300, region_301, region_302, region_303, region_304, region_305, region_306, region_307, region_308, region_309, region_310, region_311, region_312, region_313, region_314, region_315, region_316, region_317, region_318, region_319, region_320, region_321, region_322, region_323, region_324, region_325, region_326, region_327, region_328, region_329, region_330, region_331, region_332, region_333, region_334, region_335, region_336, region_337, region_338, region_339, region_340, region_341, region_342, region_343, region_344, region_345, region_346, region_347, region_348, region_349, region_350, region_351, region_352, region_353, region_354, region_355, region_356, region_357, region_358, region_359]
-    features: [exponent, offset, alpha_peak, beta_peak]
+    groups: ['C3', 'C4', 'Cz', 'F3', 'F4', 'F7', 'F8', 'Fp1', 'Fp2', 'Fz', 'O1', 'O2', 'P3', 'P4', 'Pz', 'T3', 'T4', 'T5', 'T6']
+    features: ["feature-foofOffset.spaces-"]
 analysis:
-  - name: all_features_single_region
-    type: hp_search
-    subset: all_features_per_group
-    models: [Random Forest, Logistic Regression, Decision Tree]
-    scoring: f1-score
-output: hyperparameter_search_region_wise
+  - name: "Baseline Global"
+    type: "baseline"
+    subset: "all_features_all_groups"
+    models: "all"
+    scoring: "accuracy"
+output: test
