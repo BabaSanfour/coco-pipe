@@ -1,0 +1,57 @@
+# config.yaml
+
+# -------------------------------------------------------------------
+# Data loading section: specify loader and its parameters
+# -------------------------------------------------------------------
+data:
+  # Choose 'embeddings' for BIDS-style pickle embeddings,
+  # or 'csv' for generic CSV feature tables.
+  type: embeddings
+
+  # Path to the root folder containing sub-*/ pickle files (if embeddings),
+  # or to a CSV file / directory of CSVs (if csv).
+  data_path: /Path/to/embeddings
+
+
+  # (Only for embeddings loader:)
+  # BIDS task label matching your filenames.
+  task: RESTING
+  # BIDS run identifier (string).
+  run: "01"
+  # Suffix after 'embeddings' in your pickle filenames.
+  processing: zscoreaxis0seg10
+
+  # Optional: limit to first N subjects, or list specific IDs.
+  # If omitted, all sub-* folders will be processed.
+  subjects: [1, 2, 3]
+
+  # Optional: maximum time‐segment index to include per subject.
+  max_seg: 20
+
+  # Optional: whether to keep sensor axis in the reshaped embeddings.
+  # false → (n_samples, -1) flatten
+  # true  → (n_samples, sensors, time*features)
+  sensorwise: false
+
+# -------------------------------------------------------------------
+# Reducers section: list one or more methods to apply
+# -------------------------------------------------------------------
+reducers:
+  - method: PCA
+    n_components: 100
+
+  - method: UMAP
+    n_components: 2
+    # reducer_kwargs:
+    #   # umap-learn parameters
+    #   n_neighbors: 15
+    #   min_dist: 0.1
+
+# -------------------------------------------------------------------
+# Execution options
+# -------------------------------------------------------------------
+# Run multiple reducers in parallel if true.
+parallel: false
+
+# Where to save the overall summary JSON.
+summary_path: ./dr_summary.json

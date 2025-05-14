@@ -19,7 +19,19 @@ def load(
     sep: Optional[str] = None,
 ) -> Union[Tuple[pd.DataFrame, pd.Series], Tuple[np.ndarray, np.ndarray, np.ndarray], pd.DataFrame]:
     if type == "embeddings":
-        raise NotImplementedError("Embeddings loading not implemented yet")
+        from coco_pipe.io.embeddings import load_embeddings, flatten_embeddings
+        emb, subj, times = load_embeddings(
+            embeddings_root=data_path,
+            task=task,
+            run=run,
+            processing=processing,
+            subjects=subjects,
+            max_seg=max_seg,
+        )
+        emb = emb.astype(np.float32)
+        if flatten:
+            emb = flatten_embeddings(emb, sensorwise=sensorwise)
+        return emb, subj, times
     elif type in ["meeg", "meg", "eeg"]:
         raise NotImplementedError("M/EEG loading not implemented yet")
     elif type in ["tabular", "csv", "excel", "tsv"]:

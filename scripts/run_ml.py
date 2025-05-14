@@ -486,7 +486,7 @@ def main():
     )
     parser.add_argument("--config", required=True, help="Path to YAML configuration file.")
     args = parser.parse_args()
-
+    args.config = "/Users/hamzaabdelhedi/Projects/packages/coco-pipe/configs/venk_ml_config.yml"
     # Load configuration and data.
     config = load_config(args.config)
     # X, y, feature_mapping = load_data(config["data"])
