@@ -6,3 +6,4 @@ from .embeddings import (
 from .load import (
     load,
 )
+from .tabular import load_tabular
