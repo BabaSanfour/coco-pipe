@@ -1,5 +1,5 @@
 from sklearn.manifold import TSNE
-from reducers.base import BaseReducer
+from .base import BaseReducer
 
 class TSNEReducer(BaseReducer):
     """

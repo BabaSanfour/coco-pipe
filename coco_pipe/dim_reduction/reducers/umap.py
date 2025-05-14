@@ -1,7 +1,7 @@
 import umap
 from typing import Optional
 import numpy as np
-from reducers.base import BaseReducer
+from .base import BaseReducer
 
 class UMAPReducer(BaseReducer):
     """

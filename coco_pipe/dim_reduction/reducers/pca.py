@@ -1,5 +1,5 @@
 from sklearn.decomposition import PCA
-from reducers.base import BaseReducer
+from .base import BaseReducer
 
 class PCAReducer(BaseReducer):
     """
