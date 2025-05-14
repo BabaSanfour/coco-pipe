@@ -1,7 +1,7 @@
 import umap
 from typing import Optional
 import numpy as np
-from coco_pipe.dim_reduction.reducers.base import BaseReducer
+from reducers.base import BaseReducer
 
 class UMAPReducer(BaseReducer):
     """
@@ -25,6 +25,9 @@ class UMAPReducer(BaseReducer):
     Methods:
         fit(X, y=None): Fit the UMAP model on the input data X.
         transform(X): Transform new data X using the trained UMAP model.
+        fit_transform(X): Compute and return the UMAP embedding.
+        save(filename: str): Save the trained UMAP model to a file.
+        load(filename: str): Load a trained UMAP model from a file.
     """
     def __init__(self, n_components: int = 2, **kwargs):
         self.params = dict(n_components=n_components, **kwargs)

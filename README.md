@@ -152,6 +152,9 @@ Contributions are welcome! If you have suggestions or find any bugs, please open
 - Plan and implement enhancements for visualization features.
 - Integrate new visual components and testing.
 
+#### Dim reduction:
+- Add parallelism
+
 ## License
 
 *TODO*

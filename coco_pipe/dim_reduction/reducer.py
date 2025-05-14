@@ -11,11 +11,15 @@ from typing import Optional, Union
 
 import numpy as np
 
-from coco_pipe.dim_reduction.config import METHODS, METHODS_DICT
-from coco_pipe.dim_reduction.reducers.base import BaseReducer
+from .config import METHODS, METHODS_DICT
+from .reducers import BaseReducer
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 class DimReducer:
