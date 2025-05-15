@@ -146,7 +146,7 @@ class BaseClassificationPipeline(BasePipeline):
             estimator = self.models[estimator]["estimator"]
 
         # Perform cross-validation
-        return self.cross_validate(estimator, X=X, y=y)
+        return self.run(estimator, X=X, y=y, metrics=self.metrics, metric_funcs=CLASSIFICATION_METRICS)
 
     def feature_selection(self, model_name=None, n_features=None, direction="forward", scoring=None):
         """

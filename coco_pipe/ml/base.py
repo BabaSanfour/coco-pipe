@@ -198,86 +198,6 @@ class CrossValidationStrategy:
             'feature_importances': feature_importances
         }
 
-    @staticmethod
-    def compute_cv_metrics(fold_predictions, metrics, metric_funcs):
-        """
-        Compute cross-validation metrics from fold predictions.
-        
-        This method handles metric computation across CV folds:
-        1. Collects predictions from all folds
-        2. Computes specified metrics for each fold
-        3. Aggregates results with statistics
-        
-        Parameters
-        ----------
-        fold_predictions : list
-            List of dictionaries containing predictions for each fold
-        metrics : list
-            List of metric names to compute
-        metric_funcs : dict
-            Dictionary mapping metric names to their scoring functions
-            
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - metrics: Dict with scores for each metric:
-                - mean: Mean score across folds
-                - std: Standard deviation across folds
-                - scores: List of scores for each fold
-            - predictions: Dict with:
-                - y_true: Concatenated true values from all folds
-                - y_pred: Concatenated predictions from all folds
-                - y_proba: Concatenated probability predictions if available
-        """
-        metric_scores = {metric: [] for metric in metrics}
-        
-        # Initialize lists to store predictions
-        all_y_true = []
-        all_y_pred = []
-        all_y_proba = []
-        has_proba = 'y_proba' in fold_predictions[0]
-        
-        # Compute scores for each fold and collect predictions
-        for fold in fold_predictions:
-            y_true = fold['y_true']
-            y_pred = fold['y_pred']
-            
-            # Store predictions
-            all_y_true.append(y_true)
-            all_y_pred.append(y_pred)
-            if has_proba:
-                all_y_proba.append(fold['y_proba'])
-            
-            # Compute metrics
-            for metric in metrics:
-                score = metric_funcs[metric](y_true, y_pred)
-                metric_scores[metric].append(score)
-        
-        # Compute statistics for metrics
-        metric_results = {}
-        for metric, scores in metric_scores.items():
-            scores = np.array(scores)
-            metric_results[metric] = {
-                'mean': scores.mean(),
-                'std': scores.std(),
-                'scores': scores.tolist()
-            }
-            # Log results
-            logging.info(f"{metric}: {metric_results[metric]['mean']:.4f} (±{metric_results[metric]['std']:.4f})")
-
-        # Concatenate all predictions
-        predictions = {
-            'y_true': np.concatenate(all_y_true),
-            'y_pred': np.concatenate(all_y_pred)
-        }
-        if has_proba:
-            predictions['y_proba'] = np.concatenate(all_y_proba)
-            
-        return {
-            'metrics': metric_results,
-            'predictions': predictions
-        }
 
 class BasePipeline:
     """
@@ -392,6 +312,87 @@ class BasePipeline:
             coef = estimator.coef_
             return coef[0] if len(coef.shape) > 1 else coef
         return None
+    
+    @staticmethod
+    def compute_metrics(fold_predictions, metrics, metric_funcs):
+        """
+        Compute cross-validation metrics from fold predictions.
+        
+        This method handles metric computation across CV folds:
+        1. Collects predictions from all folds
+        2. Computes specified metrics for each fold
+        3. Aggregates results with statistics
+        
+        Parameters
+        ----------
+        fold_predictions : list
+            List of dictionaries containing predictions for each fold
+        metrics : list
+            List of metric names to compute
+        metric_funcs : dict
+            Dictionary mapping metric names to their scoring functions
+            
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - metrics: Dict with scores for each metric:
+                - mean: Mean score across folds
+                - std: Standard deviation across folds
+                - scores: List of scores for each fold
+            - predictions: Dict with:
+                - y_true: Concatenated true values from all folds
+                - y_pred: Concatenated predictions from all folds
+                - y_proba: Concatenated probability predictions if available
+        """
+        metric_scores = {metric: [] for metric in metrics}
+        
+        # Initialize lists to store predictions
+        all_y_true = []
+        all_y_pred = []
+        all_y_proba = []
+        has_proba = 'y_proba' in fold_predictions[0]
+        
+        # Compute scores for each fold and collect predictions
+        for fold in fold_predictions:
+            y_true = fold['y_true']
+            y_pred = fold['y_pred']
+            
+            # Store predictions
+            all_y_true.append(y_true)
+            all_y_pred.append(y_pred)
+            if has_proba:
+                all_y_proba.append(fold['y_proba'])
+            
+            # Compute metrics
+            for metric in metrics:
+                score = metric_funcs[metric](y_true, y_pred)
+                metric_scores[metric].append(score)
+        
+        # Compute statistics for metrics
+        metric_results = {}
+        for metric, scores in metric_scores.items():
+            scores = np.array(scores)
+            metric_results[metric] = {
+                'mean': scores.mean(),
+                'std': scores.std(),
+                'scores': scores.tolist()
+            }
+            # Log results
+            logging.info(f"{metric}: {metric_results[metric]['mean']:.4f} (±{metric_results[metric]['std']:.4f})")
+
+        # Concatenate all predictions
+        predictions = {
+            'y_true': np.concatenate(all_y_true),
+            'y_pred': np.concatenate(all_y_pred)
+        }
+        if has_proba:
+            predictions['y_proba'] = np.concatenate(all_y_proba)
+            
+        return {
+            'metrics': metric_results,
+            'predictions': predictions
+        }
 
     def cross_validate(self, estimator, X=None, y=None, **cv_kwargs):
         """
@@ -438,6 +439,11 @@ class BasePipeline:
             n_jobs=self.n_jobs,
             **cv_kwargs
         )
+    
+    def run(self, estimator, X: None, y: None, metrics, metric_funcs, **cv_kwargs):
+        cv_results = self.cross_validate(estimator, X, y, **cv_kwargs)
+        cv_results.update(self.compute_metrics(cv_results['fold_predictions'], metrics, metric_funcs))
+        return cv_results
     
     def baseline(self, estimator, X, y):
         """
