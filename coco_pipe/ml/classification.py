@@ -280,13 +280,11 @@ class ClassificationPipeline(BasePipeline):
         -------
         dict
             Dictionary containing:
-            - 'status': 'success'
             - 'models': List of available model names
             - 'details': Dict of model configurations (if verbose=True)
             - 'total_models': Number of available models
         """
         result = {
-            'status': 'success',
             'models': list(self.all_models.keys()),
             'total_models': len(self.all_models)
         }
@@ -315,28 +313,15 @@ class ClassificationPipeline(BasePipeline):
         param_grid : Dict[str, List[Any]]
             Dictionary of parameters to search during optimization
             
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'status': 'success' or 'error'
-            - 'message': Description of the operation result
-            - 'model_info': Model configuration (if successful)
         """
         try:
             # Validate input
             if name in self.all_models:
-                return {
-                    'status': 'error',
-                    'message': f"Model '{name}' already exists. Use update_model_params to modify it."
-                }
-            
+                logging.warning(f"Model '{name}' already exists. Use update_model_params to modify it.")
+                return
             # Validate estimator has fit and predict methods
             if not (hasattr(estimator, 'fit') and hasattr(estimator, 'predict')):
-                return {
-                    'status': 'error',
-                    'message': "Estimator must implement fit() and predict() methods"
-                }
+                raise ValueError("Estimator must implement fit() and predict() methods")
             
             # Add the model
             self.all_models[name] = {
@@ -347,21 +332,11 @@ class ClassificationPipeline(BasePipeline):
             # If using 'all' models, update self.models
             if hasattr(self, 'models') and len(self.models) == len(self.all_models) - 1:
                 self.models = self.all_models
-            
-            return {
-                'status': 'success',
-                'message': f"Successfully added model '{name}'",
-                'model_info': {
-                    'type': type(estimator).__name__,
-                    'parameters': param_grid
-                }
-            }
+            logging.info(f"Successfully added model '{name}'")
             
         except Exception as e:
-            return {
-                'status': 'error',
-                'message': f"Failed to add model: {str(e)}"
-            }
+            logging.error(f"Failed to add model: {str(e)}")
+            raise
 
     def update_model_params(self, name: str, param_grid: Dict[str, List[Any]]) -> Dict[str, Any]:
         """
@@ -374,20 +349,10 @@ class ClassificationPipeline(BasePipeline):
         param_grid : Dict[str, List[Any]]
             New parameter grid for hyperparameter optimization
             
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'status': 'success' or 'error'
-            - 'message': Description of the operation result
-            - 'model_info': Updated model configuration (if successful)
         """
         try:
             if name not in self.all_models:
-                return {
-                    'status': 'error',
-                    'message': f"Model '{name}' not found"
-                }
+                raise ValueError(f"Model '{name}' not found")
             
             # Validate parameters against estimator
             estimator = self.all_models[name]['estimator']
@@ -397,10 +362,7 @@ class ClassificationPipeline(BasePipeline):
             ]
             
             if invalid_params:
-                return {
-                    'status': 'error',
-                    'message': f"Invalid parameters for {name}: {', '.join(invalid_params)}"
-                }
+                raise ValueError(f"Invalid parameters for {name}: {', '.join(invalid_params)}")
             
             # Update parameters
             self.all_models[name]['params'] = param_grid
@@ -409,20 +371,11 @@ class ClassificationPipeline(BasePipeline):
             if name in self.models:
                 self.models[name]['params'] = param_grid
             
-            return {
-                'status': 'success',
-                'message': f"Successfully updated parameters for '{name}'",
-                'model_info': {
-                    'type': type(estimator).__name__,
-                    'parameters': param_grid
-                }
-            }
+            logging.info(f"Successfully updated parameters for '{name}'")
             
         except Exception as e:
-            return {
-                'status': 'error',
-                'message': f"Failed to update model parameters: {str(e)}"
-            }
+            logging.error(f"Failed to update model parameters: {str(e)}")
+            raise
 
     def remove_model(self, name: str) -> Dict[str, Any]:
         """
@@ -433,35 +386,22 @@ class ClassificationPipeline(BasePipeline):
         name : str
             Name of the model to remove
             
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'status': 'success' or 'error'
-            - 'message': Description of the operation result
         """
         try:
             if name not in self.all_models:
-                return {
-                    'status': 'error',
-                    'message': f"Model '{name}' not found"
-                }
+                raise ValueError(f"Model '{name}' not found")
             
             # Remove from all_models and models if present
             del self.all_models[name]
             if name in self.models:
                 del self.models[name]
             
-            return {
-                'status': 'success',
-                'message': f"Successfully removed model '{name}'"
-            }
+            logging.info(f"Successfully removed model '{name}'")
+            
             
         except Exception as e:
-            return {
-                'status': 'error',
-                'message': f"Failed to remove model: {str(e)}"
-            }
+            logging.error(f"Failed to remove model: {str(e)}")
+            raise
 
     def baseline(self):
         """
