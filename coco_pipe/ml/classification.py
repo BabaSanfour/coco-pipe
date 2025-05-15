@@ -49,7 +49,7 @@ except ImportError:
     LIGHTGBM_AVAILABLE = False
 
 from .base import BasePipeline
-from .cross_validation import CrossValidationStrategy
+from .base import CrossValidationStrategy
 
 def sensitivity_score(y_true, y_pred):
     """Calculate sensitivity (recall for positive class)."""
