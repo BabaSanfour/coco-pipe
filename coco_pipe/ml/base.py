@@ -191,10 +191,11 @@ class CrossValidationStrategy:
         if hasattr(final_estimator, 'random_state'):
             final_estimator.random_state = random_state
         final_estimator.fit(X, y)
-        
+        feature_importances = CrossValidationStrategy.get_feature_importances(final_estimator)
         return {
             'fold_predictions': fold_predictions,
-            'estimator': final_estimator
+            'estimator': final_estimator,
+            'feature_importances': feature_importances
         }
 
     @staticmethod
@@ -435,3 +436,26 @@ class BasePipeline:
             n_jobs=self.n_jobs,
             **cv_kwargs
         )
+    
+    def baseline(self, estimator, X, y):
+        """
+        Run baseline evaluation for estimator.
+        """
+        pass
+
+    def feature_selection(self, model_name, n_features, direction, scoring):
+        """
+        Perform feature selection using sequential feature selection.
+        """
+        pass
+
+    def hp_search(self, model_name, param_grid, search_type, n_iter, scoring):
+        """
+        Perform hyperparameter optimization.
+        """
+    
+    def run(self, **kwargs):
+        """
+        Run the pipeline.
+        """
+        pass
