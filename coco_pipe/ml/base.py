@@ -152,6 +152,55 @@ class CrossValidationStrategy:
             'estimator': final_estimator
         }
 
+    @staticmethod
+    def compute_cv_metrics(fold_predictions, metrics, metric_funcs):
+        """
+        Compute cross-validation metrics from fold predictions.
+        
+        This is the core implementation for computing CV metrics that can be used
+        by different ML tasks (classification, regression, etc.). Each task should
+        prepare its own metric functions and handle any special cases.
+        
+        Parameters
+        ----------
+        fold_predictions : list
+            List of dictionaries containing predictions for each fold
+        metrics : list
+            List of metric names to compute
+        metric_funcs : dict
+            Dictionary mapping metric names to their scoring functions
+            
+        Returns
+        -------
+        dict
+            Dictionary containing scores for each metric:
+            - mean: Mean score across folds
+            - std: Standard deviation across folds
+            - scores: List of scores for each fold
+        """
+        metric_scores = {metric: [] for metric in metrics}
+        
+        # Compute scores for each fold
+        for fold in fold_predictions:
+            y_true = fold['y_true']
+            y_pred = fold['y_pred']
+            
+            for metric in metrics:
+                score = metric_funcs[metric](y_true, y_pred)
+                metric_scores[metric].append(score)
+        
+        # Compute statistics
+        results = {}
+        for metric, scores in metric_scores.items():
+            scores = np.array(scores)
+            results[metric] = {
+                'mean': scores.mean(),
+                'std': scores.std(),
+                'scores': scores.tolist()
+            }
+            
+        return results
+
 class BasePipeline:
     """
     Base pipeline class with common functionality for all ML pipelines.
