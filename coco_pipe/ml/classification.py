@@ -587,13 +587,9 @@ class ClassificationPipeline(BasePipeline):
         logging.info("Baseline evaluation completed")
         return results
 
-    def feature_selection(self, estimator, n_features, direction="forward"):
+    def _feature_selection(self, estimator, n_features, direction="forward", name=None):
         """
-        Perform sequential feature selection.
-        
-        Uses sequential feature selection to identify the most important features
-        for the given estimator. The selection is performed using the primary metric
-        (first metric in self.metrics).
+        Perform feature selection for a single estimator.
         
         Parameters
         ----------
@@ -602,29 +598,17 @@ class ClassificationPipeline(BasePipeline):
         n_features : int
             Number of features to select
         direction : {'forward', 'backward'}, optional (default='forward')
-            Direction of feature selection:
-            - 'forward': Start with no features and add one at a time
-            - 'backward': Start with all features and remove one at a time
+            Direction of feature selection
+        name : str, optional
+            Name for logging purposes
             
         Returns
         -------
         dict
-            Dictionary containing:
-            - selected_features: Names of selected features
-            - support: Boolean mask of selected features
-            - cv_results: Cross-validation scores with selected features
-            - estimator: Final model trained on selected features
-            - feature_importances: Feature importance scores
-            - predictions: Dict with predictions from CV
-        
-        Examples
-        --------
-        >>> from sklearn.ensemble import RandomForestClassifier
-        >>> rf = RandomForestClassifier()
-        >>> results = pipeline.feature_selection(rf, n_features=10)
-        >>> print("Selected features:", results['selected_features'])
+            Dictionary containing feature selection results
         """
-        logging.info(f"Starting {direction} feature selection for {n_features} features")
+        name = name or f"{type(estimator).__name__} feature selection"
+        logging.info(f"Starting {direction} feature selection for {name} with {n_features} features")
         
         # Create a scorer that optimizes the first metric
         primary_metric = self.metrics[0]
@@ -639,14 +623,14 @@ class ClassificationPipeline(BasePipeline):
         
         sfs.fit(self.X, self.y)
         selected_features = self.get_feature_names()[sfs.get_support()]
-        logging.info(f"Selected features: {', '.join(selected_features)}")
+        logging.info(f"Selected features for {name}: {', '.join(selected_features)}")
         
         # Evaluate selected features
         X_selected = self.X[:, sfs.get_support()]
         
         # Evaluate selected features using _baseline
         cross_val_results = self._baseline(
-            name=f'CV with selected features',
+            name=f'CV with selected features for {name}',
             model_dict={'estimator': sfs.estimator_},
             X=X_selected
         )
@@ -659,53 +643,88 @@ class ClassificationPipeline(BasePipeline):
         
         return cross_val_results
 
-    def hp_search(self, model_name):
+    def feature_selection(self, estimators, n_features, direction="forward"):
         """
-        Perform hyperparameter search for a specific model.
+        Perform feature selection for multiple estimators.
         
-        Uses grid search cross-validation to find the best hyperparameters
-        for the specified model. The search optimizes for the primary metric
-        (first metric in self.metrics).
+        Parameters
+        ----------
+        estimators : estimator object or dict
+            Single estimator or dictionary of estimators to evaluate.
+            If dict, keys are used as names.
+        n_features : int
+            Number of features to select
+        direction : {'forward', 'backward'}, optional (default='forward')
+            Direction of feature selection:
+            - 'forward': Start with no features and add one at a time
+            - 'backward': Start with all features and remove one at a time
+            
+        Returns
+        -------
+        dict
+            Dictionary mapping estimator names to their feature selection results
+            
+        Examples
+        --------
+        >>> from sklearn.ensemble import RandomForestClassifier
+        >>> rf = RandomForestClassifier()
+        >>> # Single estimator
+        >>> results = pipeline.feature_selection(rf, n_features=10)
+        >>> # Multiple estimators
+        >>> estimators = {
+        ...     'RF': RandomForestClassifier(),
+        ...     'LR': LogisticRegression()
+        ... }
+        >>> results = pipeline.feature_selection(estimators, n_features=10)
+        """
+        # Handle single estimator case
+        if not isinstance(estimators, dict):
+            return self._feature_selection(estimators, n_features, direction)
+        
+        # Handle multiple estimators
+        results = {}
+        for name, estimator in estimators.items():
+            logging.info(f"Performing feature selection for {name}")
+            results[name] = self._feature_selection(
+                estimator, n_features, direction, name=name
+            )
+        
+        return results
+
+    def _hp_search(self, model_name, param_grid=None):
+        """
+        Perform hyperparameter search for a single model.
         
         Parameters
         ----------
         model_name : str
             Name of the model to optimize
+        param_grid : dict, optional
+            Custom parameter grid. If None, uses default from self.models
             
         Returns
         -------
         dict
-            Dictionary containing:
-            - best_params: Best hyperparameters found
-            - cv_results: Cross-validation scores with best parameters
-            - estimator: Final model with best parameters
-            - feature_importances: Feature importance scores
-            - predictions: Dict with predictions from CV
-        
-        Examples
-        --------
-        >>> results = pipeline.hp_search('Random Forest')
-        >>> print("Best parameters:", results['best_params'])
-        >>> print(f"Best accuracy: {results['cv_results']['accuracy']['mean']:.4f}")
-        
-        Raises
-        ------
-        ValueError
-            If model_name is not found in available models
+            Dictionary containing hyperparameter optimization results
         """
-        if model_name not in self.models:
-            msg = f"Model '{model_name}' not found"
-            logging.error(msg)
-            raise ValueError(msg)
+        if model_name not in self.models and param_grid is None:
+            raise ValueError(f"Model '{model_name}' not found and no param_grid provided")
         
         logging.info(f"Starting hyperparameter search for {model_name}")
-        model_dict = self.models[model_name]
+        
+        # Get model and param grid
+        if param_grid is None:
+            model_dict = self.models[model_name]
+            estimator = model_dict["estimator"]
+            param_grid = model_dict["params"]
+        else:
+            estimator = self.models[model_name]["estimator"]
         
         # Create a scorer that optimizes the first metric
         primary_metric = self.metrics[0]
         grid_search = GridSearchCV(
-            estimator=self._clone_estimator(model_dict["estimator"]),
-            param_grid=model_dict["params"],
+            estimator=self._clone_estimator(estimator),
+            param_grid=param_grid,
             scoring=CLASSIFICATION_METRICS[primary_metric],
             n_jobs=self.n_jobs,
             cv=5,
@@ -713,7 +732,7 @@ class ClassificationPipeline(BasePipeline):
         )
         
         grid_search.fit(self.X, self.y)
-        logging.info(f"Best parameters: {grid_search.best_params_}")
+        logging.info(f"Best parameters for {model_name}: {grid_search.best_params_}")
         
         # Evaluate best model using _baseline
         cross_val_results = self._baseline(
@@ -724,6 +743,62 @@ class ClassificationPipeline(BasePipeline):
         # Add grid search specific results
         cross_val_results.update({
             'best_params': grid_search.best_params_,
+            'grid_search_results': {
+                'mean_test_score': grid_search.cv_results_['mean_test_score'],
+                'std_test_score': grid_search.cv_results_['std_test_score'],
+                'mean_train_score': grid_search.cv_results_['mean_train_score'],
+                'std_train_score': grid_search.cv_results_['std_train_score'],
+                'params': grid_search.cv_results_['params']
             }
-        )
-        return cross_val_results 
+        })
+        
+        return cross_val_results
+
+    def hp_search(self, models, param_grids=None):
+        """
+        Perform hyperparameter search for multiple models.
+        
+        Parameters
+        ----------
+        models : str or list
+            Single model name or list of model names to optimize.
+            Can also be a dict mapping model names to custom param_grids.
+        param_grids : dict, optional
+            Custom parameter grids for each model.
+            If provided, must be a dict mapping model names to param_grids.
+            
+        Returns
+        -------
+        dict
+            Dictionary mapping model names to their optimization results
+            
+        Examples
+        --------
+        >>> # Single model with default params
+        >>> results = pipeline.hp_search('Random Forest')
+        >>> # Multiple models with default params
+        >>> results = pipeline.hp_search(['Random Forest', 'SVC'])
+        >>> # Custom param grids
+        >>> param_grids = {
+        ...     'Random Forest': {
+        ...         'n_estimators': [100, 200],
+        ...         'max_depth': [5, 10]
+        ...     }
+        ... }
+        >>> results = pipeline.hp_search('Random Forest', param_grids)
+        """
+        # Handle string input (single model)
+        if isinstance(models, str):
+            models = [models]
+        
+        # Handle dict input (models with custom param_grids)
+        if isinstance(models, dict):
+            param_grids = models
+            models = list(models.keys())
+        
+        results = {}
+        for model_name in models:
+            param_grid = param_grids.get(model_name) if param_grids else None
+            results[model_name] = self._hp_search(model_name, param_grid)
+        
+        return results 
