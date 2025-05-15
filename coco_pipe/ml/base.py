@@ -173,33 +173,62 @@ class CrossValidationStrategy:
         Returns
         -------
         dict
-            Dictionary containing scores for each metric:
-            - mean: Mean score across folds
-            - std: Standard deviation across folds
-            - scores: List of scores for each fold
+            Dictionary containing:
+            - metrics: Dict with scores for each metric:
+                - mean: Mean score across folds
+                - std: Standard deviation across folds
+                - scores: List of scores for each fold
+            - predictions: Dict with:
+                - y_true: Concatenated true values from all folds
+                - y_pred: Concatenated predictions from all folds
+                - y_proba: Concatenated probability predictions if available
         """
         metric_scores = {metric: [] for metric in metrics}
         
-        # Compute scores for each fold
+        # Initialize lists to store predictions
+        all_y_true = []
+        all_y_pred = []
+        all_y_proba = []
+        has_proba = 'y_proba' in fold_predictions[0]
+        
+        # Compute scores for each fold and collect predictions
         for fold in fold_predictions:
             y_true = fold['y_true']
             y_pred = fold['y_pred']
             
+            # Store predictions
+            all_y_true.append(y_true)
+            all_y_pred.append(y_pred)
+            if has_proba:
+                all_y_proba.append(fold['y_proba'])
+            
+            # Compute metrics
             for metric in metrics:
                 score = metric_funcs[metric](y_true, y_pred)
                 metric_scores[metric].append(score)
         
-        # Compute statistics
-        results = {}
+        # Compute statistics for metrics
+        metric_results = {}
         for metric, scores in metric_scores.items():
             scores = np.array(scores)
-            results[metric] = {
+            metric_results[metric] = {
                 'mean': scores.mean(),
                 'std': scores.std(),
                 'scores': scores.tolist()
             }
+        
+        # Concatenate all predictions
+        predictions = {
+            'y_true': np.concatenate(all_y_true),
+            'y_pred': np.concatenate(all_y_pred)
+        }
+        if has_proba:
+            predictions['y_proba'] = np.concatenate(all_y_proba)
             
-        return results
+        return {
+            'metrics': metric_results,
+            'predictions': predictions
+        }
 
 class BasePipeline:
     """

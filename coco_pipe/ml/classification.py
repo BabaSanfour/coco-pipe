@@ -46,6 +46,7 @@ except ImportError:
     LIGHTGBM_AVAILABLE = False
 
 from .base import BasePipeline
+from .cross_validation import CrossValidationStrategy
 
 def sensitivity_score(y_true, y_pred):
     """Calculate sensitivity (recall for positive class)."""
@@ -403,6 +404,52 @@ class ClassificationPipeline(BasePipeline):
             logging.error(f"Failed to remove model: {str(e)}")
             raise
 
+
+    def _compute_cv_metrics(self, fold_predictions):
+        """
+        Compute classification metrics from cross-validation predictions.
+        
+        Parameters
+        ----------
+        fold_predictions : list
+            List of dictionaries containing predictions for each fold
+            
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - metrics: Dict with scores for each metric
+            - predictions: Dict with aggregated predictions
+        """
+        # Handle metrics that don't need probabilities first
+        standard_metrics = [m for m in self.metrics if m != 'auc']
+        if standard_metrics:
+            standard_funcs = {m: CLASSIFICATION_METRICS[m]._score_func for m in standard_metrics}
+            results = CrossValidationStrategy.compute_cv_metrics(
+                fold_predictions, 
+                standard_metrics, 
+                standard_funcs
+            )
+        else:
+            results = {'metrics': {}, 'predictions': {}}
+        
+        # Handle AUC separately if needed
+        if 'auc' in self.metrics:
+            auc_scores = []
+            for fold in fold_predictions:
+                if 'y_proba' not in fold:
+                    raise ValueError("AUC metric requires probability predictions")
+                auc_scores.append(roc_auc_score(fold['y_true'], fold['y_proba'][:, 1]))
+            
+            scores = np.array(auc_scores)
+            results['metrics']['auc'] = {
+                'mean': scores.mean(),
+                'std': scores.std(),
+                'scores': scores.tolist()
+            }
+            
+        return results
+
     def baseline(self):
         """
         Run baseline evaluation for all selected models.
@@ -415,6 +462,7 @@ class ClassificationPipeline(BasePipeline):
             - estimator: Fitted estimator
             - feature_importances: Feature importance scores if available
             - predictions: Dict with true and predicted values
+            - fold_predictions: Detailed predictions for each CV fold
         """
         results = {}
         logging.info("Starting baseline evaluation for all selected models")
@@ -423,49 +471,25 @@ class ClassificationPipeline(BasePipeline):
             logging.info(f"Evaluating {name}")
             estimator = self._clone_estimator(model_dict["estimator"])
             
-            # Perform cross-validation for each metric
-            cv_results = {}
-            for metric in self.metrics:
-                cv_scores = self.cross_validate(
-                    estimator, 
-                    scoring=CLASSIFICATION_METRICS[metric],
-                    return_estimator=True,
-                    return_predictions=True
-                )
-                cv_results[metric] = {
-                    'scores': cv_scores['cv_scores'],
-                    'mean': cv_scores['mean_score'],
-                    'std': cv_scores['std_score']
-                }
-                logging.info(f"{name} - {metric}: {cv_scores['mean_score']:.4f} (±{cv_scores['std_score']:.4f})")
+            # Perform cross-validation
+            cv_output = self.cross_validate(estimator)
+            cv_metrics = self._compute_cv_metrics(cv_output['fold_predictions'])
             
-            # Get feature importances if available
-            feature_importances = None
-            if hasattr(estimator, 'feature_importances_'):
-                feature_importances = estimator.feature_importances_
-            elif hasattr(estimator, 'coef_'):
-                feature_importances = estimator.coef_[0] if len(estimator.coef_.shape) > 1 else estimator.coef_
+            # Log results for each metric
+            for metric, scores in cv_metrics['metrics'].items():
+                logging.info(f"{name} - {metric}: {scores['mean']:.4f} (±{scores['std']:.4f})")
             
-            # Fit on full dataset and get predictions
-            estimator.fit(self.X, self.y)
-            y_pred = estimator.predict(self.X)
-            y_proba = estimator.predict_proba(self.X) if hasattr(estimator, 'predict_proba') else None
+            # Get feature importances from the final model; these are the feature importances for the full dataset
+            feature_importances = self.get_feature_importances(cv_output['estimator'])
             
-            # Evaluate on full dataset
-            full_scores = self._evaluate_predictions(self.y, y_pred, y_proba)
-            
+            # Store results using aggregated predictions from CV
             results[name] = {
-                'cv_results': cv_results,
-                'estimator': estimator,
+                'cv_results': cv_metrics['metrics'],
+                'estimator': cv_output['estimator'],  # final model trained on full dataset
                 'feature_importances': feature_importances,
-                'predictions': {
-                    'y_true': self.y,
-                    'y_pred': y_pred,
-                    'y_proba': y_proba
-                },
-                'scores': full_scores
+                'predictions': cv_metrics['predictions'],
             }
-        
+                    
         logging.info("Baseline evaluation completed")
         return results
 
