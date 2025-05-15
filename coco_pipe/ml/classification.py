@@ -1,12 +1,17 @@
 """
 Classification module with extended model selection and evaluation.
 
-This module provides classification-specific functionality, including:
-- Binary and multiclass classification
-- Feature selection
-- Hyperparameter optimization
-- Model evaluation with various metrics
-- Model management utilities
+This module provides classification-specific functionality for machine learning pipelines,
+including model selection, evaluation, and optimization. It supports both binary and 
+multiclass classification tasks with various metrics and cross-validation strategies.
+
+Key Features:
+- Multiple classification models with pre-configured parameter grids
+- Cross-validation with various strategies (stratified, leave-p-out, group-based)
+- Feature selection with forward/backward selection
+- Hyperparameter optimization with grid search
+- Comprehensive model evaluation with multiple metrics
+- Support for probability-based metrics (e.g., AUC)
 """
 
 import logging
@@ -56,6 +61,7 @@ def specificity_score(y_true, y_pred):
     """Calculate specificity (recall for negative class)."""
     return recall_score(y_true, y_pred, pos_label=0)
 
+# Dictionary of classification metrics with their scorer functions
 CLASSIFICATION_METRICS = {
     "accuracy": make_scorer(accuracy_score),
     "sensitivity": make_scorer(sensitivity_score),
@@ -67,14 +73,60 @@ CLASSIFICATION_METRICS = {
 
 class ClassificationPipeline(BasePipeline):
     """
-    A pipeline for classification tasks with model selection and evaluation.
+    A comprehensive pipeline for classification tasks with model selection and evaluation.
     
-    This class extends BasePipeline with classification-specific functionality:
-    - Model selection from common classifiers
-    - Feature selection
-    - Hyperparameter optimization
-    - Classification-specific metrics
-    - Model management utilities
+    This pipeline extends BasePipeline with classification-specific functionality:
+    - Model selection from common classifiers (logistic regression, random forest, etc.)
+    - Feature selection using sequential methods
+    - Hyperparameter optimization via grid search
+    - Classification-specific metrics (accuracy, F1, AUC, etc.)
+    - Support for probability-based metrics
+    - Cross-validation with various strategies
+    
+    The pipeline follows a consistent pattern for all operations:
+    1. Model initialization/selection
+    2. Cross-validation with prediction collection
+    3. Metric computation across folds
+    4. Final model training on full dataset
+    
+    Parameters
+    ----------
+    X : array-like of shape (n_samples, n_features)
+        Feature matrix
+    y : array-like of shape (n_samples,)
+        Target vector
+    models : str or list, optional (default="all")
+        Models to include in the pipeline. Can be:
+        - "all": Include all available models
+        - str: Name of a specific model
+        - list: List of model names
+    metrics : str or list, optional (default=None)
+        Metrics to evaluate. Can be:
+        - None: Use default metrics ['accuracy']
+        - str: Single metric name
+        - list: List of metric names
+        Available metrics: accuracy, sensitivity, specificity, f1, precision, auc
+    random_state : int, optional (default=42)
+        Random state for reproducibility
+    n_jobs : int, optional (default=-1)
+        Number of parallel jobs. -1 means use all processors
+    
+    Attributes
+    ----------
+    models : dict
+        Dictionary of selected models with their configurations
+    metrics : list
+        List of metric names to evaluate
+    all_models : dict
+        Dictionary of all available models with their default parameters
+    
+    Examples
+    --------
+    >>> from coco_pipe.ml import ClassificationPipeline
+    >>> pipeline = ClassificationPipeline(X, y, models=['Logistic Regression', 'Random Forest'])
+    >>> results = pipeline.baseline()
+    >>> feature_results = pipeline.feature_selection(estimator, n_features=10)
+    >>> hp_results = pipeline.hp_search('Random Forest')
     """
     
     def __init__(self, X, y, models="all", metrics=None, random_state=42, n_jobs=-1):
@@ -449,46 +501,88 @@ class ClassificationPipeline(BasePipeline):
             }
             
         return results
+    
+    def _baseline(self, name, model_dict, X=None, y=None):
+        """
+        Run baseline evaluation for a single model.
+        
+        This is the core evaluation method used by baseline, feature_selection,
+        and hp_search. It performs cross-validation, computes metrics, and returns
+        a consistent set of results.
+        
+        Parameters
+        ----------
+        name : str
+            Name of the model for logging purposes
+        model_dict : dict
+            Dictionary containing:
+            - estimator: The scikit-learn compatible estimator
+        X : array-like, optional (default=None)
+            Feature matrix. If None, uses self.X
+        y : array-like, optional (default=None)
+            Target vector. If None, uses self.y
+            
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - cv_results: Cross-validation metrics for each metric
+            - estimator: Final model trained on full dataset
+            - feature_importances: Feature importance scores if available
+            - predictions: Dict with predictions from CV
+        """
+        X = self.X if X is None else X
+        y = self.y if y is None else y
+        
+        estimator = self._clone_estimator(model_dict["estimator"])
+            
+        # Perform cross-validation
+        cv_output = self.cross_validate(estimator)
+        cv_metrics = self._compute_cv_metrics(cv_output['fold_predictions'])
+            
+        # Log results for each metric
+        for metric, scores in cv_metrics['metrics'].items():
+            logging.info(f"{name} - {metric}: {scores['mean']:.4f} (±{scores['std']:.4f})")
+            
+        # Get feature importances from the final model
+        feature_importances = self.get_feature_importances(cv_output['estimator'])
+
+        return {
+            'cv_results': cv_metrics['metrics'],
+            'estimator': cv_output['estimator'],  # final model trained on full dataset
+            'feature_importances': feature_importances,
+            'predictions': cv_metrics['predictions'],
+        }
 
     def baseline(self):
         """
         Run baseline evaluation for all selected models.
         
+        This method evaluates all selected models using cross-validation,
+        computes specified metrics, and returns comprehensive results including
+        predictions and feature importances.
+        
         Returns
         -------
         dict
-            Dictionary with model results containing:
+            Dictionary with results for each model:
             - cv_results: Cross-validation scores for each metric
-            - estimator: Fitted estimator
+            - estimator: Final model trained on full dataset
             - feature_importances: Feature importance scores if available
-            - predictions: Dict with true and predicted values
-            - fold_predictions: Detailed predictions for each CV fold
+            - predictions: Dict with predictions from CV
+        
+        Examples
+        --------
+        >>> pipeline = ClassificationPipeline(X, y)
+        >>> results = pipeline.baseline()
+        >>> print(f"Best accuracy: {results['Random Forest']['cv_results']['accuracy']['mean']:.4f}")
         """
         results = {}
         logging.info("Starting baseline evaluation for all selected models")
         
         for name, model_dict in self.models.items():
             logging.info(f"Evaluating {name}")
-            estimator = self._clone_estimator(model_dict["estimator"])
-            
-            # Perform cross-validation
-            cv_output = self.cross_validate(estimator)
-            cv_metrics = self._compute_cv_metrics(cv_output['fold_predictions'])
-            
-            # Log results for each metric
-            for metric, scores in cv_metrics['metrics'].items():
-                logging.info(f"{name} - {metric}: {scores['mean']:.4f} (±{scores['std']:.4f})")
-            
-            # Get feature importances from the final model; these are the feature importances for the full dataset
-            feature_importances = self.get_feature_importances(cv_output['estimator'])
-            
-            # Store results using aggregated predictions from CV
-            results[name] = {
-                'cv_results': cv_metrics['metrics'],
-                'estimator': cv_output['estimator'],  # final model trained on full dataset
-                'feature_importances': feature_importances,
-                'predictions': cv_metrics['predictions'],
-            }
+            results[name] = self._baseline(name, model_dict)
                     
         logging.info("Baseline evaluation completed")
         return results
@@ -497,88 +591,107 @@ class ClassificationPipeline(BasePipeline):
         """
         Perform sequential feature selection.
         
+        Uses sequential feature selection to identify the most important features
+        for the given estimator. The selection is performed using the primary metric
+        (first metric in self.metrics).
+        
+        Parameters
+        ----------
+        estimator : estimator object
+            Scikit-learn compatible estimator to use for selection
+        n_features : int
+            Number of features to select
+        direction : {'forward', 'backward'}, optional (default='forward')
+            Direction of feature selection:
+            - 'forward': Start with no features and add one at a time
+            - 'backward': Start with all features and remove one at a time
+            
         Returns
         -------
         dict
             Dictionary containing:
             - selected_features: Names of selected features
             - support: Boolean mask of selected features
-            - estimator: Fitted estimator
-            - feature_importances: Feature importance scores if available
-            - cv_results: Cross-validation scores for each metric
-            - predictions: Dict with true and predicted values
+            - cv_results: Cross-validation scores with selected features
+            - estimator: Final model trained on selected features
+            - feature_importances: Feature importance scores
+            - predictions: Dict with predictions from CV
+        
+        Examples
+        --------
+        >>> from sklearn.ensemble import RandomForestClassifier
+        >>> rf = RandomForestClassifier()
+        >>> results = pipeline.feature_selection(rf, n_features=10)
+        >>> print("Selected features:", results['selected_features'])
         """
         logging.info(f"Starting {direction} feature selection for {n_features} features")
         
+        # Create a scorer that optimizes the first metric
+        primary_metric = self.metrics[0]
+        scorer = CLASSIFICATION_METRICS[primary_metric]
         sfs = SequentialFeatureSelector(
             estimator=self._clone_estimator(estimator),
             n_features_to_select=n_features,
             direction=direction,
-            n_jobs=self.n_jobs
+            n_jobs=self.n_jobs,
+            scoring=scorer
         )
         
         sfs.fit(self.X, self.y)
         selected_features = self.get_feature_names()[sfs.get_support()]
         logging.info(f"Selected features: {', '.join(selected_features)}")
         
-        # Evaluate with selected features
+        # Evaluate selected features
         X_selected = self.X[:, sfs.get_support()]
-        cv_results = {}
         
-        for metric in self.metrics:
-            cv_scores = self.cross_validate(
-                sfs.estimator_,
-                X=X_selected,
-                scoring=CLASSIFICATION_METRICS[metric],
-                return_estimator=True,
-                return_predictions=True
-            )
-            cv_results[metric] = {
-                'scores': cv_scores['cv_scores'],
-                'mean': cv_scores['mean_score'],
-                'std': cv_scores['std_score']
+        # Evaluate selected features using _baseline
+        cross_val_results = self._baseline(
+            name=f'CV with selected features',
+            model_dict={'estimator': sfs.estimator_},
+            X=X_selected
+        )
+        cross_val_results.update(
+            {
+                "selected_features": selected_features,
+                "support": sfs.get_support()
             }
-            logging.info(f"CV {metric} with selected features: {cv_scores['mean_score']:.4f} (±{cv_scores['std_score']:.4f})")
+        )
         
-        # Get predictions on full dataset
-        sfs.estimator_.fit(X_selected, self.y)
-        y_pred = sfs.estimator_.predict(X_selected)
-        y_proba = sfs.estimator_.predict_proba(X_selected) if hasattr(sfs.estimator_, 'predict_proba') else None
-        
-        # Get feature importances if available
-        feature_importances = None
-        if hasattr(sfs.estimator_, 'feature_importances_'):
-            feature_importances = sfs.estimator_.feature_importances_
-        elif hasattr(sfs.estimator_, 'coef_'):
-            feature_importances = sfs.estimator_.coef_[0] if len(sfs.estimator_.coef_.shape) > 1 else sfs.estimator_.coef_
-        
-        return {
-            'selected_features': selected_features,
-            'support': sfs.get_support(),
-            'estimator': sfs.estimator_,
-            'feature_importances': feature_importances,
-            'cv_results': cv_results,
-            'predictions': {
-                'y_true': self.y,
-                'y_pred': y_pred,
-                'y_proba': y_proba
-            },
-            'scores': self._evaluate_predictions(self.y, y_pred, y_proba)
-        }
+        return cross_val_results
 
     def hp_search(self, model_name):
         """
         Perform hyperparameter search for a specific model.
         
+        Uses grid search cross-validation to find the best hyperparameters
+        for the specified model. The search optimizes for the primary metric
+        (first metric in self.metrics).
+        
+        Parameters
+        ----------
+        model_name : str
+            Name of the model to optimize
+            
         Returns
         -------
         dict
             Dictionary containing:
             - best_params: Best hyperparameters found
-            - best_estimator: Best fitted estimator
-            - feature_importances: Feature importance scores if available
-            - cv_results: Cross-validation scores for each metric
-            - predictions: Dict with true and predicted values
+            - cv_results: Cross-validation scores with best parameters
+            - estimator: Final model with best parameters
+            - feature_importances: Feature importance scores
+            - predictions: Dict with predictions from CV
+        
+        Examples
+        --------
+        >>> results = pipeline.hp_search('Random Forest')
+        >>> print("Best parameters:", results['best_params'])
+        >>> print(f"Best accuracy: {results['cv_results']['accuracy']['mean']:.4f}")
+        
+        Raises
+        ------
+        ValueError
+            If model_name is not found in available models
         """
         if model_name not in self.models:
             msg = f"Model '{model_name}' not found"
@@ -602,37 +715,15 @@ class ClassificationPipeline(BasePipeline):
         grid_search.fit(self.X, self.y)
         logging.info(f"Best parameters: {grid_search.best_params_}")
         
-        # Get predictions
-        y_pred = grid_search.predict(self.X)
-        y_proba = grid_search.predict_proba(self.X) if hasattr(grid_search, 'predict_proba') else None
+        # Evaluate best model using _baseline
+        cross_val_results = self._baseline(
+            name=f'Best model from {model_name}',
+            model_dict={'estimator': grid_search.best_estimator_}
+        )
         
-        # Evaluate all metrics
-        scores = self._evaluate_predictions(self.y, y_pred, y_proba)
-        for metric, score in scores.items():
-            logging.info(f"Best {metric}: {score:.4f}")
-        
-        # Get feature importances
-        feature_importances = None
-        if hasattr(grid_search.best_estimator_, 'feature_importances_'):
-            feature_importances = grid_search.best_estimator_.feature_importances_
-        elif hasattr(grid_search.best_estimator_, 'coef_'):
-            feature_importances = grid_search.best_estimator_.coef_[0] if len(grid_search.best_estimator_.coef_.shape) > 1 else grid_search.best_estimator_.coef_
-        
-        return {
+        # Add grid search specific results
+        cross_val_results.update({
             'best_params': grid_search.best_params_,
-            'best_estimator': grid_search.best_estimator_,
-            'feature_importances': feature_importances,
-            'cv_results': {
-                'mean_test_score': grid_search.cv_results_['mean_test_score'],
-                'std_test_score': grid_search.cv_results_['std_test_score'],
-                'mean_train_score': grid_search.cv_results_['mean_train_score'],
-                'std_train_score': grid_search.cv_results_['std_train_score'],
-                'params': grid_search.cv_results_['params']
-            },
-            'predictions': {
-                'y_true': self.y,
-                'y_pred': y_pred,
-                'y_proba': y_proba
-            },
-            'scores': scores
-        } 
+            }
+        )
+        return cross_val_results 
