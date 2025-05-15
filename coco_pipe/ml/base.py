@@ -263,7 +263,9 @@ class CrossValidationStrategy:
                 'std': scores.std(),
                 'scores': scores.tolist()
             }
-        
+            # Log results
+            logging.info(f"{metric}: {metric_results[metric]['mean']:.4f} (±{metric_results[metric]['std']:.4f})")
+
         # Concatenate all predictions
         predictions = {
             'y_true': np.concatenate(all_y_true),

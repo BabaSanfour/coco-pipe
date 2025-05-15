@@ -124,55 +124,7 @@ class BaseClassificationPipeline(BasePipeline):
             self.models = {m: self.all_models[m] for m in self.models}
         else:
             raise ValueError("models must be 'all', a string, or a list of strings")
-    
-    def _compute_cv_metrics(self, fold_predictions):
-        """
-        Compute classification metrics from cross-validation predictions.
-        
-        Parameters
-        ----------
-        fold_predictions : list
-            List of dictionaries containing predictions for each fold
             
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - metrics: Dict with scores for each metric
-            - predictions: Dict with aggregated predictions
-        """
-        # Initialize storage for metrics
-        all_metrics = {metric: [] for metric in self.metrics}
-        
-        # Compute metrics for each fold
-        for fold in fold_predictions:
-            y_true = fold['y_true']
-            y_pred = fold['y_pred']
-            
-            # Compute each metric
-            for metric in self.metrics:
-                scorer = CLASSIFICATION_METRICS[metric]._score_func
-                score = scorer(y_true, y_pred)
-                all_metrics[metric].append(score)
-        
-        # Compute mean and std for metrics
-        metrics_summary = {}
-        for metric in self.metrics:
-            scores = np.array(all_metrics[metric])
-            metrics_summary[metric] = {
-                'mean': scores.mean(),
-                'std': scores.std(),
-                'scores': scores.tolist()
-            }
-        
-        return {
-            'metrics': metrics_summary,
-            'predictions': {
-                'y_true': np.concatenate([fold['y_true'] for fold in fold_predictions]),
-                'y_pred': np.concatenate([fold['y_pred'] for fold in fold_predictions])
-            }
-        }
-        
     
     def baseline(self, estimator: None, X: None, y: None):
         """
@@ -194,19 +146,7 @@ class BaseClassificationPipeline(BasePipeline):
             estimator = self.models[estimator]["estimator"]
 
         # Perform cross-validation
-        cv_output = self.cross_validate(estimator, X=X, y=y)
-        cv_metrics = self._compute_cv_metrics(cv_output['fold_predictions'])
-            
-        # Log results
-        for metric, scores in cv_metrics['metrics'].items():
-            logging.info(f"{metric}: {scores['mean']:.4f} (±{scores['std']:.4f})")
-            
-        return {
-                'cv_results': cv_metrics['metrics'],
-                'estimator': cv_output['estimator'],
-                'predictions': cv_metrics['predictions'],
-                'feature_importances': cv_output['feature_importances']
-        }
+        return self.cross_validate(estimator, X=X, y=y)
 
     def feature_selection(self, model_name=None, n_features=None, direction="forward", scoring=None):
         """
@@ -268,7 +208,7 @@ class BaseClassificationPipeline(BasePipeline):
         support = sfs.get_support()
         selected_features = np.where(support)[0]
         selected_names = self.get_feature_names()[selected_features]
-
+        logging.info(f"Selected features: {selected_names}")
         # Evaluate with selected features
         X_selected = self.X[:, selected_features]
         # use baseline to evaluate
