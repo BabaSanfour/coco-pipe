@@ -15,10 +15,8 @@ Key Features:
 """
 
 import logging
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Any
 import numpy as np
-from sklearn.model_selection import GridSearchCV
-from sklearn.feature_selection import SequentialFeatureSelector
 from sklearn.metrics import (
     make_scorer, recall_score, accuracy_score, 
     f1_score, roc_auc_score, precision_score
@@ -607,6 +605,7 @@ class ClassificationPipeline(BasePipeline):
         dict
             Dictionary containing feature selection results
         """
+        from sklearn.feature_selection import SequentialFeatureSelector
         name = name or f"{type(estimator).__name__} feature selection"
         logging.info(f"Starting {direction} feature selection for {name} with {n_features} features")
         
@@ -676,6 +675,14 @@ class ClassificationPipeline(BasePipeline):
         ...     'LR': LogisticRegression()
         ... }
         >>> results = pipeline.feature_selection(estimators, n_features=10)
+        
+        Notes
+        -----
+        Feature selection uses the first metric in self.metrics as the scoring metric
+        for evaluating feature importance. This is important to consider when
+        initializing the pipeline. For example:
+        >>> pipeline = ClassificationPipeline(X, y, metrics=['accuracy', 'f1'])
+        Here, 'accuracy' will be used as the feature selection metric.
         """
         # Handle single estimator case
         if not isinstance(estimators, dict):
@@ -691,7 +698,7 @@ class ClassificationPipeline(BasePipeline):
         
         return results
 
-    def _hp_search(self, model_name, param_grid=None):
+    def _hp_search(self, model_name, param_search=None, search_type='grid', n_iter=100):
         """
         Perform hyperparameter search for a single model.
         
@@ -699,62 +706,86 @@ class ClassificationPipeline(BasePipeline):
         ----------
         model_name : str
             Name of the model to optimize
-        param_grid : dict, optional
+        param_search : dict, optional
             Custom parameter grid. If None, uses default from self.models
+        search_type : {'grid', 'random'}, optional (default='grid')
+            Type of search to perform:
+            - 'grid': Exhaustive search over all parameter combinations
+            - 'random': Random search over parameter space
+        n_iter : int, optional (default=100)
+            Number of parameter settings sampled if using random search.
+            Not used if search_type='grid'.
             
         Returns
         -------
         dict
             Dictionary containing hyperparameter optimization results
+            
+        Notes
+        -----
+        The search uses the first metric in self.metrics as the scoring metric.
+        This is important to consider when ordering your metrics during pipeline
+        initialization.
         """
         if model_name not in self.models and param_grid is None:
             raise ValueError(f"Model '{model_name}' not found and no param_grid provided")
         
-        logging.info(f"Starting hyperparameter search for {model_name}")
+        logging.info(f"Starting {search_type} search for {model_name}")
         
         # Get model and param grid
-        if param_grid is None:
+        if param_search is None:
             model_dict = self.models[model_name]
             estimator = model_dict["estimator"]
-            param_grid = model_dict["params"]
+            param_search = model_dict["params"]
         else:
             estimator = self.models[model_name]["estimator"]
         
         # Create a scorer that optimizes the first metric
         primary_metric = self.metrics[0]
-        grid_search = GridSearchCV(
-            estimator=self._clone_estimator(estimator),
-            param_grid=param_grid,
-            scoring=CLASSIFICATION_METRICS[primary_metric],
-            n_jobs=self.n_jobs,
-            cv=5,
-            return_train_score=True
-        )
+        logging.info(f"Using {primary_metric} as the optimization metric")
         
-        grid_search.fit(self.X, self.y)
-        logging.info(f"Best parameters for {model_name}: {grid_search.best_params_}")
+        # Choose search strategy
+        if search_type == 'grid':
+            from sklearn.model_selection import GridSearchCV
+            search = GridSearchCV(
+                estimator=self._clone_estimator(estimator),
+                param_grid=param_search,
+                scoring=CLASSIFICATION_METRICS[primary_metric],
+                n_jobs=self.n_jobs,
+                cv=5,
+                return_train_score=True
+            )
+        elif search_type == 'random':
+            from sklearn.model_selection import RandomizedSearchCV
+            search = RandomizedSearchCV(
+                estimator=self._clone_estimator(estimator),
+                param_distributions=param_search,
+                n_iter=n_iter,
+                scoring=CLASSIFICATION_METRICS[primary_metric],
+                n_jobs=self.n_jobs,
+                cv=5,
+                return_train_score=True
+            )
+        else:
+            raise ValueError(f"Unknown search type: {search_type}. Use 'grid' or 'random'.")
+        
+        search.fit(self.X, self.y)
+        logging.info(f"Best parameters for {model_name}: {search.best_params_}")
         
         # Evaluate best model using _baseline
         cross_val_results = self._baseline(
-            name=f'Best model from {model_name}',
-            model_dict={'estimator': grid_search.best_estimator_}
+            name=f'Best model from {model_name} ({search_type} search)',
+            model_dict={'estimator': search.best_estimator_}
         )
         
-        # Add grid search specific results
+        # Add search specific results
         cross_val_results.update({
-            'best_params': grid_search.best_params_,
-            'grid_search_results': {
-                'mean_test_score': grid_search.cv_results_['mean_test_score'],
-                'std_test_score': grid_search.cv_results_['std_test_score'],
-                'mean_train_score': grid_search.cv_results_['mean_train_score'],
-                'std_train_score': grid_search.cv_results_['std_train_score'],
-                'params': grid_search.cv_results_['params']
-            }
+            'best_params': search.best_params_,
         })
         
         return cross_val_results
 
-    def hp_search(self, models, param_grids=None):
+    def hp_search(self, models, param_search=None, search_type='grid', n_iter=100):
         """
         Perform hyperparameter search for multiple models.
         
@@ -762,10 +793,17 @@ class ClassificationPipeline(BasePipeline):
         ----------
         models : str or list
             Single model name or list of model names to optimize.
-            Can also be a dict mapping model names to custom param_grids.
-        param_grids : dict, optional
-            Custom parameter grids for each model.
-            If provided, must be a dict mapping model names to param_grids.
+            Can also be a dict mapping model names to custom param_searches.
+        param_search : dict, optional
+            Custom parameter searches for each model.
+            If provided, must be a dict mapping model names to param_searches.
+        search_type : {'grid', 'random'}, optional (default='grid')
+            Type of search to perform:
+            - 'grid': Exhaustive search over all parameter combinations
+            - 'random': Random search over parameter space
+        n_iter : int, optional (default=100)
+            Number of parameter settings sampled if using random search.
+            Not used if search_type='grid'.
             
         Returns
         -------
@@ -774,11 +812,11 @@ class ClassificationPipeline(BasePipeline):
             
         Examples
         --------
-        >>> # Single model with default params
+        >>> # Grid search with single model
         >>> results = pipeline.hp_search('Random Forest')
-        >>> # Multiple models with default params
-        >>> results = pipeline.hp_search(['Random Forest', 'SVC'])
-        >>> # Custom param grids
+        >>> # Random search with multiple models
+        >>> results = pipeline.hp_search(['Random Forest', 'SVC'], search_type='random')
+        >>> # Custom param grids with grid search
         >>> param_grids = {
         ...     'Random Forest': {
         ...         'n_estimators': [100, 200],
@@ -786,6 +824,14 @@ class ClassificationPipeline(BasePipeline):
         ...     }
         ... }
         >>> results = pipeline.hp_search('Random Forest', param_grids)
+        
+        Notes
+        -----
+        Both hyperparameter search and feature selection use the first metric in
+        self.metrics as their scoring metric. This is important to consider when
+        initializing the pipeline. For example:
+        >>> pipeline = ClassificationPipeline(X, y, metrics=['accuracy', 'f1'])
+        Here, 'accuracy' will be used as the optimization metric.
         """
         # Handle string input (single model)
         if isinstance(models, str):
@@ -798,7 +844,12 @@ class ClassificationPipeline(BasePipeline):
         
         results = {}
         for model_name in models:
-            param_grid = param_grids.get(model_name) if param_grids else None
-            results[model_name] = self._hp_search(model_name, param_grid)
+            param_search = param_search.get(model_name) if param_search else None
+            results[model_name] = self._hp_search(
+                model_name, 
+                param_search, 
+                search_type=search_type,
+                n_iter=n_iter
+            )
         
         return results 
