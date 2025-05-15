@@ -1,8 +1,17 @@
 """
 Base ML pipeline module with core functionality and utilities.
 
-This module provides the base class for ML pipelines and common utilities
-that are shared between different types of ML tasks (classification, regression, etc.).
+This module provides the foundational components for machine learning pipelines,
+implementing core functionality that is shared across different types of ML tasks
+(classification, regression, etc.).
+
+Key Features:
+- Cross-validation strategies (stratified, leave-p-out, group-based)
+- Prediction collection and aggregation
+- Metric computation across folds
+- Input validation and error handling
+- Model cloning and validation
+- Feature importance extraction
 """
 
 import logging
@@ -25,25 +34,40 @@ logging.basicConfig(
 
 class CrossValidationStrategy:
     """
-    Class to manage different cross-validation strategies.
+    Class to manage different cross-validation strategies and metric computation.
     
-    Supported strategies:
-    - 'stratified': StratifiedKFold
-    - 'leave_p_out': Leave-P-Subjects-Out
-    - 'group_kfold': Group K-Fold
+    This class provides a unified interface for:
+    - Selecting and configuring CV splitters
+    - Performing cross-validation with prediction collection
+    - Computing metrics across CV folds
+    - Aggregating predictions and results
+    
+    Supported CV Strategies:
+    - 'stratified': Stratified K-Fold CV (preserves class distribution)
+    - 'leave_p_out': Leave-P-Groups-Out CV (for group-based validation)
+    - 'group_kfold': Group K-Fold CV (no group overlap between folds)
+    
+    The class follows a consistent pattern:
+    1. CV splitter selection and configuration
+    2. Data splitting and model training
+    3. Prediction collection for each fold
+    4. Metric computation and aggregation
     """
     
     @staticmethod
     def get_cv_splitter(strategy: str, **kwargs):
         """
-        Get the appropriate cross-validation splitter.
+        Get the appropriate cross-validation splitter based on strategy.
         
         Parameters
         ----------
         strategy : str
-            The cross-validation strategy to use
+            The cross-validation strategy to use:
+            - 'stratified': Stratified K-Fold
+            - 'leave_p_out': Leave-P-Groups-Out
+            - 'group_kfold': Group K-Fold
         **kwargs : dict
-            Additional arguments for the CV splitter:
+            Additional arguments for CV splitter:
             - n_splits: Number of folds (for stratified and group k-fold)
             - n_groups: Number of groups to leave out (for leave-p-out)
             - shuffle: Whether to shuffle (for stratified)
@@ -52,7 +76,12 @@ class CrossValidationStrategy:
         Returns
         -------
         splitter : object
-            A scikit-learn cross-validation splitter
+            A scikit-learn compatible cross-validation splitter
+            
+        Raises
+        ------
+        ValueError
+            If strategy is not recognized
         """
         if strategy == "stratified":
             return StratifiedKFold(
@@ -72,21 +101,27 @@ class CrossValidationStrategy:
     def cross_validate_with_predictions(estimator, X, y, cv_strategy="stratified", 
                                       groups=None, random_state=42, **cv_kwargs):
         """
-        Perform cross-validation and return predictions for each fold.
+        Perform cross-validation and collect predictions for each fold.
+        
+        This method handles the complete CV process:
+        1. Splits data according to CV strategy
+        2. Trains model on each training fold
+        3. Collects predictions for each validation fold
+        4. Trains final model on full dataset
         
         Parameters
         ----------
         estimator : estimator object
-            The estimator to cross-validate
-        X : array-like
+            Scikit-learn compatible estimator to cross-validate
+        X : array-like of shape (n_samples, n_features)
             Feature matrix
-        y : array-like
+        y : array-like of shape (n_samples,)
             Target vector
-        cv_strategy : str, optional
+        cv_strategy : str, optional (default="stratified")
             Cross-validation strategy to use
-        groups : array-like, optional
-            Group labels for group-based CV
-        random_state : int, optional
+        groups : array-like of shape (n_samples,), optional
+            Group labels for group-based CV strategies
+        random_state : int, optional (default=42)
             Random state for reproducibility
         **cv_kwargs : dict
             Additional arguments for CV splitter
@@ -96,7 +131,17 @@ class CrossValidationStrategy:
         dict
             Dictionary containing:
             - fold_predictions: List of dicts with predictions for each fold
-            - estimator: Fitted estimator on full dataset
+                - y_true: True values for the fold
+                - y_pred: Predictions for the fold
+                - y_proba: Probability predictions (if available)
+                - train_indices: Training set indices
+                - val_indices: Validation set indices
+            - estimator: Final estimator trained on full dataset
+            
+        Notes
+        -----
+        The final estimator is trained on the full dataset after CV,
+        making it ready for deployment or further analysis.
         """
         # Set random state in cv_kwargs
         cv_kwargs['random_state'] = random_state
@@ -157,9 +202,10 @@ class CrossValidationStrategy:
         """
         Compute cross-validation metrics from fold predictions.
         
-        This is the core implementation for computing CV metrics that can be used
-        by different ML tasks (classification, regression, etc.). Each task should
-        prepare its own metric functions and handle any special cases.
+        This method handles metric computation across CV folds:
+        1. Collects predictions from all folds
+        2. Computes specified metrics for each fold
+        3. Aggregates results with statistics
         
         Parameters
         ----------
@@ -232,33 +278,41 @@ class CrossValidationStrategy:
 
 class BasePipeline:
     """
-    Base pipeline class with common functionality for all ML pipelines.
+    Base pipeline class providing core ML pipeline functionality.
     
-    This class provides core functionality such as:
-    - Cross-validation with predictions
+    This class serves as the foundation for specific ML pipelines (classification,
+    regression, etc.) by providing common functionality:
+    - Cross-validation with prediction collection
+    - Input validation and error handling
     - Model cloning and validation
+    - Feature importance extraction
     - Basic data handling
+    
+    The class is designed to be extended by task-specific pipelines that add
+    their own metrics, models, and evaluation methods.
+    
+    Parameters
+    ----------
+    X : array-like of shape (n_samples, n_features)
+        Feature matrix
+    y : array-like of shape (n_samples,)
+        Target vector
+    cv_strategy : str, optional (default="stratified")
+        Cross-validation strategy to use
+    groups : array-like of shape (n_samples,), optional
+        Group labels for group-based CV
+    random_state : int, optional (default=42)
+        Random state for reproducibility
+    n_jobs : int, optional (default=-1)
+        Number of parallel jobs
+        
+    Notes
+    -----
+    This class is not meant to be used directly, but rather serves as a base
+    for specific pipeline implementations like ClassificationPipeline.
     """
     
     def __init__(self, X, y, cv_strategy="stratified", groups=None, random_state=42, n_jobs=-1):
-        """
-        Initialize the base pipeline.
-        
-        Parameters
-        ----------
-        X : array-like
-            Feature matrix
-        y : array-like
-            Target vector
-        cv_strategy : str, optional
-            Cross-validation strategy to use
-        groups : array-like, optional
-            Group labels for group-based CV
-        random_state : int, optional
-            Random state for reproducibility
-        n_jobs : int, optional
-            Number of parallel jobs
-        """
         self.X = X
         self.y = y
         self.cv_strategy = cv_strategy
@@ -268,7 +322,14 @@ class BasePipeline:
         self._validate_input()
     
     def _validate_input(self):
-        """Validate input data."""
+        """
+        Validate input data format and dimensions.
+        
+        Raises
+        ------
+        ValueError
+            If input validation fails
+        """
         if not isinstance(self.X, (pd.DataFrame, np.ndarray)):
             raise ValueError("X must be a pandas DataFrame or numpy array")
         if not isinstance(self.y, (pd.Series, np.ndarray)):
@@ -279,18 +340,49 @@ class BasePipeline:
             raise ValueError("groups must have the same length as y")
 
     def _validate_estimator(self, estimator):
-        """Validate that an estimator has required methods."""
+        """
+        Validate that an estimator has required methods.
+        
+        Parameters
+        ----------
+        estimator : object
+            Estimator to validate
+            
+        Returns
+        -------
+        bool
+            True if estimator has all required methods
+        """
         required_methods = ['fit', 'predict']
         return all(hasattr(estimator, method) for method in required_methods)
 
     def get_feature_names(self):
-        """Get feature names from X if available."""
+        """
+        Get feature names from X if available.
+        
+        Returns
+        -------
+        array-like
+            Feature names if X is a DataFrame, otherwise feature indices
+        """
         if hasattr(self.X, 'columns'):
             return self.X.columns
         return np.arange(self.X.shape[1])
 
     def get_feature_importances(self, estimator):
-        """Extract feature importances from an estimator if available."""
+        """
+        Extract feature importances from an estimator if available.
+        
+        Parameters
+        ----------
+        estimator : estimator object
+            Fitted estimator to extract feature importances from
+            
+        Returns
+        -------
+        array-like or None
+            Feature importances if available, None otherwise
+        """
         if hasattr(estimator, 'feature_importances_'):
             return estimator.feature_importances_
         elif hasattr(estimator, 'coef_'):
@@ -302,13 +394,14 @@ class BasePipeline:
         """
         Perform cross-validation with predictions.
         
-        This method uses CrossValidationStrategy to perform CV and return predictions.
-        Subclasses should implement their own metric computation from these predictions.
+        This method uses CrossValidationStrategy to perform CV and return
+        predictions. Specific pipeline implementations should handle metric
+        computation from these predictions.
         
         Parameters
         ----------
         estimator : estimator object
-            The estimator to cross-validate
+            Estimator to cross-validate
         X : array-like, optional
             Features to use (defaults to self.X)
         y : array-like, optional
@@ -320,6 +413,11 @@ class BasePipeline:
         -------
         dict
             Cross-validation results with predictions
+            
+        Raises
+        ------
+        ValueError
+            If estimator validation fails
         """
         if not self._validate_estimator(estimator):
             raise ValueError("Estimator must implement fit() and predict() methods")
