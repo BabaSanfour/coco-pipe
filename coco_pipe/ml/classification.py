@@ -12,6 +12,7 @@ Key Features:
 - Hyperparameter optimization with grid search
 - Comprehensive model evaluation with multiple metrics
 - Support for probability-based metrics (e.g., AUC)
+- Support for multiclass classification
 """
 
 import logging
@@ -19,8 +20,11 @@ from typing import Dict, List, Any
 import numpy as np
 from sklearn.metrics import (
     make_scorer, recall_score, accuracy_score, 
-    f1_score, roc_auc_score, precision_score
+    f1_score, roc_auc_score, precision_score,
+    matthews_corrcoef, balanced_accuracy_score,
+    cohen_kappa_score
 )
+from sklearn.preprocessing import label_binarize
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import (
@@ -49,24 +53,35 @@ except ImportError:
     LIGHTGBM_AVAILABLE = False
 
 from .base import BasePipeline
-from .base import CrossValidationStrategy
 
 def sensitivity_score(y_true, y_pred):
-    """Calculate sensitivity (recall for positive class)."""
-    return recall_score(y_true, y_pred, pos_label=1)
+    """Calculate sensitivity (recall) with support for multiclass."""
+    return recall_score(y_true, y_pred, average='weighted')
 
 def specificity_score(y_true, y_pred):
-    """Calculate specificity (recall for negative class)."""
-    return recall_score(y_true, y_pred, pos_label=0)
+    """Calculate specificity with support for multiclass."""
+    return recall_score(y_true, y_pred, average='weighted')
+
+def multiclass_roc_auc_score(y_true, y_proba):
+    """Calculate ROC AUC score for multiclass problems using one-vs-rest."""
+    if y_proba.shape[1] == 2:  # Binary classification
+        return roc_auc_score(y_true, y_proba[:, 1])
+    else:  # Multiclass
+        classes = np.unique(y_true)
+        y_true_bin = label_binarize(y_true, classes=classes)
+        return roc_auc_score(y_true_bin, y_proba, average='weighted', multi_class='ovr')
 
 # Dictionary of classification metrics with their scorer functions
 CLASSIFICATION_METRICS = {
     "accuracy": make_scorer(accuracy_score),
+    "balanced_accuracy": make_scorer(balanced_accuracy_score),
     "sensitivity": make_scorer(sensitivity_score),
     "specificity": make_scorer(specificity_score),
-    "f1": make_scorer(f1_score),
-    "precision": make_scorer(precision_score),
-    "auc": make_scorer(roc_auc_score, needs_proba=True)
+    "f1": make_scorer(f1_score, average='weighted'),
+    "precision": make_scorer(precision_score, average='weighted'),
+    "auc": make_scorer(multiclass_roc_auc_score, needs_proba=True),
+    "mcc": make_scorer(matthews_corrcoef),
+    "kappa": make_scorer(cohen_kappa_score)
 }
 
 class ClassificationPipeline(BasePipeline):
@@ -80,6 +95,7 @@ class ClassificationPipeline(BasePipeline):
     - Classification-specific metrics (accuracy, F1, AUC, etc.)
     - Support for probability-based metrics
     - Cross-validation with various strategies
+    - Support for multiclass classification
     
     The pipeline follows a consistent pattern for all operations:
     1. Model initialization/selection
@@ -100,10 +116,11 @@ class ClassificationPipeline(BasePipeline):
         - list: List of model names
     metrics : str or list, optional (default=None)
         Metrics to evaluate. Can be:
-        - None: Use default metrics ['accuracy']
+        - None: Use default metrics ['accuracy', 'balanced_accuracy']
         - str: Single metric name
         - list: List of metric names
-        Available metrics: accuracy, sensitivity, specificity, f1, precision, auc
+        Available metrics: accuracy, balanced_accuracy, sensitivity, specificity,
+                         f1, precision, auc, mcc, kappa
     random_state : int, optional (default=42)
         Random state for reproducibility
     n_jobs : int, optional (default=-1)
@@ -117,6 +134,8 @@ class ClassificationPipeline(BasePipeline):
         List of metric names to evaluate
     all_models : dict
         Dictionary of all available models with their default parameters
+    n_classes : int
+        Number of unique classes in the target variable
     
     Examples
     --------
@@ -141,14 +160,14 @@ class ClassificationPipeline(BasePipeline):
             Models to include
         metrics : str or list, optional
             Metrics to evaluate. Can be a single metric name or a list.
-            Default metrics: ['accuracy', 'f1']
+            Default metrics: ['accuracy', 'balanced_accuracy']
         random_state : int, optional
             Random state for reproducibility
         n_jobs : int, optional
             Number of parallel jobs
         """
         super().__init__(X, y, random_state, n_jobs)
-        self.metrics = ['accuracy'] if metrics is None else (
+        self.metrics = ['accuracy', 'balanced_accuracy'] if metrics is None else (
             [metrics] if isinstance(metrics, str) else metrics
         )
         self._validate_metrics()
@@ -165,25 +184,91 @@ class ClassificationPipeline(BasePipeline):
         """
         Evaluate predictions using all requested metrics.
         
+        This method computes both overall and per-class metrics when applicable.
+        For multiclass problems, it provides:
+        - Weighted average metrics across all classes
+        - Per-class metrics for detailed analysis
+        - Confusion matrix for detailed error analysis
+        
+        Parameters
+        ----------
+        y_true : array-like
+            True labels
+        y_pred : array-like
+            Predicted labels
+        y_proba : array-like, optional
+            Predicted probabilities for each class
+            
         Returns
         -------
         dict
-            Dictionary of metric scores
+            Dictionary containing:
+            - overall_metrics: Dict of overall metric scores
+            - per_class_metrics: Dict of per-class metric scores (if applicable)
+            - confusion_matrix: Confusion matrix as a nested list
         """
-        scores = {}
+        from sklearn.metrics import confusion_matrix
+        
+        # Compute overall metrics
+        overall_scores = {}
         for metric in self.metrics:
             if metric == 'auc' and y_proba is not None:
-                scores[metric] = roc_auc_score(y_true, y_proba[:, 1])
+                overall_scores[metric] = multiclass_roc_auc_score(y_true, y_proba)
             else:
                 scorer = CLASSIFICATION_METRICS[metric]._score_func
-                scores[metric] = scorer(y_true, y_pred)
-        return scores
+                if metric in ['sensitivity', 'specificity', 'f1', 'precision']:
+                    # These metrics support averaging
+                    overall_scores[metric] = scorer(y_true, y_pred, average='weighted')
+                else:
+                    overall_scores[metric] = scorer(y_true, y_pred)
+        
+        # For binary/multiclass, compute per-class metrics
+        classes = np.unique(y_true)
+        per_class_scores = {}
+        
+        if len(classes) > 2:  # Multiclass
+            for cls in classes:
+                cls_metrics = {}
+                # Convert to binary problem for this class
+                y_true_bin = (y_true == cls).astype(int)
+                y_pred_bin = (y_pred == cls).astype(int)
+                
+                # Compute binary metrics for this class
+                cls_metrics['precision'] = precision_score(y_true_bin, y_pred_bin)
+                cls_metrics['recall'] = recall_score(y_true_bin, y_pred_bin)
+                cls_metrics['f1'] = f1_score(y_true_bin, y_pred_bin)
+                
+                if y_proba is not None:
+                    # ROC AUC for this class vs rest
+                    try:
+                        cls_metrics['auc'] = roc_auc_score(y_true_bin, y_proba[:, int(cls)])
+                    except:
+                        cls_metrics['auc'] = None
+                
+                per_class_scores[f'class_{cls}'] = cls_metrics
+        
+        # Compute confusion matrix
+        conf_matrix = confusion_matrix(y_true, y_pred).tolist()
+        
+        return {
+            'overall_metrics': overall_scores,
+            'per_class_metrics': per_class_scores,
+            'confusion_matrix': conf_matrix
+        }
 
     def _setup_models(self, models):
         """Setup available models and their parameter grids."""
+        # Determine number of classes
+        self.n_classes = len(np.unique(self.y))
+        
         self.all_models = {
             "Logistic Regression": {
-                "estimator": LogisticRegression(random_state=self.random_state, max_iter=1000),
+                "estimator": LogisticRegression(
+                    random_state=self.random_state,
+                    max_iter=1000,
+                    multi_class='multinomial' if self.n_classes > 2 else 'auto',
+                    penalty=self.penalty
+                ),
                 "params": {
                     "C": [0.1, 1, 10],
                     "penalty": ["l2"],
@@ -195,7 +280,8 @@ class ClassificationPipeline(BasePipeline):
                 "params": {
                     "max_depth": [3, 5, 10, None],
                     "min_samples_split": [2, 5, 10],
-                    "min_samples_leaf": [1, 2, 4]
+                    "min_samples_leaf": [1, 2, 4],
+                    "criterion": ["gini", "entropy", "log_loss"]
                 },
             },
             "Random Forest": {
@@ -205,25 +291,29 @@ class ClassificationPipeline(BasePipeline):
                     "max_depth": [3, 5, 10, None],
                     "min_samples_split": [2, 5, 10],
                     "min_samples_leaf": [1, 2, 4],
-                    "max_features": ["auto", "sqrt", "log2"]
+                    "max_features": ["sqrt", "log2"],
+                    "criterion": ["gini", "entropy", "log_loss"],
+                    "class_weight": ["balanced", "balanced_subsample", None]
                 },
             },
             "Gradient Boosting": {
                 "estimator": GradientBoostingClassifier(random_state=self.random_state),
                 "params": {
                     "n_estimators": [100, 200, 300],
-                    "learning_rate": [0.01, 0.1, 1],
-                    "max_depth": [3, 5, 10],
+                    "learning_rate": [0.01, 0.1, 0.3],
+                    "max_depth": [3, 5, 7],
                     "min_samples_split": [2, 5, 10],
                     "min_samples_leaf": [1, 2, 4],
-                    "max_features": ["auto", "sqrt", "log2"]
+                    "subsample": [0.8, 0.9, 1.0],
+                    "max_features": ["sqrt", "log2"]
                 },
             },
             "AdaBoost": {
                 "estimator": AdaBoostClassifier(random_state=self.random_state),
                 "params": {
                     "n_estimators": [50, 100, 200],
-                    "learning_rate": [0.01, 0.1, 1]
+                    "learning_rate": [0.01, 0.1, 1],
+                    "algorithm": ["SAMME", "SAMME.R"]
                 },
             },
             "Extra Trees": {
@@ -233,7 +323,9 @@ class ClassificationPipeline(BasePipeline):
                     "max_depth": [3, 5, 10, None],
                     "min_samples_split": [2, 5, 10],
                     "min_samples_leaf": [1, 2, 4],
-                    "max_features": ["auto", "sqrt", "log2"]
+                    "max_features": ["sqrt", "log2"],
+                    "criterion": ["gini", "entropy", "log_loss"],
+                    "class_weight": ["balanced", "balanced_subsample", None]
                 },
             },
             "SVC": {
@@ -242,16 +334,19 @@ class ClassificationPipeline(BasePipeline):
                     "C": [0.1, 1, 10],
                     "kernel": ["linear", "rbf", "poly"],
                     "gamma": ["scale", "auto"],
-                    "degree": [2, 3, 4]  # for poly kernel
+                    "degree": [2, 3] if self.n_classes > 2 else [2, 3, 4],
+                    "decision_function_shape": ["ovr", "ovo"] if self.n_classes > 2 else ["ovr"],
+                    "class_weight": ["balanced", None]
                 },
             },
             "K-Nearest Neighbors": {
                 "estimator": KNeighborsClassifier(),
                 "params": {
-                    "n_neighbors": [3, 5, 7, 10],
+                    "n_neighbors": [3, 5, 7, 11],
                     "weights": ["uniform", "distance"],
-                    "p": [1, 2],  # Manhattan or Euclidean
-                    "metric": ["minkowski", "cosine"]
+                    "p": [1, 2],
+                    "metric": ["minkowski", "cosine", "manhattan"],
+                    "algorithm": ["auto", "ball_tree", "kd_tree", "brute"]
                 },
             },
             "Linear Discriminant Analysis": {
@@ -271,7 +366,7 @@ class ClassificationPipeline(BasePipeline):
             "Gaussian Naive Bayes": {
                 "estimator": GaussianNB(),
                 "params": {
-                    "var_smoothing": [1e-9, 1e-8, 1e-7]
+                    "var_smoothing": [1e-9, 1e-8, 1e-7, 1e-6]
                 },
             },
         }
@@ -279,7 +374,11 @@ class ClassificationPipeline(BasePipeline):
         # Add XGBoost if available
         if XGBOOST_AVAILABLE:
             self.all_models["XGBoost"] = {
-                "estimator": xgb.XGBClassifier(random_state=self.random_state),
+                "estimator": xgb.XGBClassifier(
+                    random_state=self.random_state,
+                    objective='multiclass' if self.n_classes > 2 else 'binary:logistic',
+                    num_class=self.n_classes if self.n_classes > 2 else None
+                ),
                 "params": {
                     "n_estimators": [100, 200, 300],
                     "max_depth": [3, 5, 7, 9],
@@ -287,14 +386,19 @@ class ClassificationPipeline(BasePipeline):
                     "subsample": [0.8, 0.9, 1.0],
                     "colsample_bytree": [0.8, 0.9, 1.0],
                     "min_child_weight": [1, 3, 5],
-                    "gamma": [0, 0.1, 0.2]
+                    "gamma": [0, 0.1, 0.2],
+                    "scale_pos_weight": [1] if self.n_classes > 2 else [1, sum(self.y == 0) / sum(self.y == 1)]
                 },
             }
             
         # Add LightGBM if available
         if LIGHTGBM_AVAILABLE:
             self.all_models["LightGBM"] = {
-                "estimator": lgb.LGBMClassifier(random_state=self.random_state),
+                "estimator": lgb.LGBMClassifier(
+                    random_state=self.random_state,
+                    objective='multiclass' if self.n_classes > 2 else 'binary',
+                    num_class=self.n_classes if self.n_classes > 2 else None
+                ),
                 "params": {
                     "n_estimators": [100, 200, 300],
                     "max_depth": [3, 5, 7, -1],
@@ -302,7 +406,8 @@ class ClassificationPipeline(BasePipeline):
                     "num_leaves": [31, 63, 127],
                     "subsample": [0.8, 0.9, 1.0],
                     "colsample_bytree": [0.8, 0.9, 1.0],
-                    "min_child_samples": [20, 30, 50]
+                    "min_child_samples": [20, 30, 50],
+                    "class_weight": ["balanced", None]
                 },
             }
 
@@ -322,57 +427,119 @@ class ClassificationPipeline(BasePipeline):
         """
         List all available models and their configurations.
         
+        This method provides information about all models that can be used in the pipeline,
+        including their current parameter grids and multiclass support status.
+        
         Parameters
         ----------
-        verbose : bool, optional
-            If True, include hyperparameter grids in output
+        verbose : bool, optional (default=False)
+            If True, include detailed information about each model:
+            - Parameter grids
+            - Multiclass support
+            - Current configuration
+            - Available metrics
             
         Returns
         -------
         dict
             Dictionary containing:
-            - 'models': List of available model names
-            - 'details': Dict of model configurations (if verbose=True)
-            - 'total_models': Number of available models
+            - models: List of available model names
+            - total_models: Number of available models
+            - details: Dict of model configurations (if verbose=True)
+            - metrics: List of available metrics
+            - current_task: 'binary' or 'multiclass'
+        
+        Examples
+        --------
+        >>> pipeline = ClassificationPipeline(X, y)
+        >>> # Get basic model list
+        >>> models = pipeline.list_available_models()
+        >>> print(f"Available models: {models['models']}")
+        >>> # Get detailed information
+        >>> details = pipeline.list_available_models(verbose=True)
+        >>> print(f"Model details: {details['details']}")
         """
         result = {
             'models': list(self.all_models.keys()),
-            'total_models': len(self.all_models)
+            'total_models': len(self.all_models),
+            'metrics': list(CLASSIFICATION_METRICS.keys()),
+            'current_task': 'multiclass' if self.n_classes > 2 else 'binary'
         }
         
         if verbose:
             result['details'] = {
                 name: {
                     'type': type(model['estimator']).__name__,
-                    'parameters': model['params']
+                    'parameters': model['params'],
+                    'multiclass_support': True,  # All our models support multiclass
+                    'current_config': {
+                        param: getattr(model['estimator'], param)
+                        for param in model['params'].keys()
+                        if hasattr(model['estimator'], param)
+                    }
                 }
                 for name, model in self.all_models.items()
             }
         
         return result
 
-    def add_model(self, name: str, estimator: Any, param_grid: Dict[str, List[Any]]) -> Dict[str, Any]:
+    def add_model(self, name: str, estimator: Any, param_grid: Dict[str, List[Any]]) -> None:
         """
         Add a new model to the available models list.
+        
+        This method allows adding custom models to the pipeline. The model must be
+        scikit-learn compatible (implement fit, predict, and predict_proba methods).
         
         Parameters
         ----------
         name : str
             Name of the model to add
-        estimator : Any
-            Scikit-learn compatible estimator object
+        estimator : estimator object
+            Scikit-learn compatible estimator that implements:
+            - fit(X, y)
+            - predict(X)
+            - predict_proba(X) for probability-based metrics
         param_grid : Dict[str, List[Any]]
             Dictionary of parameters to search during optimization
             
+        Returns
+        -------
+        None
+        
+        Raises
+        ------
+        ValueError
+            If the model name already exists or if the estimator is not compatible
+        
+        Examples
+        --------
+        >>> from sklearn.ensemble import BaggingClassifier
+        >>> pipeline = ClassificationPipeline(X, y)
+        >>> # Add a new model
+        >>> pipeline.add_model(
+        ...     name="Bagging",
+        ...     estimator=BaggingClassifier(random_state=42),
+        ...     param_grid={
+        ...         "n_estimators": [10, 20, 30],
+        ...         "max_samples": [0.5, 0.7, 1.0]
+        ...     }
+        ... )
         """
         try:
             # Validate input
             if name in self.all_models:
-                logging.warning(f"Model '{name}' already exists. Use update_model_params to modify it.")
-                return
-            # Validate estimator has fit and predict methods
-            if not (hasattr(estimator, 'fit') and hasattr(estimator, 'predict')):
-                raise ValueError("Estimator must implement fit() and predict() methods")
+                raise ValueError(f"Model '{name}' already exists. Use update_model_params to modify it.")
+            
+            # Validate estimator has required methods
+            required_methods = ['fit', 'predict']
+            missing_methods = [method for method in required_methods 
+                             if not hasattr(estimator, method)]
+            
+            if missing_methods:
+                raise ValueError(
+                    f"Estimator must implement: {', '.join(required_methods)}. "
+                    f"Missing methods: {', '.join(missing_methods)}"
+                )
             
             # Add the model
             self.all_models[name] = {
@@ -383,52 +550,74 @@ class ClassificationPipeline(BasePipeline):
             # If using 'all' models, update self.models
             if hasattr(self, 'models') and len(self.models) == len(self.all_models) - 1:
                 self.models = self.all_models
+                
             logging.info(f"Successfully added model '{name}'")
             
         except Exception as e:
             logging.error(f"Failed to add model: {str(e)}")
             raise
 
-    def update_model_params(self, name: str, param_grid: Dict[str, List[Any]]) -> Dict[str, Any]:
+    def update_model_params(self, name: str, param_grid: Dict[str, List[Any]]) -> None:
         """
         Update the parameter grid for an existing model.
+        
+        This method allows modifying the hyperparameter search space for a model.
+        It validates that all parameters exist in the estimator before updating.
         
         Parameters
         ----------
         name : str
             Name of the model to update
         param_grid : Dict[str, List[Any]]
-            New parameter grid for hyperparameter optimization
+            New parameter grid for hyperparameter search
             
+        Returns
+        -------
+        None
+        
+        Raises
+        ------
+        ValueError
+            If the model doesn't exist or if invalid parameters are provided
+            
+        Examples
+        --------
+        >>> pipeline = ClassificationPipeline(X, y)
+        >>> # Update Random Forest parameters
+        >>> pipeline.update_model_params(
+        ...     "Random Forest",
+        ...     {
+        ...         "n_estimators": [50, 100],
+        ...         "max_depth": [5, 10]
+        ...     }
+        ... )
         """
         try:
             if name not in self.all_models:
                 raise ValueError(f"Model '{name}' not found")
             
-            # Validate parameters against estimator
-            estimator = self.all_models[name]['estimator']
+            # Validate all parameters exist in the estimator
+            estimator = self.all_models[name]["estimator"]
             invalid_params = [
                 param for param in param_grid.keys()
                 if not hasattr(estimator, param)
             ]
             
             if invalid_params:
-                raise ValueError(f"Invalid parameters for {name}: {', '.join(invalid_params)}")
+                raise ValueError(
+                    f"Invalid parameters for {name}: {invalid_params}. "
+                    f"Available parameters: {[p for p in dir(estimator) if not p.startswith('_')]}"
+                )
             
-            # Update parameters
-            self.all_models[name]['params'] = param_grid
-            
-            # If the model is in current selection, update it there too
-            if name in self.models:
-                self.models[name]['params'] = param_grid
-            
-            logging.info(f"Successfully updated parameters for '{name}'")
+            # Update the parameter grid
+            self.all_models[name]["params"] = param_grid
+            logging.info(f"Successfully updated parameters for model '{name}'")
             
         except Exception as e:
             logging.error(f"Failed to update model parameters: {str(e)}")
             raise
 
-    def remove_model(self, name: str) -> Dict[str, Any]:
+    def remove_model(self, name: str) -> None:
         """
         Remove a model from the available models list.
         
@@ -437,6 +626,19 @@ class ClassificationPipeline(BasePipeline):
         name : str
             Name of the model to remove
             
+        Returns
+        -------
+        None
+        
+        Raises
+        ------
+        ValueError
+            If the model doesn't exist
+            
+        Examples
+        --------
+        >>> pipeline = ClassificationPipeline(X, y)
+        >>> pipeline.remove_model("Decision Tree")
         """
         try:
             if name not in self.all_models:
@@ -449,11 +651,9 @@ class ClassificationPipeline(BasePipeline):
             
             logging.info(f"Successfully removed model '{name}'")
             
-            
         except Exception as e:
             logging.error(f"Failed to remove model: {str(e)}")
             raise
-
 
     def _compute_cv_metrics(self, fold_predictions):
         """
@@ -469,36 +669,76 @@ class ClassificationPipeline(BasePipeline):
         dict
             Dictionary containing:
             - metrics: Dict with scores for each metric
+            - per_class_metrics: Dict with per-class scores
             - predictions: Dict with aggregated predictions
+            - confusion_matrices: List of confusion matrices from each fold
         """
-        # Handle metrics that don't need probabilities first
-        standard_metrics = [m for m in self.metrics if m != 'auc']
-        if standard_metrics:
-            standard_funcs = {m: CLASSIFICATION_METRICS[m]._score_func for m in standard_metrics}
-            results = CrossValidationStrategy.compute_cv_metrics(
-                fold_predictions, 
-                standard_metrics, 
-                standard_funcs
-            )
-        else:
-            results = {'metrics': {}, 'predictions': {}}
+        # Initialize storage for metrics
+        all_metrics = {metric: [] for metric in self.metrics}
+        all_per_class_metrics = {}
+        all_confusion_matrices = []
         
-        # Handle AUC separately if needed
-        if 'auc' in self.metrics:
-            auc_scores = []
-            for fold in fold_predictions:
-                if 'y_proba' not in fold:
-                    raise ValueError("AUC metric requires probability predictions")
-                auc_scores.append(roc_auc_score(fold['y_true'], fold['y_proba'][:, 1]))
+        # Compute metrics for each fold
+        for fold in fold_predictions:
+            # Get predictions for this fold
+            y_true = fold['y_true']
+            y_pred = fold['y_pred']
+            y_proba = fold.get('y_proba')
             
-            scores = np.array(auc_scores)
-            results['metrics']['auc'] = {
+            # Evaluate predictions
+            eval_results = self._evaluate_predictions(y_true, y_pred, y_proba)
+            
+            # Store overall metrics
+            for metric, score in eval_results['overall_metrics'].items():
+                all_metrics[metric].append(score)
+            
+            # Store per-class metrics
+            if eval_results['per_class_metrics']:
+                for cls, cls_metrics in eval_results['per_class_metrics'].items():
+                    if cls not in all_per_class_metrics:
+                        all_per_class_metrics[cls] = {
+                            metric: [] for metric in cls_metrics.keys()
+                        }
+                    for metric, score in cls_metrics.items():
+                        if score is not None:  # Only append valid scores
+                            all_per_class_metrics[cls][metric].append(score)
+            
+            # Store confusion matrix
+            all_confusion_matrices.append(eval_results['confusion_matrix'])
+        
+        # Compute mean and std for overall metrics
+        metrics_summary = {}
+        for metric in self.metrics:
+            scores = np.array(all_metrics[metric])
+            metrics_summary[metric] = {
                 'mean': scores.mean(),
                 'std': scores.std(),
                 'scores': scores.tolist()
             }
-            
-        return results
+        
+        # Compute mean and std for per-class metrics
+        per_class_summary = {}
+        for cls, cls_metrics in all_per_class_metrics.items():
+            per_class_summary[cls] = {}
+            for metric, scores in cls_metrics.items():
+                if scores:  # Only compute if we have valid scores
+                    scores_array = np.array(scores)
+                    per_class_summary[cls][metric] = {
+                        'mean': scores_array.mean(),
+                        'std': scores_array.std(),
+                        'scores': scores_array.tolist()
+                    }
+        
+        return {
+            'metrics': metrics_summary,
+            'per_class_metrics': per_class_summary,
+            'confusion_matrices': all_confusion_matrices,
+            'predictions': {
+                'y_true': np.concatenate([fold['y_true'] for fold in fold_predictions]),
+                'y_pred': np.concatenate([fold['y_pred'] for fold in fold_predictions]),
+                'y_proba': np.concatenate([fold['y_proba'] for fold in fold_predictions]) if 'y_proba' in fold_predictions[0] else None
+            }
+        }
     
     def _baseline(self, name, model_dict, X=None, y=None):
         """
@@ -698,7 +938,7 @@ class ClassificationPipeline(BasePipeline):
         
         return results
 
-    def _hp_search(self, model_name, param_search=None, search_type='grid', n_iter=100):
+    def _hp_search(self, model_name, param_grid=None, search_type='grid', n_iter=100):
         """
         Perform hyperparameter search for a single model.
         
@@ -706,7 +946,7 @@ class ClassificationPipeline(BasePipeline):
         ----------
         model_name : str
             Name of the model to optimize
-        param_search : dict, optional
+        param_grid : dict, optional
             Custom parameter grid. If None, uses default from self.models
         search_type : {'grid', 'random'}, optional (default='grid')
             Type of search to perform:
@@ -733,10 +973,10 @@ class ClassificationPipeline(BasePipeline):
         logging.info(f"Starting {search_type} search for {model_name}")
         
         # Get model and param grid
-        if param_search is None:
+        if param_grid is None:
             model_dict = self.models[model_name]
             estimator = model_dict["estimator"]
-            param_search = model_dict["params"]
+            param_grid = model_dict["params"]
         else:
             estimator = self.models[model_name]["estimator"]
         
@@ -749,7 +989,7 @@ class ClassificationPipeline(BasePipeline):
             from sklearn.model_selection import GridSearchCV
             search = GridSearchCV(
                 estimator=self._clone_estimator(estimator),
-                param_grid=param_search,
+                param_grid=param_grid,
                 scoring=CLASSIFICATION_METRICS[primary_metric],
                 n_jobs=self.n_jobs,
                 cv=5,
@@ -759,7 +999,7 @@ class ClassificationPipeline(BasePipeline):
             from sklearn.model_selection import RandomizedSearchCV
             search = RandomizedSearchCV(
                 estimator=self._clone_estimator(estimator),
-                param_distributions=param_search,
+                param_distributions=param_grid,
                 n_iter=n_iter,
                 scoring=CLASSIFICATION_METRICS[primary_metric],
                 n_jobs=self.n_jobs,
@@ -785,7 +1025,7 @@ class ClassificationPipeline(BasePipeline):
         
         return cross_val_results
 
-    def hp_search(self, models, param_search=None, search_type='grid', n_iter=100):
+    def hp_search(self, models, param_grid=None, search_type='grid', n_iter=100):
         """
         Perform hyperparameter search for multiple models.
         
@@ -793,10 +1033,10 @@ class ClassificationPipeline(BasePipeline):
         ----------
         models : str or list
             Single model name or list of model names to optimize.
-            Can also be a dict mapping model names to custom param_searches.
-        param_search : dict, optional
+            Can also be a dict mapping model names to custom param_grides.
+        param_grid : dict, optional
             Custom parameter searches for each model.
-            If provided, must be a dict mapping model names to param_searches.
+            If provided, must be a dict mapping model names to param_grides.
         search_type : {'grid', 'random'}, optional (default='grid')
             Type of search to perform:
             - 'grid': Exhaustive search over all parameter combinations
@@ -844,10 +1084,10 @@ class ClassificationPipeline(BasePipeline):
         
         results = {}
         for model_name in models:
-            param_search = param_search.get(model_name) if param_search else None
+            param_grid = param_grid.get(model_name) if param_grid else None
             results[model_name] = self._hp_search(
                 model_name, 
-                param_search, 
+                param_grid, 
                 search_type=search_type,
                 n_iter=n_iter
             )
