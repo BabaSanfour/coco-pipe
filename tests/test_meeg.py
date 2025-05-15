@@ -193,16 +193,29 @@ def test_subjects_list_handling(mock_read_raw_bids, bids_test_params):
         assert kwargs['subject'] == bids_test_params["subject"]
 
 
-def test_subjects_list_multiple_error(bids_test_params):
-    """Test that load raises an error when subjects list has multiple items."""
-    with pytest.raises(ValueError):
+@patch('coco_pipe.io.meeg.read_raw_bids')
+def test_subjects_list_multiple(mock_read_raw_bids, bids_test_params):
+    """Test that load can handle a list of multiple subjects."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_raw_bids.return_value = mock_raw
+
+    subject_list = ["01", "02"]
+    # Patch read_eeg_bids to reuse our implementation but still count calls
+    with patch('coco_pipe.io.load.read_eeg_bids', side_effect=read_eeg_bids) as mock_load_read_eeg_bids:
         result = load(
             type="eeg",
             data_path=str(bids_test_params["bids_root"]),
-            subjects=["01", "02"],  # Multiple subjects
+            subjects=subject_list,
             session=bids_test_params["session"],
             task=bids_test_params["task"]
         )
+
+        # Ensure read_eeg_bids called for each subject
+        assert mock_load_read_eeg_bids.call_count == len(subject_list)
+
+        # The result should be a list with an entry per subject
+        assert isinstance(result, list)
+        assert len(result) == len(subject_list)
 
 
 def test_missing_subject_error(bids_test_params):

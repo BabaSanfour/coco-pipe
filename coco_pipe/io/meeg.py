@@ -1,7 +1,7 @@
 from mne_bids import BIDSPath, read_raw_bids
 import mne
 
-def read_eeg_bids(bids_root: str, subject: str, session: str, task: str, datatype: str = 'eeg', suffix: str = 'eeg', extension: str | None = None, verbose: bool = False):
+def read_eeg_bids(bids_root: str, subject: str, session: str | None, task: str | None, run: str | None = None, datatype: str = 'eeg', suffix: str = 'eeg', extension: str | None = None, verbose: bool = False):
     """
     Reads EEG data from a BIDS-compliant dataset.
 
@@ -11,10 +11,12 @@ def read_eeg_bids(bids_root: str, subject: str, session: str, task: str, datatyp
         The root directory of the BIDS dataset.
     subject : str
         The subject identifier (e.g., '01').
-    session : str
-        The session identifier (e.g., '01').
-    task : str
-        The task identifier (e.g., 'rest').
+    session : str | None
+        The session identifier (e.g., '01'). Optional if not present in the dataset.
+    task : str | None
+        The task identifier (e.g., 'rest'). Optional if not present in the dataset.
+    run : str | None, optional
+        The run identifier (e.g., '01'). Optional. If provided, it will be passed to ``BIDSPath``.
     datatype : str, optional
         The type of data to read (e.g., 'eeg', 'meg'). Defaults to 'eeg'.
     suffix : str, optional
@@ -35,6 +37,7 @@ def read_eeg_bids(bids_root: str, subject: str, session: str, task: str, datatyp
         root=bids_root,
         subject=subject,
         session=session,
+        run=run,
         task=task,
         datatype=datatype,
         suffix=suffix,
