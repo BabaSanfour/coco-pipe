@@ -1,175 +1,113 @@
 """
-Multivariate classification pipeline with specialized functionality.
+Multi-output (multi-label) classification.
 
-This module extends the base classification pipeline with multivariate-specific
-functionality for handling multiple target variables.
+This module wraps single-output estimators in MultiOutputClassifier,
+performs cross-validation, and computes specified multi-output metrics.
 """
-
 import logging
 import numpy as np
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.metrics import (
-    make_scorer, accuracy_score, f1_score
-)
-from .base_classification import BaseClassificationPipeline, CLASSIFICATION_METRICS
 
-# Configure logging
+from .base import BasePipeline
+from .config import MULTIOUTPUT_METRICS, BINARY_MODELS, DEFAULT_CV
+
+logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Add multivariate-specific metrics (aggregated across targets)
-MULTIVARIATE_METRICS = {
-    **CLASSIFICATION_METRICS,
-    "mean_accuracy": make_scorer(lambda y_true, y_pred: np.mean([
-        accuracy_score(y_true[:, i], y_pred[:, i])
-        for i in range(y_true.shape[1])
-    ])),
-    "mean_f1": make_scorer(lambda y_true, y_pred: np.mean([
-        f1_score(y_true[:, i], y_pred[:, i], average='weighted')
-        for i in range(y_true.shape[1])
-    ])),
-}
+class MultiOutputClassificationPipeline(BasePipeline):
+    """
+    Pipeline for multi-output classification.
+    """
+    def __init__(
+        self,
+        X,
+        y,
+        models="all",
+        metrics=None,
+        random_state=42,
+        n_jobs=-1,
+        cv_kwargs=None,
+        groups=None,
+    ):
+        self._validate_multivariate_target(y)
 
-class MultivariateClassificationPipeline(BaseClassificationPipeline):
-    """
-    Pipeline specifically for multivariate classification tasks.
+        # Metric functions and defaults
+        metric_funcs = MULTIOUTPUT_METRICS
+        if isinstance(metrics, str):
+            default_metrics = [metrics]
+        else:
+            default_metrics = metrics or list(MULTIOUTPUT_METRICS.keys())
+
+        # Model configs selection
+        model_configs = self._setup_multivariate_models(models, n_jobs)
+
+        cv = cv_kwargs or DEFAULT_CV
+
+        super().__init__(
+            X=X,
+            y=y,
+            metric_funcs=metric_funcs,
+            model_configs=model_configs,
+            default_metrics=default_metrics,
+            cv_kwargs=cv,
+            groups=groups,
+            n_jobs=n_jobs,
+            random_state=random_state,
+        )
+
+    def _validate_multivariate_target(self, y):
+        """Ensure target is multivariate."""
+        if not (hasattr(y, "ndim") and y.ndim == 2):
+            raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
+
+    def _setup_multivariate_models(self, models, n_jobs):
+        """Setup multivariate models."""
+        base = BINARY_MODELS
+        if models == "all":
+            model_configs = base
+        elif isinstance(models, str):
+            model_configs = {models: base[models]}
+        else:
+            model_configs = {m: base[m] for m in models}
+        for name, cfg in model_configs.items():
+            est = cfg["estimator"]
+            if not isinstance(est, MultiOutputClassifier):
+                cfg["estimator"] = MultiOutputClassifier(est, n_jobs=n_jobs)
+        return model_configs
     
-    This class extends BaseClassificationPipeline with multivariate-specific:
-    - Metrics (mean accuracy, mean F1 across targets)
-    - Model configurations optimized for multiple targets
-    - Per-target evaluation methods
-    
-    Parameters
-    ----------
-    X : array-like of shape (n_samples, n_features)
-        Feature matrix
-    y : array-like of shape (n_samples, n_targets)
-        Target matrix where each column is a classification target
-    models : str or list, optional (default="all")
-        Models to include in the pipeline
-    metrics : str or list, optional (default=None)
-        Metrics to evaluate
-    random_state : int, optional (default=42)
-        Random state for reproducibility
-    n_jobs : int, optional (default=-1)
-        Number of parallel jobs
-    """
-    
-    def __init__(self, X, y, models="all", metrics=None, random_state=42, n_jobs=-1):
-        # Initialize with base metrics if none provided
-        if metrics is None:
-            metrics = ['mean_accuracy', 'mean_f1']
-        
-        super().__init__(X, y, models, metrics, random_state, n_jobs)
-        self._validate_multivariate_target()
-        self._setup_multivariate_models()
-        self.n_targets_ = y.shape[1]
-    
-    def _validate_multivariate_target(self):
-        """Ensure target is 2D array."""
-        if len(self.y.shape) != 2:
-            raise ValueError(
-                f"Target must be 2D array for multivariate classification. "
-                f"Shape is {self.y.shape}"
-            )
-    
-    def _validate_metrics(self):
-        """Validate that all requested metrics are available."""
-        invalid_metrics = [m for m in self.metrics if m not in MULTIVARIATE_METRICS]
-        if invalid_metrics:
-            raise ValueError(f"Invalid metrics: {invalid_metrics}. "
-                           f"Available metrics: {list(MULTIVARIATE_METRICS.keys())}")
-    
-    def _setup_multivariate_models(self):
-        """Add multivariate-specific model configurations."""
-        # Wrap all estimators with MultiOutputClassifier
-        for name in self.models:
-            base_estimator = self.models[name]["estimator"]
-            if not isinstance(base_estimator, MultiOutputClassifier):
-                self.models[name]["estimator"] = MultiOutputClassifier(
-                    base_estimator,
-                    n_jobs=self.n_jobs
+    def compute_metrics(self, fold_preds, metrics, funcs):
+        """
+        Compute metrics using BasePipeline, then add per-output breakdown if specified.
+        """
+        results = super().compute_metrics(fold_preds, metrics, funcs, multioutput=True)
+
+        y_true = results["predictions"]["y_true"]
+        y_pred = results["predictions"]["y_pred"]
+
+        # Per-output precision/recall/f1 samples (if requested)
+        from sklearn.metrics import precision_score, recall_score, f1_score
+        per_output = {}
+        for i in range(y_true.shape[1]):
+            out = {}
+            if "precision_samples" in self.metrics:
+                out["precision"] = float(
+                    precision_score(y_true[:, i], y_pred[:, i], zero_division=0)
                 )
-    
-    def _compute_multivariate_metrics(self, results):
-        """
-        Compute multivariate-specific metrics.
-        """
-        metrics_multivariate = {}
-        y_true = results['predictions']['y_true']
-        y_pred = results['predictions']['y_pred']
-        
-        # Compute mean metrics across targets
-        for metric in self.metrics:
-            if metric == 'mean_accuracy':
-                scores = [accuracy_score(y_true[:, i], y_pred[:, i])
-                         for i in range(self.n_targets_)]
-                metrics_multivariate['mean_accuracy'] = np.mean(scores)
-                logging.info(f"Mean Accuracy: {metrics_multivariate['mean_accuracy']:.4f}")
-            
-            elif metric == 'mean_f1':
-                scores = [f1_score(y_true[:, i], y_pred[:, i], average='weighted')
-                         for i in range(self.n_targets_)]
-                metrics_multivariate['mean_f1'] = np.mean(scores)
-                logging.info(f"Mean F1: {metrics_multivariate['mean_f1']:.4f}")
-        
-        # Add metrics to results
-        results['metrics'].update(metrics_multivariate)
+            if "recall_samples" in self.metrics:
+                out["recall"] = float(
+                    recall_score(y_true[:, i], y_pred[:, i], zero_division=0)
+                )
+            if "f1_samples" in self.metrics:
+                out["f1"] = float(
+                    f1_score(y_true[:, i], y_pred[:, i], zero_division=0)
+                )
+            if out:
+                per_output[i] = out
+        if per_output:
+            results["per_output_metrics"] = per_output
+
         return results
-    
-    def baseline(self, estimator=None, X=None, y=None):
-        """
-        Run baseline evaluation for multivariate classification.
-        """
-        results = super().baseline(estimator, X, y)
-        return self._compute_multivariate_metrics(results)
-    
-    def feature_selection(self, estimator=None, n_features=None, direction="forward", scoring=None):
-        """
-        Perform feature selection optimized for multivariate classification.
-        
-        Extends the base method to:
-        - Use multivariate metrics (mean accuracy, mean F1)
-        - Select features that work well for all targets
-        - Compute per-target metrics for selected features
-        
-        Parameters and returns are the same as the base method.
-        """
-        results = super().feature_selection(
-            estimator=estimator,
-            n_features=n_features,
-            direction=direction,
-            scoring=scoring
-        )
-        return self._compute_multivariate_metrics(results)
-    
-    def hp_search(self, model_name, param_grid=None, search_type='grid', 
-                 n_iter=100, scoring=None, cv=5):
-        """
-        Perform hyperparameter optimization for multivariate classification.
-        
-        Extends the base method to:
-        - Use multivariate metrics (mean accuracy, mean F1)
-        - Optimize parameters that work well for all targets
-        - Compute per-target metrics for best parameters
-        
-        Parameters and returns are the same as the base method.
-        """
-        results = super().hp_search(
-            model_name=model_name,
-            param_grid=param_grid,
-            search_type=search_type,
-            n_iter=n_iter,
-            scoring=scoring,
-            cv=cv
-        )
-        return self._compute_multivariate_metrics(results)
-    
-    def execute(self, type='baseline', **kwargs):
-        """
-        Execute the pipeline.
-        """
-        return super().execute(type, **kwargs) 

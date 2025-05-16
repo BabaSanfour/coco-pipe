@@ -4,13 +4,14 @@ from sklearn.metrics import (
     recall_score, accuracy_score, f1_score,
     precision_score, matthews_corrcoef, balanced_accuracy_score,
     r2_score, mean_squared_error, mean_absolute_error,
-    roc_auc_score, average_precision_score
+    roc_auc_score, average_precision_score,
+    hamming_loss, jaccard_score,
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-
+from sklearn.ensemble import GradientBoostingClassifier
 DEFAULT_CV = {
     "strategy": "stratified",
     "n_splits": 5,
@@ -34,6 +35,29 @@ BINARY_METRICS = {
     "average_precision": make_scorer(average_precision_score, needs_proba=True),
 }
 
+MULTIOUTPUT_METRICS = {
+    # Strict subset accuracy: 1 iff all labels correct
+    "subset_accuracy": make_scorer(accuracy_score),
+    # fraction of incorrect labels (we invert so higher is better)
+    "hamming_loss": lambda y_true, y_pred: 1.0 - hamming_loss(y_true, y_pred),
+
+    # intersection over union per sample
+    "jaccard_samples": lambda y_true, y_pred: jaccard_score(
+        y_true, y_pred, average="samples", zero_division=0
+    ),
+
+    # per-sample precision/recall/f1
+    "precision_samples": lambda y_true, y_pred: precision_score(
+        y_true, y_pred, average="samples", zero_division=0
+    ),
+    "recall_samples": lambda y_true, y_pred: recall_score(
+        y_true, y_pred, average="samples", zero_division=0
+    ),
+    "f1_samples": lambda y_true, y_pred: f1_score(
+        y_true, y_pred, average="samples", zero_division=0
+    ),
+}
+
 # Default model configurations for binary classification
 BINARY_MODELS = {
     "Logistic Regression": {
@@ -53,11 +77,6 @@ BINARY_MODELS = {
         "params": {"C": [0.1,1,10], "kernel": ["linear","rbf"]},
     },
 }
-
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.svm import SVC
 
 MULTICLASS_MODELS = {
     "Logistic Regression": {
@@ -107,8 +126,6 @@ MULTICLASS_MODELS = {
         },
     },
 }
-
-
 
 REGRESSION_METRICS = {
     "r2": make_scorer(r2_score),
