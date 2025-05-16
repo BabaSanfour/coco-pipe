@@ -3,8 +3,13 @@ from sklearn.metrics import (
     make_scorer,
     recall_score, accuracy_score, f1_score,
     precision_score, matthews_corrcoef, balanced_accuracy_score,
-    r2_score, mean_squared_error, mean_absolute_error
+    r2_score, mean_squared_error, mean_absolute_error,
+    roc_auc_score, average_precision_score
 )
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 
 DEFAULT_CV = {
     "strategy": "stratified",
@@ -22,6 +27,33 @@ CLASSIFICATION_METRICS = {
     "recall": make_scorer(recall_score, average="weighted"),
     "mcc": make_scorer(matthews_corrcoef),
 }
+
+BINARY_METRICS = {
+    **CLASSIFICATION_METRICS,
+    "roc_auc": make_scorer(roc_auc_score, needs_proba=True),
+    "average_precision": make_scorer(average_precision_score, needs_proba=True),
+}
+
+# Default model configurations for binary classification
+BINARY_MODELS = {
+    "Logistic Regression": {
+        "estimator": LogisticRegression(random_state=0),
+        "params": {"C": [0.1, 1, 10], "penalty": ["l2"]},
+    },
+    "Decision Tree": {
+        "estimator": DecisionTreeClassifier(random_state=0),
+        "params": {"max_depth": [3,5,10,None], "min_samples_split": [2,5,10]},
+    },
+    "Random Forest": {
+        "estimator": RandomForestClassifier(random_state=0),
+        "params": {"n_estimators": [100,200], "max_depth": [3,5,10,None]},
+    },
+    "SVC": {
+        "estimator": SVC(random_state=0, probability=True),
+        "params": {"C": [0.1,1,10], "kernel": ["linear","rbf"]},
+    },
+}
+
 
 REGRESSION_METRICS = {
     "r2": make_scorer(r2_score),
