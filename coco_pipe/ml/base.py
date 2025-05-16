@@ -79,7 +79,7 @@ class BasePipeline(ABC):
         return [f"feature_{i}" for i in range(X.shape[1])]
     
     @staticmethod
-    def compute_metrics(fold_preds, metrics, funcs):
+    def compute_metrics(fold_preds, metrics, funcs, multioutput=False):
         import numpy as np
         scores = {m: [] for m in metrics}
         fold_sizes = [len(f["y_true"]) for f in fold_preds]
@@ -109,7 +109,7 @@ class BasePipeline(ABC):
                 "predictions": {
                     "y_true": np.concatenate(all_true),
                     "y_pred": np.concatenate(all_pred),
-                    "y_proba": np.concatenate(all_proba) if all_proba else None
+                    "y_proba": np.concatenate(all_proba, axis=1) if all_proba and multioutput else np.concatenate(all_proba) if all_proba else None
                 }}
     
     def update_model_params(self, model_name: str, params: Dict[str, Any]):
