@@ -4,8 +4,8 @@ from typing import Union, Optional, List, Tuple
 import mne
 from typing import overload, Literal
 
-# Import read_eeg_bids from meeg
-from coco_pipe.io.meeg import read_eeg_bids
+# Import read_meeg_bids and load_meeg from meeg
+from coco_pipe.io.meeg import read_meeg_bids, load_meeg
 
 # -----------------------------------------------------------------------------
 # Typing helpers & overloads for `load`
@@ -138,34 +138,21 @@ def load(
         # though embeddings are typically (data, subjects, segments)
         return emb, subj_array, times
     elif type in ["meeg", "meg", "eeg"]:
-        # Assuming 'data_path' is bids_root
-        # 'run' from load() could map to BIDS 'run' or 'session'.
-        # For read_eeg_bids, 'session' is a distinct parameter.
-        # We need to clarify how 'run' in the load() signature maps to BIDSPath entities.
-        # Clarify BIDS entities: use 'session' for BIDS session and 'run' for BIDS run.
-        bids_session_entity = session  # May be None if dataset has no session level.
-
+        # Use the new load_meeg function from meeg.py
         if subjects is None:
             raise ValueError("'subjects' must be provided for M/EEG BIDS loading.")
         
-        # Support single subject string or list of subjects
-        def _load_single(subj: str):
-            return read_eeg_bids(
-                bids_root=data_path,
-                subject=subj,
-                session=bids_session_entity,
-                run=run,
-                task=task,
-                datatype=datatype,
-                suffix=suffix,
-                extension=extension,
-                verbose=verbose,
-            )
-
-        if isinstance(subjects, list):
-            return [_load_single(subj) for subj in subjects]
-        else:
-            return _load_single(subjects)
+        return load_meeg(
+            bids_root=data_path,
+            subjects=subjects,
+            session=session,
+            task=task,
+            run=run,
+            datatype=datatype,
+            suffix=suffix,
+            extension=extension,
+            verbose=verbose
+        )
     elif type in ["tabular", "csv", "excel", "tsv"]:
         from coco_pipe.io.tabular import load_tabular
         return load_tabular(
