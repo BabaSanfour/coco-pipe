@@ -91,7 +91,10 @@ class BasePipeline(ABC):
                 all_proba.append(f["y_proba"])
             for m in metrics:
                 if hasattr(funcs[m], "_sign"):
-                    scores[m].append(funcs[m]._sign * funcs[m]._score_func(y_true=f["y_true"], y_pred=f["y_pred"]))
+                    try:
+                        scores[m].append(funcs[m]._sign * funcs[m]._score_func(y_true=f["y_true"], y_score=f["y_pred"]))
+                    except:
+                        scores[m].append(funcs[m]._sign * funcs[m]._score_func(y_true=f["y_true"], y_pred=f["y_pred"]))
                 else:
                     scores[m].append(funcs[m](y_true=f["y_true"], y_pred=f["y_pred"]))
         arrs = {}

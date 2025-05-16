@@ -58,7 +58,7 @@ class BinaryClassificationPipeline(BasePipeline):
         groups=None,
     ):
         
-        self._validate_binary_target()
+        self._validate_binary_target(y)
 
         # Build metric_funcs and defaults
         metric_funcs = BINARY_METRICS
@@ -88,9 +88,9 @@ class BinaryClassificationPipeline(BasePipeline):
             random_state=random_state,
         )
 
-    def _validate_binary_target(self):
+    def _validate_binary_target(self, y):
         """Ensure target is binary."""
-        unique_classes = np.unique(self.y)
+        unique_classes = np.unique(y)
         if len(unique_classes) != 2:
             raise ValueError(
                 f"Target must be binary. Found {len(unique_classes)} classes: {unique_classes}"
@@ -102,11 +102,13 @@ class BinaryClassificationPipeline(BasePipeline):
         y_proba = results["predictions"]["y_proba"]
         extra = {}
         if "roc_auc" in self.metrics:
-            extra["roc_auc"] = roc_auc_score(y_true, y_proba[:,1])
-            logging.info(f"ROC AUC: {extra['roc_auc']:.4f}")
+            extra["roc_auc"] = {"mean": roc_auc_score(y_true, y_proba[:,1]),
+                                "std": 0.0}
+            logging.info(f"ROC AUC: {extra['roc_auc']['mean']:.4f}")
 
         if "average_precision" in self.metrics:
-            extra["average_precision"] = average_precision_score(y_true, y_proba[:,1])
-            logging.info(f"Avg Precision: {extra['average_precision']:.4f}")
+            extra["average_precision"] = {"mean": average_precision_score(y_true, y_proba[:,1]),
+                                          "std": 0.0}
+            logging.info(f"Avg Precision: {extra['average_precision']['mean']:.4f}")
         results["metrics"].update(extra)
         return results    
