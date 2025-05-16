@@ -6,7 +6,7 @@ Implements the core functionality and utilities shared by all ML pipelines.
 
 import logging
 import warnings
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -15,8 +15,12 @@ from sklearn.base import BaseEstimator, clone
 from coco_pipe.ml.config import DEFAULT_CV
 from coco_pipe.ml.utils import get_cv_splitter
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 class BasePipeline(ABC):
@@ -101,6 +105,10 @@ class BasePipeline(ABC):
                     "y_pred": np.concatenate(all_pred),
                     "y_proba": np.concatenate(all_proba) if all_proba else None
                 }}
+    
+    def update_model_params(self, model_name: str, params: Dict[str, Any]):
+        self.model_configs[model_name]["estimator"].set_params(**params)
+
     def cross_validate(self, estimator: BaseEstimator, X, y):
         # --- adjust n_splits for stratified if too large ---
         if self.cv_strategy == "stratified":
@@ -127,7 +135,7 @@ class BasePipeline(ABC):
         else:
             split_args = (X, y)
         for fold_idx, (tr, va) in enumerate(cv.split(*split_args), start=1):
-            logger.info("Starting fold %d/%d", fold_idx, cv.get_n_splits(*split_args))
+            logging.info("Starting fold %d/%d", fold_idx, cv.get_n_splits(*split_args))
             X_train, X_val = X[tr], X[va]
             y_train, y_val = y[tr], y[va]
             est = clone(estimator)
@@ -189,12 +197,9 @@ class BasePipeline(ABC):
         mask = sfs.get_support()
         Xs = self.X[:, mask]
         out = self.baseline(model_name, Xs, self.y)
-        # get all feature names, turn them into a NumPy array
         orig_names = np.array(self._get_feature_names(self.X))
-        # now boolean‐index
         selected = orig_names[mask].tolist()
         logging.info(f"Selected features: {selected}")
-        print(f"Selected features: {selected}")
         out.update({"selected features": selected})
         return out
 
