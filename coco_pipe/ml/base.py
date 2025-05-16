@@ -40,7 +40,7 @@ class BasePipeline(ABC):
         self.X = X; self.y = y
         self.metric_funcs = metric_funcs
         self.model_configs = model_configs
-        self.metrics = list(default_metrics or [])
+        self.metrics = list(metric_funcs.keys()) if default_metrics == "all" else list(default_metrics or [])
         self.cv_kwargs = cv_kwargs
         self.cv_strategy = cv_kwargs.get("strategy", "stratified")
         self.n_jobs = n_jobs
@@ -82,7 +82,7 @@ class BasePipeline(ABC):
     def compute_metrics(fold_preds, metrics, funcs):
         import numpy as np
         scores = {m: [] for m in metrics}
-        
+        fold_sizes = [len(f["y_true"]) for f in fold_preds]
         all_true, all_pred, all_proba = [], [], []
         for f in fold_preds:
             all_true.append(f["y_true"])
@@ -98,9 +98,12 @@ class BasePipeline(ABC):
                 else:
                     scores[m].append(funcs[m](y_true=f["y_true"], y_pred=f["y_pred"]))
         arrs = {}
+        weights = np.array(fold_sizes, dtype=float)
         for m, s in scores.items():
             scores[m] = np.array(s)
-            arrs[m] = {"mean": float(np.mean(s)), "std": float(np.std(s)), "scores": s}
+            weighted_mean = float((scores[m] * weights).sum() / weights.sum())
+            std = float(np.sqrt((weights * (scores[m] - weighted_mean)**2).sum() / weights.sum()))  
+            arrs[m] = {"mean": weighted_mean, "std": std, "scores": s}
             logging.info(f"{m}: {arrs[m]['mean']:.4f} (±{arrs[m]['std']:.4f})")
         return {"metrics": arrs,
                 "predictions": {
