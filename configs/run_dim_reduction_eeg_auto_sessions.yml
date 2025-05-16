@@ -1,0 +1,35 @@
+# Config for EEG data dimension reduction with auto-detected sessions
+
+# -------------------------------------------------------------------
+# Data loading section: specify loader and its parameters
+# -------------------------------------------------------------------
+data:
+  # Choose the EEG data loader
+  type: eeg
+
+  # Path to BIDS-compliant EEG dataset
+  data_path: ./test_data/bids_eeg
+
+  # BIDS entities
+  task: rest
+  
+  # Subject identifier
+  subjects: ["pd6"]
+  
+  # No sessions specified - will automatically detect and load all available sessions
+
+# -------------------------------------------------------------------
+# Reducers section: list one or more methods to apply
+# -------------------------------------------------------------------
+reducers:
+  - method: PCA
+    n_components: 10
+
+# -------------------------------------------------------------------
+# Execution options
+# -------------------------------------------------------------------
+# Run multiple reducers in parallel if true.
+parallel: false
+
+# Where to save the overall summary JSON.
+summary_path: ./dr_summary_eeg_auto_sessions.json 

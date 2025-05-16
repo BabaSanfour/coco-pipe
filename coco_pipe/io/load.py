@@ -1,6 +1,66 @@
 import numpy as np
 import pandas as pd
 from typing import Union, Optional, List, Tuple
+import mne
+from typing import overload, Literal
+
+# Import read_meeg_bids and load_meeg from meeg
+from coco_pipe.io.meeg import read_meeg_bids, load_meeg
+
+# -----------------------------------------------------------------------------
+# Typing helpers & overloads for `load`
+# -----------------------------------------------------------------------------
+
+# Return-type aliases
+EmbeddingsReturn = Tuple[np.ndarray, np.ndarray, np.ndarray]
+TabularReturnWithTarget = Tuple[pd.DataFrame, pd.Series]
+TabularReturn = pd.DataFrame
+MeegReturnSingle = mne.io.Raw
+MeegReturnMultiple = List[mne.io.Raw]
+
+
+# Overload signatures mapping `type` argument to concrete return type.
+
+@overload
+def load(
+    *,
+    type: Literal["embeddings"],
+    data_path: str,
+    task: Optional[str] = ...,  # other params omitted for brevity
+    **kwargs,
+) -> EmbeddingsReturn: ...
+
+
+@overload
+def load(
+    *,
+    type: Literal["eeg", "meg", "meeg"],
+    data_path: str,
+    subjects: Union[str, List[str]],
+    **kwargs,
+) -> Union[MeegReturnSingle, MeegReturnMultiple]: ...
+
+
+@overload
+def load(
+    *,
+    type: Literal["tabular", "csv", "excel", "tsv"],
+    data_path: str,
+    target_col: str,
+    **kwargs,
+) -> TabularReturnWithTarget: ...
+
+
+@overload
+def load(
+    *,
+    type: Literal["tabular", "csv", "excel", "tsv"],
+    data_path: str,
+    target_col: None = ...,  # explicitly None to return full DataFrame
+    **kwargs,
+) -> TabularReturn: ...
+
+# The concrete implementation follows below.
 
 def load(
     type: str,
@@ -8,7 +68,7 @@ def load(
     task: Optional[str] = None,
     run: Optional[str] = None,
     processing: Optional[str] = None,
-    subjects: Optional[List[str]] = None,
+    subjects: Optional[Union[str, List[str]]] = None,
     max_seg: Optional[int] = None,
     flatten: bool = False,
     sensorwise: bool = False,
@@ -17,23 +77,82 @@ def load(
     index_col: Optional[Union[int, str]] = None,
     sheet_name: Optional[str] = None,
     sep: Optional[str] = None,
-) -> Union[Tuple[pd.DataFrame, pd.Series], Tuple[np.ndarray, np.ndarray, np.ndarray], pd.DataFrame]:
+    session: Optional[str] = None,
+    datatype: str = 'eeg',
+    suffix: str = 'eeg',
+    extension: Optional[str] = None,
+    verbose: bool = False
+) -> Union[Tuple[pd.DataFrame, pd.Series], Tuple[np.ndarray, np.ndarray, np.ndarray], pd.DataFrame, mne.io.Raw, List[mne.io.Raw]]:
+    """Generic data loader for COCO-Pipe.
+
+    Parameters
+    ----------
+    type : {'embeddings', 'eeg', 'meg', 'meeg', 'csv', 'tsv', 'excel', 'tabular'}
+        The modality / file-type to load.
+    data_path : str
+        Root directory or file path, depending on *type*.
+    task, run, processing : str | None
+        BIDS entities used by some loaders.  *run* maps to the BIDS *run* entity;
+        *session* (see below) maps to the BIDS *session* entity.
+    subjects : str | list[str] | None
+        Subject identifier(s).  For M/EEG loaders a list is accepted and returns
+        a list of ``mne.io.Raw`` objects; for other loaders either a single
+        subject or *None* (ignored) can be given.
+    max_seg, flatten, sensorwise : optional
+        Additional options used by the embeddings loader.
+    target_col : str | None
+        Target/label column for tabular data.  If *None*, the full DataFrame is
+        returned without target separation.
+    header, index_col, sheet_name, sep
+        Standard pandas read options for tabular loaders.
+    session : str | None
+        BIDS *session* entity for M/EEG files.
+    datatype, suffix, extension : str
+        Extra BIDSPath components forwarded to ``read_eeg_bids``.
+    verbose : bool
+        Passed through to MNE-BIDS for verbose output.
+
+    Returns
+    -------
+    Depending on *type*:
+
+    * 'embeddings' → (embeddings, subjects, times) :tuple[np.ndarray, …]
+    * M/EEG types  → ``mne.io.Raw`` or list thereof
+    * Tabular with *target_col* → (X, y) :tuple[pd.DataFrame, pd.Series]
+    * Tabular without *target_col* → pd.DataFrame
+    """
     if type == "embeddings":
         from coco_pipe.io.embeddings import load_embeddings, flatten_embeddings
-        emb, subj, times = load_embeddings(
+        emb, subj_array, times = load_embeddings(
             embeddings_root=data_path,
             task=task,
-            run=run,
+            run=run, # This 'run' is for embeddings, BIDSPath might use it as 'run' entity
             processing=processing,
-            subjects=subjects,
+            subjects=subjects if isinstance(subjects, list) or subjects is None else [subjects], # load_embeddings can take list
             max_seg=max_seg,
         )
         emb = emb.astype(np.float32)
         if flatten:
             emb = flatten_embeddings(emb, sensorwise=sensorwise)
-        return emb, subj, times
+        # Ensuring consistent return type with other branches if possible,
+        # though embeddings are typically (data, subjects, segments)
+        return emb, subj_array, times
     elif type in ["meeg", "meg", "eeg"]:
-        raise NotImplementedError("M/EEG loading not implemented yet")
+        # Use the new load_meeg function from meeg.py
+        if subjects is None:
+            raise ValueError("'subjects' must be provided for M/EEG BIDS loading.")
+        
+        return load_meeg(
+            bids_root=data_path,
+            subjects=subjects,
+            session=session,
+            task=task,
+            run=run,
+            datatype=datatype,
+            suffix=suffix,
+            extension=extension,
+            verbose=verbose
+        )
     elif type in ["tabular", "csv", "excel", "tsv"]:
         from coco_pipe.io.tabular import load_tabular
         return load_tabular(

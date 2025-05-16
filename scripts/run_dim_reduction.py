@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 def run_job(cfg: dict) -> dict:
     pipeline = DimReductionPipeline(**cfg)
-    out = pipeline.run()
+    out = pipeline.execute()
     return {"method": pipeline.method, "output": str(out)}
 
 def main():
@@ -49,7 +49,7 @@ def main():
     jobs = []
     for r in reducers_cfg:
         job = {
-            "loader":         data_cfg.get("loader", "embeddings"),
+            "type":           data_cfg.get("type", "embeddings"),
             "method":         r["method"],
             "data_path":      data_cfg["data_path"],
             "n_components":   r.get("n_components", 2),
@@ -60,7 +60,15 @@ def main():
             "subjects":       data_cfg.get("subjects"),
             "max_seg":        data_cfg.get("max_seg"),
             "sensorwise":     data_cfg.get("sensorwise", False),
+            "flatten":        data_cfg.get("flatten", False),
         }
+        
+        # Handle sessions parameter - can be a string or a list
+        if "sessions" in data_cfg:
+            job["session"] = data_cfg["sessions"] 
+        elif "session" in data_cfg:
+            job["session"] = data_cfg["session"]
+            
         jobs.append(job)
 
     results = []
