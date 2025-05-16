@@ -12,154 +12,99 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
-from sklearn.model_selection import (
-    StratifiedKFold,
-    LeaveOneGroupOut,
-    LeavePGroupsOut,
-    GroupKFold,
-)
-from sklearn.model_selection._split import BaseCrossValidator
-
 from coco_pipe.ml.config import DEFAULT_CV
+from coco_pipe.ml.utils import get_cv_splitter
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO)
 
 
-class PipelineError(Exception):
-    """Custom exception class for pipeline errors."""
-    pass
+class BasePipeline(ABC):
+    def __init__(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        metric_funcs: Dict[str, Any],
+        model_configs: Dict[str, Any],
+        default_metrics: Optional[Sequence[str]] = None,
+        cv_kwargs: Dict[str, Any] = DEFAULT_CV,
+        groups: Optional[Union[pd.Series, np.ndarray]] = None,
+        n_jobs: int = -1,
+        random_state: Optional[int] = None,
 
+    ):
+        self.X = X; self.y = y
+        self.metric_funcs = metric_funcs
+        self.model_configs = model_configs
+        self.metrics = list(default_metrics or [])
+        self.cv_kwargs = cv_kwargs
+        self.cv_strategy = cv_kwargs.get("strategy", "stratified")
+        self.n_jobs = n_jobs
+        self.groups = groups
+        self.random_state = random_state
+        self._validate_input()
+        self._validate_metrics()
 
-class CrossValidationStrategy:
-    """
-    Manage different cross-validation strategies and metric computation.
-    """
+    def _validate_input(self):
+        if not isinstance(self.X, (pd.DataFrame, np.ndarray)):
+            raise ValueError("X must be DataFrame or ndarray")
+        if len(self.X) != len(self.y):
+            raise ValueError("X and y length mismatch")
 
-    @staticmethod
-    def get_cv_splitter(
-        strategy: str, **kwargs: Any
-    ) -> BaseCrossValidator:
-        """
-        Return a scikit-learn CV splitter based on `strategy`.
-
-        Args:
-            strategy: One of 'stratified', 'leave_p_out', 'group_kfold'.
-            **kwargs: n_splits, shuffle, random_state, n_groups, etc.
-
-        Returns:
-            A BaseCrossValidator instance.
-
-        Raises:
-            PipelineError: If strategy is not recognized.
-        """
-        if strategy == "stratified":
-            n_splits = kwargs.get("n_splits", DEFAULT_CV["n_splits"])
-            shuffle = kwargs.get("shuffle", DEFAULT_CV["shuffle"])
-            random_state = kwargs.get("random_state", DEFAULT_CV["random_state"])
-
-            # Warn if random_state set but shuffle=False
-            if not shuffle and random_state is not None:
-                warnings.warn(
-                    "You set random_state=%r while shuffle=False. "
-                    "random_state will have no effect unless shuffle=True."
-                    % random_state,
-                    UserWarning
-                )
-                # Create with shuffle=True so random_state attribute is stored,
-                # then revert shuffle to False
-                splitter = StratifiedKFold(
-                    n_splits=n_splits,
-                    shuffle=True,
-                    random_state=random_state
-                )
-                splitter.shuffle = False
-                return splitter
-
-            # Normal creation
-            rs_arg = random_state if shuffle else None
-            return StratifiedKFold(
-                n_splits=n_splits,
-                shuffle=shuffle,
-                random_state=rs_arg
-            )
-
-        if strategy == "leave_p_out":
-            n_groups = kwargs.get("n_groups", DEFAULT_CV["n_groups"])
-            return (
-                LeavePGroupsOut(n_groups=n_groups)
-                if n_groups > 1
-                else LeaveOneGroupOut()
-            )
-
-        if strategy == "group_kfold":
-            return GroupKFold(n_splits=kwargs.get("n_splits", DEFAULT_CV["n_splits"]))
-
-        raise PipelineError(f"Unknown CV strategy: {strategy}")
+    def _validate_metrics(self):
+        invalid = [m for m in self.metrics if m not in self.metric_funcs]
+        if invalid:
+            raise ValueError(f"Unknown metrics: {invalid}")
     
     @staticmethod
-    def get_feature_importances(
-        est: BaseEstimator
-    ) -> Optional[np.ndarray]:
-        """
-        Extract feature importances or coefficients from a fitted estimator.
+    def _get_splitter(**cv_kwargs):
+        return get_cv_splitter(**cv_kwargs)
 
-        Args:
-            est: fitted estimator
-
-        Returns:
-            Array of importances or None.
-        """
+    @staticmethod
+    def get_feature_importances(est: BaseEstimator) -> Optional[np.ndarray]:
         if hasattr(est, "feature_importances_"):
             return est.feature_importances_
         if hasattr(est, "coef_"):
             coef = est.coef_
             return coef[0] if coef.ndim > 1 else coef
         return None
-
     @staticmethod
-    def cross_validate_with_predictions(
-        estimator: BaseEstimator,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
-        cv_strategy: str = DEFAULT_CV["strategy"],
-        groups: Optional[Sequence[Any]] = None,
-        random_state: int = DEFAULT_CV["random_state"],
-        n_jobs: int = -1,
-        **cv_kwargs: Any,
-    ) -> Dict[str, Any]:
-        """
-        Perform CV and return fold predictions + final fitted estimator.
-
-        Args:
-            estimator: scikit-learn estimator
-            X: feature matrix
-            y: target vector
-            cv_strategy: CV strategy name
-            groups: group labels for group-based splits
-            random_state: for reproducibility
-            n_jobs: parallel jobs (if supported)
-            **cv_kwargs: passed to get_cv_splitter
-
-        Returns:
-            Dict with keys:
-              - 'fold_predictions': list of fold dicts
-              - 'estimator': final estimator fitted on full data
-              - 'feature_importances': array or None
-
-        Notes
-        -----
-        The final estimator is trained on the full dataset after CV,
-        making it ready for deployment or further analysis.
-
-        """
+    def _get_feature_names(X: Union[pd.DataFrame, np.ndarray]) -> List[str]:
+        if isinstance(X, pd.DataFrame):
+            return X.columns.tolist()
+        return [f"feature_{i}" for i in range(X.shape[1])]
+    
+    @staticmethod
+    def compute_metrics(fold_preds, metrics, funcs):
+        import numpy as np
+        scores = {m: [] for m in metrics}
+        
+        all_true, all_pred, all_proba = [], [], []
+        for f in fold_preds:
+            all_true.append(f["y_true"])
+            all_pred.append(f["y_pred"])
+            if "y_proba" in f:
+                all_proba.append(f["y_proba"])
+            for m in metrics:
+                if hasattr(funcs[m], "_sign"):
+                    scores[m].append(funcs[m]._sign * funcs[m]._score_func(y_true=f["y_true"], y_pred=f["y_pred"]))
+                else:
+                    scores[m].append(funcs[m](y_true=f["y_true"], y_pred=f["y_pred"]))
+        arrs = {}
+        for m, s in scores.items():
+            scores[m] = np.array(s)
+            arrs[m] = {"mean": float(np.mean(s)), "std": float(np.std(s)), "scores": s}
+            logging.info(f"{m}: {arrs[m]['mean']:.4f} (±{arrs[m]['std']:.4f})")
+        return {"metrics": arrs,
+                "predictions": {
+                    "y_true": np.concatenate(all_true),
+                    "y_pred": np.concatenate(all_pred),
+                    "y_proba": np.concatenate(all_proba) if all_proba else None
+                }}
+    def cross_validate(self, estimator: BaseEstimator, X, y):
         # --- adjust n_splits for stratified if too large ---
-        if cv_strategy == "stratified":
-            desired = cv_kwargs.get("n_splits", DEFAULT_CV["n_splits"])
+        if self.cv_strategy == "stratified":
+            desired = self.cv_kwargs.get("n_splits", DEFAULT_CV["n_splits"])
             # compute minimum class count
             _, counts = np.unique(y, return_counts=True)
             min_count = counts.min()
@@ -169,184 +114,133 @@ class CrossValidationStrategy:
                     f"reducing to n_splits={min_count}.",
                     UserWarning
                 )
-                cv_kwargs["n_splits"] = int(min_count)
+                self.cv_kwargs["n_splits"] = int(min_count)
+        self.cv_kwargs["random_state"] = self.random_state
 
-        cv_kwargs["random_state"] = random_state
-        cv = CrossValidationStrategy.get_cv_splitter(cv_strategy, **cv_kwargs)
-
-        fold_predictions: List[Dict[str, Any]] = []
-        supports_proba = hasattr(estimator, "predict_proba")
-
+        cv = self._get_splitter(**self.cv_kwargs)
+        fold_preds, supports_proba = [], hasattr(estimator, "predict_proba")
         split_args: Tuple
-        if cv_strategy in ["leave_p_out", "group_kfold"]:
-            if groups is None:
-                raise PipelineError(f"'groups' required for strategy: {cv_strategy}")
-            split_args = (X, y, groups)
+        if self.cv_strategy in ["leave_p_out", "group_kfold"]:
+            if self.groups is None:
+                raise ValueError(f"'groups' required for strategy: {self.cv_strategy}")
+            split_args = (X, y, self.groups)
         else:
             split_args = (X, y)
-
-        for fold_idx, (train_idx, val_idx) in enumerate(cv.split(*split_args), start=1):
+        for fold_idx, (tr, va) in enumerate(cv.split(*split_args), start=1):
             logger.info("Starting fold %d/%d", fold_idx, cv.get_n_splits(*split_args))
-            X_train, X_val = X[train_idx], X[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-
+            X_train, X_val = X[tr], X[va]
+            y_train, y_val = y[tr], y[va]
             est = clone(estimator)
             if hasattr(est, "random_state"):
-                setattr(est, "random_state", random_state)
+                setattr(est, "random_state", self.random_state)
             est.fit(X_train, y_train)
-
-            fold_pred = {
-                "y_true": y_val,
-                "y_pred": est.predict(X_val),
-                "train_indices": train_idx,
-                "val_indices": val_idx,
-            }
+            pred = dict(
+                y_true=y_val,
+                y_pred=est.predict(X_val),
+                train_indices=tr, val_indices=va
+            )
             if supports_proba:
-                fold_pred["y_proba"] = est.predict_proba(X_val)
-
-            fold_predictions.append(fold_pred)
-
-        # Final fit on full data
-        final_estimator = clone(estimator)
-        if hasattr(final_estimator, "random_state"):
-            setattr(final_estimator, "random_state", random_state)
-        final_estimator.fit(X, y)
-        feature_importances = CrossValidationStrategy.get_feature_importances(
-            final_estimator
-        )
+                pred["y_proba"] = est.predict_proba(X_val)
+            fold_preds.append(pred)
+        # final fit
+        final = clone(estimator)
+        if hasattr(final, "random_state"):
+            setattr(final, "random_state", self.random_state)
+        final.fit(X, y)
+        feature_importances = self.get_feature_importances(final)
 
         return {
-            "fold_predictions": fold_predictions,
-            "estimator": final_estimator,
+            "fold_predictions": fold_preds,
+            "estimator": final,
             "feature_importances": feature_importances,
         }
 
+    def baseline(self, model_name: str, X: Optional[Union[pd.DataFrame, np.ndarray]] = None, 
+                 y: Optional[Union[pd.Series, np.ndarray]] = None, 
+                 best_params: Optional[Dict[str, Any]] = None):
+        cfg = self.model_configs[model_name]
+        if best_params is not None:
+            cfg["estimator"].set_params(**best_params)
+        metric_funcs = {m: self.metric_funcs[m] for m in self.metrics}
+        X = X if X is not None else self.X
+        y = y if y is not None else self.y
+        cv_results = self.cross_validate(cfg["estimator"], X, y)
+        results = self.compute_metrics(cv_results["fold_predictions"], self.metrics, metric_funcs)
+        return {"model": cv_results["estimator"], 
+                "feature_importances": cv_results["feature_importances"], 
+                **results}
 
-
-class BasePipeline(ABC):
-    """
-    Abstract base for ML pipelines.
-
-    Subclasses must implement `run()`.
-    """
-
-    def __init__(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
-        cv_strategy: str = DEFAULT_CV["strategy"],
-        groups: Optional[Sequence[Any]] = None,
-        random_state: int = DEFAULT_CV["random_state"],
-        n_jobs: int = -1,
-    ) -> None:
-        self.X = X
-        self.y = y
-        self.cv_strategy = cv_strategy
-        self.groups = groups
-        self.random_state = random_state
-        self.n_jobs = n_jobs
-        self._validate_input()
-
-    def _validate_input(self) -> None:
-        """Ensure X, y (and groups) have correct types and lengths."""
-        if not isinstance(self.X, (pd.DataFrame, np.ndarray)):
-            raise PipelineError("X must be a DataFrame or ndarray")
-        if not isinstance(self.y, (pd.Series, np.ndarray)):
-            raise PipelineError("y must be a Series or ndarray")
-        if len(self.X) != len(self.y):
-            raise PipelineError("X and y must have same number of samples")
-        if self.groups is not None and len(self.groups) != len(self.y):
-            raise PipelineError("groups length must match y length")
-
-    def _validate_estimator(self, est: Any) -> bool:
-        """Check estimator has fit() and predict()."""
-        return all(hasattr(est, m) for m in ("fit", "predict"))
-
-    def get_feature_names(self) -> np.ndarray:
-        """Return DataFrame columns or numeric indices."""
-        if hasattr(self.X, "columns"):
-            return self.X.columns.values
-        return np.arange(self.X.shape[1])
-
-    @staticmethod
-    def compute_metrics(
-        fold_predictions: List[Dict[str, Any]],
-        metrics: List[str],
-        metric_funcs: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Compute and log metrics across CV folds.
-
-        Returns dict with:
-         - 'metrics': {metric: {'mean', 'std', 'scores'}}
-         - 'predictions': concatenated y_true, y_pred, (y_proba)
-        """
-        scores: Dict[str, List[float]] = {m: [] for m in metrics}
-        all_true, all_pred, all_proba = [], [], []
-        has_proba = "y_proba" in fold_predictions[0]
-
-        for fold in fold_predictions:
-            y_true = fold["y_true"]
-            y_pred = fold["y_pred"]
-            all_true.append(y_true)
-            all_pred.append(y_pred)
-            if has_proba:
-                all_proba.append(fold["y_proba"])
-            for m in metrics:
-                if m not in metric_funcs:
-                    raise PipelineError(f"No function for metric '{m}'")
-                score = metric_funcs[m](y_true, y_pred)
-                scores[m].append(score)
-
-        results = {}
-        for m, vals in scores.items():
-            arr = np.array(vals)
-            results[m] = {"mean": arr.mean(), "std": arr.std(), "scores": arr.tolist()}
-            logger.info("%s: %.4f ± %.4f", m, results[m]["mean"], results[m]["std"])
-
-        preds = {
-            "y_true": np.concatenate(all_true),
-            "y_pred": np.concatenate(all_pred),
-        }
-        if has_proba:
-            preds["y_proba"] = np.concatenate(all_proba)
-
-        return {"metrics": results, "predictions": preds}
-
-    def cross_validate(
-        self,
-        estimator: BaseEstimator,
-        X: Optional[Any] = None,
-        y: Optional[Any] = None,
-        **cv_kwargs: Any,
-    ) -> Dict[str, Any]:
-        """
-        Wrapper around CrossValidationStrategy to get fold predictions.
-        """
-        if not self._validate_estimator(estimator):
-            raise PipelineError("Estimator must implement fit() and predict()")
-        X_used = self.X if X is None else X
-        y_used = self.y if y is None else y
-        return CrossValidationStrategy.cross_validate_with_predictions(
-            estimator=estimator,
-            X=X_used,
-            y=y_used,
-            cv_strategy=self.cv_strategy,
-            groups=self.groups,
-            random_state=self.random_state,
+    def feature_selection(
+        self, model_name: str, n_features: Optional[int] = None,
+        direction: str = "forward", scoring: Optional[str] = None
+    ):
+        from sklearn.feature_selection import SequentialFeatureSelector
+        if scoring is None:
+            scoring = self.metrics[0]
+        sfs = SequentialFeatureSelector(
+            self.model_configs[model_name]["estimator"],
+            n_features_to_select=(n_features or self.X.shape[1] // 2),
+            direction=direction,
+            scoring=self.metric_funcs[scoring],
             n_jobs=self.n_jobs,
-            **cv_kwargs,
+            cv=self._get_splitter(**self.cv_kwargs)
         )
+        sfs.fit(self.X, self.y)
+        mask = sfs.get_support()
+        Xs = self.X[:, mask]
+        out = self.baseline(model_name, Xs, self.y)
+        # get all feature names, turn them into a NumPy array
+        orig_names = np.array(self._get_feature_names(self.X))
+        # now boolean‐index
+        selected = orig_names[mask].tolist()
+        logging.info(f"Selected features: {selected}")
+        print(f"Selected features: {selected}")
+        out.update({"selected features": selected})
+        return out
 
-    @abstractmethod
-    def run(
-        self,
-        estimator: BaseEstimator,
-        metrics: List[str],
-        metric_funcs: Dict[str, Any],
-        **cv_kwargs: Any,
-    ) -> Dict[str, Any]:
-        """
-        Execute the pipeline: CV + metrics + any task-specific steps.
-        """
-        pass
+    def hp_search(
+        self, model_name: str, search_type="grid",
+        param_grid=None, n_iter=50, scoring: Optional[str] = None
+    ):
+        if scoring is None:
+            scoring = self.metrics[0]
+        estimator = self.model_configs[model_name]["estimator"]
+        grid = param_grid or self.model_configs[model_name].get("params", {})
+        CV = self._get_splitter(**self.cv_kwargs)
+        if search_type == "grid":
+            from sklearn.model_selection import GridSearchCV
+            search = GridSearchCV(estimator, grid, scoring=self.metric_funcs[scoring],
+                                  cv=CV, n_jobs=self.n_jobs)
+        else:
+            from sklearn.model_selection import RandomizedSearchCV
+            search = RandomizedSearchCV(
+                estimator, grid, n_iter=n_iter,
+                scoring=self.metric_funcs[scoring],
+                cv=CV, n_jobs=self.n_jobs
+            )
+        search.fit(self.X, self.y)
+        best_params = search.best_params_
+        logging.info(f"Best parameters: {best_params}")
+        # re-baseline with best parameters
+        out = self.baseline(model_name, self.X, self.y, best_params)
+        out.update({"best_params": best_params})
+        return out
+    
+    def hp_search_fs(self, model_name: str, search_type="grid",
+                     param_grid=None, n_features=None, direction="forward", 
+                     n_iter=50, scoring: Optional[str] = None):
+        out = self.feature_selection(model_name, n_features, direction, scoring)
+        best_features = out["selected features"]
+        out = self.hp_search(model_name, search_type, param_grid, n_iter, scoring, best_features)
+        out.update({"best_features": best_features})
+        return out
+
+    def execute(self, type='baseline', **kwargs):
+        if type == "hp_search_fs":
+            return self.hp_search_fs(**kwargs)
+        elif type == 'feature_selection':
+            return self.feature_selection(**kwargs)
+        elif type == 'hp_search':
+            return self.hp_search(**kwargs)
+        elif type == 'baseline':
+            return self.baseline(**kwargs)

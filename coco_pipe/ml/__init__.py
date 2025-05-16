@@ -1,10 +1,8 @@
-# coco_pipe/ml/__init__.py
-
-from .config import DEFAULT_CV
-from .base import CrossValidationStrategy, BasePipeline
+from .config import DEFAULT_CV, CLASSIFICATION_METRICS, REGRESSION_METRICS
+from .utils import get_cv_splitter
+from .base import BasePipeline
 
 __all__ = [
-    "DEFAULT_CV",
-    "CrossValidationStrategy",
-    "BasePipeline",
+    "DEFAULT_CV", "CLASSIFICATION_METRICS", "REGRESSION_METRICS",
+    "get_cv_splitter", "BasePipeline"
 ]
