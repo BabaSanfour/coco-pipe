@@ -54,6 +54,61 @@ BINARY_MODELS = {
     },
 }
 
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+
+MULTICLASS_MODELS = {
+    "Logistic Regression": {
+        "estimator": LogisticRegression(
+            multi_class="multinomial", solver="lbfgs", random_state=42, max_iter=1000
+        ),
+        "params": {
+            "C": [0.01, 0.1, 1, 10],
+            "penalty": ["l2"],
+            "solver": ["lbfgs", "saga"],
+            "multi_class": ["multinomial"],
+        },
+    },
+    "Decision Tree": {
+        "estimator": DecisionTreeClassifier(random_state=42),
+        "params": {
+            "max_depth": [None, 3, 5, 10],
+            "min_samples_split": [2, 5, 10],
+            "criterion": ["gini", "entropy"],
+        },
+    },
+    "Random Forest": {
+        "estimator": RandomForestClassifier(random_state=42),
+        "params": {
+            "n_estimators": [100, 200],
+            "max_depth": [None, 3, 5],
+            "min_samples_split": [2, 5],
+            "criterion": ["gini", "entropy"],
+        },
+    },
+    "Gradient Boosting": {
+        "estimator": GradientBoostingClassifier(random_state=42),
+        "params": {
+            "n_estimators": [100, 200],
+            "learning_rate": [0.01, 0.1],
+            "max_depth": [3, 5],
+            "min_samples_split": [2, 5],
+        },
+    },
+    "SVC": {
+        "estimator": SVC(probability=True, random_state=42),
+        "params": {
+            "C": [0.1, 1, 10],
+            "kernel": ["linear", "rbf", "poly"],
+            "gamma": ["scale", "auto"],
+            "decision_function_shape": ["ovr", "ovo"],
+        },
+    },
+}
+
+
 
 REGRESSION_METRICS = {
     "r2": make_scorer(r2_score),

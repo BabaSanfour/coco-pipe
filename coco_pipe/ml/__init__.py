@@ -2,7 +2,8 @@ from .config import DEFAULT_CV, CLASSIFICATION_METRICS, REGRESSION_METRICS
 from .utils import get_cv_splitter
 from .base import BasePipeline
 from .binary_classification import BinaryClassificationPipeline
+from .multiclass_classification import MultiClassPipeline
 __all__ = [
     "DEFAULT_CV", "CLASSIFICATION_METRICS", "REGRESSION_METRICS",
-    "get_cv_splitter", "BasePipeline", "BinaryClassificationPipeline"
+    "get_cv_splitter", "BasePipeline", "BinaryClassificationPipeline", "MultiClassPipeline"
 ]
