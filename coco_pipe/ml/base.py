@@ -15,7 +15,7 @@ from sklearn.base import BaseEstimator, clone
 from coco_pipe.ml.config import DEFAULT_CV
 from coco_pipe.ml.utils import get_cv_splitter
 
-# Configure logging
+logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
