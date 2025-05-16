@@ -1,241 +1,244 @@
 """
-Base ML pipeline module with core functionality and utilities.
-
-This module provides the foundational components for machine learning pipelines,
-implementing core functionality that is shared across different types of ML tasks
-(classification, regression, etc.).
-
-Key Features:
-- Cross-validation strategies (stratified, leave-p-out, group-based)
-- Prediction collection and aggregation
-- Metric computation across folds
-- Input validation and error handling
-- Model cloning and validation
-- Feature importance extraction
+base.py
+----------------
+Implements the core functionality and utilities shared by all ML pipelines.
 """
 
 import logging
-import pandas as pd
+import warnings
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
 import numpy as np
-from sklearn.base import clone
+import pandas as pd
+from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import (
     StratifiedKFold,
     LeaveOneGroupOut,
     LeavePGroupsOut,
-    GroupKFold
+    GroupKFold,
 )
+from sklearn.model_selection._split import BaseCrossValidator
 
-# Configure logging
+from coco_pipe.ml.config import DEFAULT_CV
+
+logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
+class PipelineError(Exception):
+    """Custom exception class for pipeline errors."""
+    pass
+
+
 class CrossValidationStrategy:
     """
-    Class to manage different cross-validation strategies and metric computation.
-    
-    This class provides a unified interface for:
-    - Selecting and configuring CV splitters
-    - Performing cross-validation with prediction collection
-    - Computing metrics across CV folds
-    - Aggregating predictions and results
-    
-    Supported CV Strategies:
-    - 'stratified': Stratified K-Fold CV (preserves class distribution)
-    - 'leave_p_out': Leave-P-Groups-Out CV (for group-based validation)
-    - 'group_kfold': Group K-Fold CV (no group overlap between folds)
-    
-    The class follows a consistent pattern:
-    1. CV splitter selection and configuration
-    2. Data splitting and model training
-    3. Prediction collection for each fold
-    4. Metric computation and aggregation
+    Manage different cross-validation strategies and metric computation.
     """
-    
-    @staticmethod
-    def get_cv_splitter(strategy: str, **kwargs):
-        """
-        Get the appropriate cross-validation splitter based on strategy.
-        
-        Parameters
-        ----------
-        strategy : str
-            The cross-validation strategy to use:
-            - 'stratified': Stratified K-Fold
-            - 'leave_p_out': Leave-P-Groups-Out
-            - 'group_kfold': Group K-Fold
-        **kwargs : dict
-            Additional arguments for CV splitter:
-            - n_splits: Number of folds (for stratified and group k-fold)
-            - n_groups: Number of groups to leave out (for leave-p-out)
-            - shuffle: Whether to shuffle (for stratified)
-            - random_state: Random state (for shuffling)
-            
-        Returns
-        -------
-        splitter : object
-            A scikit-learn compatible cross-validation splitter
-            
-        Raises
-        ------
-        ValueError
-            If strategy is not recognized
-        """
-        if strategy == "stratified":
-            return StratifiedKFold(
-                n_splits=kwargs.get("n_splits", 5),
-                shuffle=kwargs.get("shuffle", True),
-                random_state=kwargs.get("random_state", 42)
-            )
-        elif strategy == "leave_p_out":
-            n_groups = kwargs.get("n_groups", 1)
-            return LeavePGroupsOut(n_groups=n_groups) if n_groups > 1 else LeaveOneGroupOut()
-        elif strategy == "group_kfold":
-            return GroupKFold(n_splits=kwargs.get("n_splits", 5))
-        else:
-            raise ValueError(f"Unknown CV strategy: {strategy}")
 
     @staticmethod
-    def cross_validate_with_predictions(estimator, X, y, cv_strategy="stratified", 
-                                      groups=None, random_state=42, **cv_kwargs):
+    def get_cv_splitter(
+        strategy: str, **kwargs: Any
+    ) -> BaseCrossValidator:
         """
-        Perform cross-validation and collect predictions for each fold.
-        
-        This method handles the complete CV process:
-        1. Splits data according to CV strategy
-        2. Trains model on each training fold
-        3. Collects predictions for each validation fold
-        4. Trains final model on full dataset
-        
-        Parameters
-        ----------
-        estimator : estimator object
-            Scikit-learn compatible estimator to cross-validate
-        X : array-like of shape (n_samples, n_features)
-            Feature matrix
-        y : array-like of shape (n_samples,)
-            Target vector
-        cv_strategy : str, optional (default="stratified")
-            Cross-validation strategy to use
-        groups : array-like of shape (n_samples,), optional
-            Group labels for group-based CV strategies
-        random_state : int, optional (default=42)
-            Random state for reproducibility
-        **cv_kwargs : dict
-            Additional arguments for CV splitter
-            
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - fold_predictions: List of dicts with predictions for each fold
-                - y_true: True values for the fold
-                - y_pred: Predictions for the fold
-                - y_proba: Probability predictions (if available)
-                - train_indices: Training set indices
-                - val_indices: Validation set indices
-            - estimator: Final estimator trained on full dataset
-            
+        Return a scikit-learn CV splitter based on `strategy`.
+
+        Args:
+            strategy: One of 'stratified', 'leave_p_out', 'group_kfold'.
+            **kwargs: n_splits, shuffle, random_state, n_groups, etc.
+
+        Returns:
+            A BaseCrossValidator instance.
+
+        Raises:
+            PipelineError: If strategy is not recognized.
+        """
+        if strategy == "stratified":
+            n_splits = kwargs.get("n_splits", DEFAULT_CV["n_splits"])
+            shuffle = kwargs.get("shuffle", DEFAULT_CV["shuffle"])
+            random_state = kwargs.get("random_state", DEFAULT_CV["random_state"])
+
+            # Warn if random_state set but shuffle=False
+            if not shuffle and random_state is not None:
+                warnings.warn(
+                    "You set random_state=%r while shuffle=False. "
+                    "random_state will have no effect unless shuffle=True."
+                    % random_state,
+                    UserWarning
+                )
+                # Create with shuffle=True so random_state attribute is stored,
+                # then revert shuffle to False
+                splitter = StratifiedKFold(
+                    n_splits=n_splits,
+                    shuffle=True,
+                    random_state=random_state
+                )
+                splitter.shuffle = False
+                return splitter
+
+            # Normal creation
+            rs_arg = random_state if shuffle else None
+            return StratifiedKFold(
+                n_splits=n_splits,
+                shuffle=shuffle,
+                random_state=rs_arg
+            )
+
+        if strategy == "leave_p_out":
+            n_groups = kwargs.get("n_groups", DEFAULT_CV["n_groups"])
+            return (
+                LeavePGroupsOut(n_groups=n_groups)
+                if n_groups > 1
+                else LeaveOneGroupOut()
+            )
+
+        if strategy == "group_kfold":
+            return GroupKFold(n_splits=kwargs.get("n_splits", DEFAULT_CV["n_splits"]))
+
+        raise PipelineError(f"Unknown CV strategy: {strategy}")
+    
+    @staticmethod
+    def get_feature_importances(
+        est: BaseEstimator
+    ) -> Optional[np.ndarray]:
+        """
+        Extract feature importances or coefficients from a fitted estimator.
+
+        Args:
+            est: fitted estimator
+
+        Returns:
+            Array of importances or None.
+        """
+        if hasattr(est, "feature_importances_"):
+            return est.feature_importances_
+        if hasattr(est, "coef_"):
+            coef = est.coef_
+            return coef[0] if coef.ndim > 1 else coef
+        return None
+
+    @staticmethod
+    def cross_validate_with_predictions(
+        estimator: BaseEstimator,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        cv_strategy: str = DEFAULT_CV["strategy"],
+        groups: Optional[Sequence[Any]] = None,
+        random_state: int = DEFAULT_CV["random_state"],
+        n_jobs: int = -1,
+        **cv_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """
+        Perform CV and return fold predictions + final fitted estimator.
+
+        Args:
+            estimator: scikit-learn estimator
+            X: feature matrix
+            y: target vector
+            cv_strategy: CV strategy name
+            groups: group labels for group-based splits
+            random_state: for reproducibility
+            n_jobs: parallel jobs (if supported)
+            **cv_kwargs: passed to get_cv_splitter
+
+        Returns:
+            Dict with keys:
+              - 'fold_predictions': list of fold dicts
+              - 'estimator': final estimator fitted on full data
+              - 'feature_importances': array or None
+
         Notes
         -----
         The final estimator is trained on the full dataset after CV,
         making it ready for deployment or further analysis.
+
         """
-        # Set random state in cv_kwargs
-        cv_kwargs['random_state'] = random_state
-        
-        # Get CV splitter
+        # --- adjust n_splits for stratified if too large ---
+        if cv_strategy == "stratified":
+            desired = cv_kwargs.get("n_splits", DEFAULT_CV["n_splits"])
+            # compute minimum class count
+            _, counts = np.unique(y, return_counts=True)
+            min_count = counts.min()
+            if desired > min_count:
+                warnings.warn(
+                    f"Requested n_splits={desired} > smallest class count ({min_count}); "
+                    f"reducing to n_splits={min_count}.",
+                    UserWarning
+                )
+                cv_kwargs["n_splits"] = int(min_count)
+
+        cv_kwargs["random_state"] = random_state
         cv = CrossValidationStrategy.get_cv_splitter(cv_strategy, **cv_kwargs)
-        
-        # Initialize results
-        fold_predictions = []
-        supports_proba = hasattr(estimator, 'predict_proba')
-        
-        # Determine split arguments based on CV strategy
+
+        fold_predictions: List[Dict[str, Any]] = []
+        supports_proba = hasattr(estimator, "predict_proba")
+
+        split_args: Tuple
         if cv_strategy in ["leave_p_out", "group_kfold"]:
             if groups is None:
-                raise ValueError(f"groups must be provided for {cv_strategy}")
+                raise PipelineError(f"'groups' required for strategy: {cv_strategy}")
             split_args = (X, y, groups)
         else:
             split_args = (X, y)
-        
-        # Perform cross-validation
-        for train_idx, val_idx in cv.split(*split_args):
-            # Split data
+
+        for fold_idx, (train_idx, val_idx) in enumerate(cv.split(*split_args), start=1):
+            logger.info("Starting fold %d/%d", fold_idx, cv.get_n_splits(*split_args))
             X_train, X_val = X[train_idx], X[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
-            
-            # Clone and fit estimator
+
             est = clone(estimator)
-            if hasattr(est, 'random_state'):
-                est.random_state = random_state
+            if hasattr(est, "random_state"):
+                setattr(est, "random_state", random_state)
             est.fit(X_train, y_train)
-            
-            # Get predictions
+
             fold_pred = {
-                'y_true': y_val,
-                'y_pred': est.predict(X_val),
-                'train_indices': train_idx,
-                'val_indices': val_idx
+                "y_true": y_val,
+                "y_pred": est.predict(X_val),
+                "train_indices": train_idx,
+                "val_indices": val_idx,
             }
-            
             if supports_proba:
-                fold_pred['y_proba'] = est.predict_proba(X_val)
-            
+                fold_pred["y_proba"] = est.predict_proba(X_val)
+
             fold_predictions.append(fold_pred)
-        
-        # Fit on full dataset
+
+        # Final fit on full data
         final_estimator = clone(estimator)
-        if hasattr(final_estimator, 'random_state'):
-            final_estimator.random_state = random_state
+        if hasattr(final_estimator, "random_state"):
+            setattr(final_estimator, "random_state", random_state)
         final_estimator.fit(X, y)
-        feature_importances = CrossValidationStrategy.get_feature_importances(final_estimator)
+        feature_importances = CrossValidationStrategy.get_feature_importances(
+            final_estimator
+        )
+
         return {
-            'fold_predictions': fold_predictions,
-            'estimator': final_estimator,
-            'feature_importances': feature_importances
+            "fold_predictions": fold_predictions,
+            "estimator": final_estimator,
+            "feature_importances": feature_importances,
         }
 
 
-class BasePipeline:
+
+class BasePipeline(ABC):
     """
-    Base pipeline class providing core ML pipeline functionality.
-    
-    This class serves as the foundation for specific ML pipelines (classification,
-    regression, etc.) by providing common functionality:
-    - Cross-validation with prediction collection
-    - Input validation and error handling
-    - Model cloning and validation
-    - Feature importance extraction
-    - Basic data handling
-    
-    The class is designed to be extended by task-specific pipelines that add
-    their own metrics, models, and evaluation methods.
-    
-    Parameters
-    ----------
-    X : array-like of shape (n_samples, n_features)
-        Feature matrix
-    y : array-like of shape (n_samples,)
-        Target vector
-    cv_strategy : str, optional (default="stratified")
-        Cross-validation strategy to use
-    groups : array-like of shape (n_samples,), optional
-        Group labels for group-based CV
-    random_state : int, optional (default=42)
-        Random state for reproducibility
-    n_jobs : int, optional (default=-1)
-        Number of parallel jobs
-        
-    Notes
-    -----
-    This class is not meant to be used directly, but rather serves as a base
-    for specific pipeline implementations like ClassificationPipeline.
+    Abstract base for ML pipelines.
+
+    Subclasses must implement `run()`.
     """
-    
-    def __init__(self, X, y, cv_strategy="stratified", groups=None, random_state=42, n_jobs=-1):
+
+    def __init__(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        cv_strategy: str = DEFAULT_CV["strategy"],
+        groups: Optional[Sequence[Any]] = None,
+        random_state: int = DEFAULT_CV["random_state"],
+        n_jobs: int = -1,
+    ) -> None:
         self.X = X
         self.y = y
         self.cv_strategy = cv_strategy
@@ -243,227 +246,107 @@ class BasePipeline:
         self.random_state = random_state
         self.n_jobs = n_jobs
         self._validate_input()
-    
-    def _validate_input(self):
-        """
-        Validate input data format and dimensions.
-        
-        Raises
-        ------
-        ValueError
-            If input validation fails
-        """
+
+    def _validate_input(self) -> None:
+        """Ensure X, y (and groups) have correct types and lengths."""
         if not isinstance(self.X, (pd.DataFrame, np.ndarray)):
-            raise ValueError("X must be a pandas DataFrame or numpy array")
+            raise PipelineError("X must be a DataFrame or ndarray")
         if not isinstance(self.y, (pd.Series, np.ndarray)):
-            raise ValueError("y must be a pandas Series or numpy array")
-        if self.X.shape[0] != len(self.y):
-            raise ValueError("X and y must have the same number of samples")
+            raise PipelineError("y must be a Series or ndarray")
+        if len(self.X) != len(self.y):
+            raise PipelineError("X and y must have same number of samples")
         if self.groups is not None and len(self.groups) != len(self.y):
-            raise ValueError("groups must have the same length as y")
+            raise PipelineError("groups length must match y length")
 
-    def _validate_estimator(self, estimator):
-        """
-        Validate that an estimator has required methods.
-        
-        Parameters
-        ----------
-        estimator : object
-            Estimator to validate
-            
-        Returns
-        -------
-        bool
-            True if estimator has all required methods
-        """
-        required_methods = ['fit', 'predict']
-        return all(hasattr(estimator, method) for method in required_methods)
+    def _validate_estimator(self, est: Any) -> bool:
+        """Check estimator has fit() and predict()."""
+        return all(hasattr(est, m) for m in ("fit", "predict"))
 
-    def get_feature_names(self):
-        """
-        Get feature names from X if available.
-        
-        Returns
-        -------
-        array-like
-            Feature names if X is a DataFrame, otherwise feature indices
-        """
-        if hasattr(self.X, 'columns'):
-            return self.X.columns
+    def get_feature_names(self) -> np.ndarray:
+        """Return DataFrame columns or numeric indices."""
+        if hasattr(self.X, "columns"):
+            return self.X.columns.values
         return np.arange(self.X.shape[1])
 
-    def get_feature_importances(self, estimator):
-        """
-        Extract feature importances from an estimator if available.
-        
-        Parameters
-        ----------
-        estimator : estimator object
-            Fitted estimator to extract feature importances from
-            
-        Returns
-        -------
-        array-like or None
-            Feature importances if available, None otherwise
-        """
-        if hasattr(estimator, 'feature_importances_'):
-            return estimator.feature_importances_
-        elif hasattr(estimator, 'coef_'):
-            coef = estimator.coef_
-            return coef[0] if len(coef.shape) > 1 else coef
-        return None
-    
     @staticmethod
-    def compute_metrics(fold_predictions, metrics, metric_funcs):
+    def compute_metrics(
+        fold_predictions: List[Dict[str, Any]],
+        metrics: List[str],
+        metric_funcs: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
-        Compute cross-validation metrics from fold predictions.
-        
-        This method handles metric computation across CV folds:
-        1. Collects predictions from all folds
-        2. Computes specified metrics for each fold
-        3. Aggregates results with statistics
-        
-        Parameters
-        ----------
-        fold_predictions : list
-            List of dictionaries containing predictions for each fold
-        metrics : list
-            List of metric names to compute
-        metric_funcs : dict
-            Dictionary mapping metric names to their scoring functions
-            
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - metrics: Dict with scores for each metric:
-                - mean: Mean score across folds
-                - std: Standard deviation across folds
-                - scores: List of scores for each fold
-            - predictions: Dict with:
-                - y_true: Concatenated true values from all folds
-                - y_pred: Concatenated predictions from all folds
-                - y_proba: Concatenated probability predictions if available
-        """
-        metric_scores = {metric: [] for metric in metrics}
-        
-        # Initialize lists to store predictions
-        all_y_true = []
-        all_y_pred = []
-        all_y_proba = []
-        has_proba = 'y_proba' in fold_predictions[0]
-        
-        # Compute scores for each fold and collect predictions
-        for fold in fold_predictions:
-            y_true = fold['y_true']
-            y_pred = fold['y_pred']
-            
-            # Store predictions
-            all_y_true.append(y_true)
-            all_y_pred.append(y_pred)
-            if has_proba:
-                all_y_proba.append(fold['y_proba'])
-            
-            # Compute metrics
-            for metric in metrics:
-                score = metric_funcs[metric](y_true, y_pred)
-                metric_scores[metric].append(score)
-        
-        # Compute statistics for metrics
-        metric_results = {}
-        for metric, scores in metric_scores.items():
-            scores = np.array(scores)
-            metric_results[metric] = {
-                'mean': scores.mean(),
-                'std': scores.std(),
-                'scores': scores.tolist()
-            }
-            # Log results
-            logging.info(f"{metric}: {metric_results[metric]['mean']:.4f} (±{metric_results[metric]['std']:.4f})")
+        Compute and log metrics across CV folds.
 
-        # Concatenate all predictions
-        predictions = {
-            'y_true': np.concatenate(all_y_true),
-            'y_pred': np.concatenate(all_y_pred)
+        Returns dict with:
+         - 'metrics': {metric: {'mean', 'std', 'scores'}}
+         - 'predictions': concatenated y_true, y_pred, (y_proba)
+        """
+        scores: Dict[str, List[float]] = {m: [] for m in metrics}
+        all_true, all_pred, all_proba = [], [], []
+        has_proba = "y_proba" in fold_predictions[0]
+
+        for fold in fold_predictions:
+            y_true = fold["y_true"]
+            y_pred = fold["y_pred"]
+            all_true.append(y_true)
+            all_pred.append(y_pred)
+            if has_proba:
+                all_proba.append(fold["y_proba"])
+            for m in metrics:
+                if m not in metric_funcs:
+                    raise PipelineError(f"No function for metric '{m}'")
+                score = metric_funcs[m](y_true, y_pred)
+                scores[m].append(score)
+
+        results = {}
+        for m, vals in scores.items():
+            arr = np.array(vals)
+            results[m] = {"mean": arr.mean(), "std": arr.std(), "scores": arr.tolist()}
+            logger.info("%s: %.4f ± %.4f", m, results[m]["mean"], results[m]["std"])
+
+        preds = {
+            "y_true": np.concatenate(all_true),
+            "y_pred": np.concatenate(all_pred),
         }
         if has_proba:
-            predictions['y_proba'] = np.concatenate(all_y_proba)
-            
-        return {
-            'metrics': metric_results,
-            'predictions': predictions
-        }
+            preds["y_proba"] = np.concatenate(all_proba)
 
-    def cross_validate(self, estimator, X=None, y=None, **cv_kwargs):
+        return {"metrics": results, "predictions": preds}
+
+    def cross_validate(
+        self,
+        estimator: BaseEstimator,
+        X: Optional[Any] = None,
+        y: Optional[Any] = None,
+        **cv_kwargs: Any,
+    ) -> Dict[str, Any]:
         """
-        Perform cross-validation with predictions.
-        
-        This method uses CrossValidationStrategy to perform CV and return
-        predictions. Specific pipeline implementations should handle metric
-        computation from these predictions.
-        
-        Parameters
-        ----------
-        estimator : estimator object
-            Estimator to cross-validate
-        X : array-like, optional
-            Features to use (defaults to self.X)
-        y : array-like, optional
-            Target to use (defaults to self.y)
-        **cv_kwargs : dict
-            Additional arguments for CV splitter
-            
-        Returns
-        -------
-        dict
-            Cross-validation results with predictions
-            
-        Raises
-        ------
-        ValueError
-            If estimator validation fails
+        Wrapper around CrossValidationStrategy to get fold predictions.
         """
         if not self._validate_estimator(estimator):
-            raise ValueError("Estimator must implement fit() and predict() methods")
-        
-        X = self.X if X is None else X
-        y = self.y if y is None else y
-        
+            raise PipelineError("Estimator must implement fit() and predict()")
+        X_used = self.X if X is None else X
+        y_used = self.y if y is None else y
         return CrossValidationStrategy.cross_validate_with_predictions(
             estimator=estimator,
-            X=X,
-            y=y,
+            X=X_used,
+            y=y_used,
             cv_strategy=self.cv_strategy,
             groups=self.groups,
             random_state=self.random_state,
             n_jobs=self.n_jobs,
-            **cv_kwargs
+            **cv_kwargs,
         )
-    
-    def run(self, estimator, X: None, y: None, metrics, metric_funcs, **cv_kwargs):
-        cv_results = self.cross_validate(estimator, X, y, **cv_kwargs)
-        cv_results.update(self.compute_metrics(cv_results['fold_predictions'], metrics, metric_funcs))
-        return cv_results
-    
-    def baseline(self, estimator, X, y):
-        """
-        Run baseline evaluation for estimator.
-        """
-        pass
 
-    def feature_selection(self, model_name, n_features, direction, scoring):
+    @abstractmethod
+    def run(
+        self,
+        estimator: BaseEstimator,
+        metrics: List[str],
+        metric_funcs: Dict[str, Any],
+        **cv_kwargs: Any,
+    ) -> Dict[str, Any]:
         """
-        Perform feature selection using sequential feature selection.
-        """
-        pass
-
-    def hp_search(self, model_name, param_grid, search_type, n_iter, scoring):
-        """
-        Perform hyperparameter optimization.
-        """
-    
-    def run(self, **kwargs):
-        """
-        Run the pipeline.
+        Execute the pipeline: CV + metrics + any task-specific steps.
         """
         pass
