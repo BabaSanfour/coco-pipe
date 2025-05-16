@@ -9,7 +9,6 @@ import logging
 import numpy as np
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
-    make_scorer
 )
 from .base import BasePipeline
 from .config import BINARY_METRICS, BINARY_MODELS, DEFAULT_CV
