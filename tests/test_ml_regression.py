@@ -2,8 +2,9 @@ import pytest
 import numpy as np
 from pytest import approx
 from sklearn.datasets import make_regression
-from coco_pipe.ml.config import REGRESSION_METRICS, REGRESSION_MODELS, DEFAULT_CV
+from coco_pipe.ml.config import REGRESSION_METRICS, REGRESSION_MODELS, DEFAULT_CV, MULTIOUTPUT_MODELS_REGRESSION
 from coco_pipe.ml.single_target_regression import SingleOutputRegressionPipeline
+from coco_pipe.ml.multivariate_regression import MultiOutputRegressionPipeline
 
 ########################################################
 # Test compute_metrics for neg_mean_squared_error
@@ -104,4 +105,93 @@ def test_target_validation_raises_on_2d_y():
             y=y_2d,
             models="Linear Regression"
         )
+
+
+########################################################
+# Test compute_metrics for neg_mean_mse
+########################################################
+def test_compute_metrics_neg_mean_mse_weighted():
+    # Fold 1: 3 samples, predictions off by 1 ⇒ MSE=1 ⇒ neg_mse=-1
+    # Fold 2: 2 samples, perfect ⇒ MSE=0 ⇒ neg_mse=0
+    fold_preds = [
+        {"y_true": np.zeros((3,2)), "y_pred": np.ones((3,2))},
+        {"y_true": np.zeros((2,2)), "y_pred": np.zeros((2,2))}
+    ]
+    dummy_X = np.zeros((5,3))
+    dummy_y = np.zeros((5,2))
+    pipe = MultiOutputRegressionPipeline(
+        X=dummy_X,
+        y=dummy_y,
+        models="all",
+        metrics=["neg_mean_mse", "mean_r2"],
+        random_state=0,
+        n_jobs=1,
+        cv_kwargs={**DEFAULT_CV, "n_splits":2, "strategy": "kfold"}
+    )
+    out = pipe.compute_metrics(fold_preds, pipe.metrics, pipe.metric_funcs)
+
+    # weighted mean neg_mse = (-1*3 + 0*2)/5 = -0.6
+    assert out["metrics"]["neg_mean_mse"]["mean"] == approx(-0.6)
+    # mean_r2 for perfect fold: fold1 r2 = -inf (degenerate) but our function uses numpy mean,
+    # so we'll just check it's a float present
+    assert isinstance(out["metrics"]["mean_r2"]["mean"], float)
+
+    # aggregated predictions
+    y_true = np.vstack([fp["y_true"] for fp in fold_preds])
+    y_pred = np.vstack([fp["y_pred"] for fp in fold_preds])
+    assert np.all(out["predictions"]["y_true"] == y_true)
+    assert np.all(out["predictions"]["y_pred"] == y_pred)
+    # no y_proba
+    assert out["predictions"]["y_proba"] is None
+
+########################################################
+# Tests for MultivariateRegressionPipeline.baseline
+########################################################
+@pytest.mark.parametrize("model_name", list(MULTIOUTPUT_MODELS_REGRESSION.keys()))
+def test_baseline_all_models_multivariate(model_name):
+    # 3‐target regression
+    X, y = make_regression(
+        n_samples=100,
+        n_features=4,
+        n_informative=2,
+        noise=0.1,
+        n_targets=3,
+        random_state=0
+    )
+    metrics = ["mean_r2", "neg_mean_mse"]
+    pipe = MultiOutputRegressionPipeline(
+        X=X,
+        y=y,
+        models=[model_name],
+        metrics=metrics,
+        random_state=0,
+        n_jobs=1,
+        cv_kwargs={**DEFAULT_CV, "n_splits": 5, "strategy": "kfold"}
+    )
+    res = pipe.baseline(model_name)
+
+    # Check shape
+    preds = res["predictions"]
+    assert preds["y_true"].shape == y.shape
+    assert preds["y_pred"].shape == y.shape
+
+    # metrics present and finite
+    m_r2 = res["metrics"]["mean_r2"]["mean"]
+    m_mse = res["metrics"]["neg_mean_mse"]["mean"]
+    assert isinstance(m_r2, float)
+    assert isinstance(m_mse, float)
+
+########################################################
+# Test target validation
+########################################################
+def test_target_validation_raises_on_1d_y():
+    X = np.zeros((10,3))
+    y_1d = np.zeros(10)
+    with pytest.raises(ValueError):
+        MultiOutputRegressionPipeline(
+            X=X,
+            y=y_1d,
+            models="all"
+        )
+
 

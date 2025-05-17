@@ -11,6 +11,7 @@ from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, La
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVC, SVR
+from sklearn.multioutput import MultiOutputRegressor
 
 DEFAULT_CV = {
     "strategy": "stratified",
@@ -136,6 +137,28 @@ REGRESSION_METRICS = {
     "neg_max_error": lambda y_true, y_pred: -max_error(y_true, y_pred),
 }
 
+
+
+# Pure‐function multi‐output metrics (higher is better)
+def mean_r2_score(y_true, y_pred):
+    return np.mean([r2(y_true[:, i], y_pred[:, i]) 
+                    for i, r2 in enumerate([REGRESSION_METRICS["r2"]] * y_true.shape[1])])
+
+def neg_mean_mse(y_true, y_pred):
+    return -np.mean([mean_squared_error(y_true[:, i], y_pred[:, i])
+                     for i in range(y_true.shape[1])])
+
+def neg_mean_mae(y_true, y_pred):
+    return -np.mean([mean_absolute_error(y_true[:, i], y_pred[:, i])
+                     for i in range(y_true.shape[1])])
+
+MULTIOUTPUT_METRICS_REGRESSION = {
+    **REGRESSION_METRICS,
+    "mean_r2": mean_r2_score,
+    "neg_mean_mse": neg_mean_mse,
+    "neg_mean_mae": neg_mean_mae,
+}
+
 REGRESSION_MODELS = {
     "Linear Regression": {
         "estimator": LinearRegression(),
@@ -177,4 +200,12 @@ REGRESSION_MODELS = {
             "max_depth": [3, 5]
         }
     },
+}
+
+MULTIOUTPUT_MODELS_REGRESSION = {
+    name: {
+        "estimator": MultiOutputRegressor(cfg["estimator"], n_jobs=None),
+        "params": cfg["params"],
+    }
+    for name, cfg in REGRESSION_MODELS.items()
 }
