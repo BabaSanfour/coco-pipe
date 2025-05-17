@@ -3,15 +3,15 @@ from sklearn.metrics import (
     make_scorer,
     recall_score, accuracy_score, f1_score,
     precision_score, matthews_corrcoef, balanced_accuracy_score,
-    r2_score, mean_squared_error, mean_absolute_error,
-    roc_auc_score, average_precision_score,
+    r2_score, mean_squared_error, mean_absolute_error, explained_variance_score, 
+    max_error, roc_auc_score, average_precision_score,
     hamming_loss, jaccard_score,
 )
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor, GradientBoostingRegressor
+from sklearn.svm import SVC, SVR
+
 DEFAULT_CV = {
     "strategy": "stratified",
     "n_splits": 5,
@@ -128,11 +128,53 @@ MULTICLASS_MODELS = {
 }
 
 REGRESSION_METRICS = {
-    "r2": make_scorer(r2_score),
-    "neg_mse": make_scorer(mean_squared_error, greater_is_better=False),
-    "neg_mae": make_scorer(mean_absolute_error, greater_is_better=False),
-    "neg_rmse": make_scorer(
-        lambda y_t, y_p: np.sqrt(mean_squared_error(y_t, y_p)),
-        greater_is_better=False
-    ),
+    "r2": r2_score,
+    "neg_mse": lambda y_true, y_pred: -mean_squared_error(y_true, y_pred),
+    "neg_mae": lambda y_true, y_pred: -mean_absolute_error(y_true, y_pred),
+    "neg_rmse": lambda y_true, y_pred: -np.sqrt(mean_squared_error(y_true, y_pred)), 
+    "explained_variance": explained_variance_score,
+    "neg_max_error": lambda y_true, y_pred: -max_error(y_true, y_pred),
+}
+
+REGRESSION_MODELS = {
+    "Linear Regression": {
+        "estimator": LinearRegression(),
+        "params": {}
+    },
+    "Ridge": {
+        "estimator": Ridge(random_state=42),
+        "params": {"alpha": [0.1, 1.0, 10.0]}
+    },
+    "Lasso": {
+        "estimator": Lasso(random_state=42),
+        "params": {"alpha": [0.1, 1.0, 10.0]}
+    },
+    "ElasticNet": {
+        "estimator": ElasticNet(random_state=42),
+        "params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]}
+    },
+    "Random Forest": {
+        "estimator": RandomForestRegressor(random_state=42),
+        "params": {
+            "n_estimators": [100, 200],
+            "max_depth": [None, 3, 5],
+            "min_samples_split": [2, 5]
+        }
+    },
+    "SVR": {
+        "estimator": SVR(),
+        "params": {
+            "kernel": ["linear", "rbf"],
+            "C": [0.1, 1.0, 10.0],
+            "epsilon": [0.1, 0.2]
+        }
+    },
+    "Gradient Boosting": {
+        "estimator": GradientBoostingRegressor(random_state=42),
+        "params": {
+            "n_estimators": [100, 200],
+            "learning_rate": [0.01, 0.1],
+            "max_depth": [3, 5]
+        }
+    },
 }
