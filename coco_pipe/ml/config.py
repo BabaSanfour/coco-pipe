@@ -129,20 +129,18 @@ MULTICLASS_MODELS = {
 }
 
 REGRESSION_METRICS = {
-    "r2": r2_score,
-    "neg_mse": lambda y_true, y_pred: -mean_squared_error(y_true, y_pred),
-    "neg_mae": lambda y_true, y_pred: -mean_absolute_error(y_true, y_pred),
-    "neg_rmse": lambda y_true, y_pred: -np.sqrt(mean_squared_error(y_true, y_pred)), 
-    "explained_variance": explained_variance_score,
-    "neg_max_error": lambda y_true, y_pred: -max_error(y_true, y_pred),
+    "r2": make_scorer(r2_score),
+    "neg_mse": make_scorer(mean_squared_error, greater_is_better=False),
+    "neg_mae": make_scorer(mean_absolute_error, greater_is_better=False),
+    "neg_rmse": make_scorer(lambda y_true, y_pred: -np.sqrt(mean_squared_error(y_true, y_pred))),
+    "explained_variance": make_scorer(explained_variance_score),
+    "neg_max_error": make_scorer(lambda y_true, y_pred: -max_error(y_true, y_pred))
 }
 
 
-
-# Pure‐function multi‐output metrics (higher is better)
 def mean_r2_score(y_true, y_pred):
-    return np.mean([r2(y_true[:, i], y_pred[:, i]) 
-                    for i, r2 in enumerate([REGRESSION_METRICS["r2"]] * y_true.shape[1])])
+    return np.mean([r2_score(y_true[:, i], y_pred[:, i])
+                    for i in range(y_true.shape[1])])
 
 def neg_mean_mse(y_true, y_pred):
     return -np.mean([mean_squared_error(y_true[:, i], y_pred[:, i])
@@ -154,9 +152,9 @@ def neg_mean_mae(y_true, y_pred):
 
 MULTIOUTPUT_METRICS_REGRESSION = {
     **REGRESSION_METRICS,
-    "mean_r2": mean_r2_score,
-    "neg_mean_mse": neg_mean_mse,
-    "neg_mean_mae": neg_mean_mae,
+    "mean_r2": make_scorer(mean_r2_score),
+    "neg_mean_mse": make_scorer(neg_mean_mse),
+    "neg_mean_mae": make_scorer(neg_mean_mae),
 }
 
 REGRESSION_MODELS = {
