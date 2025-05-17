@@ -287,6 +287,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
         if not (hasattr(y, "ndim") and y.ndim == 2):
             raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
 
+    # TODO: move to config.py
     def _setup_multivariate_models(self, models, n_jobs):
         """Setup multivariate models."""
         base = BINARY_MODELS.copy()
