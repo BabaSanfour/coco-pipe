@@ -1,46 +1,76 @@
-# -------------------------------------------------------------------
-# Toy config for both classification and regression pipelines
-# -------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Toy config for MLPipeline
+# -----------------------------------------------------------------------------
 
-# Which high‐level ML task to run: "classification" or "regression"
-task: classification
+# Global parameters shared across analyses
+global_experiment_id: "toy_ml_config"
+data_path: "../data/toy_dataset.csv"
+results_dir: "../results"
+results_file: "toy_ml_config"
 
-# Which stage of the pipeline
-#   baseline:    just run the default models
-#   feature_selection:  run sequential feature selection
-#   hp_search:   run hyperparameter search
-#   hp_search_fs: feature‐selection + hyperparameter search
-type: baseline
-
-# Models to include (use names exactly as defined in your config module)
-# Use "all" to test every available model
-models:
-  - Logistic Regression
-  - Random Forest
-
-# Metrics to compute
-# For classification: e.g. accuracy, roc_auc, average_precision
-metrics:
-  - accuracy
-  - roc_auc
-
-# Random seed
-random_state: 42
-
-# Cross‐validation parameters
-cv_kwargs:
-  strategy: stratified
-  n_splits: 5
-  shuffle: true
+# Default analysis parameters (can be overridden per analysis)
+defaults:
   random_state: 42
-  n_groups: 1
+  n_jobs: -1
+  cv_kwargs:
+    strategy: "stratified"
+    n_splits: 5
+    shuffle: true
+    random_state: 42
+  covariates: ["age"]
+  spatial_units: ["regionX", "regionY"]
+  feature_names: ["feat1", "feat2", "feat3"]
 
-# Parallel jobs
-n_jobs: -1
+# List of analyses to run
+analyses:
+  - id: "classification_baseline"
+    task: "classification"
+    analysis_type: "baseline"
+    target_columns: ["target_class"]
+    row_filter:
+      - column: "age"
+        values: 13
+        operator: ">"
+      - column: "sex"
+        values: ["male"]
+    models:
+      - "Logistic Regression"
+      - "Random Forest"
+    metrics:
+      - "accuracy" 
+      - "roc_auc"
 
-# Only needed for feature_selection, hp_search, hp_search_fs:
-n_features: 3       # number of features to select
-direction: forward  # "forward" or "backward"
-search_type: grid   # "grid" or "random"
-n_iter: 20          # number of random search iterations
-scoring: accuracy   # scoring function to use for searches
+  - id: "classification_feature_selection"
+    task: "classification"
+    analysis_type: "feature_selection"
+    target_columns: ["target_class"]
+    row_filter:
+      column: "age"
+      values: 40
+      operator: "<"
+    models:
+      - "SVC"
+    metrics:
+      - "f1"
+    n_features: 2
+    direction: "backward"
+    scoring: "f1"
+    cv_kwargs:
+      strategy: "stratified"
+
+  - id: "regression_hp_search"
+    task: "regression" 
+    analysis_type: "hp_search"
+    target_columns: ["target_reg"]
+    feature_names: ["feat1"]
+    spatial_units: ["regionX"]
+    models: "all"
+    metrics:
+      - "r2"
+      - "neg_mse"
+    cv_kwargs:
+      strategy: "kfold"
+      n_splits: 3
+    search_type: "grid"
+    n_iter: 20
+    scoring: "r2"
