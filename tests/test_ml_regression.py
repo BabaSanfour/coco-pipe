@@ -61,7 +61,7 @@ def test_baseline_single_model_metrics(model_name, metrics):
         models=[model_name],
         metrics=metrics,
         random_state=0,
-        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "strategy": "kfold"},
+        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"},
         n_jobs=1
     )
     out = pipe.baseline(model_name)
@@ -93,7 +93,7 @@ def test_baseline_multivariate_model_metrics(model_name, metrics):
         models=[model_name],
         metrics=metrics,
         random_state=0,
-        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "strategy": "kfold"},
+        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"},
         n_jobs=1
     )
     out = pipe.baseline(model_name)
@@ -124,7 +124,7 @@ def test_regression_pipeline_wrapper_baseline_all():
         cp = RegressionPipeline(
             X=X,
             y=y,
-            type="baseline",
+            analysis_type="baseline",
             models=MODELS,
             metrics=None,
             random_state=0,
@@ -141,10 +141,10 @@ def test_regression_pipeline_wrapper_baseline_all():
         assert set(results.keys()) == set(MODELS)
         for m in MODELS:
             assert "metrics" in results[m] and "predictions" in results[m]
-        # saves: one per model + final
+        # saves: one per model + final + metadata
         assert len(saved) == len(MODELS) + 1
         saved.clear()
 
 def test_regression_pipeline_invalid_type():
     with pytest.raises(ValueError):
-        RegressionPipeline(X=X1, y=y1, type="foo").run()
+        RegressionPipeline(X=X1, y=y1, analysis_type="foo").run()
