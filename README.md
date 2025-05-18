@@ -96,56 +96,64 @@ results = pipeline.run()
 For batch processing or experiment management, use the CLI tool with a YAML configuration file:
 
 ```yaml
-ID: "experiment_01"
-data:
-  file: "data/dataset.csv"
-  type: "tabular"
-  target: "diagnosis"
-  features:
-    covariates: ["age", "sex", "education"]
-    spatial_units: ["left_frontal", "right_frontal", "temporal"]
-    names: ["alpha", "beta", "gamma", "connectivity"]
+# -----------------------------------------------------------------------------
+# Toy config for MLPipeline
+# -----------------------------------------------------------------------------
 
+# Global parameters shared across analyses
+global_experiment_id: "toy_ml_config"
+data_path: "../datasets/toy_dataset.csv"
+results_dir: "../results"
+results_file: "toy_ml_config"
+
+# Default analysis parameters (can be overridden per analysis)
+defaults:
+  random_state: 42
+  n_jobs: -1
+  cv_kwargs:
+    strategy: "stratified"
+    n_splits: 5
+    shuffle: true
+    random_state: 42
+  covariates: ["age"]
+  spatial_units: ["regionX", "regionY"]
+  feature_names: ["feat1", "feat2", "feat3"]
+
+# List of analyses to run
 analyses:
-  - name: "Baseline Classification"
+  - id: "classification_baseline"
     task: "classification"
     analysis_type: "baseline"
-    models: ["Random Forest", "SVM", "XGBoost"]
-    metrics: ["accuracy", "f1-score", "roc_auc"]
-    cv_kwargs:
-      strategy: "stratified"
-      n_splits: 5
-    
-  - name: "Feature Selection"
-    task: "classification"
-    analysis_type: "feature_selection"
-    models: ["Random Forest"]
-    n_features: 10
-    direction: "forward"
-    scoring: "accuracy"
-    
-  - name: "Hyperparameter Tuning"
-    task: "classification"
-    analysis_type: "hp_search"
-    models: ["SVM"]
-    search_type: "grid"
-    n_iter: 100
-    scoring: "accuracy"
-    
-  - name: "Combined FS + HP"
-    task: "classification"
-    analysis_type: "hp_search_fs"
-    models: ["XGBoost"]
-    n_features: 15
-    direction: "forward"
-    search_type: "random"
-    n_iter: 50
-    scoring: "f1-score"
+    target_columns: ["target_class"]
+    row_filter:
+      - column: "age"
+        values: 13
+        operator: ">"
+      - column: "sex"
+        values: ["male"]
+    models:
+      - "Logistic Regression"
+      - "Random Forest"
+    metrics:
+      - "accuracy" 
+      - "roc_auc"
 
-output:
-  save_intermediate: true
-  results_dir: "results/experiment_01"
-  results_file: "classification_results"
+  - id: "regression_hp_search"
+    task: "regression" 
+    analysis_type: "hp_search"
+    target_columns: ["target_reg"]
+    feature_names: ["feat1"]
+    spatial_units: ["regionX"]
+    models: "all"
+    metrics:
+      - "r2"
+      - "neg_mse"
+    cv_kwargs:
+      strategy: "kfold"
+      n_splits: 3
+    search_type: "grid"
+    n_iter: 20
+    scoring: "r2"
 ```
 
 Run the analysis using:
