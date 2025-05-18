@@ -1,7 +1,12 @@
 """
-base.py
+coco_pipe/ml/base.py
 ----------------
 Implements the core functionality and utilities shared by all ML pipelines.
+
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
 """
 
 import logging
@@ -22,6 +27,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# TODO: Add descriptions and docstring
 
 class BasePipeline(ABC):
     def __init__(
@@ -42,7 +48,7 @@ class BasePipeline(ABC):
         self.model_configs = model_configs
         self.metrics = list(metric_funcs.keys()) if default_metrics == "all" else list(default_metrics or [])
         self.cv_kwargs = cv_kwargs
-        self.cv_strategy = cv_kwargs.get("strategy", "stratified")
+        self.cv_strategy = cv_kwargs.get("cv_strategy", "stratified")
         self.n_jobs = n_jobs
         self.groups = groups
         self.random_state = random_state
@@ -72,6 +78,7 @@ class BasePipeline(ABC):
             coef = est.coef_
             return coef[0] if coef.ndim > 1 else coef
         return None
+    
     @staticmethod
     def _get_feature_names(X: Union[pd.DataFrame, np.ndarray]) -> List[str]:
         if isinstance(X, pd.DataFrame):
@@ -109,7 +116,8 @@ class BasePipeline(ABC):
                 "predictions": {
                     "y_true": np.concatenate(all_true),
                     "y_pred": np.concatenate(all_pred),
-                    "y_proba": np.concatenate(all_proba, axis=1) if all_proba and multioutput else np.concatenate(all_proba) if all_proba else None
+                    # TODO: check if this is correct
+                    "y_proba": np.concatenate(all_proba, axis=0) if all_proba and multioutput else np.concatenate(all_proba) if all_proba else None
                 }}
     
     def update_model_params(self, model_name: str, params: Dict[str, Any]):
@@ -186,8 +194,12 @@ class BasePipeline(ABC):
 
     def feature_selection(
         self, model_name: str, n_features: Optional[int] = None,
-        direction: str = "forward", scoring: Optional[str] = None
+        direction: str = "forward", scoring: Optional[str] = None,
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        y: Optional[Union[pd.Series, np.ndarray]] = None
     ):
+        X = X if X is not None else self.X
+        y = y if y is not None else self.y
         from sklearn.feature_selection import SequentialFeatureSelector
         if scoring is None:
             scoring = self.metrics[0]
@@ -199,11 +211,11 @@ class BasePipeline(ABC):
             n_jobs=self.n_jobs,
             cv=self._get_splitter(**self.cv_kwargs)
         )
-        sfs.fit(self.X, self.y)
+        sfs.fit(X, y)
         mask = sfs.get_support()
-        Xs = self.X[:, mask]
-        out = self.baseline(model_name, Xs, self.y)
-        orig_names = np.array(self._get_feature_names(self.X))
+        Xs = X[:, mask]
+        out = self.baseline(model_name, Xs, y)
+        orig_names = np.array(self._get_feature_names(X))
         selected = orig_names[mask].tolist()
         logging.info(f"Selected features: {selected}")
         out.update({"selected features": selected})
@@ -211,8 +223,12 @@ class BasePipeline(ABC):
 
     def hp_search(
         self, model_name: str, search_type="grid",
-        param_grid=None, n_iter=50, scoring: Optional[str] = None
+        param_grid=None, n_iter=50, scoring: Optional[str] = None,
+        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        y: Optional[Union[pd.Series, np.ndarray]] = None
     ):
+        X = X if X is not None else self.X
+        y = y if y is not None else self.y
         if scoring is None:
             scoring = self.metrics[0]
         estimator = self.model_configs[model_name]["estimator"]
@@ -229,11 +245,11 @@ class BasePipeline(ABC):
                 scoring=self.metric_funcs[scoring],
                 cv=CV, n_jobs=self.n_jobs
             )
-        search.fit(self.X, self.y)
+        search.fit(X, y)
         best_params = search.best_params_
         logging.info(f"Best parameters: {best_params}")
         # re-baseline with best parameters
-        out = self.baseline(model_name, self.X, self.y, best_params)
+        out = self.baseline(model_name, X, y, best_params)
         out.update({"best_params": best_params})
         return out
     
@@ -241,8 +257,9 @@ class BasePipeline(ABC):
                      param_grid=None, n_features=None, direction="forward", 
                      n_iter=50, scoring: Optional[str] = None):
         out = self.feature_selection(model_name, n_features, direction, scoring)
+        Xs = self.X[:, out["selected features"]]
         best_features = out["selected features"]
-        out = self.hp_search(model_name, search_type, param_grid, n_iter, scoring, best_features)
+        out = self.hp_search(model_name, search_type, param_grid, n_iter, scoring, Xs, self.y)
         out.update({"best_features": best_features})
         return out
 

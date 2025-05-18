@@ -14,7 +14,7 @@ from sklearn.svm import SVC, SVR
 from sklearn.multioutput import MultiOutputRegressor
 
 DEFAULT_CV = {
-    "strategy": "stratified",
+    "cv_strategy": "stratified",
     "n_splits": 5,
     "shuffle": True,
     "random_state": 42,

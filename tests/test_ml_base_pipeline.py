@@ -72,7 +72,7 @@ def test_cross_validate_and_baseline_classification():
                          metric_funcs={'accuracy': lambda y_true, y_pred: float(np.mean(y_true==y_pred))},
                          model_configs=model_configs,
                          default_metrics=['accuracy'],
-                         cv_kwargs={'strategy':'stratified','n_splits':5,'shuffle':True,'random_state':0,'n_groups':1},
+                         cv_kwargs={'cv_strategy':'stratified','n_splits':5,'shuffle':True,'random_state':0,'n_groups':1},
                          n_jobs=1)
     # baseline
     res = pipe.baseline('dummy')
@@ -93,7 +93,7 @@ def test_feature_selection_regression():
                          metric_funcs=REGRESSION_METRICS,
                          model_configs=model_configs,
                          default_metrics=['neg_mse'],
-                         cv_kwargs={'strategy':'stratified','n_splits':2,'shuffle':True,'random_state':0,'n_groups':1},
+                         cv_kwargs={'cv_strategy':'stratified','n_splits':2,'shuffle':True,'random_state':0,'n_groups':1},
                          n_jobs=1)
     out = pipe.feature_selection('dummy', n_features=1)
     assert 'selected features' in out and len(out['selected features'])==1
@@ -108,7 +108,7 @@ def test_hp_search_regression():
                          metric_funcs=REGRESSION_METRICS,
                          model_configs=model_configs,
                          default_metrics=['neg_mse'],
-                         cv_kwargs={'strategy':'stratified','n_splits':2,'shuffle':True,'random_state':0,'n_groups':1},
+                         cv_kwargs={'cv_strategy':'stratified','n_splits':2,'shuffle':True,'random_state':0,'n_groups':1},
                          n_jobs=1)
     out = pipe.hp_search('dummy', search_type='grid')
     assert 'best_params' in out and 'metrics' in out
@@ -125,7 +125,7 @@ def test_execute_dispatch():
                          metric_funcs=REGRESSION_METRICS,
                          model_configs=model_configs,
                          default_metrics=['neg_mse'],
-                         cv_kwargs={'strategy':'stratified','n_splits':3,'shuffle':True,'random_state':0},
+                         cv_kwargs={'cv_strategy':'stratified','n_splits':3,'shuffle':True,'random_state':0},
                          n_jobs=1)
     r1 = pipe.execute(type='baseline', model_name='dummy')
     r2 = pipe.baseline('dummy')
@@ -148,5 +148,5 @@ def test_cross_validate_requires_groups_for_group_strategies():
                          metric_funcs=CLASSIFICATION_METRICS,
                          model_configs={},
                          default_metrics=['accuracy'],
-                         cv_kwargs={'strategy':'group_kfold', 'n_splits':2, 'shuffle':True, 'random_state':0, 'n_groups':1},
+                         cv_kwargs={'cv_strategy':'group_kfold', 'n_splits':2, 'shuffle':True, 'random_state':0, 'n_groups':1},
                          n_jobs=1)
