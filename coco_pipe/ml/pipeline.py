@@ -1,13 +1,39 @@
+"""
+coco_pipe/ml/pipeline.py
+----------------
+Wrapper for ML pipelines.
+
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
+"""
 from .classification import ClassificationPipeline
 from .regression    import RegressionPipeline
 
 class MLPipeline:
+    """
+    Wrapper for ML pipelines.
+
+    Parameters
+    ----------
+        :X: np.ndarray, Feature matrix, array-like of shape (n_samples, n_features)
+        :y: np.ndarray, Target vector, array-like of shape (n_samples,)
+        :config: dict, Configuration dictionary
+
+    Returns
+    -------
+        :dict, Results dictionary
+    """
     def __init__(self, X, y, config):
         self.X = X
         self.y = y
         self.config = config
 
     def run(self):
+        """
+        Run the ML pipeline.
+        """
         task = self.config.get("task")
         
         if task == "regression":
