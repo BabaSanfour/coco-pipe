@@ -116,7 +116,7 @@ def test_regression_pipeline_wrapper_baseline_all():
         saved.append(name)
     RegressionPipeline.save = fake_save
 
-    # test both tasks
+    # test both single‐output and multi‐output
     for X, y, MODELS, prefix in [
         (X1, y1, list(REGRESSION_MODELS.keys()), "singleoutput"),
         (X2, y2, list(MULTIOUTPUT_MODELS_REGRESSION.keys()), "multioutput")
@@ -125,11 +125,11 @@ def test_regression_pipeline_wrapper_baseline_all():
             X=X,
             y=y,
             analysis_type="baseline",
-            models="all",
+            models=MODELS,
             metrics=None,
             random_state=0,
 
-            # ensure at least 2 splits so CV doesn't error out:
+            # force at least 2 folds and use k‐fold CV
             cv_strategy="kfold",
             n_splits=2,
 
@@ -139,19 +139,19 @@ def test_regression_pipeline_wrapper_baseline_all():
         )
         results = cp.run()
 
-        # ensure save() was called
+        # at least one save() call (final metadata)
         assert saved, "Expected at least one save call, but none were made"
-        # ensure the correct task prefix appears in every saved filename
+        # every filename should include the correct task prefix
         assert all(prefix in name for name in saved), (
             f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
         )
 
-        # verify returned results structure
+        # verify results for each model
         assert set(results.keys()) == set(MODELS)
         for m in MODELS:
             assert "metrics" in results[m] and "predictions" in results[m]
 
-        # expect one save per model plus the final metadata
+        # expect one save per model + one final metadata save
         assert len(saved) == len(MODELS) + 1
         saved.clear()
 
