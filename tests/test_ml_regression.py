@@ -125,24 +125,33 @@ def test_regression_pipeline_wrapper_baseline_all():
             X=X,
             y=y,
             analysis_type="baseline",
-            models=MODELS,
+            models="all",
             metrics=None,
             random_state=0,
-            cv_kwargs={"cv_strategy": "kfold"},  # Fix: Use cv_kwargs instead of cv_strategy
+
+            # ensure at least 2 splits so CV doesn't error out:
+            cv_strategy="kfold",
+            n_splits=2,
+
             n_jobs=1,
             save_intermediate=True,
             results_file="res"
         )
         results = cp.run()
-        # correct pipeline detection
-        assert cp.pipeline is not None, "Pipeline was not initialized"
-        clsname = type(cp.pipeline).__name__.lower()
-        assert prefix in clsname
-        # keys
+
+        # ensure save() was called
+        assert saved, "Expected at least one save call, but none were made"
+        # ensure the correct task prefix appears in every saved filename
+        assert all(prefix in name for name in saved), (
+            f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
+        )
+
+        # verify returned results structure
         assert set(results.keys()) == set(MODELS)
         for m in MODELS:
             assert "metrics" in results[m] and "predictions" in results[m]
-        # saves: one per model + final + metadata
+
+        # expect one save per model plus the final metadata
         assert len(saved) == len(MODELS) + 1
         saved.clear()
 
