@@ -1,3 +1,13 @@
+"""
+coco_pipe/io/select_features.py
+----------------
+Select features from a DataFrame.
+
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
+"""
 import pandas as pd
 from typing import List, Optional, Union, Tuple, Dict
 
@@ -12,8 +22,8 @@ def select_features(
     """
     Slice a DataFrame into X (features) and y (target) according to:
 
-      - covariates: extra columns like age, sex, clinical scores
-      - spatial_units: sensors/regions or groups thereof
+      - covariates: columns like age, sex, clinical scores, etc.
+      - spatial_units: sensors/regions or groups thereof, e.g. "left_frontal", "right_frontal", "T1", "C3"
       - feature_names: e.g. 'alpha', 'beta', etc.
       - row_filter: {"column": col, "values": [...]}
 
@@ -21,23 +31,17 @@ def select_features(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        DataFrame containing the data to select features from
-    target_columns : Union[str, List[str]]
-        Target variable(s) to predict
-    covariates : Optional[List[str]]
-        Covariates to include in the model, e.g. age, sex, clinical scores, behavioral metrics
-    spatial_units : Optional[Union[str, List[str], Dict[str, List[str]]]]
-        List of brain regions, sensors, or groups of regions/sensors, e.g. ["left_frontal", "right_frontal", "T1", "C3"]
-    feature_names : Union[str, List[str]]
-        Names of features computed, e.g. ["alpha", "beta", "gamma", "entropy", "slope"]
-    row_filter : Optional[dict]
-        {"column": ..., "values": [...]} to subset rows, e.g. {"column": "subject", "values": ["sub-01", "sub-02"]}
+        :df: pd.DataFrame, DataFrame containing the data to select features from
+        :target_columns: Union[str, List[str]], Target variable(s) to predict
+        :covariates: Optional[List[str]], Covariates to include in the model, e.g. age, sex, clinical scores, behavioral metrics
+        :spatial_units: Optional[Union[str, List[str], Dict[str, List[str]]]], List of brain regions, sensors, or groups of regions/sensors, e.g. ["left_frontal", "right_frontal", "T1", "C3"]
+        :feature_names: Union[str, List[str]], Names of features computed, e.g. ["alpha", "beta", "gamma", "entropy", "slope"]
+        :row_filter: Optional[dict], {"column": ..., "values": [...]} to subset rows, e.g. {"column": "subject", "values": ["sub-01", "sub-02"]}
 
     Returns
     -------
-    X : DataFrame of selected features
-    y : Series (or DataFrame if multiple targets)
+        :X: pd.DataFrame, DataFrame of selected features
+        :y: Union[pd.Series, pd.DataFrame], Target variable(s) to predict
     """
     # 1) optional row-filtering
     if row_filter:
