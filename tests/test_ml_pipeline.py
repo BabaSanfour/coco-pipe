@@ -35,7 +35,7 @@ def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipelin
         "models": ["A","B"],
         "metrics": ["m1","m2"],
         "random_state": 123,
-        "cv_kwargs": {"strategy":"stratified","n_splits":3},
+        "cv_kwargs": {"cv_strategy":"stratified","n_splits":3},
         "n_jobs": 7,
         "n_features": 4,
         "direction": "backward",

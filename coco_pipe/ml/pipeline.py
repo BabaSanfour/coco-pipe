@@ -23,8 +23,8 @@ class MLPipeline:
             models=self.config.get("models", "all"),
             metrics=self.config.get("metrics", None), 
             random_state=self.config.get("random_state", 42),
-            cv_kwargs=self.config.get("cv_kwargs"),
             n_jobs=self.config.get("n_jobs", -1),
+            **self.config.get("cv_kwargs", {}),
         )
         return pipeline.execute(type=self.config.get("type", "baseline"),
                               n_features=self.config.get("n_features"),

@@ -187,6 +187,7 @@ class RegressionPipeline:
         metrics=None,
         random_state=42,
         cv_strategy="stratified",
+        n_splits=5,
         n_features=None,
         direction="forward",
         search_type="grid",
@@ -204,6 +205,7 @@ class RegressionPipeline:
         self.metrics = metrics
         self.random_state = random_state
         self.cv_strategy = cv_strategy
+        self.n_splits = n_splits
         self.n_features = n_features
         self.direction = direction
         self.search_type = search_type
@@ -244,7 +246,7 @@ class RegressionPipeline:
         cv_kwargs = dict(DEFAULT_CV)
         cv_kwargs["strategy"] = self.cv_strategy
         cv_kwargs["random_state"] = self.random_state
-
+        cv_kwargs["n_splits"] = self.n_splits
         # instantiate
         self.pipeline = PipelineClass(
             X=self.X,
