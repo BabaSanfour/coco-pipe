@@ -135,6 +135,7 @@ def test_regression_pipeline_wrapper_baseline_all():
         )
         results = cp.run()
         # correct pipeline detection
+        assert cp.pipeline is not None, "Pipeline was not initialized"
         clsname = type(cp.pipeline).__name__.lower()
         assert prefix in clsname
         # keys
