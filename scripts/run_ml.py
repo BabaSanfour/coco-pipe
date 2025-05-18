@@ -23,7 +23,7 @@ def run_analysis(X, y, analysis_cfg):
             'analysis_type': analysis_cfg.get('analysis_type'),
             'models': analysis_cfg.get('models'),
             'metrics': analysis_cfg.get('metrics'),
-            'cv_strategy': analysis_cfg.get('cv_kwargs', {}).get('strategy'),
+            'cv_strategy': analysis_cfg.get('cv_kwargs', {}).get('cv_strategy'),
             'n_splits': analysis_cfg.get('cv_kwargs', {}).get('n_splits'),
             'n_features': analysis_cfg.get('n_features'),
             'direction': analysis_cfg.get('direction'),
