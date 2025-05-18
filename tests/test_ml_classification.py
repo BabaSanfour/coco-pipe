@@ -45,7 +45,7 @@ def tmp_working_dir(tmp_path, monkeypatch):
 ########################################################
 
 @pytest.mark.parametrize(
-    "type_, models, metrics, expected_task",
+    "analysis_type, models, metrics, expected_task",
     [
         ("baseline", ["Decision Tree"], ["accuracy"], "binary"),
         ("baseline", ["Logistic Regression"], ["accuracy"], "multiclass"),
@@ -53,7 +53,7 @@ def tmp_working_dir(tmp_path, monkeypatch):
     ],
 )
 def test_pipeline_detect_and_run_baseline(
-    type_, models, metrics, expected_task, monkeypatch
+    analysis_type, models, metrics, expected_task, monkeypatch
 ):
     # Select the appropriate dataset
     if expected_task == "binary":
@@ -74,7 +74,7 @@ def test_pipeline_detect_and_run_baseline(
     pipe = ClassificationPipeline(
         X=X,
         y=y,
-        type=type_,
+        analysis_type=analysis_type,
         models=models,
         metrics=metrics,
         random_state=0,
@@ -102,9 +102,9 @@ def test_pipeline_detect_and_run_baseline(
     assert any(name.startswith("testres") for name in saved)
 
 
-def test_invalid_type_raises():
+def test_invalid_analysis_type_raises():
     with pytest.raises(ValueError):
-        ClassificationPipeline(X=X_binary, y=y_binary, type="unknown").run()
+        ClassificationPipeline(X=X_binary, y=y_binary, analysis_type="unknown").run()
 
 
 ########################################################
@@ -135,7 +135,7 @@ def test_binary_metrics_correctness():
         y=dummy_y,
         models="all",
         metrics=list(BINARY_METRICS.keys()),
-        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "strategy": "kfold"},
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
         n_jobs=1
     )
 
@@ -210,7 +210,7 @@ def test_multiclass_compute_metrics():
         X=dummy_X,
         y=dummy_y,
         models="all",
-        metrics=["accuracy", "roc_auc_ovr"],
+        metrics=["accuracy", "roc_auc"],
         per_class=True,
         cv_kwargs={**DEFAULT_CV, "n_splits": 2},
         n_jobs=1
@@ -224,12 +224,12 @@ def test_multiclass_compute_metrics():
     acc = np.mean(y_true == y_pred)
     assert pytest.approx(acc, rel=1e-6) == results["metrics"]["accuracy"]["mean"]
 
-    # roc_auc_ovr
+    # roc_auc
     y_proba = np.concatenate([f["y_proba"] for f in fold_preds], axis=0)
     from sklearn.preprocessing import label_binarize
     y_true_bin = label_binarize(y_true, classes=[0,1,2])
     expected_auc = roc_auc_score(y_true_bin, y_proba, average="weighted", multi_class="ovr")
-    assert pytest.approx(results["metrics"]["roc_auc_ovr"]["mean"], rel=1e-6) == expected_auc
+    assert pytest.approx(results["metrics"]["roc_auc"]["mean"], rel=1e-6) == expected_auc
 
     # per-class breakdown
     pcm = results.get("per_class_metrics", {})
@@ -246,7 +246,7 @@ def test_baseline_all_multiclass_models():
         n_classes=3,
         random_state=1
     )
-    metrics = ["accuracy", "roc_auc_ovr"]
+    metrics = ["accuracy", "roc_auc"]
     results = []
     for name in MULTICLASS_MODELS:
         pipe = MultiClassClassificationPipeline(
@@ -295,7 +295,7 @@ def test_compute_metrics_per_output():
         y=np.zeros((5,2)), # Ensure y is 2D
         models=BINARY_MODELS.keys(),
         metrics=metrics,
-        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "strategy": "kfold"},
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
         n_jobs=1
     )
     results = pipe.compute_metrics(fold_preds, pipe.metrics, pipe.metric_funcs)
@@ -325,7 +325,7 @@ def test_baseline_all_models_multioutput():
             metrics=metrics,
             random_state=42,
             n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits": 3, "strategy": "kfold"}
+            cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"}
         )
         out = pipe.baseline(name)
         assert out["predictions"]["y_true"].shape == y.shape

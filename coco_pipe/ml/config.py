@@ -7,11 +7,12 @@ from sklearn.metrics import (
     max_error, roc_auc_score, average_precision_score,
     hamming_loss, jaccard_score,
 )
+from sklearn.preprocessing import label_binarize
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso, ElasticNet
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVC, SVR
-from sklearn.multioutput import MultiOutputRegressor
+from sklearn.multioutput import MultiOutputRegressor, MultiOutputClassifier
 
 DEFAULT_CV = {
     "cv_strategy": "stratified",
@@ -35,6 +36,21 @@ BINARY_METRICS = {
     "roc_auc": make_scorer(roc_auc_score, needs_proba=True),
     "average_precision": make_scorer(average_precision_score, needs_proba=True),
 }
+
+def multiclass_roc_auc_score(y_true, y_proba):
+    """Compute OVR ROC AUC for multiclass."""
+    classes = np.unique(y_true)
+    y_true_bin = label_binarize(y_true, classes=classes)
+    # if binary-probabilities, pad to 2 columns
+    if y_proba.shape[1] == 2:
+        return roc_auc_score(y_true_bin, y_proba[:,1])
+    return roc_auc_score(y_true_bin, y_proba, average='weighted', multi_class='ovr')
+
+MULTICLASS_METRICS = {
+    **CLASSIFICATION_METRICS,
+    "roc_auc": make_scorer(multiclass_roc_auc_score, needs_proba=True),
+}
+
 
 MULTIOUTPUT_METRICS = {
     # Strict subset accuracy: 1 iff all labels correct
@@ -126,6 +142,13 @@ MULTICLASS_MODELS = {
             "decision_function_shape": ["ovr", "ovo"],
         },
     },
+}
+MULTIOUTPUT_MODELS = {
+    name: {
+        "estimator": MultiOutputClassifier(cfg["estimator"], n_jobs=None),
+        "params": cfg["params"],
+    }
+    for name, cfg in MULTICLASS_MODELS.items()
 }
 
 REGRESSION_METRICS = {
