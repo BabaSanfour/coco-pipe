@@ -78,7 +78,7 @@ def test_baseline_single_model_metrics(model_name, metrics):
             assert isinstance(val, float)
 
 # -------------------------------------------------------------------
-# 3) Parametrized baseline for multivariate
+# 3) Parametrized baseline for multioutput
 # -------------------------------------------------------------------
 @pytest.mark.parametrize("model_name", list(MULTIOUTPUT_MODELS_REGRESSION.keys()))
 @pytest.mark.parametrize("metrics", [
@@ -86,7 +86,7 @@ def test_baseline_single_model_metrics(model_name, metrics):
     ["neg_mean_mse"],
     ["mean_r2", "neg_mean_mae"]
 ])
-def test_baseline_multivariate_model_metrics(model_name, metrics):
+def test_baseline_multioutput_model_metrics(model_name, metrics):
     pipe = MultiOutputRegressionPipeline(
         X=X2,
         y=y2,
@@ -128,7 +128,7 @@ def test_regression_pipeline_wrapper_baseline_all():
             models=MODELS,
             metrics=None,
             random_state=0,
-            cv_strategy="kfold",
+            cv_kwargs={"cv_strategy": "kfold"},  # Fix: Use cv_kwargs instead of cv_strategy
             n_jobs=1,
             save_intermediate=True,
             results_file="res"
