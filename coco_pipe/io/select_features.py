@@ -46,11 +46,30 @@ def select_features(
     col_map = {col.lower(): col for col in df.columns}
 
     # 1) optional row-filtering
+    # Handle multiple row filters
     if row_filter:
-        col, vals = row_filter["column"].lower(), row_filter["values"]
-        if col not in col_map:
-            raise ValueError(f"Row filter column '{col}' not found in DataFrame")
-        df = df[df[col_map[col]].isin(vals)]
+        # Convert to list if single filter provided
+        filters = row_filter if isinstance(row_filter, list) else [row_filter]
+        
+        # Apply each filter sequentially
+        for filt in filters:
+            col = filt["column"].lower()
+            vals = filt["values"] 
+            operator = filt.get("operator")
+            
+            if col not in col_map:
+                raise ValueError(f"Row filter column '{col}' not found in DataFrame")
+                
+            if operator == ">":
+                df = df[df[col_map[col]] > vals]
+            elif operator == "<":
+                df = df[df[col_map[col]] < vals]
+            elif operator == ">=":
+                df = df[df[col_map[col]] >= vals]
+            elif operator == "<=":
+                df = df[df[col_map[col]] <= vals]
+            else:
+                df = df[df[col_map[col]].isin(vals)]
 
     parts: List[pd.DataFrame] = []
 
