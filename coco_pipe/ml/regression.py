@@ -11,6 +11,7 @@ License: TBD
 import logging
 import pickle
 import datetime
+import os
 
 from .base import BasePipeline
 from .config import REGRESSION_METRICS, REGRESSION_MODELS, DEFAULT_CV, MULTIOUTPUT_MODELS_REGRESSION, MULTIOUTPUT_METRICS_REGRESSION
@@ -229,14 +230,18 @@ class RegressionPipeline:
         self.cv_kwargs = cv_kwargs
         self.pipeline = None
         self.results = {}
+        
+        # Create results directory if it doesn't exist
+        os.makedirs(self.results_dir, exist_ok=True)
 
     def save(self, name, res):
         """
         Save intermediate results for each model in a pickle file as well as the final results in a pickle file.
         """
-        with open(f"{name}.pkl", "wb") as f:
+        filepath = os.path.join(self.results_dir, f"{name}.pkl")
+        with open(filepath, "wb") as f:
             pickle.dump(res, f)
-        logger.info(f"Saved results for {name}")
+        logger.info(f"Saved results to {filepath}")
 
     def run(self):
         """
@@ -357,8 +362,9 @@ class RegressionPipeline:
 
         # Save final results and metadata
         self.save(base_name, self.results)
-        with open(f"{base_name}_metadata.json", "w") as f:
+        metadata_path = os.path.join(self.results_dir, f"{base_name}_metadata.json")
+        with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {base_name}_metadata.json")
+        logger.info(f"Saved metadata to {metadata_path}")
 
         return self.results

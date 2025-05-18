@@ -12,6 +12,7 @@ License: TBD
 import datetime
 import logging
 import pickle
+import os
 import numpy as np
 from sklearn.metrics import (
     roc_auc_score, average_precision_score, precision_recall_fscore_support
@@ -396,14 +397,18 @@ class ClassificationPipeline:
         # placeholders
         self.pipeline = None
         self.results = {}
+        
+        # Create results directory if it doesn't exist
+        os.makedirs(self.results_dir, exist_ok=True)
 
     def save(self, name, res):
         """
         Save intermediate results for each model in a pickle file as well as the final results in a pickle file.
         """
-        with open(f"{name}.pkl", "wb") as f:
+        filepath = os.path.join(self.results_dir, f"{name}.pkl")
+        with open(filepath, "wb") as f:
             pickle.dump(res, f)
-        logger.info(f"Saved results for {name}")
+        logger.info(f"Saved results to {filepath}")
 
     def run(self):
         """
@@ -530,8 +535,9 @@ class ClassificationPipeline:
 
         # Save final results and metadata
         self.save(file_name, self.results)
-        with open(f"{file_name}_metadata.json", "w") as f:
+        metadata_path = os.path.join(self.results_dir, f"{file_name}_metadata.json")
+        with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {file_name}_metadata.json")
+        logger.info(f"Saved metadata to {metadata_path}")
 
         return self.results
