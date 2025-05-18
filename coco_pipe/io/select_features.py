@@ -43,16 +43,26 @@ def select_features(
         :X: pd.DataFrame, DataFrame of selected features
         :y: Union[pd.Series, pd.DataFrame], Target variable(s) to predict
     """
+    col_map = {col.lower(): col for col in df.columns}
+
     # 1) optional row-filtering
     if row_filter:
-        col, vals = row_filter["column"], row_filter["values"]
-        df = df[df[col].isin(vals)]
+        col, vals = row_filter["column"].lower(), row_filter["values"]
+        if col not in col_map:
+            raise ValueError(f"Row filter column '{col}' not found in DataFrame")
+        df = df[df[col_map[col]].isin(vals)]
 
     parts: List[pd.DataFrame] = []
 
     # 2) covariates
     if covariates:
-        parts.append(df[covariates])
+        # Check for missing covariates
+        missing_covs = [cov for cov in covariates if cov.lower() not in col_map]
+        if missing_covs:
+            raise ValueError(f"Requested covariates not found in DataFrame: {missing_covs}")
+        # Match covariates case-insensitively
+        matched_covs = [col_map[cov.lower()] for cov in covariates]
+        parts.append(df[matched_covs])
 
     all_cols = df.columns.tolist()
 
@@ -74,13 +84,13 @@ def select_features(
         feature_names = [feature_names]
     # else assume list of feature_names
 
-    # 5) collect "<spatial>_<feature>" columns
-    spatial_unit_cols = [
-        f"{s}_{f}"
-        for s in spatial_units
-        for f in feature_names
-        if f"{s}_{f}" in all_cols
-    ]
+    # 5) collect "<spatial>_<feature>" columns using case-insensitive matching
+    requested_cols = [f"{s}_{f}".lower() for s in spatial_units for f in feature_names]
+    missing_cols = [col for col in requested_cols if col not in col_map]
+    if missing_cols:
+        raise ValueError(f"Requested feature columns not found in DataFrame: {missing_cols}")
+        
+    spatial_unit_cols = [col_map[col] for col in requested_cols]
     if spatial_unit_cols:
         parts.append(df[spatial_unit_cols])
 
@@ -92,6 +102,15 @@ def select_features(
 
     X = pd.concat(parts, axis=1)
 
-    # 7) select target(s)
-    y = df[target_columns]
+    # 7) select target(s) with case-insensitive matching
+    if isinstance(target_columns, str):
+        target_columns = [target_columns]
+    
+    # Check for missing target columns
+    missing_targets = [t for t in target_columns if t.lower() not in col_map]
+    if missing_targets:
+        raise ValueError(f"Target columns not found in DataFrame: {missing_targets}")
+        
+    matched_targets = [col_map[t.lower()] for t in target_columns]
+    y = df[matched_targets[0] if len(matched_targets) == 1 else matched_targets]
     return X, y

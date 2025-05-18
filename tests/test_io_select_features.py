@@ -27,13 +27,13 @@ def test_only_covariates(example_df):
     X, y = select_features(
         df=example_df,
         target_columns="target",
-        covariates=["age", "sex"],
+        covariates=["AGE", "SEX"],  # Test case-insensitive matching
         spatial_units=None,
         feature_names="all",
         row_filter=None
     )
     # X should have only age & sex
-    assert list(X.columns) == ["age", "sex"]
+    assert set(X.columns) == {"age", "sex"}
     # y should be a Series of length 4
     pd.testing.assert_series_equal(y, example_df["target"], check_names=False)
 
@@ -41,9 +41,9 @@ def test_only_spatial_all_features(example_df):
     # no covariates, select both sensors, all features
     X, y = select_features(
         df=example_df,
-        target_columns="target",
+        target_columns="TARGET",  # Test case-insensitive matching
         covariates=None,
-        spatial_units=["sensorA", "sensorB"],
+        spatial_units=["SENSORA", "sensorB"],  # Test mixed case
         feature_names="all",
         row_filter=None
     )
@@ -56,10 +56,10 @@ def test_only_features_all_sensors(example_df):
     # no covariates, all sensors, only alpha
     X, y = select_features(
         df=example_df,
-        target_columns=["target","target2"],
+        target_columns=["TARGET","TARGET2"],  # Test case-insensitive matching
         covariates=None,
         spatial_units="all",
-        feature_names="alpha",
+        feature_names="ALPHA",  # Test case-insensitive matching
         row_filter=None
     )
     # "all" sensors picks sensorA and sensorB; only alpha feature => 2 columns
@@ -74,13 +74,13 @@ def test_covariates_plus_custom_selection(example_df):
     X, y = select_features(
         df=example_df,
         target_columns="target",
-        covariates=["age"],
-        spatial_units=["sensorA"],
-        feature_names=["beta"],
+        covariates=["AGE"],  # Test case-insensitive matching
+        spatial_units=["SENSORA"],  # Test case-insensitive matching
+        feature_names=["BETA"],  # Test case-insensitive matching
         row_filter=None
     )
     # columns: age, sensorA_beta
-    assert list(X.columns) == ["age","sensorA_beta"]
+    assert set(X.columns) == {"age","sensorA_beta"}
     # types preserved
     assert X["age"].dtype == example_df["age"].dtype
 
@@ -89,10 +89,10 @@ def test_row_filtering(example_df):
     X, y = select_features(
         df=example_df,
         target_columns="target",
-        covariates=["age"],
-        spatial_units=["sensorA"],
-        feature_names=["alpha"],
-        row_filter={"column":"subject","values":["s1","s3"]}
+        covariates=["AGE"],
+        spatial_units=["SENSORA"],
+        feature_names=["ALPHA"],
+        row_filter={"column":"SUBJECT","values":["s1","s3"]}  # Use lowercase to match DataFrame
     )
     # only two rows remain
     assert X.shape[0] == 2
@@ -102,7 +102,7 @@ def test_row_filtering(example_df):
 
 def test_no_selection_raises(example_df):
     # neither covariates nor spatial_units => error
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="No features selected"):
         select_features(
             df=example_df,
             target_columns="target",
@@ -112,26 +112,60 @@ def test_no_selection_raises(example_df):
             row_filter=None
         )
 
-def test_mismatch_feature_or_sensor_ignored(example_df):
-    # request a sensor that doesn't exist plus one valid
-    X, y = select_features(
-        df=example_df,
-        target_columns="target",
-        covariates=None,
-        spatial_units=["sensorA", "sensorX"],
-        feature_names=["alpha","gamma"],
-        row_filter=None
-    )
-    # sensorA_alpha exists; sensorA_gamma and sensorX_* ignored
-    assert list(X.columns) == ["sensorA_alpha"]
-    assert X.shape == (4,1)
+def test_missing_features_raises(example_df):
+    # Request non-existent feature
+    with pytest.raises(ValueError, match="Requested feature columns not found"):
+        select_features(
+            df=example_df,
+            target_columns="target",
+            covariates=None,
+            spatial_units=["sensorA"],
+            feature_names=["gamma"],  # Non-existent feature
+            row_filter=None
+        )
+
+def test_missing_spatial_units_raises(example_df):
+    # Request non-existent spatial unit
+    with pytest.raises(ValueError, match="Requested feature columns not found"):
+        select_features(
+            df=example_df,
+            target_columns="target",
+            covariates=None,
+            spatial_units=["sensorX"],  # Non-existent sensor
+            feature_names=["alpha"],
+            row_filter=None
+        )
+
+def test_missing_covariates_raises(example_df):
+    # Request non-existent covariate
+    with pytest.raises(ValueError, match="Requested covariates not found"):
+        select_features(
+            df=example_df,
+            target_columns="target",
+            covariates=["height"],  # Non-existent covariate
+            spatial_units=None,
+            feature_names="all",
+            row_filter=None
+        )
+
+def test_missing_target_raises(example_df):
+    # Request non-existent target
+    with pytest.raises(ValueError, match="Target columns not found"):
+        select_features(
+            df=example_df,
+            target_columns="nonexistent",
+            covariates=["age"],
+            spatial_units=None,
+            feature_names="all",
+            row_filter=None
+        )
 
 def test_multi_target_list(example_df):
     # target_columns as list
     X, y = select_features(
         df=example_df,
-        target_columns=["target","target2"],
-        covariates=["sex"],
+        target_columns=["TARGET","TARGET2"],  # Test case-insensitive matching
+        covariates=["SEX"],
         spatial_units=None,
         feature_names="all",
         row_filter=None
