@@ -47,7 +47,12 @@ def run_analysis(X, y, analysis_cfg):
 
 def main():
     # 0) Load config & data
-    cfg = yaml.safe_load(open("../configs/toy_ml_config.yml"))
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True, help="Path to config file")
+    args = parser.parse_args()
+    
+    cfg = yaml.safe_load(open(args.config))
     df = load("tabular", cfg["data_path"])
     all_results = {}
 
