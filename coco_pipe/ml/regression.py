@@ -205,6 +205,7 @@ class RegressionPipeline:
         save_intermediate=False,
         results_dir="results",
         results_file="results",
+        cv_kwargs=None,
     ):
         self.X = X
         self.y = y
@@ -225,7 +226,7 @@ class RegressionPipeline:
         self.save_intermediate = save_intermediate
         self.results_dir = results_dir
         self.results_file = results_file
-
+        self.cv_kwargs = cv_kwargs
         self.pipeline = None
         self.results = {}
 
@@ -253,7 +254,10 @@ class RegressionPipeline:
             logger.info("Detected single-output regression task")
 
         # prepare cv_kwargs
+
         cv_kwargs = dict(DEFAULT_CV)
+        if self.cv_kwargs is not None:
+            cv_kwargs.update(self.cv_kwargs)
         cv_kwargs["cv_strategy"] = self.cv_strategy
         cv_kwargs["random_state"] = self.random_state
         cv_kwargs["n_splits"] = self.n_splits
