@@ -11,6 +11,10 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import warnings
+
+# Suppress the deprecation warning
+warnings.filterwarnings("ignore", message="'force_all_finite' was renamed to 'ensure_all_finite'")
 
 from coco_pipe.dim_reduction import DimReducer
 from coco_pipe.dim_reduction.config import METHODS
@@ -223,19 +227,29 @@ def main():
             ({"whiten": True}, "Whitened")
         ],
         "TSNE": [
-            ({"perplexity": 10, "n_iter": 1000}, "perplexity=10"),
-            ({"perplexity": 30, "n_iter": 1000}, "perplexity=30"),
-            ({"perplexity": 50, "n_iter": 1000}, "perplexity=50")
+            ({"perplexity": 10, "max_iter": 1000}, "perplexity=10"),
+            ({"perplexity": 30, "max_iter": 1000}, "perplexity=30"),
+            ({"perplexity": 50, "max_iter": 1000}, "perplexity=50")
         ],
         "UMAP": [
-            ({"n_neighbors": 10, "min_dist": 0.1}, "n_neighbors=10"),
-            ({"n_neighbors": 20, "min_dist": 0.1}, "n_neighbors=20"),
-            ({"n_neighbors": 40, "min_dist": 0.1}, "n_neighbors=40")
+            ({"n_neighbors": 10, "min_dist": 0.1, "random_state": None, "n_jobs": -1}, "n_neighbors=10"),
+            ({"n_neighbors": 20, "min_dist": 0.1, "random_state": None, "n_jobs": -1}, "n_neighbors=20"),
+            ({"n_neighbors": 40, "min_dist": 0.1, "random_state": None, "n_jobs": -1}, "n_neighbors=40")
         ],
         "PACMAP": [
             ({"n_neighbors": 10, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=10"),
             ({"n_neighbors": 20, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=20"),
             ({"n_neighbors": 40, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=40")
+        ],
+        "TRIMAP": [
+            ({"n_inliers": 10, "n_outliers": 5, "n_random": 5}, "n_inliers=10"),
+            ({"n_inliers": 20, "n_outliers": 5, "n_random": 5}, "n_inliers=20"),
+            ({"n_inliers": 40, "n_outliers": 5, "n_random": 5}, "n_inliers=40")
+        ],
+        "PHATE": [
+            ({"knn": 5, "t": "auto"}, "knn=5"),
+            ({"knn": 10, "t": "auto"}, "knn=10"),
+            ({"knn": 20, "t": "auto"}, "knn=20")
         ]
     }
     
@@ -256,6 +270,9 @@ def main():
         
         # Results dictionary to store all outputs
         results = {method: [] for method in method_params}
+        
+        # Print methods being compared
+        logger.info(f"Comparing methods: {', '.join(method_params.keys())}")
         
         # Apply dimension reduction with each method and parameter set
         for method, param_sets in method_params.items():
