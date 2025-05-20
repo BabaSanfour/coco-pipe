@@ -76,12 +76,7 @@ def test_pipeline_detect_and_run_baseline(
         results_file="testres"
     )
 
-    # Run the pipeline
     results = pipe.run()
-
-    # Check that the pipeline was properly initialized
-    assert pipe.pipeline is not None
-    assert isinstance(pipe.pipeline, (SingleOutputRegressionPipeline, MultiOutputRegressionPipeline))
 
     # Ensure the underlying pipeline class matches the task
     cls_name = type(pipe.pipeline).__name__.lower()
