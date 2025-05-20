@@ -140,20 +140,19 @@ def test_regression_pipeline_wrapper_baseline_all():
         results = cp.run()
 
         # at least one save() call (final metadata)
-        # assert saved, "Expected at least one save call, but none were made"
+        assert saved, "Expected at least one save call, but none were made"
         # every filename should include the correct task prefix
-        # assert all(prefix in name for name in saved), (
-        #     f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
-        # )
+        assert all(prefix in name for name in saved), (
+            f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
+        )
 
         # verify results for each model
-        # assert set(results.keys()) == set(MODELS)
-        # for m in MODELS:
-        #     assert "metrics" in results[m] and "predictions" in results[m]
+        assert set(results.keys()) == set(MODELS)
+        for m in MODELS:
+            assert "metrics" in results[m] and "predictions" in results[m]
 
         # expect one save per model + one final metadata save
-        # TODO: fix this :) 
-        # assert len(saved) == len(MODELS) + 1
+        assert len(saved) == len(MODELS) + 1
         saved.clear()
 
 def test_regression_pipeline_invalid_type():
