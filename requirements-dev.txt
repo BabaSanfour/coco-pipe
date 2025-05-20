@@ -13,4 +13,9 @@ sphinxcontrib-mermaid
 sphinx-autoapi
 myst-parser
 umap-learn
+trimap
+phate
+mne>=1.0.0
+mne-bids>=0.10.0
+requests
 -e .
