@@ -41,3 +41,4 @@ coverage.xml
 .dmypy.json
 *.log
 results/
+.venv_coco_pipe/
