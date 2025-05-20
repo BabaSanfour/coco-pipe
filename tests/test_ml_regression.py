@@ -42,7 +42,7 @@ def tmp_working_dir(tmp_path, monkeypatch):
     "analysis_type, models, metrics, expected_task",
     [
         ("baseline", ["Linear Regression"], ["r2"], "singleoutput"),
-        ("baseline", ["Random Forest"], ["neg_mse"], "singleoutput"),
+        ("baseline", ["Random Forest"], ["r2"], "singleoutput"),
         ("baseline", ["Linear Regression"], ["mean_r2"], "multioutput"),
     ],
 )

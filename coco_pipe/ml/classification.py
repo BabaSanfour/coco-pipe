@@ -484,8 +484,6 @@ class ClassificationPipeline:
             try:
                 if self.analysis_type == "baseline":
                     res = self.pipeline.baseline(model_name)
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{file_name}", res)
                 elif self.analysis_type == "feature_selection":
                     res = self.pipeline.feature_selection(
                         model_name,
@@ -493,8 +491,6 @@ class ClassificationPipeline:
                         direction=self.direction,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{file_name}", res)
                 elif self.analysis_type == "hp_search":
                     res = self.pipeline.hp_search(
                         model_name,
@@ -503,8 +499,6 @@ class ClassificationPipeline:
                         n_iter=self.n_iter,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{file_name}", res)
                 elif self.analysis_type == "hp_search_fs":
                     res = self.pipeline.hp_search_fs(
                         model_name,
@@ -515,10 +509,11 @@ class ClassificationPipeline:
                         n_iter=self.n_iter,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{file_name}", res)
                 else:
                     raise ValueError(f"Unknown pipeline type: {self.analysis_type}")
+                
+                if self.save_intermediate:
+                    self.save(f"{model_name}_{file_name}", res)
 
                 self.results[model_name] = res
                 metadata["completed_models"].append(model_name)
