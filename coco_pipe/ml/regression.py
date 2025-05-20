@@ -234,7 +234,6 @@ class RegressionPipeline:
         self.results_file = results_file
         self.cv_kwargs = cv_kwargs
         self.pipeline = None
-        self.results = {}
         
         if hasattr(self.y, "ndim") and self.y.ndim == 2:
             PipelineClass = MultiOutputRegressionPipeline
@@ -278,7 +277,7 @@ class RegressionPipeline:
         """
         run across models, save and return results.
         """
-
+        results = {}
 
         base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
         if self.analysis_type == "feature_selection":
@@ -347,7 +346,7 @@ class RegressionPipeline:
                 if self.save_intermediate:
                     self.save(f"{name}_{base_name}", res)
 
-                self.results[name] = res
+                results[name] = res
                 metadata["completed_models"].append(name)
             except Exception as e:
                 logger.error(f"Failed to run {name}: {e}")
@@ -361,9 +360,9 @@ class RegressionPipeline:
         metadata["successful_models"] = len(metadata["completed_models"])
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
-        self.save(base_name, self.results)
+        self.save(base_name, results)
         with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2)
         logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
 
-        return self.results
+        return results
