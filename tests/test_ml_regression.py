@@ -140,7 +140,7 @@ def test_regression_pipeline_wrapper_baseline_all():
         results = cp.run()
 
         # at least one save() call (final metadata)
-        assert saved, "Expected at least one save call, but none were made"
+        assert len(saved) > 0, "Expected at least one save call, but none were made"
         # every filename should include the correct task prefix
         assert all(prefix in name for name in saved), (
             f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
