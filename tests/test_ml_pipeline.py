@@ -21,18 +21,18 @@ def test_invalid_task_raises(dummy_X_y):
         _ = MLPipeline(X, y_class, cfg)
     assert "Invalid task" in str(exc.value)
 
-@pytest.mark.parametrize("task, y_key, ExpectedPipeline", [
-    ("classification", 1, ClassificationPipeline),
-    ("regression",     2, RegressionPipeline),
+@pytest.mark.parametrize("task, y_key, ExpectedPipeline, metric", [
+    ("classification", 1, ClassificationPipeline, "accuracy"),
+    ("regression",     2, RegressionPipeline, "r2"),
 ])
-def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipeline):
+def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipeline, metric):
     X, y_class, y_regr = dummy_X_y
     y = dummy_X_y[y_key]
     cfg = {
         "task": task,
         "analysis_type": "hp_search",
-        "models": ["A","B"],
-        "metrics": ["m1","m2"],
+        "models": ["Random Forest"],
+        "metrics": [metric],
         "random_state": 123,
         "cv_strategy": "stratified",
         "n_splits": 3,
@@ -42,7 +42,7 @@ def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipelin
         "direction": "backward",
         "search_type": "random",
         "n_iter": 5,
-        "scoring": "dummy_scorer",
+        "scoring": metric,
         "save_intermediate": False,
         "results_dir": "results",
         "results_file": "results"
