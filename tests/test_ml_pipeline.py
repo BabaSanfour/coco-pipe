@@ -25,7 +25,7 @@ def test_invalid_task_raises(dummy_X_y):
     ("classification", 1, ClassificationPipeline, "accuracy"),
     ("regression",     2, RegressionPipeline, "r2"),
 ])
-def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipeline, metric):
+def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipeline, metric, monkeypatch):
     X, y_class, y_regr = dummy_X_y
     y = dummy_X_y[y_key]
     cfg = {
@@ -48,13 +48,13 @@ def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipelin
         "results_file": "results"
     }
 
-    # intercept the inner pipeline run
     recorded = {}
     def fake_run(self):
         recorded['pipeline_type'] = type(self)
         return {"dummy": "result"}
 
-    setattr(ExpectedPipeline, "run", fake_run)
+    # apply the patch just for this test
+    monkeypatch.setattr(ExpectedPipeline, "run", fake_run, raising=True)
 
     mlp = MLPipeline(X, y, cfg)
     out = mlp.run()
