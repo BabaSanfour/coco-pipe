@@ -64,13 +64,13 @@ class SingleOutputRegressionPipeline(BasePipeline):
         metric_funcs = REGRESSION_METRICS
         default_metrics = [metrics] if isinstance(metrics, str) else (metrics or ["r2"])
 
-        base = REGRESSION_MODELS
+        base = REGRESSION_MODELS.copy()
         if models == "all":
-            model_configs = base
+            model_configs = base.copy()
         elif isinstance(models, str):
-            model_configs = {models: base[models]}
+            model_configs = {models: base[models].copy()}
         else:
-            model_configs = {m: base[m] for m in models}
+            model_configs = {m: base[m].copy() for m in models}
 
         cv = dict(DEFAULT_CV) if cv_kwargs is None else dict(cv_kwargs)
 
