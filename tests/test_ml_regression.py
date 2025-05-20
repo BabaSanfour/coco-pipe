@@ -43,7 +43,7 @@ def tmp_working_dir(tmp_path, monkeypatch):
 ########################################################
 
 @pytest.mark.parametrize(
-    "analysis_type, models, metrics, expected_task",
+    "analysis_type, model, metrics, expected_task",
     [
         ("baseline", ["Linear Regression"], ["r2"], "singleoutput"),
         ("baseline", ["Random Forest"], ["r2"], "singleoutput"),
@@ -51,7 +51,7 @@ def tmp_working_dir(tmp_path, monkeypatch):
     ],
 )
 def test_pipeline_detect_and_run_baseline(
-    analysis_type, models, metrics, expected_task, monkeypatch
+    analysis_type, model, metrics, expected_task, monkeypatch
 ):
     # Select the appropriate dataset
     if expected_task == "singleoutput":
@@ -71,7 +71,7 @@ def test_pipeline_detect_and_run_baseline(
         X=X,
         y=y,
         analysis_type=analysis_type,
-        models=models,
+        models=model,
         metrics=metrics,
         random_state=0,
         cv_strategy="kfold",
@@ -102,14 +102,14 @@ def test_pipeline_detect_and_run_baseline(
     assert expected_task in cls_name
 
     # Results keys match requested models
-    assert set(results.keys()) == set(models)
+    assert set(results.keys()) == set(model)
 
     # Each result has predictions and metrics
     for res in results.values():
         assert "predictions" in res and "metrics" in res
 
     # save() called once per model plus final
-    assert len(saved) == len(models) + 1
+    assert len(saved) == len(model) + 1
     assert any(name.startswith("testres") for name in saved)
 
 ########################################################
