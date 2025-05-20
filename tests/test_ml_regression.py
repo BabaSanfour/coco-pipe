@@ -17,11 +17,15 @@ from coco_pipe.ml.regression import (
 )
 
 # Helper small datasets
-X_single = np.arange(20).reshape(10, 2)
+X_single = np.arange(40).reshape(20, 2)  # Increased samples to allow n_splits=2
 y_single = X_single[:, 0] * 2.0 + 1.0
 
 X_multi, y_multi = make_regression(
-    n_samples=30, n_features=4, n_targets=3, noise=0.1, random_state=0
+    n_samples=50,  # Increased samples to allow n_splits=2
+    n_features=4,
+    n_targets=3,
+    noise=0.1,
+    random_state=0
 )
 
 ########################################################
@@ -71,6 +75,7 @@ def test_pipeline_detect_and_run_baseline(
         metrics=metrics,
         random_state=0,
         cv_strategy="kfold",
+        n_splits=2,
         n_jobs=1,
         save_intermediate=True,
         results_file="testres"
