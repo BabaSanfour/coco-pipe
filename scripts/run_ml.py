@@ -33,7 +33,8 @@ def run_analysis(X, y, analysis_cfg):
             'n_jobs': analysis_cfg.get('n_jobs'),
             'results_dir': analysis_cfg.get('results_dir'),
             'results_file': analysis_cfg.get('results_file'),
-            'cv_kwargs': analysis_cfg.get('cv_kwargs')
+            'cv_kwargs': analysis_cfg.get('cv_kwargs'),
+            'save_intermediate': analysis_cfg.get('save_intermediate')
         }
     }
     
@@ -79,7 +80,8 @@ def main():
 
         # 1.1) Print the shape of the selected features and target
         logger.info(f"Analysis {analysis['id']} selected {X.shape[1]} features and {y.shape[0]} samples")
-        logger.info(f"Analysis {analysis['id']} selected features: {X.columns.tolist()}")
+        features_to_print = X.columns.tolist() if len(X.columns) <= 5 else X.columns.tolist()[:5]
+        logger.info(f"Analysis {analysis['id']} first five selected features: {features_to_print}...")
         logger.info(f"Analysis {analysis['id']} selected target: {y.name}")
 
         # 2) Run analysis
