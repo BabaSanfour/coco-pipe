@@ -5,3 +5,8 @@ scikit-learn
 matplotlib
 umap-learn
 pacmap
+trimap
+phate
+mne>=1.0.0
+mne-bids>=0.10.0
+requests
