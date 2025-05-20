@@ -78,13 +78,30 @@ def test_pipeline_detect_and_run_baseline(
         models=models,
         metrics=metrics,
         random_state=0,
-        cv_strategy="kfold",  # ensure KFold for multilabel
+        cv_strategy="kfold",
         n_jobs=1,
         save_intermediate=True,
         results_file="testres"
     )
 
     results = pipe.run()
+
+    assert isinstance(results, dict)
+    assert results is not None
+    # add assertion for different parts of pipe (step by step to know what is working and whatnot)
+    assert pipe.pipeline is not None
+    assert pipe.results is not None
+    assert pipe.results_dir is not None
+    assert pipe.results_file is not None
+    assert pipe.X is not None
+    assert pipe.y is not None
+    assert pipe.analysis_type is not None
+    assert pipe.models is not None
+    assert pipe.metrics is not None
+    assert pipe.random_state is not None
+    assert pipe.cv_strategy is not None
+    assert pipe.pipeline is not None
+    assert pipe.pipeline.model_configs is not None
 
     # Ensure the underlying pipeline class matches the task
     cls_name = type(pipe.pipeline).__name__.lower()

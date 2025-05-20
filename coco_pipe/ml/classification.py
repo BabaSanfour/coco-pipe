@@ -13,6 +13,7 @@ import datetime
 import logging
 import pickle
 import os
+import json
 import numpy as np
 from sklearn.metrics import (
     roc_auc_score, average_precision_score, precision_recall_fscore_support
@@ -319,38 +320,36 @@ class MultiOutputClassificationPipeline(BasePipeline):
 
 class ClassificationPipeline:
     """
-    Wrapper that selects and runs the appropriate pipeline based on y.
+    Wrapper that selects and runs the appropriate classification pipeline.
 
-    Parameters:
-    ---------
-        :X: Input features as a numpy array or pandas DataFrame
-        :y: Target variable(s) as a numpy array or pandas Series/DataFrame
-        :analysis_type: Type of analysis to perform, one of ["baseline", "feature_selection", "hyperparameter_tuning"]. Default is "baseline"
-        :models: List of models to evaluate or "all" to try all available models. Default is "all"
-        :metrics: Metrics to evaluate models on. Can be a string or list of strings. Default is "accuracy"
-        :random_state: Random seed for reproducibility. Default is 42
-        :cv_strategy: Cross-validation strategy, one of ["stratified", "kfold"]. Default is "stratified"
-        :n_splits: Number of cross-validation folds. Default is 5
-        :n_features: Number of features to select when doing feature selection. Default is None
-        :direction: Direction for feature selection, one of ["forward", "backward"]. Default is "forward"
-        :search_type: Type of hyperparameter search, one of ["grid", "random"]. Default is "grid"
-        :n_iter: Number of iterations for random search. Default is 100
-        :scoring: Scoring metric for model selection. Default is None
-        :n_jobs: Number of parallel jobs. Default is -1 (use all processors)
-        :save_intermediate: Whether to save intermediate results. Default is False
-        :results_dir: Directory to save results. Default is "results"
-        :results_file: Base filename for results. Default is "results"
+    Parameters
+    ----------
+        :X: np.ndarray, Feature matrix, array-like of shape (n_samples, n_features)
+        :y: np.ndarray, Target matrix, array-like of shape (n_samples, n_targets)
+        :type: str, Type of analysis to perform, one of ["baseline", "feature_selection", "hp_search", "hp_search_fs"]
+        :models: str or list, optional (default="all"), Models to include in the pipeline
+        :metrics: str or list, optional (default=None), Metrics to evaluate
+        :random_state: int, optional (default=42), Random state for reproducibility
+        :cv_strategy: str, optional (default="stratified"), Cross-validation strategy
+        :n_splits: int, optional (default=5), Number of cross-validation splits
+        :n_features: int, optional (default=None), Number of features to select
+        :direction: str, optional (default="forward"), Direction for feature selection
+        :search_type: str, optional (default="grid"), Type of hyperparameter search
+        :n_iter: int, optional (default=100), Number of iterations for hyperparameter search
+        :scoring: str, optional (default=None), Scoring metric for model selection
+        :n_jobs: int, optional (default=-1), Number of parallel jobs
+        :save_intermediate: bool, optional (default=False), Whether to save intermediate results
+        :results_dir: str, optional (default="results"), Directory to save results
+        :results_file: str, optional (default="results"), Base filename for results
 
     The pipeline can:
     - Run baseline model evaluation with cross-validation
     - Perform automated feature selection
     - Conduct hyperparameter tuning
-    - Handle both binary and multi-class classification
     - Support multiple evaluation metrics
     - Save intermediate results during training
-    - Generate comprehensive performance reports
 
-        Returns:
+    Returns:
         :results: Dictionary containing model performances, predictions, and evaluation metrics
     """
     def __init__(
@@ -376,9 +375,10 @@ class ClassificationPipeline:
     ):
         self.X = X
         self.y = y
-        if analysis_type.lower() not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
+        analysis_type = analysis_type.lower()
+        if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
-        self.analysis_type = analysis_type.lower()
+        self.analysis_type = analysis_type
         self.models = models
         self.metrics = metrics
         self.random_state = random_state
@@ -394,45 +394,24 @@ class ClassificationPipeline:
         self.results_dir = results_dir
         self.results_file = results_file
         self.cv_kwargs = cv_kwargs
-        # placeholders
         self.pipeline = None
         self.results = {}
-        
-        # Create results directory if it doesn't exist
-        os.makedirs(self.results_dir, exist_ok=True)
 
-    def save(self, name, res):
-        """
-        Save intermediate results for each model in a pickle file as well as the final results in a pickle file.
-        """
-        filepath = os.path.join(self.results_dir, f"{name}.pkl")
-        with open(filepath, "wb") as f:
-            pickle.dump(res, f)
-        logger.info(f"Saved results to {filepath}")
-
-    def run(self):
-        """
-        Detect task type, build pipeline, run all models, and store results.
-        Returns:
-            dict of model_name -> results dict
-        """
-        # Determine task
         if hasattr(self.y, "ndim") and self.y.ndim == 2:
-            PipelineClass = MultiOutputClassificationPipeline
-            task = "multioutput"
-            logger.info("Detected multi-output task")
+            PipelineClass  = MultiOutputClassificationPipeline
+            self.task = "multioutput"
+            logger.info("Detected multi-output classification task")
         else:
             target_type = type_of_target(self.y)
             if target_type == "binary":
                 PipelineClass = BinaryClassificationPipeline
-                task = "binary"
+                self.task = "binary"
                 logger.info("Detected binary classification task")
             else:
                 PipelineClass = MultiClassClassificationPipeline
-                task = "multiclass"
+                self.task = "multiclass"
                 logger.info("Detected multiclass classification task")
-
-        # Prepare cv_kwargs
+        
         cv_kwargs = dict(DEFAULT_CV)
         if self.cv_kwargs is not None:
             cv_kwargs.update(self.cv_kwargs)
@@ -440,7 +419,6 @@ class ClassificationPipeline:
         cv_kwargs["random_state"] = self.random_state
         cv_kwargs["n_splits"] = self.n_splits
 
-        # Instantiate pipeline
         self.pipeline = PipelineClass(
             X=self.X,
             y=self.y,
@@ -450,16 +428,38 @@ class ClassificationPipeline:
             n_jobs=self.n_jobs,
             cv_kwargs=cv_kwargs,
         )
-        file_name = f"{self.results_file}_{task}_{self.analysis_type}_rs{self.random_state}"
-        if self.analysis_type == "feature_selection":
-            file_name += f"_nfeatures{self.n_features}_direction{self.direction}"
-        if self.analysis_type == "hp_search":
-            file_name += f"_niter{self.n_iter}_search{self.search_type}"
 
-        # Initialize metadata
-        import json
+        # Create results directory if it doesn't exist
+        os.makedirs(self.results_dir, exist_ok=True)
+
+    def save(self, name, res):
+        """
+        Save intermediate or final results as a pickle.
+        """
+        filepath = os.path.join(self.results_dir, f"{name}.pkl")
+        with open(filepath, "wb") as f:
+            pickle.dump(res, f)
+        logger.info(f"Saved results to {filepath}")
+
+    def run(self):
+        """
+        Detect task, instantiate pipeline, run across models, save and return results.
+        """
+
+
+        base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
+        if self.analysis_type == "feature_selection":
+            base_name += f"_nfeat{self.n_features}_dir{self.direction}"
+        if self.analysis_type == "hp_search":
+            base_name += f"_niter{self.n_iter}_search{self.search_type}"
+        if self.analysis_type == "hp_search_fs":
+            base_name += (
+                f"_nfeat{self.n_features}_dir{self.direction}"
+                f"_niter{self.n_iter}_search{self.search_type}"
+            )
+
         metadata = {
-            "task": task,
+            "task": self.task,
             "analysis_type": self.analysis_type,
             "models": self.models,
             "metrics": self.metrics,
@@ -472,28 +472,27 @@ class ClassificationPipeline:
             "n_iter": self.n_iter,
             "n_jobs": self.n_jobs,
             "X_shape": self.X.shape,
-            "y_shape": self.y.shape if hasattr(self.y, "shape") else (len(self.y),),
+            "y_shape": getattr(self.y, 'shape', (len(self.y),)),
             "start_time": datetime.datetime.now().isoformat(),
             "completed_models": [],
             "failed_models": [],
-            "status": "running"
+            "status": "running",
         }
 
-        # Execute for each model
-        for model_name in self.pipeline.model_configs:
+        for name in self.pipeline.model_configs:
             try:
                 if self.analysis_type == "baseline":
-                    res = self.pipeline.baseline(model_name)
+                    res = self.pipeline.baseline(name)
                 elif self.analysis_type == "feature_selection":
                     res = self.pipeline.feature_selection(
-                        model_name,
+                        name,
                         n_features=self.n_features,
                         direction=self.direction,
                         scoring=self.scoring,
                     )
                 elif self.analysis_type == "hp_search":
                     res = self.pipeline.hp_search(
-                        model_name,
+                        name,
                         param_grid=None,
                         search_type=self.search_type,
                         n_iter=self.n_iter,
@@ -501,7 +500,7 @@ class ClassificationPipeline:
                     )
                 elif self.analysis_type == "hp_search_fs":
                     res = self.pipeline.hp_search_fs(
-                        model_name,
+                        name,
                         param_grid=None,
                         search_type=self.search_type,
                         n_features=self.n_features,
@@ -511,28 +510,27 @@ class ClassificationPipeline:
                     )
                 else:
                     raise ValueError(f"Unknown pipeline type: {self.analysis_type}")
-                
+
                 if self.save_intermediate:
-                    self.save(f"{model_name}_{file_name}", res)
+                    self.save(f"{name}_{base_name}", res)
 
-                self.results[model_name] = res
-                metadata["completed_models"].append(model_name)
+                self.results[name] = res
+                metadata["completed_models"].append(name)
             except Exception as e:
-                logger.error(f"Failed to run {model_name}: {str(e)}")
-                metadata["failed_models"].append({"model": model_name, "error": str(e)})
+                logger.error(f"Failed to run {name}: {e}")
+                metadata["failed_models"].append({"model": name, "error": str(e)})
 
-        # Update final metadata
         metadata["end_time"] = datetime.datetime.now().isoformat()
-        metadata["status"] = "completed" if not metadata["failed_models"] else "partial_failure"
+        metadata["status"] = (
+            "completed" if not metadata["failed_models"] else "partial_failure"
+        )
         metadata["total_models"] = len(self.pipeline.model_configs)
         metadata["successful_models"] = len(metadata["completed_models"])
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
-        # Save final results and metadata
-        self.save(file_name, self.results)
-        metadata_path = os.path.join(self.results_dir, f"{file_name}_metadata.json")
-        with open(metadata_path, "w") as f:
+        self.save(base_name, self.results)
+        with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {metadata_path}")
+        logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
 
         return self.results

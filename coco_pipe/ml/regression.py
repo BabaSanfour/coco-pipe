@@ -236,30 +236,17 @@ class RegressionPipeline:
         self.pipeline = None
         self.results = {}
         
-        # Create results directory if it doesn't exist
-        os.makedirs(self.results_dir, exist_ok=True)
-
-    def save(self, name, res):
-        """
-        Save intermediate or final results as a pickle.
-        """
-        filepath = os.path.join(self.results_dir, f"{name}.pkl")
-        with open(filepath, "wb") as f:
-            pickle.dump(res, f)
-        logger.info(f"Saved results to {filepath}")
-
-    def run(self):
-        """
-        Detect task, instantiate pipeline, run across models, save and return results.
-        """
         if hasattr(self.y, "ndim") and self.y.ndim == 2:
             PipelineClass = MultiOutputRegressionPipeline
-            task = "multioutput"
+            self.task = "multioutput"
             logger.info("Detected multi-output regression task")
         else:
             PipelineClass = SingleOutputRegressionPipeline
-            task = "singleoutput"
+            self.task = "singleoutput"
             logger.info("Detected single-output regression task")
+
+        # Create results directory if it doesn't exist
+        os.makedirs(self.results_dir, exist_ok=True)
 
         cv_kwargs = dict(DEFAULT_CV)
         if self.cv_kwargs is not None:
@@ -278,7 +265,22 @@ class RegressionPipeline:
             cv_kwargs=cv_kwargs,
         )
 
-        base_name = f"{self.results_file}_{task}_{self.analysis_type}_rs{self.random_state}"
+    def save(self, name, res):
+        """
+        Save intermediate or final results as a pickle.
+        """
+        filepath = os.path.join(self.results_dir, f"{name}.pkl")
+        with open(filepath, "wb") as f:
+            pickle.dump(res, f)
+        logger.info(f"Saved results to {filepath}")
+
+    def run(self):
+        """
+        run across models, save and return results.
+        """
+
+
+        base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
         if self.analysis_type == "feature_selection":
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
         if self.analysis_type == "hp_search":
@@ -290,7 +292,7 @@ class RegressionPipeline:
             )
 
         metadata = {
-            "task": task,
+            "task": self.task,
             "analysis_type": self.analysis_type,
             "models": self.models,
             "metrics": self.metrics,
