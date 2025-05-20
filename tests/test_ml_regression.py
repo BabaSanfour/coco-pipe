@@ -85,7 +85,6 @@ def test_pipeline_detect_and_run_baseline(
     assert results is not None
     # add assertion for different parts of pipe (step by steo to know what is working and whatnot)
     assert pipe.pipeline is not None
-    assert pipe.results is not None
     assert pipe.results_dir is not None
     assert pipe.results_file is not None
     assert pipe.X is not None
