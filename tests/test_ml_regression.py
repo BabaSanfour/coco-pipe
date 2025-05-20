@@ -110,11 +110,11 @@ def test_baseline_multioutput_model_metrics(model_name, metrics):
 # -------------------------------------------------------------------
 # 4) RegressionPipeline wrapper (baseline only)
 # -------------------------------------------------------------------
-def test_regression_pipeline_wrapper_baseline_all():
+def test_regression_pipeline_wrapper_baseline_all(monkeypatch):
     saved = []
     def fake_save(self, name, res):
         saved.append(name)
-    RegressionPipeline.save = fake_save
+    monkeypatch.setattr(RegressionPipeline, "save", fake_save)
 
     # test both single‐output and multi‐output
     for X, y, MODELS, prefix in [
@@ -124,9 +124,8 @@ def test_regression_pipeline_wrapper_baseline_all():
         cp = RegressionPipeline(
             X=X,
             y=y,
-            analysis_type="baseline",
+            analysis_type="baseline", 
             models=MODELS,
-            metrics=None,
             random_state=0,
 
             # force at least 2 folds and use k‐fold CV
@@ -135,7 +134,8 @@ def test_regression_pipeline_wrapper_baseline_all():
 
             n_jobs=1,
             save_intermediate=True,
-            results_file="res"
+            results_file="results_test",
+            results_dir="results"
         )
         results = cp.run()
 
