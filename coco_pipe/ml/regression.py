@@ -11,11 +11,17 @@ License: TBD
 import logging
 import pickle
 import datetime
+import json
 import os
 
 from .base import BasePipeline
-from .config import REGRESSION_METRICS, REGRESSION_MODELS, DEFAULT_CV, MULTIOUTPUT_MODELS_REGRESSION, MULTIOUTPUT_METRICS_REGRESSION
-from sklearn.multioutput import MultiOutputRegressor
+from .config import (
+    REGRESSION_METRICS,
+    REGRESSION_MODELS,
+    DEFAULT_CV,
+    MULTIOUTPUT_MODELS_REGRESSION,
+    MULTIOUTPUT_METRICS_REGRESSION,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -82,10 +88,9 @@ class SingleOutputRegressionPipeline(BasePipeline):
 
     def _validate_single_target(self, y):
         """Ensure target is 1D array."""
-        if len(y.shape) != 1:
+        if len(getattr(y, 'shape', ())) != 1:
             raise ValueError(
-                f"Target must be 1D array for single target regression. "
-                f"Shape is {y.shape}"
+                f"Target must be 1D array for single target regression. Shape is {getattr(y, 'shape', None)}"
             )
 
 
@@ -146,12 +151,11 @@ class MultiOutputRegressionPipeline(BasePipeline):
 
     def _validate_multioutput_target(self, y):
         """Ensure target is 2D array."""
-        if len(y.shape) != 2:
+        if len(getattr(y, 'shape', ())) != 2:
             raise ValueError(
-                f"Target must be 2D array for multivariate regression. "
-                f"Shape is {y.shape}"
+                f"Target must be 2D array for multivariate regression. Shape is {getattr(y, 'shape', None)}"
             )
-    
+
 
 class RegressionPipeline:
     """
@@ -195,7 +199,7 @@ class RegressionPipeline:
         models="all",
         metrics=None,
         random_state=42,
-        cv_strategy="stratified",
+        cv_strategy="kfold",
         n_splits=5,
         n_features=None,
         direction="forward",
@@ -210,9 +214,10 @@ class RegressionPipeline:
     ):
         self.X = X
         self.y = y
-        if analysis_type.lower() not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
+        analysis_type = analysis_type.lower()
+        if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
-        self.analysis_type = analysis_type.lower()
+        self.analysis_type = analysis_type
         self.models = models
         self.metrics = metrics
         self.random_state = random_state
@@ -236,7 +241,7 @@ class RegressionPipeline:
 
     def save(self, name, res):
         """
-        Save intermediate results for each model in a pickle file as well as the final results in a pickle file.
+        Save intermediate or final results as a pickle.
         """
         filepath = os.path.join(self.results_dir, f"{name}.pkl")
         with open(filepath, "wb") as f:
@@ -245,10 +250,8 @@ class RegressionPipeline:
 
     def run(self):
         """
-        Detect regression task, instantiate pipeline, run operation across all models, 
-        save if requested, and return results dict.
+        Detect task, instantiate pipeline, run across models, save and return results.
         """
-        # choose pipeline
         if hasattr(self.y, "ndim") and self.y.ndim == 2:
             PipelineClass = MultiOutputRegressionPipeline
             task = "multioutput"
@@ -258,15 +261,13 @@ class RegressionPipeline:
             task = "singleoutput"
             logger.info("Detected single-output regression task")
 
-        # prepare cv_kwargs
-
         cv_kwargs = dict(DEFAULT_CV)
         if self.cv_kwargs is not None:
             cv_kwargs.update(self.cv_kwargs)
         cv_kwargs["cv_strategy"] = self.cv_strategy
         cv_kwargs["random_state"] = self.random_state
         cv_kwargs["n_splits"] = self.n_splits
-        # instantiate
+
         self.pipeline = PipelineClass(
             X=self.X,
             y=self.y,
@@ -282,9 +283,12 @@ class RegressionPipeline:
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
         if self.analysis_type == "hp_search":
             base_name += f"_niter{self.n_iter}_search{self.search_type}"
+        if self.analysis_type == "hp_search_fs":
+            base_name += (
+                f"_nfeat{self.n_features}_dir{self.direction}"
+                f"_niter{self.n_iter}_search{self.search_type}"
+            )
 
-        # Initialize metadata
-        import json
         metadata = {
             "task": task,
             "analysis_type": self.analysis_type,
@@ -299,42 +303,35 @@ class RegressionPipeline:
             "n_iter": self.n_iter,
             "n_jobs": self.n_jobs,
             "X_shape": self.X.shape,
-            "y_shape": self.y.shape if hasattr(self.y, "shape") else (len(self.y),),
+            "y_shape": getattr(self.y, 'shape', (len(self.y),)),
             "start_time": datetime.datetime.now().isoformat(),
             "completed_models": [],
             "failed_models": [],
-            "status": "running"
+            "status": "running",
         }
 
-        # Execute for each model
-        for model_name in self.pipeline.model_configs:
+        for name in self.pipeline.model_configs:
             try:
                 if self.analysis_type == "baseline":
-                    res = self.pipeline.baseline(model_name)
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{base_name}", res)
+                    res = self.pipeline.baseline(name)
                 elif self.analysis_type == "feature_selection":
                     res = self.pipeline.feature_selection(
-                        model_name,
+                        name,
                         n_features=self.n_features,
                         direction=self.direction,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{base_name}", res)
                 elif self.analysis_type == "hp_search":
                     res = self.pipeline.hp_search(
-                        model_name,
+                        name,
                         param_grid=None,
                         search_type=self.search_type,
                         n_iter=self.n_iter,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{base_name}", res)
                 elif self.analysis_type == "hp_search_fs":
                     res = self.pipeline.hp_search_fs(
-                        model_name,
+                        name,
                         param_grid=None,
                         search_type=self.search_type,
                         n_features=self.n_features,
@@ -342,29 +339,29 @@ class RegressionPipeline:
                         n_iter=self.n_iter,
                         scoring=self.scoring,
                     )
-                    if self.save_intermediate:
-                        self.save(f"{model_name}_{base_name}", res)
                 else:
                     raise ValueError(f"Unknown pipeline type: {self.analysis_type}")
 
-                self.results[model_name] = res
-                metadata["completed_models"].append(model_name)
-            except Exception as e:
-                logger.error(f"Failed to run {model_name}: {str(e)}")
-                metadata["failed_models"].append({"model": model_name, "error": str(e)})
+                if self.save_intermediate:
+                    self.save(f"{name}_{base_name}", res)
 
-        # Update final metadata
+                self.results[name] = res
+                metadata["completed_models"].append(name)
+            except Exception as e:
+                logger.error(f"Failed to run {name}: {e}")
+                metadata["failed_models"].append({"model": name, "error": str(e)})
+
         metadata["end_time"] = datetime.datetime.now().isoformat()
-        metadata["status"] = "completed" if not metadata["failed_models"] else "partial_failure"
+        metadata["status"] = (
+            "completed" if not metadata["failed_models"] else "partial_failure"
+        )
         metadata["total_models"] = len(self.pipeline.model_configs)
         metadata["successful_models"] = len(metadata["completed_models"])
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
-        # Save final results and metadata
         self.save(base_name, self.results)
-        metadata_path = os.path.join(self.results_dir, f"{base_name}_metadata.json")
-        with open(metadata_path, "w") as f:
+        with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {metadata_path}")
+        logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
 
         return self.results
