@@ -124,13 +124,13 @@ class MultiOutputRegressionPipeline(BasePipeline):
     ):
         self._validate_multioutput_target(y)
 
-        base = MULTIOUTPUT_MODELS_REGRESSION
+        base = MULTIOUTPUT_MODELS_REGRESSION.copy()
         if models == "all":
-            model_configs = base
+            model_configs = base.copy()
         elif isinstance(models, str):
-            model_configs = {models: base[models]}
+            model_configs = {models: base[models].copy()}
         else:
-            model_configs = {m: base[m] for m in models}
+            model_configs = {m: base[m].copy() for m in models}
 
         metric_funcs = MULTIOUTPUT_METRICS_REGRESSION
         default_metrics = [metrics] if isinstance(metrics, str) else (metrics or ["mean_r2"])
