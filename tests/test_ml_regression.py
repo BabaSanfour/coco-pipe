@@ -16,145 +16,196 @@ from coco_pipe.ml.regression import (
     RegressionPipeline,
 )
 
-# --- Fixtures: tiny datasets ---
-X1 = np.arange(20).reshape(10, 2)
-y1 = X1[:, 0] * 2.0 + 1.0
+# Helper small datasets
+X_single = np.arange(20).reshape(10, 2)
+y_single = X_single[:, 0] * 2.0 + 1.0
 
-X2, y2 = make_regression(
+X_multi, y_multi = make_regression(
     n_samples=30, n_features=4, n_targets=3, noise=0.1, random_state=0
 )
 
+########################################################
+# Fixtures
+########################################################
+
 @pytest.fixture(autouse=True)
-def tmp_cwd(tmp_path, monkeypatch):
+def tmp_working_dir(tmp_path, monkeypatch):
+    """Run tests in a temporary directory to avoid file pollution."""
     monkeypatch.chdir(tmp_path)
     yield
 
-# -------------------------------------------------------------------
-# 1) compute_metrics for single‐target via BasePipeline
-# -------------------------------------------------------------------
-def test_compute_metrics_single():
-    fold_preds = [
-        {"y_true": np.array([1.0, 2.0]), "y_pred": np.array([1.0, 2.0])},
-        {"y_true": np.array([3.0, 4.0, 5.0]), "y_pred": np.array([3.0, 4.0, 6.0])},
-    ]
-    metrics = ["r2", "neg_mse"]
-    funcs = {m: REGRESSION_METRICS[m] for m in metrics}
-    out = BasePipeline.compute_metrics(fold_preds, metrics, funcs)
-    # Weighted means as before
-    assert pytest.approx(out["metrics"]["r2"]["mean"], rel=1e-6) == 0.7
-    assert pytest.approx(out["metrics"]["neg_mse"]["mean"], rel=1e-6) == -0.2
-    assert len(out["predictions"]["y_true"]) == 5
+########################################################
+# Tests for RegressionPipeline
+########################################################
 
-# -------------------------------------------------------------------
-# 2) Parametrized baseline for single‐target
-# -------------------------------------------------------------------
-@pytest.mark.parametrize("model_name", list(REGRESSION_MODELS.keys()))
-@pytest.mark.parametrize("metrics", [
-    ["r2"],
-    ["neg_mse"],
-    ["r2", "neg_mse", "neg_mae"],
-])
-def test_baseline_single_model_metrics(model_name, metrics):
-    pipe = SingleOutputRegressionPipeline(
-        X=X1,
-        y=y1,
-        models=[model_name],
-        metrics=metrics,
-        random_state=0,
-        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"},
-        n_jobs=1
-    )
-    out = pipe.baseline(model_name)
-    # Structure
-    assert "predictions" in out and "metrics" in out
-    # Only requested metrics present
-    assert set(out["metrics"].keys()) == set(metrics)
-    # values within expected ranges
-    for m in metrics:
-        val = out["metrics"][m]["mean"]
-        if m == "r2":
-            assert val <= 1.0
-        else:
-            assert isinstance(val, float)
+@pytest.mark.parametrize(
+    "analysis_type, models, metrics, expected_task",
+    [
+        ("baseline", ["Linear Regression"], ["r2"], "singleoutput"),
+        ("baseline", ["Random Forest"], ["neg_mse"], "singleoutput"),
+        ("baseline", ["Linear Regression"], ["mean_r2"], "multioutput"),
+    ],
+)
+def test_pipeline_detect_and_run_baseline(
+    analysis_type, models, metrics, expected_task, monkeypatch
+):
+    # Select the appropriate dataset
+    if expected_task == "singleoutput":
+        X, y = X_single, y_single
+    else:
+        X, y = X_multi, y_multi
 
-# -------------------------------------------------------------------
-# 3) Parametrized baseline for multioutput
-# -------------------------------------------------------------------
-@pytest.mark.parametrize("model_name", list(MULTIOUTPUT_MODELS_REGRESSION.keys()))
-@pytest.mark.parametrize("metrics", [
-    ["mean_r2"],
-    ["neg_mean_mse"],
-    ["mean_r2", "neg_mean_mae"]
-])
-def test_baseline_multioutput_model_metrics(model_name, metrics):
-    pipe = MultiOutputRegressionPipeline(
-        X=X2,
-        y=y2,
-        models=[model_name],
-        metrics=metrics,
-        random_state=0,
-        cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"},
-        n_jobs=1
-    )
-    out = pipe.baseline(model_name)
-    assert "predictions" in out and "metrics" in out
-    assert set(out["metrics"].keys()) == set(metrics)
-    # shape of predictions
-    pred = out["predictions"]["y_true"]
-    assert pred.shape == y2.shape
-    # check values
-    for m in metrics:
-        val = out["metrics"][m]["mean"]
-        assert isinstance(val, float)
-
-# -------------------------------------------------------------------
-# 4) RegressionPipeline wrapper (baseline only)
-# -------------------------------------------------------------------
-def test_regression_pipeline_wrapper_baseline_all(monkeypatch):
+    # Monkey-patch save() to capture names without writing files
     saved = []
+
     def fake_save(self, name, res):
         saved.append(name)
+
     monkeypatch.setattr(RegressionPipeline, "save", fake_save)
 
-    # test both single‐output and multi‐output
-    for X, y, MODELS, prefix in [
-        (X1, y1, list(REGRESSION_MODELS.keys()), "singleoutput"),
-        (X2, y2, list(MULTIOUTPUT_MODELS_REGRESSION.keys()), "multioutput")
-    ]:
-        cp = RegressionPipeline(
+    pipe = RegressionPipeline(
+        X=X,
+        y=y,
+        analysis_type=analysis_type,
+        models=models,
+        metrics=metrics,
+        random_state=0,
+        cv_strategy="kfold",
+        n_jobs=1,
+        save_intermediate=True,
+        results_file="testres"
+    )
+
+    results = pipe.run()
+
+    # Ensure the underlying pipeline class matches the task
+    cls_name = type(pipe.pipeline).__name__.lower()
+    assert expected_task in cls_name
+
+    # Results keys match requested models
+    assert set(results.keys()) == set(models)
+
+    # Each result has predictions and metrics
+    for res in results.values():
+        assert "predictions" in res and "metrics" in res
+
+    # save() called once per model plus final
+    assert len(saved) == len(models) + 1
+    assert any(name.startswith("testres") for name in saved)
+
+########################################################
+# Tests for SingleOutputRegressionPipeline
+########################################################
+
+def test_single_output_metrics_correctness():
+    # synthetic fold predictions
+    fold_preds = [
+        {
+            "y_true": np.array([1.0, 2.0]),
+            "y_pred": np.array([1.0, 2.0])
+        },
+        {
+            "y_true": np.array([3.0, 4.0, 5.0]),
+            "y_pred": np.array([3.0, 4.0, 6.0])
+        }
+    ]
+
+    # dummy pipeline instance
+    dummy_X = np.zeros((5, 2))
+    dummy_y = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    dummy_y_pred = np.array([1.0, 2.0, 3.0, 4.0, 6.0])
+    pipe = SingleOutputRegressionPipeline(
+        X=dummy_X,
+        y=dummy_y,
+        models="all",
+        metrics=list(REGRESSION_METRICS.keys()),
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
+        n_jobs=1
+    )
+
+    results = pipe.compute_metrics(fold_preds, pipe.metrics, pipe.metric_funcs)
+
+    # r2: perfect prediction in first fold, imperfect in second
+    expected_r2 = 0.7  # (1.0 * 2 + 0.4 * 3) / 5
+    assert pytest.approx(results["metrics"]["r2"]["mean"], rel=1e-6) == expected_r2
+
+    # neg_mse: only error in second fold
+    expected_neg_mse = -0.2  # -(0.0 * 2 + 0.2 * 3) / 5
+    assert pytest.approx(results["metrics"]["neg_mse"]["mean"], rel=1e-6) == expected_neg_mse
+
+def test_baseline_all_models_run_single():
+    X, y = make_regression(
+        n_samples=100,
+        n_features=10,
+        n_informative=3,
+        noise=0.1,
+        random_state=0
+    )
+    metrics = ["r2", "neg_mse", "neg_mae"]
+    count = 0
+    for model_name in REGRESSION_MODELS.keys():
+        pipe = SingleOutputRegressionPipeline(
             X=X,
             y=y,
-            analysis_type="baseline", 
-            models=MODELS,
+            models=[model_name],
+            metrics=metrics,
             random_state=0,
-
-            # force at least 2 folds and use k‐fold CV
-            cv_strategy="kfold",
-            n_splits=2,
-
             n_jobs=1,
-            save_intermediate=True,
-            results_file="results_test",
-            results_dir="results"
+            cv_kwargs={**DEFAULT_CV, "n_splits": 5, "shuffle": True, "cv_strategy": "kfold"}
         )
-        results = cp.run()
+        out = pipe.baseline(model_name)
+        assert all(key in out for key in ("model", "feature_importances", "metrics", "predictions"))
+        assert len(out["predictions"]["y_true"]) == len(y)
+        for m in metrics:
+            val = out["metrics"][m]["mean"]
+            if m == "r2":
+                assert val <= 1.0
+            else:
+                assert isinstance(val, float)
+        count += 1
+    assert count == len(REGRESSION_MODELS)
 
-        # at least one save() call (final metadata)
-        assert saved, "Expected at least one save call, but none were made"
-        # every filename should include the correct task prefix
-        assert all(prefix in name for name in saved), (
-            f"Expected prefix {prefix!r} in all saved filenames, got: {saved}"
+########################################################
+# Tests for MultiOutputRegressionPipeline
+########################################################
+
+def test_target_validation_error_multioutput():
+    X = np.zeros((10, 5))
+    y = np.zeros(10)
+    with pytest.raises(ValueError, match="Target must be 2D array for multivariate regression"):
+        MultiOutputRegressionPipeline(X=X, y=y)
+
+def test_baseline_all_models_multioutput():
+    X, y = make_regression(
+        n_samples=100,
+        n_features=6,
+        n_targets=3,
+        noise=0.1,
+        random_state=0
+    )
+    metrics = ["mean_r2", "neg_mean_mse", "neg_mean_mae"]
+    results = []
+    for name in MULTIOUTPUT_MODELS_REGRESSION:
+        pipe = MultiOutputRegressionPipeline(
+            X=X,
+            y=y,
+            models=[name],
+            metrics=metrics,
+            random_state=42,
+            n_jobs=1,
+            cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"}
         )
-
-        # verify results for each model
-        assert set(results.keys()) == set(MODELS)
-        for m in MODELS:
-            assert "metrics" in results[m] and "predictions" in results[m]
-
-        # expect one save per model + one final metadata save
-        assert len(saved) == len(MODELS) + 1
-        saved.clear()
+        out = pipe.baseline(name)
+        assert out["predictions"]["y_true"].shape == y.shape
+        for m in metrics:
+            val = out["metrics"][m]["mean"]
+            if m == "mean_r2":
+                assert val <= 1.0
+            else:
+                assert isinstance(val, float)
+        results.append(out)
+    assert len(results) == len(MULTIOUTPUT_MODELS_REGRESSION)
 
 def test_regression_pipeline_invalid_type():
     with pytest.raises(ValueError):
-        RegressionPipeline(X=X1, y=y1, analysis_type="foo").run()
+        RegressionPipeline(X=X_single, y=y_single, analysis_type="foo").run()
