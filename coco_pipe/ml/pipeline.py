@@ -29,19 +29,13 @@ class MLPipeline:
         self.X = X
         self.y = y
         self.config = config
-
-    def run(self):
-        """
-        Run the ML pipeline.
-        """
-        task = self.config.get("task")
-        
-        if task == "regression":
-            pipeline = RegressionPipeline
-        elif task == "classification"   :
-            pipeline = ClassificationPipeline
+        self.task = config.get("task")
+        if self.task == "regression":
+            self.pipeline = RegressionPipeline
+        elif self.task == "classification"   :
+            self.pipeline = ClassificationPipeline
         else:
-            raise ValueError(f"Invalid task: {task}")
+            raise ValueError(f"Invalid task: {self.task}")
 
         # Instantiate and run pipeline
         # Extract cv_kwargs first to avoid duplicate parameters
@@ -50,8 +44,14 @@ class MLPipeline:
         cv_kwargs.pop("cv_strategy", None)
         cv_kwargs.pop("n_splits", None)
         cv_kwargs.pop("random_state", None)
+        self.cv_kwargs = cv_kwargs
 
-        pipeline = pipeline(
+    def run(self):
+        """
+        Run the ML pipeline.
+        """
+
+        pipeline = self.pipeline(
             X=self.X, y=self.y,
             analysis_type=self.config.get("analysis_type", "baseline"),
             models=self.config.get("models", "all"),
@@ -68,6 +68,6 @@ class MLPipeline:
             save_intermediate=self.config.get("save_intermediate", False),
             results_dir=self.config.get("results_dir", "results"),
             results_file=self.config.get("results_file", "results"),
-            cv_kwargs=cv_kwargs
+            cv_kwargs=self.cv_kwargs
         )
         return pipeline.run()

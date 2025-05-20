@@ -9,16 +9,16 @@ from coco_pipe.ml.regression    import RegressionPipeline
 def dummy_X_y():
     # simple dummy data for both tasks
     X = np.arange(20).reshape(10, 2)
-    y_class = np.array([0,1] * 5)
-    y_regr  = np.arange(10).astype(float)
+    y_class = np.array([0, 1] * 5)
+    y_regr = np.arange(10).astype(float)
     return X, y_class, y_regr
 
 def test_invalid_task_raises(dummy_X_y):
-    X, y_class, y_regr = dummy_X_y
+    X, y_class, _ = dummy_X_y
     cfg = {"task": "not_a_task"}
-    p = MLPipeline(X, y_class, cfg)
     with pytest.raises(ValueError) as exc:
-        p.run()
+        # error is raised in __init__
+        _ = MLPipeline(X, y_class, cfg)
     assert "Invalid task" in str(exc.value)
 
 @pytest.mark.parametrize("task, y_key, ExpectedPipeline", [
@@ -51,29 +51,23 @@ def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipelin
     # intercept the inner pipeline run
     recorded = {}
     def fake_run(self):
-        # capture the self type
         recorded['pipeline_type'] = type(self)
         return {"dummy": "result"}
 
-    # patch the run method on both pipeline classes
     setattr(ExpectedPipeline, "run", fake_run)
 
     mlp = MLPipeline(X, y, cfg)
     out = mlp.run()
 
-    # ensure the correct inner class was instantiated
     assert recorded['pipeline_type'] is ExpectedPipeline
-
-    # ensure run() returned whatever fake_run returned
     assert out == {"dummy": "result"}
 
 def test_defaults_are_applied(dummy_X_y):
     X, y_class, _ = dummy_X_y
-    # omit many keys from config to trigger defaults
-    cfg = {"task": "classification"}
+    cfg = {"task": "classification"}  # use only required field
+
     recorded = {}
     def fake_run(self):
-        # capture the instance attributes
         recorded.update({
             "analysis_type": self.analysis_type,
             "models": self.models,
