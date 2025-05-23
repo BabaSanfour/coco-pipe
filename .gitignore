@@ -40,3 +40,5 @@ coverage.xml
 .mypy_cache/
 .dmypy.json
 *.log
+results/
+.venv_coco_pipe/
