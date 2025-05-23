@@ -1,15 +1,74 @@
-"""
-coco_pipe/io/select_features.py
-----------------
-Select features from a DataFrame.
-
-Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
-Date: 2025-05-18
-Version: 0.0.1
-License: TBD
-"""
+import re
+import difflib
 import pandas as pd
-from typing import List, Optional, Union, Tuple, Dict
+from typing import Any, List, Optional, Union, Tuple, Dict
+
+__all__ = ["select_features"]
+
+
+def _get_col_map(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Map lowercase column names to actual column names for case-insensitive lookup.
+    """
+    return {col.lower(): col for col in df.columns}
+
+
+def _suggest_closest(name: str, choices: List[str], n: int = 3) -> List[str]:
+    """
+    Suggest close matches for a given name from choices.
+    """
+    return difflib.get_close_matches(name, choices, n)
+
+
+def _apply_row_filters(
+    df: pd.DataFrame,
+    row_filters: Union[Dict[str, Any], List[Dict[str, Any]]],
+    col_map: Dict[str, str]
+) -> pd.DataFrame:
+    """
+    Apply one or more row filters to df.
+
+    Each filter dict must have:
+      - 'column': column name (case-insensitive)
+      - 'values': list or single value for comparison or isin
+      - optional 'operator': one of ['>', '<', '>=', '<=', '==', '!=']
+    Without operator, defaults to isin.
+    """
+    if not isinstance(row_filters, list):
+        row_filters = [row_filters]
+
+    op_map = {
+        ">": lambda col, val: col > val,
+        "<": lambda col, val: col < val,
+        ">=": lambda col, val: col >= val,
+        "<=": lambda col, val: col <= val,
+        "==": lambda col, val: col == val,
+        "!=": lambda col, val: col != val,
+    }
+
+    mask = pd.Series(True, index=df.index)
+    for filt in row_filters:
+        col_key = filt.get("column")
+        if not col_key:
+            raise ValueError("Row filter missing 'column' key")
+        lower = col_key.lower()
+        if lower not in col_map:
+            sugg = _suggest_closest(lower, list(col_map))
+            raise ValueError(f"Row filter column '{col_key}' not found. Did you mean {sugg}?")
+        actual_col = col_map[lower]
+        values = filt.get("values")
+        operator = filt.get("operator")
+
+        if operator in op_map:
+            val = values if not isinstance(values, list) else values[0]
+            mask &= op_map[operator](df[actual_col], val)
+        elif values is not None:
+            val_list = values if isinstance(values, list) else [values]
+            mask &= df[actual_col].isin(val_list)
+        else:
+            raise ValueError(f"Row filter for column '{col_key}' must include 'values'.")
+
+    return df[mask]
 
 def select_features(
     df: pd.DataFrame,
@@ -22,16 +81,8 @@ def select_features(
     row_filter: Optional[Union[dict, List[dict]]] = None,
 ) -> Tuple[pd.DataFrame, Union[pd.Series, pd.DataFrame]]:
     """
-    Slice a DataFrame into X (features) and y (target) according to:
-
-      - covariates: columns like age, sex, clinical scores, etc.
-      - spatial_units: sensors/regions or groups thereof, e.g. "left_frontal", "right_frontal", "T1", "C3"
-      - feature_names: e.g. 'alpha', 'beta', etc.
-      - sep: separator between spatial unit and feature name (default '_')
-      - reverse: if True, expects naming '<feature>{sep}<spatial_unit>' instead of '<spatial_unit>{sep}<feature>'
-      - row_filter: {"column": col, "values": [...]} or list of such dicts
-
-    Assumes brain-feature columns are named accordingly.
+    Select feature columns (brain-feature combinations) and covariates from df,
+    and extract target(s).
 
     Parameters
     ----------
@@ -43,96 +94,97 @@ def select_features(
         :sep: str, Separator between spatial unit and feature name (default '_')
         :reverse: bool, If True, expects naming '<feature>{sep}<spatial_unit>' instead of '<spatial_unit>{sep}<feature>'
         :row_filter: Optional[dict], {"column": ..., "values": [...]} to subset rows, e.g. {"column": "subject", "values": ["sub-01", "sub-02"]}
+    
     Returns
     -------
         X: pd.DataFrame of selected features
         y: pd.Series or DataFrame of target(s)
     """
-    # Map lowercase to actual column names for case-insensitive matching
-    col_map = {col.lower(): col for col in df.columns}
+    col_map = _get_col_map(df)
 
-    # 1) optional row-filtering
+    # 1) Apply row filters
     if row_filter:
-        filters = row_filter if isinstance(row_filter, list) else [row_filter]
-        for filt in filters:
-            col_l = filt["column"].lower()
-            if col_l not in col_map:
-                raise ValueError(f"Row filter column '{col_l}' not found in DataFrame")
-            actual_col = col_map[col_l]
-            vals = filt.get("values")
-            op = filt.get("operator")
-            if op == ">":
-                df = df[df[actual_col] > vals]
-            elif op == "<":
-                df = df[df[actual_col] < vals]
-            elif op == ">=":
-                df = df[df[actual_col] >= vals]
-            elif op == "<=":
-                df = df[df[actual_col] <= vals]
-            else:
-                df = df[df[actual_col].isin(vals)]
+        df = _apply_row_filters(df, row_filter, col_map)
 
     parts: List[pd.DataFrame] = []
 
-    # 2) covariates
+    # 2) Covariates
     if covariates:
-        missing_covs = [cov for cov in covariates if cov.lower() not in col_map]
-        if missing_covs:
-            raise ValueError(f"Requested covariates not found in DataFrame: {missing_covs}")
-        matched_covs = [col_map[cov.lower()] for cov in covariates]
-        parts.append(df[matched_covs])
+        matched = []
+        for cov in covariates:
+            low = cov.lower()
+            if low not in col_map:
+                sugg = _suggest_closest(low, list(col_map))
+                raise ValueError(f"Covariate '{cov}' not found. Did you mean {sugg}?")
+            matched.append(col_map[low])
+        parts.append(df[matched])
 
+    # 3) Parse columns into (su, feat)
     all_cols = df.columns.tolist()
+    pairs = []
+    for col in all_cols:
+        if sep not in col:
+            continue
+        left, right = col.split(sep, 1)
+        if reverse:
+            feat, su = left, right
+        else:
+            su, feat = left, right
+        pairs.append({'col': col, 'su': su, 'feat': feat})
 
-    # 3) spatial_units normalization
-    if spatial_units == "all":
-        # determine from column names
-        spatial_units = sorted({
-            cols.split(sep)[1] if reverse else cols.split(sep)[0]
-            for cols in all_cols if sep in cols
-        })
+    actual_su = sorted({p['su'] for p in pairs})
+    actual_feat = sorted({p['feat'] for p in pairs})
+
+    # 4) Normalize spatial_units
+    sel_su: List[str] = []
+    if spatial_units == 'all':
+        sel_su = actual_su
     elif spatial_units is None:
-        spatial_units = []
+        sel_su = []
     elif isinstance(spatial_units, dict):
-        spatial_units = list(spatial_units.keys())
-
-    # 4) feature_names normalization
-    if feature_names == "all":
-        feature_names = sorted({
-            cols.split(sep)[0] if reverse else cols.split(sep)[1]
-            for cols in all_cols if sep in cols
-        })
-    elif isinstance(feature_names, str):
-        feature_names = [feature_names]
-
-    # 5) collect feature columns
-    if reverse:
-        requested = [f"{feat}{sep}{su}".lower() for su in spatial_units for feat in feature_names]
+        sel_su = []
     else:
-        requested = [f"{su}{sep}{feat}".lower() for su in spatial_units for feat in feature_names]
+        for su_in in spatial_units:
+            matches = [su for su in actual_su if su.lower() == su_in.lower()]
+            if not matches:
+                sel_su = []
+                break
+            sel_su.extend(matches)
 
-    missing_cols = [col for col in requested if col not in col_map]
-    if missing_cols:
-        raise ValueError(f"Requested feature columns not found in DataFrame: {missing_cols}")
+    # 5) Normalize feature_names
+    sel_feat: List[str] = []
+    if feature_names == 'all':
+        sel_feat = actual_feat
+    else:
+        feat_list = feature_names if isinstance(feature_names, list) else [feature_names]
+        for fn in feat_list:
+            matches = [f for f in actual_feat if f.lower() == fn.lower()]
+            if not matches:
+                sel_feat = []
+                break
+            sel_feat.extend(matches)
 
-    feature_cols = [col_map[col] for col in requested]
-    if feature_cols:
-        parts.append(df[feature_cols])
+    # 6) Select feature columns
+    sel_cols: List[str] = []
+    for p in pairs:
+        if p['su'] in sel_su and p['feat'] in sel_feat:
+            sel_cols.append(p['col'])
+    if sel_cols:
+        parts.append(df[sel_cols])
 
-    # 6) ensure features exist
+    # 7) Error if nothing selected
     if not parts:
-        raise ValueError(
-            "No features selected: both covariates and spatial_units yielded no columns."
-        )
-
+        raise ValueError("No features selected: check your spatial_units and feature_names.")
     X = pd.concat(parts, axis=1)
 
-    # 7) select target(s)
-    if isinstance(target_columns, str):
-        target_columns = [target_columns]
-    missing_targets = [t for t in target_columns if t.lower() not in col_map]
-    if missing_targets:
-        raise ValueError(f"Target columns not found in DataFrame: {missing_targets}")
-    matched_targets = [col_map[t.lower()] for t in target_columns]
-    y = df[matched_targets[0]] if len(matched_targets) == 1 else df[matched_targets]
+    # 8) Select targets
+    tgt_list = target_columns if isinstance(target_columns, list) else [target_columns]
+    tcols: List[str] = []
+    for tgt in tgt_list:
+        low = tgt.lower()
+        if low not in col_map:
+            sugg = _suggest_closest(low, list(col_map))
+            raise ValueError(f"Target '{tgt}' not found. Did you mean {sugg}?")
+        tcols.append(col_map[low])
+    y = df[tcols[0]] if len(tcols) == 1 else df[tcols]
     return X, y
