@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 coco_pipe/io/select_features.py
 ----------------
