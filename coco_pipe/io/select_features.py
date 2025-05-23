@@ -1,3 +1,12 @@
+"""
+coco_pipe/io/select_features.py
+----------------
+Select features from a DataFrame.
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
+"""
 import re
 import difflib
 import pandas as pd
