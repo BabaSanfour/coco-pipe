@@ -3,10 +3,10 @@ import pandas as pd
 
 from coco_pipe.io.select_features import select_features
 
-@ pytest.fixture
+@pytest.fixture
 def example_df():
     # Build a small DataFrame with:
-    # - two target columns: "target1", "target2"
+    # - two target columns: "target", "target2"
     # - two covariates: "age", "sex"
     # - sensors: "sensorA", "sensorB"
     # - features: "alpha", "beta"
@@ -204,17 +204,18 @@ def test_custom_sep(example_df):
 
 
 def test_spatial_units_dict(example_df):
-    # Group sensors via dict mapping (not supported)
-    groups = {'group1': ['sensorA', 'sensorB']}
-    with pytest.raises(ValueError, match="No features selected"):
-        select_features(
-            df=example_df,
-            target_columns='target',
-            covariates=None,
-            spatial_units=groups,
-            feature_names=['beta'],
-            row_filter=None
-        )
+    # Provide mapping keys as actual spatial units
+    groups = {'sensorA': ['alpha', 'beta']}
+    X, y = select_features(
+        df=example_df,
+        target_columns='target',
+        covariates=None,
+        spatial_units=groups,
+        feature_names='all',
+        row_filter=None
+    )
+    # Should select all features under sensorA
+    assert set(X.columns) == {'sensorA_alpha', 'sensorA_beta'}
 
 
 def test_row_filter_operator_gt(example_df):
@@ -269,4 +270,40 @@ def test_no_features_selected_when_reverse_and_none(example_df):
             spatial_units=None,
             feature_names='alpha',
             reverse=True
+        )
+
+
+def test_row_filter_missing_values_key(example_df):
+    with pytest.raises(ValueError, match="Row filter for column 'age' must include 'values'."):
+        select_features(
+            df=example_df,
+            target_columns='target',
+            covariates=None,
+            spatial_units=None,
+            feature_names='alpha',
+            row_filter={'column': 'age'}
+        )
+
+
+def test_row_filter_missing_column_key(example_df):
+    with pytest.raises(ValueError, match="Row filter missing 'column' key"):
+        select_features(
+            df=example_df,
+            target_columns='target',
+            covariates=None,
+            spatial_units=None,
+            feature_names='alpha',
+            row_filter={'values': ['s1']}
+        )
+
+
+def test_row_filter_column_not_found(example_df):
+    with pytest.raises(ValueError, match="Row filter column 'foo' not found. Did you mean"):
+        select_features(
+            df=example_df,
+            target_columns='target',
+            covariates=None,
+            spatial_units=None,
+            feature_names='alpha',
+            row_filter={'column': 'foo', 'values': ['s1']}
         )

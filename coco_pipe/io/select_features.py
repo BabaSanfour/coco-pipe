@@ -142,14 +142,16 @@ def select_features(
     elif spatial_units is None:
         sel_su = []
     elif isinstance(spatial_units, dict):
-        sel_su = []
+        keys = list(spatial_units.keys())
+        for key in keys:
+            matches = [su for su in actual_su if su.lower() == key.lower()]
+            if matches:
+                sel_su.extend(matches)
     else:
         for su_in in spatial_units:
             matches = [su for su in actual_su if su.lower() == su_in.lower()]
-            if not matches:
-                sel_su = []
-                break
-            sel_su.extend(matches)
+            if matches:
+                sel_su.extend(matches)
 
     # 5) Normalize feature_names
     sel_feat: List[str] = []
