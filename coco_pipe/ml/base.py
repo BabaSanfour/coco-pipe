@@ -418,12 +418,14 @@ class BasePipeline(ABC):
         n_features: Optional[int] = None,
         direction: str = 'forward',
         scoring: Optional[str] = None,
+        test_size: float = 0.2,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         y: Optional[Union[pd.Series, np.ndarray]] = None
     ) -> Dict[str, Any]:
         """
-        Perform sequential feature selection followed by baseline evaluation.
-        
+        Perform feature selection on a training set via cross-validation 
+        and evaluate on a holdout test set.
+
         Parameters
         ----------
         model_name : str
@@ -434,6 +436,8 @@ class BasePipeline(ABC):
             Direction for sequential feature selection ('forward' or 'backward').
         scoring : str, optional
             Metric to use for feature selection. If None, uses first metric in self.metrics.
+        test_size : float, default=0.2
+            Proportion of the dataset to include in the test split.
         X : DataFrame or ndarray, optional
             Feature matrix. If None, uses self.X.
         y : Series or ndarray, optional
@@ -442,169 +446,83 @@ class BasePipeline(ABC):
         Returns
         -------
         dict
-            Dictionary containing baseline results plus:
+            Dictionary containing:
             - 'selected_features': List of selected feature names
         """
+
+        # 1) Data + feature names
         X_use = X if X is not None else self.X
         y_use = y if y is not None else self.y
-        if scoring is None:
-            scoring = self.metrics[0]
-        scorer = make_scorer(self.metric_funcs[scoring], needs_proba=False)
-        n_sel = n_features or (X_use.shape[1] // 2)
-        sfs = SequentialFeatureSelector(
-            self.model_configs[model_name]['estimator'],
-            n_features_to_select=n_sel,
-            direction=direction,
-            scoring=scorer,
-            n_jobs=self.n_jobs,
-            cv=get_cv_splitter(**self.cv_kwargs)
-        )
-        sfs.fit(
-            X_use.values if isinstance(X_use, pd.DataFrame) else X_use,
-            y_use.values if isinstance(y_use, (pd.Series, pd.DataFrame)) else y_use
-        )
-        mask = sfs.get_support()
-        Xs = self._select_columns(X_use, mask)
-        out = self.baseline(model_name, Xs, y_use)
-        feat_names = np.array(self._get_feature_names(X_use))[mask].tolist()
-        logger.info(f"Selected features: {feat_names}")
-        out['selected_features'] = feat_names
-        return out
+        feat_names = np.array(self._get_feature_names(X_use))
 
-    def nested_feature_selection(
-        self,
-        model_name: str,
-        n_features: Optional[int] = None,
-        direction: str = 'forward',
-        scoring: Optional[str] = None,
-        outer_cv_kwargs: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Perform nested cross-validation for feature selection.
-        
-        Uses an outer CV loop to evaluate the feature selection process,
-        and an inner CV loop to perform the actual feature selection.
-        
-        Parameters
-        ----------
-        model_name : str
-            Name of the model in model_configs to use.
-        n_features : int, optional
-            Number of features to select. If None, uses half of available features.
-        direction : str, default='forward'
-            Direction for sequential feature selection ('forward' or 'backward').
-        scoring : str, optional
-            Metric to use for feature selection. If None, uses first metric in self.metrics.
-        outer_cv_kwargs : dict, optional
-            CV settings for outer loop. If None, uses self.cv_kwargs.
-            
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - 'feature_counts': How many times each feature was selected
-            - 'top_features': Features selected in majority of outer folds
-            - 'metrics': Performance metrics across outer folds
-            - 'outer_results': Detailed results from each outer fold
-        """
-        X_use = self.X
-        y_use = self.y
-        
-        # Configure outer CV
-        outer_cv_conf = deepcopy(outer_cv_kwargs or self.cv_kwargs)
-        outer_cv_conf.setdefault('random_state', self.random_state)
-        outer_cv = get_cv_splitter(**outer_cv_conf)
-        
-        # Prepare data for CV
-        X_arr = X_use.values if isinstance(X_use, pd.DataFrame) else X_use
-        y_arr = y_use.values if isinstance(y_use, (pd.Series, pd.DataFrame)) else y_use
-        groups_arr = (self.groups.values if isinstance(self.groups, pd.Series) 
-                     else self.groups)
-        
-        # Determine splitting args
-        if outer_cv_conf.get('cv_strategy') in ['leave_p_out', 'group_kfold']:
-            if groups_arr is None:
-                raise ValueError("'groups' required for this CV strategy.")
-            split_args = (X_arr, y_arr, groups_arr)
-        else:
-            split_args = (X_arr, y_arr)
-        
-        # Track selected features and performance
-        feature_names = self._get_feature_names(X_use)
-        n_features_total = len(feature_names)
-        feature_counts = {name: 0 for name in feature_names}
-        outer_metrics = []
-        outer_results = []
-        
-        # Run outer CV loop
-        logger.info(f"Starting nested CV feature selection with {outer_cv.get_n_splits()} outer folds")
-        
-        for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(*split_args)):
-            logger.info(f"Outer fold {fold_idx+1}/{outer_cv.get_n_splits()}")
-            
-            # Get train/test split for this outer fold
-            X_train = self._select_rows(X_use, train_idx)
-            X_test = self._select_rows(X_use, test_idx)
-            y_train = self._select_rows(y_use, train_idx)
-            y_test = self._select_rows(y_use, test_idx)
-            
-            # Inner CV: Run feature selection on training data
-            fs_result = self.feature_selection(
-                model_name=model_name,
-                n_features=n_features,
+        # 2) How many to select & scoring
+        n_sel   = n_features or (X_use.shape[1] // 2)
+        scoring = scoring or self.metrics[0]
+        scorer  = make_scorer(self.metric_funcs[scoring], needs_proba=False)
+
+        # 3) Base estimator (fresh clone)
+        base_est = clone(self.model_configs[model_name]['estimator'])
+        if hasattr(base_est, 'random_state'):
+            base_est.random_state = self.random_state
+
+        # 4) Inner-CV splitter for SFS
+        inner_cv = get_cv_splitter(random_state=self.random_state, **self.cv_kwargs)
+
+        # 5) Build pipeline: SFS(inner_cv) -> estimator
+        pipe = Pipeline([
+            ('sfs', SequentialFeatureSelector(
+                clone(base_est),
+                n_features_to_select=n_sel,
                 direction=direction,
-                scoring=scoring,
-                X=X_train,
-                y=y_train
-            )
-            
-            selected_features = fs_result['selected_features']
-            
-            # Track selected features
-            for feature in selected_features:
-                feature_counts[feature] += 1
-            
-            # Create mask for selected features
-            mask = np.array([fn in selected_features for fn in feature_names])
-            
-            # Test on outer fold's test set using selected features
-            X_test_selected = self._select_columns(X_test, mask)
-            test_result = self.baseline(model_name, X_test_selected, y_test)
-            
-            # Store fold results
-            outer_metrics.append(test_result['metrics'])
+                scoring=scorer,
+                cv=inner_cv,
+                n_jobs=self.n_jobs
+            )),
+            ('clf', clone(base_est))
+        ])
+
+        # 6) Outer-CV via cross_val
+        cv_res = self.cross_val(pipe, X_use, y_use)
+
+        # 7) Gather per-fold support masks and test-scores
+        estimators = cv_res['cv_fold_estimators']
+        scores     = cv_res['cv_fold_scores']
+        n_folds    = len(estimators)
+
+        outer_results = []
+        all_selected = []
+
+        for fold_idx, est in enumerate(estimators):
+            sfs = est.named_steps['sfs']
+            mask = sfs.get_support()
+            selected = feat_names[mask].tolist()
+            all_selected.extend(selected)
+
+            # per-fold test-scores
+            test_scores = {m: float(scores[m][fold_idx]) for m in self.metrics}
+
             outer_results.append({
                 'fold': fold_idx,
-                'selected_features': selected_features,
-                'test_metrics': test_result['metrics']
+                'selected_features': selected,
+                'test_scores': test_scores
             })
-        
-        # Aggregate results
-        feature_selection_counts = [(name, count) for name, count in feature_counts.items() if count > 0]
-        feature_selection_counts.sort(key=lambda x: x[1], reverse=True)
-        
-        # Features selected in majority of folds
-        n_folds = outer_cv.get_n_splits()
-        majority_threshold = n_folds // 2 + 1
-        top_features = [name for name, count in feature_selection_counts if count >= majority_threshold]
-        
-        # Aggregate metrics across folds
-        aggregated_metrics = {}
-        for metric_name in self.metrics:
-            values = [fold['test_metrics'][metric_name]['mean'] for fold in outer_results]
-            aggregated_metrics[metric_name] = {
-                'mean': float(np.mean(values)),
-                'std': float(np.std(values)),
-                'values': values
-            }
-            logger.info(f"Outer CV {metric_name}: {aggregated_metrics[metric_name]['mean']:.4f} (±{aggregated_metrics[metric_name]['std']:.4f})")
-        
+
+        # 8) Aggregate: count & majority vote
+        freq = Counter(all_selected)
+        # features selected in majority of folds (> half)
+        selected_features = [f for f, cnt in freq.items() if cnt > n_folds / 2]
+        # sort descending by count
+        selected_features.sort(key=lambda f: freq[f], reverse=True)
+
+        # 9) Compute selection frequency map
+        feature_frequency = {f: freq.get(f, 0) / n_folds for f in feat_names}
+
         return {
-            'feature_counts': dict(feature_selection_counts),
-            'top_features': top_features,
-            'metrics': aggregated_metrics,
-            'outer_results': outer_results
+            'selected_features': selected_features,
+            'outer_results': outer_results,
+            'feature_frequency': feature_frequency
         }
+
 
     def hp_search(
         self,
