@@ -225,3 +225,123 @@ def test_feature_selection_missing_model_error():
             default_metrics=['mse'],
             cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2},
         ).feature_selection('b')
+
+def _make_pipeline():
+    # simple binary classification pipeline
+    X = np.vstack([np.zeros((5, 2)), np.ones((5, 2))])
+    y = np.array([0]*5 + [1]*5)
+    model_configs = {
+        'dummy': {
+            'estimator': LogisticRegression(solver='liblinear'),
+            'params': {'C': [0.1, 1.0]}
+        }
+    }
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs=model_configs,
+        default_metrics=['accuracy'],
+        cv_kwargs={
+            'cv_strategy': 'kfold',
+            'n_splits': 2,
+            'shuffle': True,
+            'random_state': 42
+        },
+        n_jobs=1
+    )
+    return pipe, X, y
+
+
+def test_build_search_estimator_grid():
+    pipe, X, y = _make_pipeline()
+    grid_est, metric = pipe._build_search_estimator(
+        'dummy', 'grid', None, n_iter=10, scoring='accuracy'
+    )
+    # should return GridSearchCV and metric
+    from sklearn.model_selection import GridSearchCV
+    assert isinstance(grid_est, GridSearchCV)
+    assert metric == 'accuracy'
+    # param_grid should match model_configs
+    assert grid_est.param_grid == pipe.model_configs['dummy']['params']
+    # cv splits should equal n_splits
+    assert grid_est.cv.get_n_splits(X, y) == pipe.cv_kwargs['n_splits']
+
+
+def test_build_search_estimator_random():
+    pipe, X, y = _make_pipeline()
+    rand_est, metric = pipe._build_search_estimator(
+        'dummy', 'random', None, n_iter=5, scoring='accuracy'
+    )
+    from sklearn.model_selection import RandomizedSearchCV
+    assert isinstance(rand_est, RandomizedSearchCV)
+    assert metric == 'accuracy'
+    # n_iter set correctly
+    assert rand_est.n_iter == 5
+
+
+def test_extract_hp_search_results():
+    pipe, X, y = _make_pipeline()
+    # simulate cv_res
+    class FakeEst:
+        def __init__(self, best_params):
+            self.best_params_ = best_params
+    cv_res = {
+        'cv_fold_estimators': [FakeEst({'C': 0.1}), FakeEst({'C': 1.0})],
+        'cv_fold_scores': {'accuracy': np.array([0.6, 0.8])}
+    }
+    outer = pipe._extract_hp_search_results(cv_res)
+    assert isinstance(outer, list) and len(outer) == 2
+    # each entry has fold, best_params, test_scores
+    for idx, entry in enumerate(outer):
+        assert entry['fold'] == idx
+        assert 'best_params' in entry and isinstance(entry['best_params'], dict)
+        assert 'test_scores' in entry and 'accuracy' in entry['test_scores']
+
+
+def test_aggregate_hp_search_results():
+    pipe, X, y = _make_pipeline()
+    # simulate outer_results
+    outer = [
+        {'fold': 0, 'best_params': {'C': 0.1}, 'test_scores': {'accuracy': 0.6}},
+        {'fold': 1, 'best_params': {'C': 1.0}, 'test_scores': {'accuracy': 0.8}},
+        {'fold': 2, 'best_params': {'C': 0.1}, 'test_scores': {'accuracy': 0.7}}
+    ]
+    best_params, freq, best_fold = pipe._aggregate_hp_search_results(outer, 'accuracy')
+    # best C should be 0.1 (majority)
+    assert best_params['C'] == 0.1
+    # frequency correct
+    assert pytest.approx(freq['C'][0.1], rel=1e-3) == 2/3
+    # best_fold should be fold 1 (accuracy 0.8)
+    assert best_fold['fold'] == 1
+    assert best_fold['scores']['accuracy'] == 0.8
+
+
+def test_hp_search_grid():
+    pipe, X, y = _make_pipeline()
+    # perform hp_search
+    res = pipe.hp_search('dummy', search_type='grid')
+    # check top-level keys
+    for key in ['model_name', 'search_type', 'best_params', 'param_frequency', 'best_fold', 'outer_results',
+                'cv_fold_scores', 'cv_fold_estimators', 'cv_fold_predictions']:
+        assert key in res
+    # best_params should be one of grid values
+    assert res['best_params']['C'] in pipe.model_configs['dummy']['params']['C']
+    # param_frequency should sum to 1.0 for C
+    assert pytest.approx(sum(res['param_frequency']['C'].values()), rel=1e-6) == 1.0
+    # outer_results length matches n_splits
+    assert len(res['outer_results']) == pipe.cv_kwargs['n_splits']
+    # best_fold fold index valid
+    assert 0 <= res['best_fold']['fold'] < pipe.cv_kwargs['n_splits']
+
+
+def test_hp_search_random():
+    pipe, X, y = _make_pipeline()
+    # extend grid to multiple params
+    pipe.model_configs['dummy']['params'] = {'C': [0.1, 1.0], 'max_iter': [50, 100]}
+    res = pipe.hp_search('dummy', search_type='random', n_iter=4)
+    # ensure random search type reflected
+    assert res['search_type'] == 'random'
+    # best_params keys present
+    assert set(res['best_params'].keys()) == set(pipe.model_configs['dummy']['params'].keys())
+    # param_frequency keys match
+    assert set(res['param_frequency'].keys()) == set(pipe.model_configs['dummy']['params'].keys())
