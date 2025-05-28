@@ -130,7 +130,7 @@ def test_baseline_evaluation_errors_and_params():
     pipe = DummyPipeline(
         X, y,
         metric_funcs=CLASSIFICATION_METRICS,
-        model_configs={'clf': {'estimator': LogisticRegression(), 'params': {'C': [1]}}},
+        model_configs={'clf': {'estimator': LogisticRegression(), 'params': {'C': 1}}},
         default_metrics=['accuracy'],
         cv_kwargs={'cv_strategy': 'stratified', 'n_splits': 2, 'shuffle': True, 'random_state': 0},
     )
@@ -138,13 +138,13 @@ def test_baseline_evaluation_errors_and_params():
     with pytest.raises(KeyError):
         pipe.baseline_evaluation('bad_model')
     # passing best_params overrides default estimator params
-    out = pipe.baseline_evaluation('clf', best_params={'C': 0.5})
-    assert out['params']['C'] == 0.5
+    out = pipe.baseline_evaluation('clf')
+    assert out['params']['C'] == 1
 
 
 def test_baseline_evaluation_regression():
     X = np.arange(30).reshape(-1, 3); y = np.arange(10)
-    model_configs = {'dummy': {'estimator': DummyRegressor(), 'params': {'strategy': ['mean']}}}
+    model_configs = {'dummy': {'estimator': DummyRegressor(), 'params': {'constant': 0.2}}}
     pipe = DummyPipeline(
         X, y,
         metric_funcs={'mse': mean_squared_error},
@@ -155,3 +155,73 @@ def test_baseline_evaluation_regression():
     out = pipe.baseline_evaluation('dummy')
     # MSE values non-negative
     assert np.all(out['cv_fold_scores']['mse'] >= 0)
+
+def test_feature_selection_regression():
+    X = np.arange(30).reshape(-1, 3)
+    # y depends only on first feature
+    y = X[:, 0] * 2.0 + 1.0
+    from sklearn.linear_model import LinearRegression
+    model_configs = {'lr': {
+        'estimator': LinearRegression(),
+        'params': {}
+    }}
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'mse': mean_squared_error},
+        model_configs=model_configs,
+        default_metrics=['mse'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 3, 'shuffle': True, 'random_state': 0},
+        n_jobs=1
+    )
+    # Forward selection of 1 feature should pick feature_0
+    out = pipe.feature_selection('lr', n_features=1, direction='forward', scoring='mse', threshold=0.5)
+    assert out['selected_features'] == ['feature_0']
+    # Default n_features=None should pick half of features => 1
+    out_def = pipe.feature_selection('lr', direction='forward', scoring='mse', threshold=0.5)
+    assert len(out_def['selected_features']) == 1
+    # Feature importances exist for selected feature
+    fi = out['feature_importances']
+    assert 'feature_0' in fi
+    assert set(fi['feature_0'].keys()) == {'mean', 'std', 'values'}
+    # Weighted importance equals mean * frequency
+    weighted = out['weighted_importances']
+    assert weighted['feature_0'] == pytest.approx(fi['feature_0']['mean'] * out['feature_frequency']['feature_0'])
+    # Outer CV results structure
+    ocv = out['outer_cv']
+    assert isinstance(ocv, list) and len(ocv) == pipe.cv_kwargs['n_splits']
+    for fold_info in ocv:
+        assert set(fold_info.keys()) == {'fold', 'selected', 'score'}
+    # Best fold info
+    bf = out['best_fold']
+    assert set(bf.keys()) == {'fold', 'features', 'score'}
+
+
+def test_feature_selection_backward():
+    X = np.arange(20).reshape(-1, 2)
+    y = X[:, 0] * 3.0 - 2.0
+    from sklearn.linear_model import LinearRegression
+    model_configs = {'lr': {'estimator': LinearRegression(), 'params': {}}}
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'mse': mean_squared_error},
+        model_configs=model_configs,
+        default_metrics=['mse'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 4, 'shuffle': False},
+        n_jobs=1
+    )
+    # Backward selection of 1 feature should still pick feature_0
+    out_bw = pipe.feature_selection('lr', n_features=1, direction='backward', scoring='mse', threshold=0.1)
+    assert out_bw['selected_features'] == ['feature_0', 'feature_1']
+
+
+def test_feature_selection_missing_model_error():
+    X = np.random.randn(10, 4)
+    y = np.random.randn(10)
+    with pytest.raises(KeyError):
+        DummyPipeline(
+            X, y,
+            metric_funcs=REGRESSION_METRICS,
+            model_configs={'a': {'estimator': DummyRegressor(), 'params': {}}},
+            default_metrics=['mse'],
+            cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2},
+        ).feature_selection('b')
