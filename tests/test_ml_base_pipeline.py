@@ -345,3 +345,100 @@ def test_hp_search_random():
     assert set(res['best_params'].keys()) == set(pipe.model_configs['dummy']['params'].keys())
     # param_frequency keys match
     assert set(res['param_frequency'].keys()) == set(pipe.model_configs['dummy']['params'].keys())
+
+
+def test_build_combined_fs_hp_pipeline():
+    from sklearn.ensemble import RandomForestClassifier
+    X = np.random.randn(10, 3)
+    y = np.random.randint(0, 2, 10)
+    model_configs = {'rf': {
+        'estimator': RandomForestClassifier(random_state=0),
+        'params': {'n_estimators': [5, 10]}
+    }}
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs=model_configs,
+        default_metrics=['accuracy'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': True, 'random_state': 0},
+        n_jobs=1
+    )
+    search_est, feat_names, metric = pipe._build_combined_fs_hp_pipeline(
+        'rf', 'grid', None, 2, 'forward', 3, 'accuracy'
+    )
+    from sklearn.model_selection import GridSearchCV
+    assert isinstance(search_est, GridSearchCV)
+    assert isinstance(feat_names, np.ndarray) and feat_names.shape == (3,)
+    assert metric == 'accuracy'
+
+
+def test_extract_and_aggregate_combined_results():
+    # Simulate CV results
+    class FakeSFS:
+        def __init__(self, mask): self._mask = np.array(mask)
+        def get_support(self): return self._mask
+    class FakePipe:
+        def __init__(self, mask): self.named_steps = {'sfs': FakeSFS(mask)}
+    class FakeEst:
+        def __init__(self, mask, params):
+            self.best_estimator_ = FakePipe(mask)
+            self.best_params_   = params
+    cv_res = {
+        'cv_fold_estimators': [FakeEst([True, False, True], {'p':1}), FakeEst([False, True, True], {'p':2})],
+        'cv_fold_scores': {'accuracy': np.array([0.6, 0.8])},
+        'cv_fold_importances': {'feature_0': np.array([0.5, 0.0]), 'feature_2': np.array([0.7, 0.9])}
+    }
+    feat_names = np.array(['feature_0', 'feature_1', 'feature_2'])
+    pipe = DummyPipeline(
+        np.zeros((2,3)), np.zeros(2),
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs={'d': {'estimator': DummyClassifier(), 'params': {}}},
+        default_metrics=['accuracy'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2},
+    )
+    outer, all_sel, all_params = pipe._extract_combined_results(cv_res, feat_names, 'accuracy')
+    assert len(outer) == 2
+    assert all_sel == ['feature_0','feature_2','feature_1','feature_2']
+    assert all_params == [{'p':1},{'p':2}]
+    sel_feats, feat_freq, best_params, param_freq, best_fold, feat_imps, w_imp = \
+        pipe._aggregate_combined_results(outer, all_sel, all_params, feat_names, 'accuracy')
+    assert sel_feats == ['feature_2']
+    assert feat_freq['feature_2'] == 1.0
+    assert best_params['p'] in (1,2)
+    assert 'p' in param_freq
+    assert best_fold['fold'] in (0,1)
+    assert isinstance(feat_imps, dict) and isinstance(w_imp, dict)
+
+
+def test_hp_search_fs_end_to_end():
+    # Create a larger, more robust dataset with 20 samples instead of 8
+    X = np.vstack([
+        np.random.randn(10, 2) - 2,  # 10 samples for class 0, shifted left
+        np.random.randn(10, 2) + 2   # 10 samples for class 1, shifted right
+    ])
+    y = np.array([0]*10 + [1]*10)
+    
+    # Shuffle the data to avoid any ordering issues
+    idx = np.random.RandomState(42).permutation(len(y))
+    X, y = X[idx], y[idx]
+    model_configs = {'lr': {
+        'estimator': LogisticRegression(solver='liblinear'),
+        'params': {"C": [0.1, 1.0, 10.0], "penalty": ["l2", "l1"]}
+    }}
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs=model_configs,
+        default_metrics=['accuracy'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': True, 'random_state': 0},
+        n_jobs=1
+    )
+    res = pipe.hp_search_fs('lr', search_type='grid', n_features=1, direction='forward', n_iter=1, scoring='accuracy')
+    keys = set(res.keys())
+    expected = {'model_name','n_features','direction','scoring','search_type',
+                'selected_features','feature_frequency','best_params',
+                'param_frequency','best_fold','feature_importances',
+                'weighted_importances','outer_results'}
+    assert expected.issubset(keys)
+    assert len(res['selected_features']) == 1
+    assert res['best_params']['clf__penalty'] in model_configs['lr']['params']['penalty']
