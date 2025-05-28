@@ -535,36 +535,100 @@ class BasePipeline(ABC):
         y: Optional[Union[pd.Series, np.ndarray]] = None
     ) -> Dict[str, Any]:
         """
-        Hyperparameter search (grid or randomized) followed by baseline evaluation.
+        Nested‐CV hyperparameter search:
+        - Inner CV: GridSearchCV or RandomizedSearchCV(cv=inner_cv) tunes hyperparameters on each train split.
+        - Outer CV: self.cross_val(search_est, X, y) evaluates tuned estimator on held‐out folds.
+        Returns:
+        - selected best_params by majority vote across outer folds
+        - outer_results: per‐fold best_params & test_scores
+        - param_frequency: fraction of outer folds each param value was selected
         """
+        # 1) Data
         X_use = X if X is not None else self.X
         y_use = y if y is not None else self.y
-        if scoring is None:
-            scoring = self.metrics[0]
-        scorer = make_scorer(self.metric_funcs[scoring], needs_proba=('roc' in scoring))
+
+        # 2) Scoring
+        scoring = scoring or self.metrics[0]
+        needs_proba = 'proba' in scoring or 'roc' in scoring
+        scorer = make_scorer(self.metric_funcs[scoring], needs_proba=needs_proba)
+
+        # 3) Config & grid
         cfg = self.model_configs[model_name]
         grid = param_grid or cfg.get('params', {})
-        CV = get_cv_splitter(**self.cv_kwargs)
+
+        # 4) Inner CV splitter
+        inner_cv = get_cv_splitter(random_state=self.random_state, **self.cv_kwargs)
+
+        # 5) Build search estimator
+        base_est = cfg['estimator']
         if search_type == 'grid':
-            search = GridSearchCV(
-                cfg['estimator'], grid, scoring=scorer,
-                cv=CV, n_jobs=self.n_jobs
+            search_est = GridSearchCV(
+                base_est,
+                grid,
+                scoring=scorer,
+                cv=inner_cv,
+                n_jobs=self.n_jobs
             )
         else:
-            search = RandomizedSearchCV(
-                cfg['estimator'], grid, n_iter=n_iter,
-                scoring=scorer, cv=CV, n_jobs=self.n_jobs
+            search_est = RandomizedSearchCV(
+                base_est,
+                grid,
+                n_iter=n_iter,
+                scoring=scorer,
+                cv=inner_cv,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state
             )
-        search.fit(
-            X_use.values if isinstance(X_use, pd.DataFrame) else X_use,
-            y_use.values if isinstance(y_use, (pd.Series, pd.DataFrame)) else y_use
-        )
-        best = search.best_params_
-        logger.info(f"Best parameters: {best}")
-        out = self.baseline(model_name, X_use, y_use, best)
-        out['best_params'] = best
-        return out
 
+        # 6) Outer CV via cross_val
+        cv_res = self.cross_val(search_est, X_use, y_use)
+        estimators = cv_res['cv_fold_estimators']
+        scores = cv_res['cv_fold_scores']
+        n_folds = len(estimators)
+
+        outer_results = []
+        all_params = []
+
+        # 7) Track per‐fold best_params & test_scores
+        for fold_idx, est in enumerate(estimators):
+            best_params = est.best_params_
+            all_params.append(best_params)
+            test_scores = {m: float(scores[m][fold_idx]) for m in self.metrics}
+            outer_results.append({
+                'fold': fold_idx,
+                'best_params': best_params,
+                'test_scores': test_scores
+            })
+
+        # 8) Aggregate best_params by majority vote
+        param_counts = {}
+        for params in all_params:
+            for k, v in params.items():
+                param_counts.setdefault(k, {}).setdefault(v, 0)
+                param_counts[k][v] += 1
+
+        aggregated_params = {
+            k: max(vs.items(), key=lambda item: item[1])[0]
+            for k, vs in param_counts.items()
+        }
+
+        # 9) Compute frequency of each param value
+        param_frequency = {
+            k: {v: cnt / n_folds for v, cnt in vs.items()}
+            for k, vs in param_counts.items()
+        }
+
+        logger.info(f"Aggregated best params: {aggregated_params}")
+
+        # 10) Final baseline evaluation on full data
+        out = self.baseline(model_name, X_use, y_use, aggregated_params)
+        out.update({
+            'outer_results': outer_results,
+            'best_params': aggregated_params,
+            'param_frequency': param_frequency
+        })
+        return out
+        
     def hp_search_fs(
         self,
         model_name: str,
