@@ -146,13 +146,11 @@ class BasePipeline(ABC):
         ----------
         X : DataFrame or ndarray
             Feature matrix.
-            If DataFrame, names are taken from columns.
-            If ndarray, names are generated as 'feature_0', 'feature_1', etc.
 
         Returns
         -------
-        list of str
-            Feature names.
+        names : list of str
+            Column names if DataFrame, else 'feature_i'.
         """
         if isinstance(X, pd.DataFrame):
             return X.columns.tolist()
@@ -164,7 +162,7 @@ class BasePipeline(ABC):
         mask: np.ndarray
     ) -> Union[pd.DataFrame, np.ndarray]:
         """
-        Select columns by boolean mask for DataFrame or ndarray.
+        Select columns by boolean mask.
 
         Parameters
         ----------
@@ -190,62 +188,31 @@ class BasePipeline(ABC):
         return X[:, mask]
         
     @staticmethod
-    def _select_rows(
-        X: Union[pd.DataFrame, np.ndarray, pd.Series],
-        indices: np.ndarray
-    ) -> Union[pd.DataFrame, np.ndarray, pd.Series]:
-        """
-        Select rows by indices for DataFrame, Series or ndarray.
-        
-        Parameters
-        ----------
-        X : DataFrame, Series or ndarray
-            Data matrix or vector.
-        indices : ndarray
-            Indices of rows to select.
-            
-        Returns
-        -------
-        X : DataFrame, Series or ndarray
-            Data with selected rows.
-            Same type as input.
-        """
-        if isinstance(X, (pd.DataFrame, pd.Series)):
-            return X.iloc[indices]
-        return X[indices]
-
-    @staticmethod
-    def _extract_feature_importances(estimator: BaseEstimator) -> Optional[np.ndarray]:
+    def _extract_feature_importances(
+        estimator: BaseEstimator
+    ) -> Optional[np.ndarray]:
         """
         Extract feature importances or coefficients from a fitted estimator.
 
         Parameters
         ----------
         estimator : BaseEstimator
-            A fitted scikit-learn compatible estimator.
+            A fitted sklearn estimator.
 
         Returns
         -------
-        Optional[np.ndarray]
-            A numpy array of feature importances or coefficients, or None if not available.
+        importances : ndarray or None
         """
-        feat_imp = None
         if hasattr(estimator, 'feature_importances_'):
-            feat_imp = estimator.feature_importances_
-        elif hasattr(estimator, 'coef_'):
+            return estimator.feature_importances_
+        if hasattr(estimator, 'coef_'):
             coef = estimator.coef_
             if coef.ndim == 1:
-                feat_imp = coef
-            elif coef.ndim == 2 and coef.shape[0] == 1: 
-                feat_imp = coef[0]
-            elif coef.ndim == 2: 
-                logger.info(f"Coefficient array has shape {coef.shape}. Taking mean over axis 0 for feature importance.")
-                feat_imp = np.mean(coef, axis=0)
-            else: 
-                logger.warning(f"Coefficient array has {coef.ndim} dimensions. Cannot simply extract feature importances.")
-                feat_imp = None
-        return feat_imp
-
+                return coef
+            if coef.ndim == 2:
+                # average across outputs
+                return np.mean(coef, axis=0)
+        return None
 
     def cross_val(
         self,
@@ -256,8 +223,8 @@ class BasePipeline(ABC):
         """
         Perform cross-validation using scikit-learn's `cross_validate`.
 
-        Wraps raw metric functions in `make_scorer`, collects per-fold
-        predictions, scores, estimators, and computes final feature importances.
+        Wraps `metric_funcs` into `scoring`, collects per-fold predictions,
+        scores, estimators, and feature importances, then refits final estimator.
 
         Parameters
         ----------
@@ -271,14 +238,26 @@ class BasePipeline(ABC):
         Returns
         -------
         results : dict
-            - 'fold_predictions' : list of dicts, each with keys
-                - 'y_true', 'y_pred', optional 'y_proba'
-            - 'fold_scores' : list of dicts, per-fold metric scores
-            - 'fold_estimators' : list of fitted estimators from each fold
-            - 'fold_feature_importances' : list of arrays (one per fold) or [] if unsupported
-            - 'estimator' : final estimator fit on the full dataset
-            - 'feature_importances' : array or None, from final estimator
-            - 'cv_fold_scores' : dict mapping each metric name to array of fold scores
+            - 'cv_fold_scores': dict mapping metric names to arrays of fold scores,
+                array shape (n_splits,).
+            - 'cv_fold_importances': dict mapping feature names to arrays of importances
+                (one array per feature), or empty dict if unsupported,
+                array shape (n_splits,).
+            - 'cv_fold_predictions': list of dicts, each with keys:
+                'y_true', 'y_pred', optional 'y_proba' if estimator supports it.
+            - 'cv_fold_estimators': list of fitted estimators from each fold.
+            - 'final_estimator': fitted estimator on the full dataset.
+            - 'final_importances': feature importances from the final estimator,
+                or None if not supported.
+        Raises
+        ------
+        ValueError
+            If X and y have different numbers of samples or if no metrics are specified.
+        Notes
+        -----
+        This method performs cross-validation on the provided estimator using
+        the configured cross-validation strategy. It collects per-fold predictions,
+        scores, and feature importances, then fits a final estimator on the full dataset.
         """
 
         cv_conf = deepcopy(self.cv_kwargs)
@@ -289,13 +268,17 @@ class BasePipeline(ABC):
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
         groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
 
-        # 2) Build scorer dict for cross validate
+        # build scoring dictionary
+        proba_required = {m for m, fn in self.metric_funcs.items() if hasattr(fn, '__name__') and 'proba' in fn.__name__}
         scoring = {
-            m: make_scorer(self.metric_funcs[m])
-            for m in self.metric_funcs
+            m: make_scorer(
+            self.metric_funcs[m],
+            **({'needs_proba': True} if m in proba_required else {})
+            )
+            for m in self.metrics
         }
 
-        # 3) Run cross_validate
+        # run CV
         cv_results = cross_validate(
             estimator=estimator,
             X=X_arr, y=y_arr, groups=groups_arr,
@@ -307,70 +290,55 @@ class BasePipeline(ABC):
             error_score='raise'
         )
 
-        # 4) Split indices to re‐invoke train/test splits
+        # retrieve splits
         splits = list(cv.split(X_arr, y_arr, groups_arr))
 
-        # 5) Collect per‐fold predictions and importances
+        # collect fold-level predictions
         fold_predictions = []
-        fold_feature_importances = []
-        for i, est_fold in enumerate(cv_results['estimator']):
-            _, val_idx = splits[i]
-            y_true = y_arr[val_idx]
-            y_pred = est_fold.predict(X_arr[val_idx])
-
-            fp: Dict[str, Any] = {'y_true': y_true, 'y_pred': y_pred}
+        for idx, est_fold in enumerate(cv_results['estimator']):
+            _, val_idx = splits[idx]
+            y_true, y_pred = y_arr[val_idx], est_fold.predict(X_arr[val_idx])
+            fp = {'y_true': y_true, 'y_pred': y_pred}
             if hasattr(est_fold, 'predict_proba'):
                 try:
                     fp['y_proba'] = est_fold.predict_proba(X_arr[val_idx])
                 except Exception:
                     logger.warning(
-                        "predict_proba failed for fold %d with estimator %s",
-                        i, type(est_fold).__name__
+                        "predict_proba failed for fold %d with %s",
+                        idx, type(est_fold).__name__
                     )
             fold_predictions.append(fp)
 
-            # feature importances
-            fi = self._extract_feature_importances(est_fold)
-            if fi is not None:
-                fold_feature_importances.append(fi)
-
-        # 6) Build per‐fold scores dicts
-        fold_scores = []
-        for i in range(len(fold_predictions)):
-            d = {}
-            for m in self.metrics:
-                key = f'test_{m}'
-                if key in cv_results:
-                    d[m] = cv_results[key][i]
-            fold_scores.append(d)
-
-        # 7) Collect arrays of fold‐scores per metric
-        cv_fold_scores = {
-            m: np.array(cv_results[f'test_{m}']) if f'test_{m}' in cv_results else np.array([])
-            for m in self.metrics
+        # extract feature importances for each fold
+        fold_importances = [
+            self._extract_feature_importances(est_fold) for est_fold in cv_results['estimator']
+        ]
+        
+        # per-metric arrays
+        cv_fold_scores = {m: np.array(cv_results.get(f'test_{m}', [])) for m in self.metrics}
+        # per feature importances
+        cv_fold_importances = {
+            feature: np.array([imp[i] for imp in fold_importances if imp is not None])
+            for i, feature in enumerate(self._get_feature_names(X))
         }
 
-        # 8) Final refit on full data
-        if fit_all:
-            logger.info("Fitting final estimator on full dataset")
-            final_est = clone(estimator)
-            if hasattr(final_est, 'random_state') and self.random_state is not None:
-                setattr(final_est, 'random_state', self.random_state)
-            final_est.fit(X_arr, y_arr)
-            final_imp = self._extract_feature_importances(final_est)
+        # final estimator
+        final_estimator = clone(estimator)
+        if hasattr(final_estimator, 'random_state') and self.random_state is not None:
+            setattr(final_estimator, 'random_state', self.random_state)
+        final_estimator.fit(X_arr, y_arr)
+        final_importances = self._extract_feature_importances(final_estimator)
 
         return {
-            'fold_predictions': fold_predictions,
-            'fold_scores': fold_scores,
-            'fold_estimators': cv_results['estimator'],
-            'fold_feature_importances': fold_feature_importances,
-            'final_estimator': final_est if fit_all else None,
-            'final_feature_importances': final_imp,
-            'cv_fold_scores': cv_fold_scores
+            'cv_fold_scores': cv_fold_scores,
+            'cv_fold_importances': cv_fold_importances,
+            'cv_fold_predictions': fold_predictions,
+            'cv_fold_estimators': cv_results['estimator'],
+            'final_estimator': final_estimator,
+            'final_importances': final_importances,
         }
 
-
-    def baseline(
+    def baseline_evaluation(
         self,
         model_name: str,
         X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
@@ -378,11 +346,12 @@ class BasePipeline(ABC):
         best_params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Evaluate a single model using cross-validation and return metrics and feature importances.
+        Evaluate a single model via cross-validation and return metrics and feature importances.
         
-        This method performs cross-validation on a specified model, computes metrics on
+        This method performs cross-validation on a specified model, gets scores on
         the validation folds, and returns a comprehensive evaluation summary including
-        the final model fitted on all data.
+        the final model fitted on all data and its feature importances (if applicable) 
+        as well as the fitted estimators from each fold.
         
         Parameters
         ----------
@@ -436,11 +405,11 @@ class BasePipeline(ABC):
         X_use = X if X is not None else self.X
         y_use = y if y is not None else self.y
         
-        logger.info(f"Running baseline evaluation for {model_name}")
         results = self.cross_val(estimator, X_use, y_use)
-        
+        results.update({'model_name': model_name, 'params': estimator.get_params()})
+
         return {
-            'model': model_name,
+            'model_name': model_name,
             **results,
         }
 
