@@ -23,7 +23,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, clone
 from sklearn.feature_selection import SequentialFeatureSelector
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_validate as sklearn_cross_validate
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_validate
 from sklearn.metrics import make_scorer
 
 from coco_pipe.ml.config import DEFAULT_CV
@@ -214,82 +214,38 @@ class BasePipeline(ABC):
             return X.iloc[indices]
         return X[indices]
 
-    def score(
-        self,
-        fold_preds: List[Dict[str, Any]],
-        multioutput: bool = False
-    ) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_feature_importances(estimator: BaseEstimator) -> Optional[np.ndarray]:
         """
-        Aggregate fold predictions into metrics and combined predictions.
+        Extract feature importances or coefficients from a fitted estimator.
 
         Parameters
         ----------
-        fold_preds : list of dict
-            Each dict must have keys 'y_true', 'y_pred', optional 'y_proba'.
-        multioutput : bool, default=False
-            Whether to treat y_proba as multi-output.
+        estimator : BaseEstimator
+            A fitted scikit-learn compatible estimator.
 
         Returns
         -------
-        dict
-            {
-              'metrics': {metric: {mean, std, scores}},
-              'predictions': {'y_true', 'y_pred', 'y_proba'}
-            }
+        Optional[np.ndarray]
+            A numpy array of feature importances or coefficients, or None if not available.
         """
-        # Prepare storage
-        scores = {m: [] for m in self.metrics}
-        fold_sizes = []
-        all_true, all_pred, all_proba = [], [], []
+        feat_imp = None
+        if hasattr(estimator, 'feature_importances_'):
+            feat_imp = estimator.feature_importances_
+        elif hasattr(estimator, 'coef_'):
+            coef = estimator.coef_
+            if coef.ndim == 1:
+                feat_imp = coef
+            elif coef.ndim == 2 and coef.shape[0] == 1: 
+                feat_imp = coef[0]
+            elif coef.ndim == 2: 
+                logger.info(f"Coefficient array has shape {coef.shape}. Taking mean over axis 0 for feature importance.")
+                feat_imp = np.mean(coef, axis=0)
+            else: 
+                logger.warning(f"Coefficient array has {coef.ndim} dimensions. Cannot simply extract feature importances.")
+                feat_imp = None
+        return feat_imp
 
-        # Compute per-fold scores
-        for f in fold_preds:
-            y_true = f['y_true']
-            y_pred = f['y_pred']
-            y_proba = f.get('y_proba')
-            fold_sizes.append(len(y_true))
-            all_true.append(y_true)
-            all_pred.append(y_pred)
-            if y_proba is not None:
-                all_proba.append(y_proba)
-            for m in self.metrics:
-                func = self.metric_funcs[m]
-                # Handle proba-based metrics
-                if 'proba' in func.__name__ and y_proba is not None:
-                    score = func(y_true, y_proba)
-                else:
-                    score = func(y_true, y_pred)
-                scores[m].append(score)
-
-        # Aggregate
-        weights = np.array(fold_sizes, dtype=float)
-        metrics_out = {}
-        for m, vals in scores.items():
-            arr = np.array(vals)
-            mean = float((arr * weights).sum() / weights.sum())
-            std = float(np.sqrt((weights * (arr - mean)**2).sum() / weights.sum()))
-            metrics_out[m] = {'mean': mean, 'std': std, 'scores': arr}
-            logger.info(f"{m}: {mean:.4f} (±{std:.4f})")
-
-        # Concatenate predictions
-        y_true_all = np.concatenate(all_true)
-        y_pred_all = np.concatenate(all_pred)
-        if all_proba:
-            if multioutput:
-                y_proba_all = np.concatenate(all_proba, axis=1)
-            else:
-                y_proba_all = np.concatenate(all_proba)
-        else:
-            y_proba_all = None
-
-        return {
-            'metrics': metrics_out,
-            'predictions': {
-                'y_true': y_true_all,
-                'y_pred': y_pred_all,
-                'y_proba': y_proba_all,
-            }
-        }
 
     def cross_val(
         self,
@@ -298,87 +254,121 @@ class BasePipeline(ABC):
         y: Union[pd.Series, np.ndarray]
     ) -> Dict[str, Any]:
         """
-        Perform cross-validation using sklearn's implementation.
-        
+        Perform cross-validation using scikit-learn's `cross_validate`.
+
+        Wraps raw metric functions in `make_scorer`, collects per-fold
+        predictions, scores, estimators, and computes final feature importances.
+
         Parameters
         ----------
         estimator : BaseEstimator
-            Estimator to clone and fit.
+            The base estimator to evaluate.
         X : DataFrame or ndarray
             Feature matrix.
         y : Series or ndarray
-            Target array.
-            
+            Target vector or matrix.
+
         Returns
         -------
-        dict
-            {
-              'fold_predictions': [...],
-              'estimator': final fitted estimator,
-              'feature_importances': array or None
-            }
+        results : dict
+            - 'fold_predictions' : list of dicts, each with keys
+                - 'y_true', 'y_pred', optional 'y_proba'
+            - 'fold_scores' : list of dicts, per-fold metric scores
+            - 'fold_estimators' : list of fitted estimators from each fold
+            - 'fold_feature_importances' : list of arrays (one per fold) or [] if unsupported
+            - 'estimator' : final estimator fit on the full dataset
+            - 'feature_importances' : array or None, from final estimator
+            - 'cv_fold_scores' : dict mapping each metric name to array of fold scores
         """
-        # Prepare CV config
+
         cv_conf = deepcopy(self.cv_kwargs)
         cv_conf.setdefault('random_state', self.random_state)
         cv = get_cv_splitter(**cv_conf)
-        
-        # Convert X,y to arrays for consistency
+
         X_arr = X.values if isinstance(X, pd.DataFrame) else X
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
-        groups_arr = (self.groups.values if isinstance(self.groups, pd.Series)
-                     else self.groups)
-        
-        # Configure return_estimator to get the fitted estimators from each fold
-        supports_proba = hasattr(estimator, 'predict_proba')
-        
-        # Use sklearn's cross_validate
-        cv_results = sklearn_cross_validate(
+        groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
+
+        # 2) Build scorer dict for cross validate
+        scoring = {
+            m: make_scorer(self.metric_funcs[m])
+            for m in self.metric_funcs
+        }
+
+        # 3) Run cross_validate
+        cv_results = cross_validate(
             estimator=estimator,
-            X=X_arr,
-            y=y_arr,
-            groups=groups_arr,
+            X=X_arr, y=y_arr, groups=groups_arr,
+            scoring=scoring,
             cv=cv,
             n_jobs=self.n_jobs,
-            return_estimator=True,  # Get fitted estimators from each fold
+            return_estimator=True,
             return_train_score=False,
             error_score='raise'
         )
-        
-        # Process results into our expected format
-        fold_preds = []
-        splits = list(cv.split(X_arr, y_arr, groups_arr if groups_arr is not None else None))
-        
-        for i, est in enumerate(cv_results['estimator']):
+
+        # 4) Split indices to re‐invoke train/test splits
+        splits = list(cv.split(X_arr, y_arr, groups_arr))
+
+        # 5) Collect per‐fold predictions and importances
+        fold_predictions = []
+        fold_feature_importances = []
+        for i, est_fold in enumerate(cv_results['estimator']):
             _, val_idx = splits[i]
             y_true = y_arr[val_idx]
-            y_pred = est.predict(X_arr[val_idx])
-            fold_pred = {'y_true': y_true, 'y_pred': y_pred}
-            
-            if supports_proba:
-                fold_pred['y_proba'] = est.predict_proba(X_arr[val_idx])
-                
-            fold_preds.append(fold_pred)
-        
-        # Final fit on all data
-        final_est = clone(estimator)
-        if hasattr(final_est, 'random_state'):
-            setattr(final_est, 'random_state', self.random_state)
-        final_est.fit(X_arr, y_arr)
-        
-        # Extract feature importances
-        feat_imp = None
-        if hasattr(final_est, 'feature_importances_'):
-            feat_imp = final_est.feature_importances_
-        elif hasattr(final_est, 'coef_'):
-            coef = final_est.coef_
-            feat_imp = coef[0] if coef.ndim > 1 else coef
-        
-        return {
-            'fold_predictions': fold_preds,
-            'estimator': final_est,
-            'feature_importances': feat_imp,
+            y_pred = est_fold.predict(X_arr[val_idx])
+
+            fp: Dict[str, Any] = {'y_true': y_true, 'y_pred': y_pred}
+            if hasattr(est_fold, 'predict_proba'):
+                try:
+                    fp['y_proba'] = est_fold.predict_proba(X_arr[val_idx])
+                except Exception:
+                    logger.warning(
+                        "predict_proba failed for fold %d with estimator %s",
+                        i, type(est_fold).__name__
+                    )
+            fold_predictions.append(fp)
+
+            # feature importances
+            fi = self._extract_feature_importances(est_fold)
+            if fi is not None:
+                fold_feature_importances.append(fi)
+
+        # 6) Build per‐fold scores dicts
+        fold_scores = []
+        for i in range(len(fold_predictions)):
+            d = {}
+            for m in self.metrics:
+                key = f'test_{m}'
+                if key in cv_results:
+                    d[m] = cv_results[key][i]
+            fold_scores.append(d)
+
+        # 7) Collect arrays of fold‐scores per metric
+        cv_fold_scores = {
+            m: np.array(cv_results[f'test_{m}']) if f'test_{m}' in cv_results else np.array([])
+            for m in self.metrics
         }
+
+        # 8) Final refit on full data
+        if fit_all:
+            logger.info("Fitting final estimator on full dataset")
+            final_est = clone(estimator)
+            if hasattr(final_est, 'random_state') and self.random_state is not None:
+                setattr(final_est, 'random_state', self.random_state)
+            final_est.fit(X_arr, y_arr)
+            final_imp = self._extract_feature_importances(final_est)
+
+        return {
+            'fold_predictions': fold_predictions,
+            'fold_scores': fold_scores,
+            'fold_estimators': cv_results['estimator'],
+            'fold_feature_importances': fold_feature_importances,
+            'final_estimator': final_est if fit_all else None,
+            'final_feature_importances': final_imp,
+            'cv_fold_scores': cv_fold_scores
+        }
+
 
     def baseline(
         self,
@@ -448,14 +438,10 @@ class BasePipeline(ABC):
         
         logger.info(f"Running baseline evaluation for {model_name}")
         results = self.cross_val(estimator, X_use, y_use)
-        summary = self.score(results['fold_predictions'])
         
         return {
-            'model_name': model_name,
-            'model': results['estimator'],
-            'X_feature_names': self._get_feature_names(X_use),
-            'feature_importances': results['feature_importances'],
-            **summary
+            'model': model_name,
+            **results,
         }
 
     def feature_selection(
