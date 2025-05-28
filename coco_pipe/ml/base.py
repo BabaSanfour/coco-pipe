@@ -401,17 +401,16 @@ class BasePipeline(ABC):
         
         if best_params:
             estimator.set_params(**best_params)
+        else:
+            estimator.set_params(self.model_configs[model_name].get('params', {}))
 
         X_use = X if X is not None else self.X
         y_use = y if y is not None else self.y
         
         results = self.cross_val(estimator, X_use, y_use)
-        results.update({'model_name': model_name, 'params': estimator.get_params()})
+        results.update({'model_name': model_name, 'params': best_params or {}})
 
-        return {
-            'model_name': model_name,
-            **results,
-        }
+        return results
 
     def feature_selection(
         self,
