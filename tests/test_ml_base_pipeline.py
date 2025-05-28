@@ -95,7 +95,7 @@ def test_cross_val_and_baseline_evaluation_classification():
     # Check returned keys
     expected_keys = [
         'cv_fold_predictions', 'cv_fold_scores', 'cv_fold_estimators',
-        'cv_fold_importances', 'final_estimator', 'final_importances',
+        'cv_fold_importances', 
     ]
     for key in expected_keys:
         assert key in cv_res
@@ -155,4 +155,3 @@ def test_baseline_evaluation_regression():
     out = pipe.baseline_evaluation('dummy')
     # MSE values non-negative
     assert np.all(out['cv_fold_scores']['mse'] >= 0)
-    assert 'final_estimator' in out and 'final_importances' in out

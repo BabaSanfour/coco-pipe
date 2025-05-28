@@ -224,7 +224,7 @@ class BasePipeline(ABC):
         Perform cross-validation using scikit-learn's `cross_validate`.
 
         Wraps `metric_funcs` into `scoring`, collects per-fold predictions,
-        scores, estimators, and feature importances, then refits final estimator.
+        scores, estimators, and feature importances.
 
         Parameters
         ----------
@@ -246,9 +246,6 @@ class BasePipeline(ABC):
             - 'cv_fold_predictions': list of dicts, each with keys:
                 'y_true', 'y_pred', optional 'y_proba' if estimator supports it.
             - 'cv_fold_estimators': list of fitted estimators from each fold.
-            - 'final_estimator': fitted estimator on the full dataset.
-            - 'final_importances': feature importances from the final estimator,
-                or None if not supported.
         Raises
         ------
         ValueError
@@ -257,7 +254,7 @@ class BasePipeline(ABC):
         -----
         This method performs cross-validation on the provided estimator using
         the configured cross-validation strategy. It collects per-fold predictions,
-        scores, and feature importances, then fits a final estimator on the full dataset.
+        scores, and feature importances.
         """
 
         cv_conf = deepcopy(self.cv_kwargs)
@@ -322,49 +319,28 @@ class BasePipeline(ABC):
             for i, feature in enumerate(self._get_feature_names(X))
         }
 
-        # final estimator
-        final_estimator = clone(estimator)
-        if hasattr(final_estimator, 'random_state') and self.random_state is not None:
-            setattr(final_estimator, 'random_state', self.random_state)
-        final_estimator.fit(X_arr, y_arr)
-        final_importances = self._extract_feature_importances(final_estimator)
-
         return {
             'cv_fold_scores': cv_fold_scores,
             'cv_fold_importances': cv_fold_importances,
             'cv_fold_predictions': fold_predictions,
             'cv_fold_estimators': cv_results['estimator'],
-            'final_estimator': final_estimator,
-            'final_importances': final_importances,
         }
 
     def baseline_evaluation(
         self,
         model_name: str,
-        X: Optional[Union[pd.DataFrame, np.ndarray]] = None,
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        best_params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Evaluate a single model via cross-validation and return metrics and feature importances.
         
         This method performs cross-validation on a specified model, gets scores on
         the validation folds, and returns a comprehensive evaluation summary including
-        the final model fitted on all data and its feature importances (if applicable) 
-        as well as the fitted estimators from each fold.
+        the fitted estimators from each fold and their feature importances.
         
         Parameters
         ----------
         model_name : str
             Name of the model in model_configs to evaluate.
-        X : DataFrame or ndarray, optional
-            Feature matrix. If None, uses self.X.
-            Shape (n_samples, n_features).
-        y : Series or ndarray, optional
-            Target array. If None, uses self.y.
-            Shape (n_samples,) or (n_samples, n_targets).
-        best_params : dict, optional
-            Parameters to set on the estimator before evaluation.
             
         Returns
         -------
@@ -379,8 +355,6 @@ class BasePipeline(ABC):
         ------
         KeyError
             If model_name is not found in model_configs.
-        ValueError
-            If best_params contains parameters incompatible with the estimator.
             
         Notes
         -----
@@ -399,16 +373,10 @@ class BasePipeline(ABC):
         cfg = self.model_configs[model_name]
         estimator = clone(cfg['estimator'])
         
-        if best_params:
-            estimator.set_params(**best_params)
-        else:
-            estimator.set_params(self.model_configs[model_name].get('params', {}))
-
-        X_use = X if X is not None else self.X
-        y_use = y if y is not None else self.y
+        estimator.set_params(self.model_configs[model_name].get('params', {}))
         
-        results = self.cross_val(estimator, X_use, y_use)
-        results.update({'model_name': model_name, 'params': best_params or {}})
+        results = self.cross_val(estimator, self.X, self.y)
+        results.update({'model_name': model_name, 'params': cfg.get('params', {})})
 
         return results
 
