@@ -442,3 +442,99 @@ def test_hp_search_fs_end_to_end():
     assert expected.issubset(keys)
     assert len(res['selected_features']) == 1
     assert res['best_params']['clf__penalty'] in model_configs['lr']['params']['penalty']
+
+def test_execute_method():
+    """Test the execute method for both success and error cases"""
+    # Create a simple dataset
+    np.random.seed(42)
+    X = np.vstack([
+        np.random.randn(10, 3) - 2,  # 10 samples for class 0, shifted left
+        np.random.randn(10, 3) + 2   # 10 samples for class 1, shifted right
+    ])
+    y = np.array([0]*10 + [1]*10)
+    
+    # Create model configurations
+    model_configs = {
+        'lr': {
+            'estimator': LogisticRegression(solver='liblinear'),
+            'params': {'C': 0.1, 'penalty': "l2"}
+        }
+    }
+    
+    # Create pipeline instance
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs=model_configs,
+        default_metrics=['accuracy'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': True, 'random_state': 0},
+        n_jobs=1
+    )
+    
+    # Test case 1: Successful baseline execution
+    results = pipe.execute(type='baseline', model_name='lr')
+    assert 'model_name' in results
+    assert 'cv_fold_scores' in results
+    assert 'accuracy' in results['cv_fold_scores']
+    
+    # Test case 2: Successful feature selection execution
+    results = pipe.execute(
+        type='feature_selection',
+        model_name='lr',
+        n_features=2,
+        direction='forward'
+    )
+    assert 'selected_features' in results
+    assert len(results['selected_features']) > 0
+    assert 'feature_frequency' in results
+
+    model_configs = {
+        'lr': {
+            'estimator': LogisticRegression(solver='liblinear'),
+            'params': {'C': [0.1, 1.0, 10.0], 'penalty': ['l2', 'l1']}
+        }
+    }
+
+        # Create pipeline instance
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'accuracy': accuracy_score},
+        model_configs=model_configs,
+        default_metrics=['accuracy'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': True, 'random_state': 0},
+        n_jobs=1
+    )
+
+    # Test case 3: Successful hyperparameter search execution
+    results = pipe.execute(
+        type='hp_search',
+        model_name='lr',
+        search_type='grid'
+    )
+    assert 'best_params' in results
+    assert 'param_frequency' in results
+    
+    # Test case 4: Successful combined feature selection and hyperparameter search
+    results = pipe.execute(
+        type='hp_search_fs',
+        model_name='lr',
+        search_type='grid',
+        n_features=2
+    )
+    assert 'selected_features' in results
+    assert 'best_params' in results
+    
+    # Test case 5: Error - invalid method type
+    with pytest.raises(ValueError) as excinfo:
+        pipe.execute(type='invalid_method', model_name='lr')
+    assert "Invalid execution type 'invalid_method'" in str(excinfo.value)
+    
+    # Test case 6: Error - missing required parameter
+    with pytest.raises(TypeError) as excinfo:
+        pipe.execute(type='baseline')  # Missing model_name
+    assert "missing 1 required positional argument" in str(excinfo.value)
+    
+    # Test case 7: Error - model not found
+    with pytest.raises(KeyError) as excinfo:
+        pipe.execute(type='baseline', model_name='nonexistent_model')
+    assert "not found in model_configs" in str(excinfo.value)

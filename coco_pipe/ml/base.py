@@ -11,6 +11,7 @@ Version: 0.0.1
 License: TBD
 """
 
+# TODO - add use case for selecting model config for baseline vs hp search 
 import logging
 import warnings
 from abc import ABC
@@ -1547,11 +1548,100 @@ class BasePipeline(ABC):
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         """
-        Dispatch execution based on 'type' keyword in kwargs.
-
-        Valid types: 'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'.
+        Dispatch execution to the appropriate pipeline method based on type parameter.
+        
+        This method serves as a unified entry point for running different analysis methods
+        of the pipeline. It dynamically dispatches the call to one of the primary pipeline 
+        methods based on the 'type' parameter provided in kwargs.
+        
+        Parameters
+        ----------
+        **kwargs : dict
+            Keyword arguments to pass to the target method. Must include a 'type' parameter
+            that specifies which pipeline method to execute. The remaining parameters are
+            passed directly to the selected method.
+            
+            Special parameters:
+            - type : {'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'}, default='baseline'
+                The type of analysis to perform:
+                * 'baseline': Run baseline model evaluation
+                * 'feature_selection': Perform sequential feature selection
+                * 'hp_search': Perform hyperparameter search
+                * 'hp_search_fs': Perform combined feature selection and hyperparameter search
+                
+        Returns
+        -------
+        dict
+            The results dictionary from the called method. Contents vary depending on the
+            specific method called, but typically include:
+            
+            For baseline:
+                Model performance metrics, predictions, and feature importances
+            
+            For feature_selection:
+                Selected features, feature frequencies, feature importances, and fold results
+                
+            For hp_search:
+                Best parameters, parameter frequencies, and fold results
+                
+            For hp_search_fs:
+                Selected features, best parameters, and combined analysis results
+        
+        Raises
+        ------
+        ValueError
+            If the specified 'type' is not one of the supported methods.
+        
+        See Also
+        --------
+        baseline_evaluation : Run baseline model evaluation
+        feature_selection : Perform sequential feature selection
+        hp_search : Perform hyperparameter search
+        hp_search_fs : Perform combined feature selection and hyperparameter search
+        
+        Examples
+        --------
+        >>> # Run baseline evaluation
+        >>> results = pipeline.execute(type='baseline', model_name='random_forest')
+        >>> 
+        >>> # Run feature selection
+        >>> results = pipeline.execute(
+        ...     type='feature_selection', 
+        ...     model_name='random_forest',
+        ...     n_features=5
+        ... )
+        >>> 
+        >>> # Run hyperparameter search
+        >>> results = pipeline.execute(
+        ...     type='hp_search',
+        ...     model_name='random_forest',
+        ...     search_type='grid'
+        ... )
         """
-        method = kwargs.pop('type', 'baseline')
-        if method not in ['baseline', 'feature_selection', 'hp_search', 'hp_search_fs']:
-            raise ValueError(f"Invalid execution type '{method}'")
-        return getattr(self, method)(**kwargs)
+        # Extract execution type from kwargs
+        method_name = kwargs.pop('type', 'baseline')
+        
+        # Validate method type
+        valid_methods = ['baseline', 'feature_selection', 'hp_search', 'hp_search_fs']
+        if method_name not in valid_methods:
+            raise ValueError(
+                f"Invalid execution type '{method_name}'. "
+                f"Must be one of: {', '.join(valid_methods)}"
+            )
+        
+        # Map execution type to method name
+        method_map = {
+            'baseline': 'baseline_evaluation',
+            'feature_selection': 'feature_selection',
+            'hp_search': 'hp_search',
+            'hp_search_fs': 'hp_search_fs'
+        }
+                
+        # Get the method and execute it with the provided kwargs
+        try:
+            method = getattr(self, method_map[method_name])
+            results = method(**kwargs)
+            return results
+        except Exception as e:
+            logger.error(f"Error during {method_name} execution: {str(e)}")
+            raise
