@@ -628,7 +628,7 @@ class BasePipeline(ABC):
             'param_frequency': param_frequency
         })
         return out
-        
+
     def hp_search_fs(
         self,
         model_name: str,
@@ -640,21 +640,125 @@ class BasePipeline(ABC):
         scoring: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Combined feature selection and hyperparameter search.
+        Combined nested‐CV feature selection and hyperparameter search:
+        - Inner CV for FS and HP search within each outer train split
+        - Outer CV via self.cross_val to evaluate on held‐out folds
+        Returns:
+        - outer_results: per‐fold selected_features, best_params & test_scores
+        - selected_features: features chosen by majority vote across folds
+        - best_params: hyperparameters chosen by majority vote across folds
+        - feature_frequency: fraction of folds each feature was selected
+        - param_frequency: fraction of folds each param value was selected
         """
-        fs_out = self.feature_selection(
-            model_name, n_features, direction, scoring
-        )
-        mask = np.array([fn in fs_out['selected_features']
-                         for fn in self._get_feature_names(self.X)])
-        Xs = self._select_columns(self.X, mask)
-        hp_out = self.hp_search(
-            model_name, search_type, param_grid,
-            n_iter, scoring, Xs, self.y
-        )
-        hp_out['best_features'] = fs_out['selected_features']
-        return hp_out
+        # 1) Data + names
+        X_use = self.X
+        y_use = self.y
+        feat_names = np.array(self._get_feature_names(X_use))
 
+        # 2) Defaults
+        n_sel   = n_features or (X_use.shape[1] // 2)
+        scoring = scoring or self.metrics[0]
+        needs_proba = 'proba' in scoring or 'roc' in scoring
+        scorer  = make_scorer(self.metric_funcs[scoring], needs_proba=needs_proba)
+
+        # 3) Grid and base estimator
+        cfg  = self.model_configs[model_name]
+        grid = param_grid or cfg.get('params', {})
+
+        # 4) Inner CV splitters
+        inner_cv_fs = get_cv_splitter(random_state=self.random_state, **self.cv_kwargs)
+        inner_cv_hp = get_cv_splitter(random_state=self.random_state, **self.cv_kwargs)
+
+        # 5) Build pipeline: FS -> estimator
+        base_est = clone(cfg['estimator'])
+        if hasattr(base_est, 'random_state'):
+            base_est.random_state = self.random_state
+
+        fs_pipe = Pipeline([
+            ('sfs', SequentialFeatureSelector(
+                clone(base_est),
+                n_features_to_select=n_sel,
+                direction=direction,
+                scoring=scorer,
+                cv=inner_cv_fs,
+                n_jobs=self.n_jobs
+            )),
+            ('clf', clone(base_est))
+        ])
+
+        # 6) Wrap in hyper‐search
+        if search_type == 'grid':
+            search_est = GridSearchCV(
+                fs_pipe,
+                grid,
+                scoring=scorer,
+                cv=inner_cv_hp,
+                n_jobs=self.n_jobs
+            )
+        else:
+            search_est = RandomizedSearchCV(
+                fs_pipe,
+                grid,
+                n_iter=n_iter,
+                scoring=scorer,
+                cv=inner_cv_hp,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state
+            )
+
+        # 7) Outer CV via cross_val
+        cv_res = self.cross_val(search_est, X_use, y_use)
+        estimators   = cv_res['cv_fold_estimators']
+        scores       = cv_res['cv_fold_scores']
+        n_folds      = len(estimators)
+
+        outer_results = []
+        all_selected = []
+        all_params   = []
+
+        for fold_idx, est in enumerate(estimators):
+            # pipeline with FS and best model
+            best_pipe = est.best_estimator_
+            mask      = best_pipe.named_steps['sfs'].get_support()
+            selected  = feat_names[mask].tolist()
+            params    = est.best_params_
+
+            all_selected.extend(selected)
+            all_params.append(params)
+            test_scores = {m: float(scores[m][fold_idx]) for m in self.metrics}
+
+            outer_results.append({
+                'fold': fold_idx,
+                'selected_features': selected,
+                'best_params': params,
+                'test_scores': test_scores
+            })
+
+        # 8) Aggregate features by majority vote
+        feat_count = Counter(all_selected)
+        selected_features = [f for f, cnt in feat_count.items() if cnt > n_folds / 2]
+        selected_features.sort(key=lambda f: feat_count[f], reverse=True)
+        feature_frequency = {f: feat_count.get(f, 0) / n_folds for f in feat_names}
+
+        # 9) Aggregate params by majority vote
+        param_counts = {}
+        for params in all_params:
+            for k, v in params.items():
+                param_counts.setdefault(k, {}).setdefault(v, 0)
+                param_counts[k][v] += 1
+        best_params = {k: max(vals.items(), key=lambda x: x[1])[0] for k, vals in param_counts.items()}
+        param_frequency = {k: {v: cnt / n_folds for v, cnt in vals.items()} for k, vals in param_counts.items()}
+
+        logger.info(f"Selected features: {selected_features}")
+        logger.info(f"Aggregated best params: {best_params}")
+
+        return {
+            'outer_results': outer_results,
+            'selected_features': selected_features,
+            'best_params': best_params,
+            'feature_frequency': feature_frequency,
+            'param_frequency': param_frequency
+        }
     def execute(self, **kwargs) -> Dict[str, Any]:
         """
         Dispatch execution based on 'type' keyword in kwargs.
