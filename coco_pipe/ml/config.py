@@ -239,17 +239,17 @@ REGRESSION_MODELS: Dict[str, Dict[str, Any]] = {
         "default_params": {"random_state": 42},
         "hp_search_params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]}
     },
-    "Decision Tree Regr": {
+    "Decision Tree": {
         "estimator": DecisionTreeRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"max_depth": [None, 3, 5], "min_samples_split": [2, 5]}
     },
-    "Random Forest Regr": {
+    "Random Forest": {
         "estimator": RandomForestRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, None]}
     },
-    "Gradient Boosting Regr": {
+    "Gradient Boosting": {
         "estimator": GradientBoostingRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1]}
@@ -259,22 +259,22 @@ REGRESSION_MODELS: Dict[str, Dict[str, Any]] = {
         "default_params": {},
         "hp_search_params": {"kernel": ["linear", "rbf"], "C": [0.1, 1.0]}
     },
-    "KNN Regr": {
+    "KNN": {
         "estimator": KNeighborsRegressor,
         "default_params": {},
         "hp_search_params": {"n_neighbors": [3, 5, 7]}
     },
-    "Extra Trees Regr": {
+    "Extra Trees": {
         "estimator": ExtraTreesRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]}
     },
-    "AdaBoost Regr": {
+    "AdaBoost": {
         "estimator": AdaBoostRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]}
     },
-    "HistGradientBoosting Regr": {
+    "HistGradientBoosting": {
         "estimator": HistGradientBoostingRegressor,
         "default_params": {"random_state": 42},
         "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]}
