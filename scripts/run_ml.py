@@ -39,6 +39,7 @@ def run_analysis(X, y, analysis_cfg):
         "save_intermediate": analysis_cfg.get("save_intermediate"),
         "results_dir":    analysis_cfg.get("results_dir"),
         "results_file":   analysis_cfg.get("results_file"),
+        # **NEW** univariate vs. multivariate mode
         "mode":           analysis_cfg.get("mode"),
     }
 
@@ -100,4 +101,17 @@ def main():
 
         # 2) Run
         # ensure results_dir/file come from global defaults if not overwritten
-        anal
+        analysis_cfg["results_dir"]  = cfg.get("results_dir", analysis_cfg.get("results_dir"))
+        analysis_cfg["results_file"] = cfg.get("results_file", analysis_cfg.get("results_file"))
+
+        results = run_analysis(X, y, analysis_cfg)
+        all_results[analysis["id"]] = results
+
+    # 3) Save all results
+    out_path = os.path.join(cfg["results_dir"], f"{cfg['global_experiment_id']}.pkl")
+    logger.info(f"Saving aggregated results to {out_path}")
+    pd.to_pickle(all_results, out_path)
+
+
+if __name__ == "__main__":
+    main()
