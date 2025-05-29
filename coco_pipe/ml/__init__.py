@@ -12,7 +12,6 @@ from .config import (
     REGRESSION_MODELS,
     MULTIOUTPUT_REG_MODELS,
     multiclass_roc_auc_score,
-    multiclass_average_precision_score
 )
 from .utils import get_cv_splitter
 from .base import BasePipeline, ModelConfig
