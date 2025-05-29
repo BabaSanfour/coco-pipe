@@ -1,74 +1,84 @@
+#!/usr/bin/env python3
+import argparse
+import logging
+import os
+import json
 import yaml
 import numpy as np
 import pandas as pd
-from coco_pipe.io import load, select_features
-from coco_pipe.ml.pipeline import MLPipeline
 from copy import deepcopy
 
-import logging
+from coco_pipe.io import load, select_features
+from coco_pipe.ml.pipeline import MLPipeline
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def run_analysis(X, y, analysis_cfg):
-    """Run a single analysis with given config"""
-    X = X.values
-    y = y.values
-    
-    # Extract MLPipeline specific arguments
-    pipeline_args = {
-        'X': X,
-        'y': y,
-        'config': {
-            'task': analysis_cfg.get('task'),
-            'analysis_type': analysis_cfg.get('analysis_type'),
-            'models': analysis_cfg.get('models'),
-            'metrics': analysis_cfg.get('metrics'),
-            'cv_strategy': analysis_cfg.get('cv_kwargs', {}).get('cv_strategy'),
-            'n_splits': analysis_cfg.get('cv_kwargs', {}).get('n_splits'),
-            'n_features': analysis_cfg.get('n_features'),
-            'direction': analysis_cfg.get('direction'),
-            'search_type': analysis_cfg.get('search_type'),
-            'n_iter': analysis_cfg.get('n_iter'),
-            'scoring': analysis_cfg.get('scoring'),
-            'n_jobs': analysis_cfg.get('n_jobs'),
-            'results_dir': analysis_cfg.get('results_dir'),
-            'results_file': analysis_cfg.get('results_file'),
-            'cv_kwargs': analysis_cfg.get('cv_kwargs'),
-            'save_intermediate': analysis_cfg.get('save_intermediate')
-        }
+    """Run a single analysis with the given config, passing through the new `mode`."""
+    # scikit-learn pipelines expect numpy arrays
+    X_arr = X.values if hasattr(X, "values") else X
+    y_arr = y.values if hasattr(y, "values") else y
+
+    # Build the MLPipeline config dict
+    pipeline_config = {
+        "task":           analysis_cfg.get("task"),
+        "analysis_type":  analysis_cfg.get("analysis_type"),
+        "models":         analysis_cfg.get("models"),
+        "metrics":        analysis_cfg.get("metrics"),
+        "cv_strategy":    analysis_cfg.get("cv_kwargs", {}).get("cv_strategy"),
+        "n_splits":       analysis_cfg.get("cv_kwargs", {}).get("n_splits"),
+        "cv_kwargs":      analysis_cfg.get("cv_kwargs"),
+        "n_features":     analysis_cfg.get("n_features"),
+        "direction":      analysis_cfg.get("direction"),
+        "search_type":    analysis_cfg.get("search_type"),
+        "n_iter":         analysis_cfg.get("n_iter"),
+        "scoring":        analysis_cfg.get("scoring"),
+        "n_jobs":         analysis_cfg.get("n_jobs"),
+        "save_intermediate": analysis_cfg.get("save_intermediate"),
+        "results_dir":    analysis_cfg.get("results_dir"),
+        "results_file":   analysis_cfg.get("results_file"),
+        "mode":           analysis_cfg.get("mode"),
     }
-    
-    # Remove None values from config
-    pipeline_args['config'] = {k: v for k, v in pipeline_args['config'].items() if v is not None}
-    
-    pipeline = MLPipeline(**pipeline_args)
+
+    # strip out any None so pipeline defaults apply
+    pipeline_config = {k: v for k, v in pipeline_config.items() if v is not None}
+
+    logger.info(
+        f"Launching {pipeline_config['task']} pipeline "
+        f"({pipeline_config.get('mode','multivariate')}) – "
+        f"{pipeline_config['analysis_type']} on "
+        f"{X_arr.shape[0]}×{X_arr.shape[1]} data"
+    )
+
+    pipeline = MLPipeline(X=X_arr, y=y_arr, config=pipeline_config)
     results = pipeline.run()
+
     logger.info(f"Analysis {analysis_cfg['id']} completed")
     return results
 
+
 def main():
-    # 0) Load config & data
-    import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True, help="Path to config file")
+    parser.add_argument(
+        "--config", "-c", required=True, help="YAML file with defaults+analyses"
+    )
     args = parser.parse_args()
-    
+
+    # 0) Load config & data
     cfg = yaml.safe_load(open(args.config))
     df = load("tabular", cfg["data_path"])
     all_results = {}
 
-    # Get default parameters
-    defaults = cfg["defaults"]
+    defaults = cfg.get("defaults", {})
 
-    # Run different analyses based on config
     for analysis in cfg["analyses"]:
-        # Create analysis config starting with defaults
+        # merge defaults + specific
         analysis_cfg = deepcopy(defaults)
-        
-        # Update with analysis-specific settings
         analysis_cfg.update(analysis)
 
-        # 1) Select features & target based on analysis config
+        # 1) Select features & target
         X, y = select_features(
             df,
             target_columns=analysis_cfg["target_columns"],
@@ -78,24 +88,16 @@ def main():
             row_filter=analysis_cfg.get("row_filter"),
         )
 
-        # 1.1) Print the shape of the selected features and target
-        logger.info(f"Analysis {analysis['id']} selected {X.shape[1]} features and {y.shape[0]} samples")
-        features_to_print = X.columns.tolist() if len(X.columns) <= 5 else X.columns.tolist()[:5]
-        logger.info(f"Analysis {analysis['id']} first five selected features: {features_to_print}...")
-        logger.info(f"Analysis {analysis['id']} selected target: {y.name}")
+        logger.info(
+            f"Analysis {analysis['id']} selected {X.shape[1]} features, "
+            f"{y.shape[0]} samples, target '{y.name}'"
+        )
+        # show first few features
+        feat_list = X.columns.tolist()
+        logger.info(
+            f"First features: {feat_list[:5]}{'...' if len(feat_list)>5 else ''}"
+        )
 
-        # 2) Run analysis
-        analysis_cfg["results_dir"] = cfg["results_dir"]
-        analysis_cfg["results_file"] = cfg["results_file"]
-        results = run_analysis(X, y, analysis_cfg)
-        
-        # Store results with analysis identifier
-        all_results[analysis["id"]] = results
-
-    # 3) Save all results
-    results_file = f"{cfg['results_dir']}/{cfg['global_experiment_id']}.pkl"
-    logger.info(f"Saving results to {results_file}")
-    pd.to_pickle(all_results, results_file)
-
-if __name__ == "__main__":
-    main()
+        # 2) Run
+        # ensure results_dir/file come from global defaults if not overwritten
+        anal
