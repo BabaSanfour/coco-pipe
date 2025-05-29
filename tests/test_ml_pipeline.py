@@ -5,106 +5,112 @@ from coco_pipe.ml.pipeline import MLPipeline
 from coco_pipe.ml.classification import ClassificationPipeline
 from coco_pipe.ml.regression    import RegressionPipeline
 
-@pytest.fixture(autouse=True)
-def dummy_X_y():
-    # simple dummy data for both tasks
+# Fixtures for dummy data
+def make_dummy_multi_output(n_samples=10, n_targets=3):
+    X = np.arange(n_samples * 2).reshape(n_samples, 2)
+    # create multi-output y with simple relationships
+    y = np.vstack([X[:, 0] * (i + 1) for i in range(n_targets)]).T
+    return X, y
+
+@pytest.fixture
+def multi_output_data():
+    return make_dummy_multi_output(n_samples=8, n_targets=3)
+
+@pytest.fixture
+def single_output_data():
     X = np.arange(20).reshape(10, 2)
-    y_class = np.array([0, 1] * 5)
-    y_regr = np.arange(10).astype(float)
-    return X, y_class, y_regr
+    y = X[:, 0] * 2.0 + 1.0
+    return X, y
 
-def test_invalid_task_raises(dummy_X_y):
-    X, y_class, _ = dummy_X_y
-    cfg = {"task": "not_a_task"}
-    with pytest.raises(ValueError) as exc:
-        # error is raised in __init__
-        _ = MLPipeline(X, y_class, cfg)
-    assert "Invalid task" in str(exc.value)
+# Test invalid task
+def test_invalid_task_raises(single_output_data):
+    X, y = single_output_data
+    cfg = {"task": "unknown"}
+    with pytest.raises(ValueError, match="Invalid task"):
+        MLPipeline(X, y, cfg)
 
-@pytest.mark.parametrize("task, y_key, ExpectedPipeline, metric", [
-    ("classification", 1, ClassificationPipeline, "accuracy"),
-    ("regression",     2, RegressionPipeline, "r2"),
-])
-def test_correct_pipeline_class_selected(dummy_X_y, task, y_key, ExpectedPipeline, metric, monkeypatch):
-    X, y_class, y_regr = dummy_X_y
-    y = dummy_X_y[y_key]
-    cfg = {
-        "task": task,
-        "analysis_type": "hp_search",
-        "models": ["Random Forest"],
-        "metrics": [metric],
-        "random_state": 123,
-        "cv_strategy": "stratified",
-        "n_splits": 3,
-        "cv_kwargs": {},
-        "n_jobs": 7,
-        "n_features": 4,
-        "direction": "backward",
-        "search_type": "random",
-        "n_iter": 5,
-        "scoring": metric,
-        "save_intermediate": False,
-        "results_dir": "results",
-        "results_file": "results"
-    }
+# Test invalid mode
 
+def test_invalid_mode_raises(single_output_data):
+    X, y = single_output_data
+    cfg = {"task": "regression", "mode": "invalid"}
+    with pytest.raises(ValueError, match="Invalid mode"):
+        MLPipeline(X, y, cfg)
+
+# Test multivariate mode calls pipeline once returning dict
+
+def test_multivariate_mode(single_output_data, monkeypatch):
+    X, y = single_output_data
+    cfg = {"task": "regression", "mode": "multivariate"}
     recorded = {}
+    
+    # monkeypatch RegressionPipeline.run to capture self.y and return
     def fake_run(self):
-        recorded['pipeline_type'] = type(self)
-        return {"dummy": "result"}
-
-    # apply the patch just for this test
-    monkeypatch.setattr(ExpectedPipeline, "run", fake_run, raising=True)
+        return {"y_shape": self.y.shape}
+    monkeypatch.setattr(RegressionPipeline, "run", fake_run)
 
     mlp = MLPipeline(X, y, cfg)
     out = mlp.run()
+    assert isinstance(out, dict)
+    assert out.get("y_shape") == y.shape
 
-    assert recorded['pipeline_type'] is ExpectedPipeline
-    assert out == {"dummy": "result"}
+# Test univariate mode runs per target
 
-def test_defaults_are_applied(dummy_X_y):
-    X, y_class, _ = dummy_X_y
-    cfg = {"task": "classification"}  # use only required field
-
-    recorded = {}
+def test_univariate_mode_runs_per_output(multi_output_data, monkeypatch):
+    X, y = multi_output_data
+    cfg = {"task": "regression", "mode": "univariate"}
+    
+    # monkeypatch RegressionPipeline.run to capture self.y
     def fake_run(self):
-        recorded.update({
-            "analysis_type": self.analysis_type,
-            "models": self.models,
-            "metrics": self.metrics,
-            "random_state": self.random_state,
-            "cv_strategy": self.cv_strategy,
-            "n_splits": self.n_splits,
-            "n_features": self.n_features,
-            "direction": self.direction,
-            "search_type": self.search_type,
-            "n_iter": self.n_iter,
-            "scoring": self.scoring,
-            "n_jobs": self.n_jobs,
-            "save_intermediate": self.save_intermediate,
-            "results_dir": self.results_dir,
-            "results_file": self.results_file
-        })
-        return {}
+        return {"y_shape": self.y.shape}
+    monkeypatch.setattr(RegressionPipeline, "run", fake_run)
 
-    setattr(ClassificationPipeline, "run", fake_run)
+    mlp = MLPipeline(X, y, cfg)
+    out = mlp.run()
+    # should return dict with one entry per target
+    assert isinstance(out, dict)
+    assert set(out.keys()) == set(range(y.shape[1]))
+    for idx, res in out.items():
+        assert res["y_shape"] == (X.shape[0],)
 
-    mlp = MLPipeline(X, y_class, cfg)
-    mlp.run()
+# Test univariate feature_selection not allowed
 
-    # verify defaults
-    assert recorded["analysis_type"] == "baseline"
-    assert recorded["models"] == "all"
-    assert recorded["metrics"] is None
-    assert recorded["random_state"] == 42
-    assert recorded["cv_strategy"] == "stratified"
-    assert recorded["n_splits"] == 5
-    assert recorded["n_features"] is None
-    assert recorded["direction"] == "forward"
-    assert recorded["search_type"] == "grid"
-    assert recorded["n_iter"] == 100
-    assert recorded["scoring"] is None
-    assert recorded["n_jobs"] == -1
-    assert recorded["save_intermediate"] is False
-    assert recorded["results_dir"] == "results"
-    assert recorded["results_file"] == "results"
+def test_univariate_feature_selection_error(multi_output_data):
+    X, y = multi_output_data
+    cfg = {"task": "regression", "mode": "univariate", "analysis_type": "feature_selection"}
+    mlp = MLPipeline(X, y, cfg)
+    with pytest.raises(ValueError, match="Cannot perform feature_selection in univariate mode"):
+        mlp.run()
+
+# Classification analogs
+
+def test_classification_univariate_and_multivariate(monkeypatch):
+    # create dummy multilabel classification y
+    X = np.random.rand(6, 3)
+    y = np.array([[0,1,0], [1,0,1], [0,1,1], [1,1,0], [0,0,1], [1,0,0]])
+    # fake ClassificationPipeline.run
+    def fake_run(self):
+        return {"y_shape": self.y.shape}
+    monkeypatch.setattr(ClassificationPipeline, "run", fake_run)
+    
+    # multivariate mode
+    cfg_mv = {"task": "classification", "mode": "multivariate"}
+    mlp_mv = MLPipeline(X, y, cfg_mv)
+    out_mv = mlp_mv.run()
+    assert out_mv["y_shape"] == y.shape
+    
+    # univariate mode
+    cfg_uv = {"task": "classification", "mode": "univariate"}
+    mlp_uv = MLPipeline(X, y, cfg_uv)
+    out_uv = mlp_uv.run()
+    assert set(out_uv.keys()) == set(range(y.shape[1]))
+    for idx, res in out_uv.items():
+        assert res["y_shape"] == (X.shape[0],)
+
+# Test univariate not allow fs/hp_search_fs for classification
+def test_classification_univariate_fs_error(monkeypatch):
+    X, y = np.zeros((5,2)), np.zeros((5,2))
+    cfg = {"task": "classification", "mode": "univariate", "analysis_type": "hp_search_fs"}
+    mlp = MLPipeline(X, y, cfg)
+    with pytest.raises(ValueError, match="Cannot perform hp_search_fs in univariate mode"):
+        mlp.run()
