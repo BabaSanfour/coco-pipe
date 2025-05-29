@@ -628,35 +628,3 @@ class ClassificationPipeline:
         logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
 
         return self.results
-
-
-def main():
-    """
-    Example usage of the ClassificationPipeline.
-    This function demonstrates how to create and run a classification pipeline
-    with synthetic data.
-    """
-    # Generate synthetic data
-    X = np.random.rand(100, 20)  # 100 samples, 20 features
-    y = np.random.randint(0, 2, size=100)  # Binary target
-
-    # Create and run the classification pipeline
-    pipeline = ClassificationPipeline(
-        X=X,
-        y=y,
-        analysis_type="baseline",
-        models="all",
-        metrics=["accuracy", "f1"],
-        random_state=42,
-        cv_strategy="stratified",
-        n_splits=5,
-        n_jobs=-1,
-        save_intermediate=True,
-        results_dir="results",
-        results_file="classification_results"
-    )
-    
-    results = pipeline.run()
-    print("Results:", results)
-if __name__ == "__main__":
-    main()
