@@ -127,44 +127,53 @@ MULTIOUTPUT_REG_METRICS: Dict[str, Callable] = {
 # Binary classification models
 BINARY_MODELS: Dict[str, Dict[str, Any]] = {
     "Logistic Regression": {
-        "estimator": LogisticRegression(random_state=42),
-        "params": {"C": [0.1, 1, 10], "penalty": ["l2"]},
+        "estimator": LogisticRegression,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"C": [0.1, 1, 10], "penalty": ["l2"]},
     },
     "Decision Tree": {
-        "estimator": DecisionTreeClassifier(random_state=42),
-        "params": {"max_depth": [3, 5, 10, None], "min_samples_split": [2, 5, 10]},
+        "estimator": DecisionTreeClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"max_depth": [3, 5, 10, None], "min_samples_split": [2, 5, 10]},
     },
     "Random Forest": {
-        "estimator": RandomForestClassifier(random_state=42),
-        "params": {"n_estimators": [100, 200], "max_depth": [3, 5, 10, None]},
+        "estimator": RandomForestClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, 10, None]},
     },
     "Gradient Boosting": {
-        "estimator": GradientBoostingClassifier(random_state=42),
-        "params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1], "max_depth": [3, 5]},
+        "estimator": GradientBoostingClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1], "max_depth": [3, 5]},
     },
     "SVC": {
-        "estimator": SVC(probability=True, random_state=42),
-        "params": {"C": [0.1, 1, 10], "kernel": ["linear", "rbf"]},
+        "estimator": SVC,
+        "default_params": {"probability": True, "random_state": 42},
+        "hp_search_params": {"C": [0.1, 1, 10], "kernel": ["linear", "rbf"]},
     },
     "KNN": {
-        "estimator": KNeighborsClassifier(),
-        "params": {"n_neighbors": [3, 5, 7]},
+        "estimator": KNeighborsClassifier,
+        "default_params": {},
+        "hp_search_params": {"n_neighbors": [3, 5, 7]},
     },
     "Extra Trees": {
-        "estimator": ExtraTreesClassifier(random_state=42),
-        "params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]},
+        "estimator": ExtraTreesClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]},
     },
     "AdaBoost": {
-        "estimator": AdaBoostClassifier(random_state=42),
-        "params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]},
+        "estimator": AdaBoostClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]},
     },
     "HistGradientBoosting": {
-        "estimator": HistGradientBoostingClassifier(random_state=42),
-        "params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]},
+        "estimator": HistGradientBoostingClassifier,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]},
     },
 }
 
-# Multiclass classification models
+# Multiclass classification models (same as binary for most)
 MULTICLASS_MODELS: Dict[str, Dict[str, Any]] = {
     name: cfg for name, cfg in BINARY_MODELS.items() if name in [
         "Logistic Regression", "Decision Tree", "Random Forest",
@@ -174,64 +183,84 @@ MULTICLASS_MODELS: Dict[str, Dict[str, Any]] = {
 
 # Multi-output classification models
 MULTIOUTPUT_CLASS_MODELS: Dict[str, Dict[str, Any]] = {
-    name: {"estimator": MultiOutputClassifier(cfg["estimator"]), "params": cfg["params"]}
+    name: {
+        "estimator": MultiOutputClassifier,
+        "default_params": {"estimator": cfg["estimator"](**cfg["default_params"])},
+        "hp_search_params": {f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()}
+    }
     for name, cfg in MULTICLASS_MODELS.items()
 }
 
 # Regression models
 REGRESSION_MODELS: Dict[str, Dict[str, Any]] = {
     "Linear Regression": {
-        "estimator": LinearRegression(),
-        "params": {}
+        "estimator": LinearRegression,
+        "default_params": {},
+        "hp_search_params": {}
     },
     "Ridge": {
-        "estimator": Ridge(random_state=42),
-        "params": {"alpha": [0.1, 1.0, 10.0]}
+        "estimator": Ridge,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]}
     },
     "Lasso": {
-        "estimator": Lasso(random_state=42),
-        "params": {"alpha": [0.1, 1.0, 10.0]}
+        "estimator": Lasso,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]}
     },
     "ElasticNet": {
-        "estimator": ElasticNet(random_state=42),
-        "params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]}
+        "estimator": ElasticNet,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]}
     },
     "Decision Tree Regr": {
-        "estimator": DecisionTreeRegressor(random_state=42),
-        "params": {"max_depth": [None, 3, 5], "min_samples_split": [2, 5]}
+        "estimator": DecisionTreeRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"max_depth": [None, 3, 5], "min_samples_split": [2, 5]}
     },
     "Random Forest Regr": {
-        "estimator": RandomForestRegressor(random_state=42),
-        "params": {"n_estimators": [100, 200], "max_depth": [3, 5, None]}
+        "estimator": RandomForestRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, None]}
     },
     "Gradient Boosting Regr": {
-        "estimator": GradientBoostingRegressor(random_state=42),
-        "params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1]}
+        "estimator": GradientBoostingRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1]}
     },
     "SVR": {
-        "estimator": SVR(),
-        "params": {"kernel": ["linear", "rbf"], "C": [0.1, 1.0]}
+        "estimator": SVR,
+        "default_params": {},
+        "hp_search_params": {"kernel": ["linear", "rbf"], "C": [0.1, 1.0]}
     },
     "KNN Regr": {
-        "estimator": KNeighborsRegressor(),
-        "params": {"n_neighbors": [3, 5, 7]}
+        "estimator": KNeighborsRegressor,
+        "default_params": {},
+        "hp_search_params": {"n_neighbors": [3, 5, 7]}
     },
     "Extra Trees Regr": {
-        "estimator": ExtraTreesRegressor(random_state=42),
-        "params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]}
+        "estimator": ExtraTreesRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]}
     },
     "AdaBoost Regr": {
-        "estimator": AdaBoostRegressor(random_state=42),
-        "params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]}
+        "estimator": AdaBoostRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]}
     },
     "HistGradientBoosting Regr": {
-        "estimator": HistGradientBoostingRegressor(random_state=42),
-        "params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]}
+        "estimator": HistGradientBoostingRegressor,
+        "default_params": {"random_state": 42},
+        "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]}
     }
 }
 
 # Multi-output regression models
 MULTIOUTPUT_REG_MODELS: Dict[str, Dict[str, Any]] = {
-    name: {"estimator": MultiOutputRegressor(cfg["estimator"]), "params": cfg["params"]}
+    name: {
+        "estimator": MultiOutputRegressor,
+        "default_params": {"estimator": cfg["estimator"](**cfg["default_params"])},
+        "hp_search_params": {f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()}
+    }
     for name, cfg in REGRESSION_MODELS.items()
 }
