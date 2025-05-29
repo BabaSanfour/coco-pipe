@@ -11,16 +11,16 @@ Version: 0.0.1
 License: TBD
 """
 
-# TODO - add use case for selecting model config for baseline vs hp search 
 import logging
 import warnings
 from abc import ABC
-from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from copy import deepcopy
+from dataclasses import dataclass, field
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, clone
 from sklearn.feature_selection import SequentialFeatureSelector
@@ -37,6 +37,48 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+@dataclass
+class ModelConfig:
+    """
+    Configuration holder for a single model: estimator instance, initial params,
+    and hyperparameter grid. Automatically stores original values for resets.
+    """
+    estimator: BaseEstimator
+    init_params: Dict[str, Any] = field(default_factory=dict)
+    param_grid: Dict[str, Sequence[Any]] = field(default_factory=dict)
+
+    # Fields set in __post_init__, not by caller
+    original_estimator: BaseEstimator = field(init=False)
+    original_init_params: Dict[str, Any] = field(init=False)
+    original_param_grid: Dict[str, Sequence[Any]] = field(init=False)
+
+    def __post_init__(self):
+        # Store originals for quick reset
+        self.original_estimator = clone(self.estimator)
+        self.original_init_params = dict(self.init_params)
+        self.original_param_grid = dict(self.param_grid)
+        # Apply initial parameters to a fresh clone
+        if self.init_params:
+            self.estimator = clone(self.original_estimator).set_params(**self.init_params)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value by key, returning default if not found.
+        
+        Parameters
+        ----------
+        key : str
+            The key to retrieve from the configuration.
+        default : Any, optional
+            Default value to return if key is not found.
+
+        Returns
+        -------
+        Any
+            The value associated with the key, or default if not found.
+        """
+        return getattr(self, key, default)
 
 
 class BasePipeline(ABC):
@@ -117,12 +159,23 @@ class BasePipeline(ABC):
         self.X = X
         self.y = y
         self.metric_funcs = metric_funcs
-        self.model_configs = deepcopy(model_configs)
         self.metrics = list(default_metrics) if default_metrics else []
-        self.cv_kwargs = deepcopy(cv_kwargs)
+        self.cv_kwargs = deepcopy(cv_kwargs)  # shallow copy
         self.groups = groups
         self.n_jobs = n_jobs
         self.random_state = random_state
+
+        self.model_configs: Dict[str, ModelConfig] = {}
+        for name, cfg in model_configs.items():
+            est = cfg['estimator']
+            init = cfg.get('default_params', {})
+            grid = cfg.get('hp_search_params', cfg.get('params', {}))
+            self.model_configs[name] = ModelConfig(
+                estimator=est,
+                init_params=dict(init),
+                param_grid=dict(grid)
+            )
+
         self._validate_input()
         self._validate_metrics()
 
@@ -252,6 +305,188 @@ class BasePipeline(ABC):
 
         # Nothing found
         return None
+
+    def get_model_params(self, model_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get parameters for all models in the pipeline or a specific model.
+        This method retrieves the parameters of the model's estimator, initial
+        parameters, and hyperparameter grid used for tuning.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            The name of the model to retrieve parameters for.
+            If None, returns parameters for all models in the pipeline.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A dictionary containing the model parameters.
+            If model_name is specified, returns parameters for that model only.
+
+        Raises
+        ------
+        KeyError
+            If the specified model name does not exist in the model_configs.
+
+        Notes
+        -------
+        This method is useful for inspecting the current configuration of models
+        in the pipeline.
+        It returns a dictionary with the following keys:
+        - 'estimator_type': Type of the model's estimator (e.g., 'RandomForestClassifier').
+        - 'estimator_params': Parameters of the model's estimator.
+        - 'init_params': Initial parameters used to create the model.
+        - 'param_grid': Hyperparameter grid used for tuning the model.
+        
+        Examples
+        --------
+        >>> pipeline.get_model_params('random_forest')
+        {
+            'estimator_type': 'RandomForestClassifier',
+            'estimator_params': {'n_estimators': 100, ...},
+            'init_params': {'max_depth': None, ...},
+            'param_grid': {'n_estimators': [100, 200], ...}
+        }
+        """
+        def _single_params(mc: ModelConfig) -> Dict[str, Any]:
+            est = mc.estimator
+            return {
+                'estimator_type': type(est).__name__,
+                'estimator_params': est.get_params(deep=False),
+                'init_params': dict(mc.init_params),
+                'param_grid': dict(mc.param_grid)
+            }
+
+        if model_name:
+            if model_name not in self.model_configs:
+                raise KeyError(f"Model '{model_name}' not found")
+            return _single_params(self.model_configs[model_name])
+        return {name: _single_params(mc) for name, mc in self.model_configs.items()}
+
+    def update_model_params(
+        self,
+        model_name: str,
+        params: Dict[str, Any],
+        update_estimator: bool = True,
+        update_config: bool = True,
+        param_type: str = 'default'
+    ) -> None:
+        """
+        Update parameters for a specific model in the pipeline.
+        This method allows updating the initial parameters of the model's
+        estimator or the hyperparameter grid used for tuning.
+
+        Parameters
+        ----------
+        model_name : str
+            The name of the model to update.
+        params : dict
+            The parameters to update.
+        update_estimator : bool
+            Whether to update the model's estimator.
+        update_config : bool
+            Whether to update the model's configuration.
+        param_type : str
+            The type of parameters to update ('default' or 'hp_search').
+
+        Raises
+        ------
+        KeyError
+            If the specified model name does not exist in the model_configs.
+        ValueError
+            If the specified parameter type is invalid.
+
+        Notes
+        This method modifies the model's estimator and/or hyperparameter grid
+        based on the provided parameters. It can be used to adjust model behavior
+        or prepare for hyperparameter tuning.
+
+        Examples
+        --------
+        >>> pipeline.update_model_params('random_forest', {'n_estimators': 200})
+        """
+        if model_name not in self.model_configs:
+            raise KeyError(f"Model '{model_name}' not found")
+        mc = self.model_configs[model_name]
+
+        # Choose target
+        if param_type not in ['default', 'hp_search']:
+            raise ValueError("param_type must be 'default' or 'hp_search'")
+
+        # 1) update estimator defaults
+        if update_estimator and param_type == 'default':
+            temp = clone(mc.original_estimator)
+            temp.set_params(**params)  # will raise if invalid
+            mc.init_params.update(params)
+            mc.estimator = temp
+            logger.info(f"Updated init parameters for '{model_name}': {params}")
+
+        # 2) update config grid
+        if update_config and param_type == 'hp_search':
+            # validate grid values are list-like
+            for k, v in params.items():
+                if not isinstance(v, (list, tuple, np.ndarray)):
+                    raise ValueError(f"Grid values for '{k}' must be a sequence")
+            mc.param_grid.update(params)
+            logger.info(f"Updated param_grid for '{model_name}': {params}")
+
+    def reset_model_params(self, model_name: str) -> None:
+        """
+        Reset parameters for a specific model to their original state.
+
+        This method restores the model's estimator, initial parameters, and
+        hyperparameter grid to their original values.
+
+        Parameters
+        ----------
+        model_name : str
+            The name of the model to reset.
+
+        Raises
+        ------
+        KeyError
+            If the specified model name does not exist in the model_configs.
+
+        Notes
+        -----
+        This method is useful for reverting any changes made to a model's
+        parameters or configuration.
+
+        Examples
+        --------
+        >>> pipeline.reset_model_params('random_forest')
+        >>> print(pipeline.get_model_params('random_forest'))
+        {'estimator_type': 'RandomForestClassifier', ...}
+        """
+        if model_name not in self.model_configs:
+            raise KeyError(f"Model '{model_name}' not found")
+        mc = self.model_configs[model_name]
+        mc.estimator = clone(mc.original_estimator)
+        mc.init_params = dict(mc.original_init_params)
+        mc.param_grid = dict(mc.original_param_grid)
+        logger.info(f"Reset parameters for '{model_name}' to original state")
+
+    def list_models(self) -> Dict[str, str]:
+        """
+        List all models in the pipeline with their estimator types.
+
+        Returns
+        -------
+        dict
+            Mapping of model names to their estimator types.
+
+        Notes
+        -----
+        This method provides a quick overview of the models configured in the
+        pipeline.
+
+        Examples
+        --------
+        >>> models = pipeline.list_models()
+        """
+        return {name: type(mc.estimator).__name__
+                for name, mc in self.model_configs.items()}
 
     def cross_val(
         self,
@@ -416,14 +651,12 @@ class BasePipeline(ABC):
         """
         if model_name not in self.model_configs:
             raise KeyError(f"Model '{model_name}' not found in model_configs")
-            
-        cfg = self.model_configs[model_name]
-        estimator = clone(cfg['estimator'])
-        
-        estimator.set_params(**self.model_configs[model_name].get('params', {}))
-        
-        results = self.cross_val(estimator, self.X, self.y)
-        results.update({'model_name': model_name, 'params': cfg.get('params', {})})
+
+        mc = self.model_configs[model_name]
+        clf = clone(mc.original_estimator).set_params(**mc.init_params)
+
+        results = self.cross_val(clf, self.X, self.y)
+        results.update({'model_name': model_name, 'params': mc.get('default_params', {})})
 
         return results
 
@@ -483,8 +716,8 @@ class BasePipeline(ABC):
         n_sel = n_features or (self.X.shape[1] // 2)
         metric = scoring or self.metrics[0]
         scorer = make_scorer(self.metric_funcs[metric])
-        base = clone(self.model_configs[model_name]['estimator'])
-        base.set_params(**self.model_configs[model_name].get('params', {}))
+        mc = self.model_configs[model_name]
+        base = clone(mc.original_estimator).set_params(**mc.init_params)
         inner_cv = get_cv_splitter(**self.cv_kwargs)
         pipe = Pipeline([
         ('sfs', SequentialFeatureSelector(
@@ -876,11 +1109,11 @@ class BasePipeline(ABC):
         """
         metric = scoring or self.metrics[0]
         scorer = make_scorer(self.metric_funcs[metric])
-        base = self.model_configs[model_name]
-        grid = param_grid or base.get('params', {})
+        mc = self.model_configs[model_name]
+        grid = param_grid or mc.param_grid
+        base_est = clone(mc.original_estimator).set_params(**mc.init_params)
         inner_cv = get_cv_splitter(**self.cv_kwargs)
-        
-        base_est = clone(base['estimator'])
+
         if hasattr(base_est, 'random_state') and self.random_state is not None:
             base_est.random_state = self.random_state
         
@@ -1190,7 +1423,7 @@ class BasePipeline(ABC):
         inner_cv_hp = get_cv_splitter(**self.cv_kwargs)
         
         # Create base estimator
-        base_est = clone(cfg['estimator'])
+        base_est = clone(cfg.get('estimator'))
         if hasattr(base_est, 'random_state') and self.random_state is not None:
             base_est.random_state = self.random_state
         
