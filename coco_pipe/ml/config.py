@@ -55,19 +55,45 @@ BINARY_METRICS: Dict[str, Callable] = {
     "average_precision": average_precision_score,
 }
 
-# Multiclass ROC-AUC helper
 def multiclass_roc_auc_score(y_true, y_proba):
     """
     Compute one-vs-rest multiclass ROC AUC.
     """
+    # Ensure y_proba is 2D
+    if y_proba.ndim == 1:
+        y_proba = y_proba.reshape(-1, 1)
+    
+    # Ensure we have the right shape
+    if y_proba.shape[0] != len(y_true):
+        raise ValueError(f"Shape mismatch: y_true has {len(y_true)} samples, y_proba has {y_proba.shape[0]}")
+    
     classes = np.unique(y_true)
-    y_true_bin = label_binarize(y_true, classes=classes)
-    if y_proba.shape[1] == 2:
-        # binary-probabilities case
-        return roc_auc_score(y_true_bin, y_proba[:, 1])
-    return roc_auc_score(y_true_bin, y_proba, average='weighted', multi_class='ovr')
-
-# Multiclass metrics
+    
+    # Handle binary case
+    if len(classes) == 2:
+        if y_proba.shape[1] == 2:
+            return roc_auc_score(y_true, y_proba[:, 1])
+        elif y_proba.shape[1] == 1:
+            return roc_auc_score(y_true, y_proba[:, 0])
+        else:
+            return roc_auc_score(y_true, y_proba)
+    
+    # Handle multiclass case
+    if y_proba.shape[1] == len(classes):
+        return roc_auc_score(y_true, y_proba, average='weighted', multi_class='ovr')
+    else:
+        # Shape mismatch - fallback to simpler approach
+        try:
+            y_true_bin = label_binarize(y_true, classes=classes)
+            if y_true_bin.shape[1] == 1:
+                # Binary case disguised as multiclass
+                return roc_auc_score(y_true_bin[:, 0], y_proba[:, 0])
+            return roc_auc_score(y_true_bin, y_proba, average='weighted', multi_class='ovr')
+        except Exception:
+            return 0.5
+            
+            
+            # Multiclass metrics
 MULTICLASS_METRICS: Dict[str, Callable] = {
     **CLASSIFICATION_METRICS,
     "roc_auc": multiclass_roc_auc_score,

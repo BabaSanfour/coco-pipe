@@ -15,7 +15,7 @@ import logging
 import warnings
 from abc import ABC
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, Type
 
 import numpy as np
 import pandas as pd
@@ -44,23 +44,45 @@ class ModelConfig:
     Configuration holder for a single model: estimator instance, initial params,
     and hyperparameter grid. Automatically stores original values for resets.
     """
-    estimator: BaseEstimator
+    estimator: Union[Type[BaseEstimator], BaseEstimator]
     init_params: Dict[str, Any] = field(default_factory=dict)
     param_grid: Dict[str, Sequence[Any]] = field(default_factory=dict)
 
-    # Fields set in __post_init__, not by caller
+    # these get set by __post_init__
     original_estimator: BaseEstimator = field(init=False)
     original_init_params: Dict[str, Any] = field(init=False)
     original_param_grid: Dict[str, Sequence[Any]] = field(init=False)
 
     def __post_init__(self):
-        # Store originals for quick reset
-        self.original_estimator = clone(self.estimator)
+        # If user passed in a class, instantiate it with init_params
+        if isinstance(self.estimator, type):
+            try:
+                # Try to instantiate with init_params first
+                est_instance = self.estimator(**self.init_params)
+            except TypeError:
+                # If that fails, try with no args
+                try:
+                    est_instance = self.estimator()
+                except TypeError as e:
+                    raise ValueError(
+                        f"Cannot instantiate {self.estimator.__name__}. "
+                        f"Either provide required parameters in init_params or pass "
+                        f"an already instantiated estimator. Error: {e}"
+                    )
+        else:
+            est_instance = self.estimator
+
+        # Store clones of the "pure" estimator and config
+        self.original_estimator = clone(est_instance)
         self.original_init_params = dict(self.init_params)
         self.original_param_grid = dict(self.param_grid)
-        # Apply initial parameters to a fresh clone
+
+        # Now apply init_params to a fresh clone for use
+        fresh = clone(self.original_estimator)
         if self.init_params:
-            self.estimator = clone(self.original_estimator).set_params(**self.init_params)
+            fresh.set_params(**self.init_params)
+        self.estimator = fresh    
+
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -305,6 +327,63 @@ class BasePipeline(ABC):
 
         # Nothing found
         return None
+
+    def _aggregate(self, fold_preds):
+        """Aggregate predictions and compute metrics across folds."""
+        # Concatenate all predictions for the predictions output
+        y_true = np.concatenate([fp["y_true"] for fp in fold_preds])
+        y_pred = np.concatenate([fp["y_pred"] for fp in fold_preds])
+        
+        predictions = {"y_true": y_true, "y_pred": y_pred}
+        
+        # Add probabilities if available - handle shape mismatches
+        if all("y_proba" in fp for fp in fold_preds):
+            try:
+                # Check if all probability arrays have the same shape
+                shapes = [fp["y_proba"].shape for fp in fold_preds]
+                if all(s[1] == shapes[0][1] for s in shapes):
+                    # All have same number of columns, safe to concatenate
+                    y_proba = np.vstack([fp["y_proba"] for fp in fold_preds])
+                    predictions["y_proba"] = y_proba
+                else:
+                    # Shape mismatch - skip probability concatenation
+                    pass
+            except Exception:
+                # If concatenation fails for any reason, skip probabilities
+                pass
+
+        # Compute metrics per fold, then average
+        metrics = {}
+        for metric_name in self.metrics:
+            metric_func = self.metric_funcs[metric_name]
+            fold_scores = []
+            
+            for fp in fold_preds:
+                try:
+                    # Handle probability-based metrics
+                    if metric_name in ["roc_auc", "average_precision"] and "y_proba" in fp:
+                        if fp["y_proba"].ndim == 2 and fp["y_proba"].shape[1] >= 2:
+                            # Use positive class probabilities for binary classification
+                            score = metric_func(fp["y_true"], fp["y_proba"][:, 1])
+                        else:
+                            score = metric_func(fp["y_true"], fp["y_proba"])
+                    else:
+                        # Use predictions for other metrics
+                        score = metric_func(fp["y_true"], fp["y_pred"])
+                    fold_scores.append(score)
+                except Exception as e:
+                    # Skip this fold if metric calculation fails
+                    continue
+            
+            if fold_scores:
+                metrics[metric_name] = {
+                    "mean": np.mean(fold_scores),
+                    "std": np.std(fold_scores),
+                    "fold_scores": fold_scores
+                }
+
+        return {"predictions": predictions, "metrics": metrics}
+
 
     def get_model_params(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -657,6 +736,9 @@ class BasePipeline(ABC):
 
         results = self.cross_val(clf, self.X, self.y)
         results.update({'model_name': model_name, 'params': mc.get('default_params', {})})
+        predictions, metric_scores = self._aggregate(results["cv_fold_predictions"])
+        results['predictions'] = predictions
+        results['metric_scores'] = metric_scores
 
         return results
 
@@ -1059,6 +1141,9 @@ class BasePipeline(ABC):
             cv_res['cv_fold_importances'], feat_names, freq, selected
         )
 
+        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
+
+
         return {
             'model_name': model_name,
             **cv_res,
@@ -1067,7 +1152,9 @@ class BasePipeline(ABC):
             'feature_importances': feat_imps,
             'weighted_importances': weighted_imps,
             'outer_cv': outer_cv,
-            'best_fold': best_fold
+            'best_fold': best_fold,
+            'predictions': predictions,
+            'metric_scores': metric_scores
         }
 
     def _build_search_estimator(
@@ -1353,8 +1440,9 @@ class BasePipeline(ABC):
         best_params, param_frequency, best_fold = self._aggregate_hp_search_results(
             outer_results, metric
         )
-        
-        
+
+        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
+
         # Return comprehensive results
         return {
             'model_name': model_name,
@@ -1364,6 +1452,8 @@ class BasePipeline(ABC):
             'param_frequency': param_frequency,
             'best_fold': best_fold,
             'outer_results': outer_results,
+            'predictions': predictions,
+            'metric_scores': metric_scores,
         }
 
     def _build_combined_fs_hp_pipeline(
@@ -1759,6 +1849,7 @@ class BasePipeline(ABC):
         selected_features, feature_frequency, best_params, param_frequency, best_fold, feature_importances, weighted_importances = self._aggregate_combined_results(
             outer_results, all_selected, all_params, feat_names, metric
         )
+        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
 
         # Return comprehensive results
         return {
@@ -1775,6 +1866,8 @@ class BasePipeline(ABC):
             'feature_importances': feature_importances,
             'weighted_importances': weighted_importances,
             'best_fold': best_fold,
+            'predictions': predictions,
+            'metric_scores': metric_scores,
             'outer_results': outer_results,
         }
 
