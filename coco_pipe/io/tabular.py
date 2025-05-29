@@ -1,81 +1,108 @@
 #!/usr/bin/env python3
 """
 coco_pipe/io/tabular.py
+----------------
+Load and process tabular data (CSV, Excel, TSV). Supports ML pipeline usage.
 
-Load and process tabular data (CSV, Excel, TSV. Supports ML pipeline usage.
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
 """
 import logging
 from pathlib import Path
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, List
 
 import pandas as pd
-import numpy as np
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 def load_tabular(
     data_path: Union[str, Path],
-    target_col: Optional[str] = None,
+    target_cols: Optional[Union[str, List[str]]] = None,
     header: Union[int, None] = 0,
     index_col: Optional[Union[int, str]] = None,
     sheet_name: Optional[str] = None,
     sep: Optional[str] = None,
-) -> Union[Tuple[pd.DataFrame, pd.Series], Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame]]:
     """
-    Load tabular data from various formats (CSV, Excel, TSV) with flexible configuration.
+    Load tabular data from CSV, Excel, or TSV formats.
 
-    Args:
-        data_path: Path to the tabular data file
-        target_col: Target column name for ML pipeline usage
-        header: Row number to use as column names (None if no header)
-        index_col: Column to use as index
-        sheet_name: Sheet name for Excel files
-        sep: Separator for CSV/TSV files (auto-detected if None)
-        sensorwise: Whether to return data in sensorwise format
+    Supports both general loading and machine learning workflows where
+    features (X) and target(s) (y) are separated.
 
-    Returns:
-        If target_col is specified:
-            X: Features DataFrame
-            y: Target Series
-        If BIDS format:
-            data_array: shape (n_samples, features)
-            subjects_array: shape (n_samples,)
-            segments_array: shape (n_samples,)
+    Parameters
+    ----------
+    data_path : str or Path
+        Path to the data file.
+    target_cols : str or list of str, optional
+        Name(s) of the target column(s). If provided, returns (X, y).
+    header : int or None, optional
+        Row number to use as column names. None if no header.
+    index_col : int or str, optional
+        Column to set as index.
+    sheet_name : str, optional
+        Sheet name to load from an Excel file. If None, loads the first sheet.
+    sep : str, optional
+        Separator for CSV/TSV files. Auto-detected if None.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        Entire loaded DataFrame if `target_cols` is None.
+    X, y : tuple of (pd.DataFrame, pd.DataFrame)
+        Feature matrix and target(s) if `target_cols` is provided.
+
+    Raises
+    ------
+    ValueError
+        If any target column specified in `target_cols` is not found in the DataFrame.
     """
     data_path = Path(data_path)
-    
-    # Determine file type and load accordingly
-    if data_path.suffix.lower() in ['.xlsx', '.xls']:
+    ext = data_path.suffix.lower()
+
+    # 1) Load raw DataFrame
+    if ext in ['.xlsx', '.xls']:
+        # default to first sheet if none specified
+        actual_sheet = sheet_name if sheet_name is not None else 0
         df = pd.read_excel(
             data_path,
-            sheet_name=sheet_name,
+            sheet_name=actual_sheet,
             header=header,
-            index_col=index_col
+            index_col=index_col,
         )
-    else:  # CSV, TSV, or similar
+    else:
+        # CSV/TSV loading
         if sep is None:
-            # Auto-detect separator
-            if data_path.suffix.lower() == '.tsv':
-                sep = '\t'
-            else:
-                sep = ','
-        
+            sep = '\t' if ext == '.tsv' else ','
         df = pd.read_csv(
             data_path,
             sep=sep,
             header=header,
-            index_col=index_col
+            index_col=index_col,
         )
-    
-    # Handle ML pipeline usage if target column is specified
-    if target_col is not None:
-        if target_col not in df.columns:
-            raise ValueError(f"Target column '{target_col}' not found in data")
-        y = df[target_col]
-        X = df.drop(columns=[target_col])
+
+    # 2) Split features and targets if requested
+    if target_cols is not None:
+        if isinstance(target_cols, str):
+            target_cols = [target_cols]
+        missing = [col for col in target_cols if col not in df.columns]
+        if missing:
+            raise ValueError(f"Target column(s) not found in data: {missing}")
+        y = df[target_cols]
+        X = df.drop(columns=target_cols)
+        logger.info(
+            f"Loaded {len(X)} samples with {len(X.columns)} features and "
+            f"{len(y.columns)} target column(s)."
+        )
         return X, y
-    
+
+    # 3) Return full DataFrame
+    logger.info(f"Loaded {len(df)} samples with {len(df.columns)} columns.")
     return df
