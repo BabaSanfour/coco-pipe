@@ -11,7 +11,7 @@ def example_df():
     # - sensors: "sensorA", "sensorB"
     # - features: "alpha", "beta"
     data = {
-        "subject": ["s1", "s2", "s3", "s4"],
+        "subject": [1, 2, 3, 4],
         "target": [0, 1, 0, 1],
         "target2": [1.0, 2.0, 3.0, 4.0],
         "age": [10, 20, 30, 40],
@@ -23,11 +23,17 @@ def example_df():
     }
     return pd.DataFrame(data)
 
+def assert_groups(result_df, original_df, filter_index):
+    # Groups should match the subject values after filtering
+    expected_groups = original_df.loc[filter_index, "subject"]
+    pd.testing.assert_series_equal(result_df, expected_groups, check_names=False)
+
 def test_only_covariates(example_df):
+    # Without groups_column
     X, y = select_features(
         df=example_df,
         target_columns="target",
-        covariates=["AGE", "SEX"],  # case-insensitive
+        covariates=["AGE", "SEX"],
         spatial_units=None,
         feature_names="all",
         row_filter=None
@@ -35,6 +41,20 @@ def test_only_covariates(example_df):
     assert set(X.columns) == {"age", "sex"}
     pd.testing.assert_series_equal(y, example_df["target"], check_names=False)
 
+    # With groups_column
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns="target",
+        covariates=["AGE", "SEX"],
+        spatial_units=None,
+        feature_names="all",
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == {"age", "sex"}
+    pd.testing.assert_series_equal(yg, example_df["target"], check_names=False)
+    # groups should be the same as the subject column (unfiltered)
+    assert_groups(groups, example_df, Xg.index)
 
 def test_only_spatial_all_features(example_df):
     X, y = select_features(
@@ -52,6 +72,18 @@ def test_only_spatial_all_features(example_df):
     assert set(X.columns) == set(expected)
     assert X.shape == (4, 4)
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns="TARGET",
+        covariates=None,
+        spatial_units=["SENSORA", "sensorB"],
+        feature_names="all",
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == set(expected)
+    assert Xg.shape == (4, 4)
+    assert_groups(groups, example_df, Xg.index)
 
 def test_only_features_all_sensors(example_df):
     X, y = select_features(
@@ -67,6 +99,19 @@ def test_only_features_all_sensors(example_df):
     assert list(y.columns) == ["target", "target2"]
     assert y.shape == (4, 2)
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns=["TARGET", "TARGET2"],
+        covariates=None,
+        spatial_units="all",
+        feature_names="ALPHA",
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == set(expected)
+    assert list(yg.columns) == ["target", "target2"]
+    assert yg.shape == (4, 2)
+    assert_groups(groups, example_df, Xg.index)
 
 def test_covariates_plus_custom_selection(example_df):
     X, y = select_features(
@@ -80,6 +125,18 @@ def test_covariates_plus_custom_selection(example_df):
     assert set(X.columns) == {"age", "sensorA_beta"}
     assert X["age"].dtype == example_df["age"].dtype
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns="target",
+        covariates=["AGE"],
+        spatial_units=["SENSORA"],
+        feature_names=["BETA"],
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == {"age", "sensorA_beta"}
+    assert Xg["age"].dtype == example_df["age"].dtype
+    assert_groups(groups, example_df, Xg.index)
 
 def test_row_filtering(example_df):
     X, y = select_features(
@@ -88,12 +145,25 @@ def test_row_filtering(example_df):
         covariates=["age"],
         spatial_units=["sensorA"],
         feature_names=["ALPHA"],
-        row_filter={"column": "SUBJECT", "values": ["s1", "s3"]}
+        row_filter={"column": "SUBJECT", "values": [1, 2]}
     )
     assert X.shape[0] == 2
-    assert list(X.index) == [0, 2]
-    assert list(y.values) == [0, 0]
+    assert list(X.index) == [0, 1]
+    assert list(y.values) == [0, 1]
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns="target",
+        covariates=["age"],
+        spatial_units=["sensorA"],
+        feature_names=["ALPHA"],
+        row_filter={"column": "SUBJECT", "values": [1, 3]},
+        groups_column="subject"
+    )
+    assert Xg.shape[0] == 2
+    assert list(Xg.index) == [0, 2]
+    assert list(yg.values) == [0, 0]
+    assert_groups(groups, example_df, Xg.index)
 
 def test_no_selection_raises(example_df):
     with pytest.raises(ValueError, match="No features selected"):
@@ -167,6 +237,18 @@ def test_multi_target_list(example_df):
     assert list(y.columns) == ["target", "target2"]
     assert X.shape == (4, 1)
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns=["TARGET", "TARGET2"],
+        covariates=["SEX"],
+        spatial_units=None,
+        feature_names="all",
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert list(yg.columns) == ["target", "target2"]
+    assert Xg.shape == (4, 1)
+    assert_groups(groups, example_df, Xg.index)
 
 def test_reverse_naming(example_df):
     df = example_df.rename(columns={
@@ -186,6 +268,18 @@ def test_reverse_naming(example_df):
     )
     assert set(X.columns) == {"alpha_sensorA", "alpha_sensorB"}
 
+    Xg, yg, groups = select_features(
+        df=df,
+        target_columns="target",
+        covariates=None,
+        spatial_units=["sensorA", "sensorB"],
+        feature_names=["alpha"],
+        sep="_",
+        reverse=True,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == {"alpha_sensorA", "alpha_sensorB"}
+    assert_groups(groups, df, Xg.index)
 
 def test_custom_sep(example_df):
     df = example_df.rename(columns={
@@ -202,21 +296,43 @@ def test_custom_sep(example_df):
     )
     assert set(X.columns) == {"sensorA-alpha", "sensorB-alpha"}
 
+    Xg, yg, groups = select_features(
+        df=df,
+        target_columns="target",
+        covariates=None,
+        spatial_units=["sensorA", "sensorB"],
+        feature_names=["alpha"],
+        sep='-',
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == {"sensorA-alpha", "sensorB-alpha"}
+    assert_groups(groups, df, Xg.index)
 
 def test_spatial_units_dict(example_df):
     # Provide mapping keys as actual spatial units
-    groups = {'sensorA': ['alpha', 'beta']}
+    groups_dict = {'sensorA': ['alpha', 'beta']}
     X, y = select_features(
         df=example_df,
         target_columns='target',
         covariates=None,
-        spatial_units=groups,
+        spatial_units=groups_dict,
         feature_names='all',
         row_filter=None
     )
     # Should select all features under sensorA
     assert set(X.columns) == {'sensorA_alpha', 'sensorA_beta'}
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns='target',
+        covariates=None,
+        spatial_units=groups_dict,
+        feature_names='all',
+        row_filter=None,
+        groups_column="subject"
+    )
+    assert set(Xg.columns) == {'sensorA_alpha', 'sensorA_beta'}
+    assert_groups(groups, example_df, Xg.index)
 
 def test_row_filter_operator_gt(example_df):
     X, y = select_features(
@@ -230,10 +346,22 @@ def test_row_filter_operator_gt(example_df):
     assert list(X.index) == [2, 3]
     assert list(y.values) == [0, 1]
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns='target',
+        covariates=['age'],
+        spatial_units=['sensorA'],
+        feature_names=['alpha'],
+        row_filter={'column': 'AGE', 'operator': '>', 'values': 20},
+        groups_column="subject"
+    )
+    assert list(Xg.index) == [2, 3]
+    assert list(yg.values) == [0, 1]
+    assert_groups(groups, example_df, Xg.index)
 
 def test_multiple_row_filters(example_df):
     filters = [
-        {'column': 'SUBJECT', 'values': ['s1', 's2']},
+        {'column': 'SUBJECT', 'values': [1, 2]},
         {'column': 'age', 'operator': '<', 'values': 20}
     ]
     X, y = select_features(
@@ -247,6 +375,18 @@ def test_multiple_row_filters(example_df):
     assert list(X.index) == [0]
     assert list(y.values) == [0]
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns='target',
+        covariates=['age'],
+        spatial_units=['sensorB'],
+        feature_names=['beta'],
+        row_filter=filters,
+        groups_column="subject"
+    )
+    assert list(Xg.index) == [0]
+    assert list(yg.values) == [0]
+    assert_groups(groups, example_df, Xg.index)
 
 def test_invalid_operator_defaults_to_isin(example_df):
     X, y = select_features(
@@ -260,6 +400,18 @@ def test_invalid_operator_defaults_to_isin(example_df):
     assert list(X.index) == [0, 2]
     assert list(y.values) == [0, 0]
 
+    Xg, yg, groups = select_features(
+        df=example_df,
+        target_columns='target',
+        covariates=['age'],
+        spatial_units=['sensorB'],
+        feature_names=['beta'],
+        row_filter={'column': 'age', 'operator': 'invalid', 'values': [10, 30]},
+        groups_column="subject"
+    )
+    assert list(Xg.index) == [0, 2]
+    assert list(yg.values) == [0, 0]
+    assert_groups(groups, example_df, Xg.index)
 
 def test_no_features_selected_when_reverse_and_none(example_df):
     with pytest.raises(ValueError, match="No features selected"):

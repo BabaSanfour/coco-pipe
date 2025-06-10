@@ -11,7 +11,17 @@ License: TBD
 import re
 import difflib
 import pandas as pd
+import logging
 from typing import Any, List, Optional, Union, Tuple, Dict
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 __all__ = ["select_features"]
 
@@ -118,12 +128,14 @@ def _apply_row_filters(
 def select_features(
     df: pd.DataFrame,
     target_columns: Union[str, List[str]],
+    groups_column: Optional[str] = None,
     covariates: Optional[List[str]] = None,
     spatial_units: Optional[Union[str, List[str], Dict[str, List[str]]]] = None,
     feature_names: Union[str, List[str]] = "all",
     sep: str = "_",
     reverse: bool = False,
     row_filter: Optional[Union[dict, List[dict]]] = None,
+    verbose: bool = False
 ) -> Tuple[pd.DataFrame, Union[pd.Series, pd.DataFrame]]:
     """
     Select covariates and spatial-feature columns from a DataFrame.
@@ -134,6 +146,8 @@ def select_features(
         Input DataFrame.
     target_columns : str or list of str
         Column(s) to be used as target variable(s).
+    groups_column : str, optional
+        Column that contains group identifiers to use for cross-validation.
     covariates : list of str, optional
         List of additional covariates to include.
     spatial_units : str, list of str, dict, or None
@@ -148,6 +162,8 @@ def select_features(
         If True, expects columns in format '<feature><sep><unit>' instead of '<unit><sep><feature>'.
     row_filter : dict or list of dict, optional
         Row filtering conditions. See `_apply_row_filters` for format.
+    verbose : bool, optional
+        If True, log additional information.
 
     Returns
     -------
@@ -155,6 +171,8 @@ def select_features(
         Feature matrix.
     y : pd.Series or pd.DataFrame
         Target variable(s).
+    groups : pd.Series.
+        Group identifiers if `groups_column` is provided.
 
     Raises
     ------
@@ -164,6 +182,8 @@ def select_features(
     col_map = _get_col_map(df)
     if row_filter:
         df = _apply_row_filters(df, row_filter, col_map)
+        if verbose:
+            logger.info("Applied row filters. New DataFrame shape: %s", df.shape)
     parts: List[pd.DataFrame] = []
     if covariates:
         matched = []
@@ -174,17 +194,24 @@ def select_features(
                 raise ValueError(f"Covariate '{cov}' not found. Did you mean {sugg}?")
             matched.append(col_map[low])
         parts.append(df[matched])
+        if verbose:
+            logger.info("Selected covariates: %s", matched)
     all_cols = df.columns.tolist()
     pairs = []
     for col in all_cols:
         if sep not in col:
             continue
         left, right = col.split(sep, 1)
-        feat, su = (left, right) if reverse else (right, left)
-        su, feat = (right, left) if reverse else (left, right)
+        # Determine spatial unit and feature order
+        su, feat = (left, right) if not reverse else (right, left)
         pairs.append({'col': col, 'su': su, 'feat': feat})
+    if verbose:
+        logger.info("Found %d candidate feature pairs.", len(pairs))
     actual_su = sorted({p['su'] for p in pairs})
     actual_feat = sorted({p['feat'] for p in pairs})
+    if verbose:
+        logger.info("Actual spatial units: %s", actual_su)
+        logger.info("Actual features: %s", actual_feat)
     sel_su: List[str] = []
     if spatial_units == 'all':
         sel_su = actual_su
@@ -210,6 +237,9 @@ def select_features(
             matches = [f for f in actual_feat if f.lower() == fn.lower()]
             if matches:
                 sel_feat.extend(matches)
+    if verbose:
+        logger.info("Selected spatial units: %s", sel_su)
+        logger.info("Selected features: %s", sel_feat)
     sel_cols: List[str] = []
     for p in pairs:
         if p['su'] in sel_su and p['feat'] in sel_feat:
@@ -219,6 +249,8 @@ def select_features(
     if not parts:
         raise ValueError("No features selected: check your spatial_units and feature_names.")
     X = pd.concat(parts, axis=1)
+    if verbose:
+        logger.info("Feature matrix shape: %s", X.shape)
     tgt_list = target_columns if isinstance(target_columns, list) else [target_columns]
     tcols: List[str] = []
     for tgt in tgt_list:
@@ -228,4 +260,14 @@ def select_features(
             raise ValueError(f"Target '{tgt}' not found. Did you mean {sugg}?")
         tcols.append(col_map[low])
     y = df[tcols[0]] if len(tcols) == 1 else df[tcols]
-    return X, y
+    if verbose:
+        logger.info("Target columns selected: %s", tcols)
+
+    groups = df[groups_column] if groups_column is not None else None
+    if groups is not None:
+        groups = groups.astype(int)
+        if verbose:
+            logger.info("Groups selected with shape: %s", groups.shape)
+        return X, y, groups
+    else:
+        return X, y
