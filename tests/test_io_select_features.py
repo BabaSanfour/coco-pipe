@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+import logging
 
 from coco_pipe.io.select_features import select_features
 
@@ -459,3 +460,25 @@ def test_row_filter_column_not_found(example_df):
             feature_names='alpha',
             row_filter={'column': 'foo', 'values': ['s1']}
         )
+
+def test_verbose_logging(example_df, caplog):
+    # Test if verbose=True produces log output.
+    # This assumes select_features uses the logging module when verbose is True.
+    with caplog.at_level(logging.INFO):
+        X, y = select_features(
+            df=example_df,
+            target_columns="target",
+            covariates=["AGE", "SEX"],
+            spatial_units=None,
+            feature_names="all",
+            row_filter=None,
+            verbose=True
+        )
+    # Check that some log messages were produced.
+    assert len(caplog.records) > 0, "No log records produced with verbose=True"
+    assert any("Selected features:" in record.message for record in caplog.records), "Expected 'Selected features' in log messages"
+    assert any("Selected covariates:" in record.message for record in caplog.records), "Expected 'Selected covariates' in log messages"
+    assert any("Selected spatial units:" in record.message for record in caplog.records), "Expected 'Selected spatial units' in log messages"
+    assert any("Actual features:" in record.message for record in caplog.records), "Expected 'Actual features' in log messages"
+    assert any("Target columns selected:" in record.message for record in caplog.records), "Expected 'Target columns selected' in log messages"
+    assert any("Feature matrix shape:" in record.message for record in caplog.records), "Expected 'Feature matrix shape' in log messages"
