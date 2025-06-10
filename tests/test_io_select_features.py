@@ -465,13 +465,14 @@ def test_verbose_logging(example_df, caplog):
     # Test if verbose=True produces log output.
     # This assumes select_features uses the logging module when verbose is True.
     with caplog.at_level(logging.INFO):
-        X, y = select_features(
+        X, y, groups = select_features(
             df=example_df,
             target_columns="target",
+            groups_column="subject",
             covariates=["AGE", "SEX"],
             spatial_units=None,
             feature_names="all",
-            row_filter=None,
+            row_filter={'column': 'SUBJECT', 'values': [1, 2]},
             verbose=True
         )
     # Check that some log messages were produced.
@@ -482,3 +483,5 @@ def test_verbose_logging(example_df, caplog):
     assert any("Actual features:" in record.message for record in caplog.records), "Expected 'Actual features' in log messages"
     assert any("Target columns selected:" in record.message for record in caplog.records), "Expected 'Target columns selected' in log messages"
     assert any("Feature matrix shape:" in record.message for record in caplog.records), "Expected 'Feature matrix shape' in log messages"
+    assert any("Applied row filters." in record.message for record in caplog.records), "Expected 'Applied row filters' in log messages"
+    assert any("Groups selected with shape" in record.message for record in caplog.records), "Expected 'Groups selected with shape' in log messages"
