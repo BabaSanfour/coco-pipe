@@ -32,11 +32,15 @@ from coco_pipe.ml.config import DEFAULT_CV
 from coco_pipe.ml.utils import get_cv_splitter
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False
 
 @dataclass
 class ModelConfig:
@@ -115,6 +119,7 @@ class BasePipeline(ABC):
         y: Union[pd.Series, np.ndarray],
         metric_funcs: Dict[str, Any],
         model_configs: Dict[str, Any],
+        columns: Optional[Sequence[str]] = None,
         default_metrics: Optional[Sequence[str]] = None,
         cv_kwargs: Dict[str, Any] = DEFAULT_CV,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
@@ -141,6 +146,9 @@ class BasePipeline(ABC):
             Mapping from model names to dicts with keys:
             - 'estimator': sklearn-compatible estimator instance
             - 'params': optional dict of hyperparameter grids for tuning
+        columns : sequence of str, optional
+            Names of feature matrix columns. If None, and X is a DataFrame we will use the DataFrame's columns.
+            If X is an ndarray, default names will be generated as 'feature_0', 'feature_1', etc.
         default_metrics : sequence of str, optional
             Names of metrics to compute. Must be keys in metric_funcs.
             If None, no metrics will be calculated by default.
@@ -160,8 +168,8 @@ class BasePipeline(ABC):
         Raises
         ------
         ValueError
-            If X and y have different numbers of samples or if invalid metrics
-            are specified.
+            If X and y have different numbers of samples, if groups length does not match X,
+            if invalid metrics or model configurations are provided.,
 
         Notes
         -----
@@ -187,6 +195,8 @@ class BasePipeline(ABC):
         self.n_jobs = n_jobs
         self.random_state = random_state
 
+        self.feature_names = columns or self._get_feature_names(X)
+
         self.model_configs: Dict[str, ModelConfig] = {}
         for name, cfg in model_configs.items():
             est = cfg['estimator']
@@ -206,6 +216,8 @@ class BasePipeline(ABC):
             raise ValueError("X must be a DataFrame or numpy array.")
         if len(self.X) != len(self.y):
             raise ValueError("X and y must have the same number of samples.")
+        if self.groups is not None and len(self.groups) != len(self.X):
+            raise ValueError("If groups are provided, they must match the number of samples in X.")
 
     def _validate_metrics(self) -> None:
         invalid = [m for m in self.metrics if m not in self.metric_funcs]
@@ -271,21 +283,21 @@ class BasePipeline(ABC):
         """
         Extract feature importances or coefficients from a (possibly nested) estimator.
 
-        This will recursively unwrap pipelines, selectors, and meta‐estimators
+        This will recursively unwrap pipelines, selectors, and meta-estimators
         to find either:
-        - `feature_importances_` (tree‐based models, ensembles)
+        - `feature_importances_` (tree-based models, ensembles)
         - `coef_` (linear models), averaging multiclass outputs if needed
-        - A combination of sub‐estimators (e.g. VotingClassifier)
+        - A combination of sub-estimators (e.g. VotingClassifier)
 
         Parameters
         ----------
         estimator : BaseEstimator
-            A fitted scikit‐learn estimator, which may be:
-            - A tree‐based or ensemble model with `.feature_importances_`
+            A fitted scikit-learn estimator, which may be:
+            - A tree-based or ensemble model with `.feature_importances_`
             - A linear model with `.coef_`
             - A `Pipeline` (`.named_steps`)
             - A `SequentialFeatureSelector` (`.estimator_`)
-            - A meta‐estimator with `.estimators_`
+            - A meta-estimator with `.estimators_`
 
         Returns
         -------
@@ -315,7 +327,7 @@ class BasePipeline(ABC):
         if hasattr(estimator, 'estimator_'):
             return BasePipeline._extract_feature_importances(estimator.estimator_)
 
-        # 5) Voting or other meta‐estimators: average sub‐estimators
+        # 5) Voting or other meta-estimators: average sub-estimators
         if hasattr(estimator, 'estimators_'):
             imps = []
             for sub in estimator.estimators_:
@@ -328,7 +340,7 @@ class BasePipeline(ABC):
         # Nothing found
         return None
 
-    def _aggregate(self, fold_preds):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances):
         """Aggregate predictions and compute metrics across folds."""
         # Concatenate all predictions for the predictions output
         y_true = np.concatenate([fp["y_true"] for fp in fold_preds])
@@ -351,38 +363,53 @@ class BasePipeline(ABC):
             except Exception:
                 # If concatenation fails for any reason, skip probabilities
                 pass
-
+        
+        # add fold predictions to predictions
+        predictions["fold_preds"] = fold_preds
         # Compute metrics per fold, then average
         metrics = {}
         for metric_name in self.metrics:
             metric_func = self.metric_funcs[metric_name]
-            fold_scores = []
+            # fold_scores = []
+            fold_score = fold_scores[metric_name]
+            # for fs in fold_scores[metric_name]:
+
+                # DONT know why I am using this but lets skip it for now and use scores
+                # try:
+                #     # Handle probability-based metrics
+                #     if metric_name in ["roc_auc", "average_precision"] and "y_proba" in fp:
+                #         if fp["y_proba"].ndim == 2 and fp["y_proba"].shape[1] >= 2:
+                #             # Use positive class probabilities for binary classification
+                #             score = metric_func(fp["y_true"], fp["y_proba"][:, 1])
+                #         else:
+                #             score = metric_func(fp["y_true"], fp["y_proba"])
+                #     else:
+                #         # Use predictions for other metrics
+                #         score = metric_func(fp["y_true"], fp["y_pred"])
+                #     fold_scores.append(score)
+                # except Exception as e:
+                #     # Skip this fold if metric calculation fails
+                #     continue
             
-            for fp in fold_preds:
-                try:
-                    # Handle probability-based metrics
-                    if metric_name in ["roc_auc", "average_precision"] and "y_proba" in fp:
-                        if fp["y_proba"].ndim == 2 and fp["y_proba"].shape[1] >= 2:
-                            # Use positive class probabilities for binary classification
-                            score = metric_func(fp["y_true"], fp["y_proba"][:, 1])
-                        else:
-                            score = metric_func(fp["y_true"], fp["y_proba"])
-                    else:
-                        # Use predictions for other metrics
-                        score = metric_func(fp["y_true"], fp["y_pred"])
-                    fold_scores.append(score)
-                except Exception as e:
-                    # Skip this fold if metric calculation fails
-                    continue
-            
-            if fold_scores:
-                metrics[metric_name] = {
-                    "mean": np.mean(fold_scores),
-                    "std": np.std(fold_scores),
-                    "fold_scores": fold_scores
+            # if fold_score:
+            metrics[metric_name] = {
+                "mean": np.mean(fold_score),
+                "std": np.std(fold_score),
+                "fold_scores": fold_score
+            }
+
+        # Aggregate feature importances if available now it is a dict feat_name: array of importances!
+        # get mean std of each feature importance and also keep fold importances
+        feature_importances = {}
+        if fold_importances:
+            for feat_name, fi in fold_importances.items():
+                feature_importances[feat_name] = {
+                    "mean": np.mean(fi),
+                    "std": np.std(fi),
+                    "fold_importances": fi
                 }
 
-        return {"predictions": predictions, "metrics": metrics}
+        return predictions, metrics, feature_importances
 
 
     def get_model_params(self, model_name: Optional[str] = None) -> Dict[str, Any]:
@@ -668,9 +695,9 @@ class BasePipeline(ABC):
         cv_fold_scores = {m: np.array(cv_results.get(f'test_{m}', [])) for m in self.metrics}
         # per feature importances
         cv_fold_importances = {}
-        feature_names = self._get_feature_names(X)
 
-        for i, feature in enumerate(feature_names):
+
+        for i, feature in enumerate(self.feature_names):
             # Only collect importances where the index is within bounds
             values = []
             for imp in fold_importances:
@@ -734,11 +761,19 @@ class BasePipeline(ABC):
         mc = self.model_configs[model_name]
         clf = clone(mc.original_estimator).set_params(**mc.init_params)
 
-        results = self.cross_val(clf, self.X, self.y)
-        results.update({'model_name': model_name, 'params': mc.get('default_params', {})})
-        predictions, metric_scores = self._aggregate(results["cv_fold_predictions"])
-        results['predictions'] = predictions
-        results['metric_scores'] = metric_scores
+        results_ = self.cross_val(clf, self.X, self.y)
+        predictions, metric_scores, feature_importances = self._aggregate(results_["cv_fold_predictions"], 
+                                                    results_["cv_fold_scores"],
+                                                    results_["cv_fold_importances"])
+        results = {
+            'model_name': model_name,
+            'metric_scores': metric_scores,
+            'feature_importances': feature_importances,
+            'predictions': predictions,
+            'params': mc.get('default_params', {}),
+            'folds_estimators': results_['cv_fold_estimators'],
+        }
+
 
         return results
 
