@@ -186,30 +186,38 @@ class MultiClassClassificationPipeline(BasePipeline):
             raise ValueError(f"Multiclass target requires >2 classes, got: {classes}")
 
 
-    def _aggregate(self, fold_preds):
-        agg = super()._aggregate(fold_preds)
-        # add multiclass ROC-AUC if requested
-        if 'roc_auc' in self.metrics:
+    def _aggregate(
+        self,
+        fold_preds,
+        fold_scores,
+        fold_importances,
+        freq=None
+    ):
+        # unpack the base‐class aggregation
+        predictions, metrics, feature_importances = super()._aggregate(
+            fold_preds, fold_scores, fold_importances, freq
+        )
+        # add multiclass ROC-AUC if requested and we have probabilities
+        if 'roc_auc' in self.metrics and "y_proba" in predictions:
             from .config import multiclass_roc_auc_score
-            proba = agg["predictions"].get("y_proba")
-            if proba is not None:
-                score = multiclass_roc_auc_score(
-                    y_true=agg["predictions"]["y_true"],
-                    y_proba=proba
-                )
-                agg["metrics"]["roc_auc"] = {"scores":[score], "mean":score, "std":0.0}
+            proba = predictions["y_proba"]
+            score = multiclass_roc_auc_score(
+                y_true=predictions["y_true"],
+                y_proba=proba
+            )
+            metrics["roc_auc"] = {"mean": score, "std": 0.0, "fold_scores": [score]}
         # per-class precision/recall/f1
         if self.per_class:
-            yt = agg["predictions"]["y_true"]
-            yp = agg["predictions"]["y_pred"]
+            yt = predictions["y_true"]
+            yp = predictions["y_pred"]
             prec, rec, f1, _ = precision_recall_fscore_support(
                 yt, yp, labels=np.unique(yt), zero_division=0
             )
             pcm = {}
             for cls, p, r, f in zip(np.unique(yt), prec, rec, f1):
-                pcm[int(cls)] = {"precision":float(p),"recall":float(r),"f1":float(f)}
-            agg["per_class_metrics"] = pcm
-        return agg
+                pcm[int(cls)] = {"precision": float(p), "recall": float(r), "f1": float(f)}
+            metrics["per_class_metrics"] = pcm
+        return predictions, metrics, feature_importances
 
 
 class MultiOutputClassificationPipeline(BasePipeline):
@@ -283,30 +291,35 @@ class MultiOutputClassificationPipeline(BasePipeline):
             raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
 
 
-    def _aggregate(self, fold_preds):
-        agg = super()._aggregate(fold_preds)
-        yt = agg["predictions"]["y_true"]
-        yp = agg["predictions"]["y_pred"]
+    def _aggregate(
+        self,
+        fold_preds,
+        fold_scores,
+        fold_importances,
+        freq=None
+    ):
+        # unpack the base‐class aggregation
+        predictions, metrics, feature_importances = super()._aggregate(
+            fold_preds, fold_scores, fold_importances, freq
+        )
         # per-output metrics
         from sklearn.metrics import precision_score, recall_score, f1_score
+        yt = predictions["y_true"]
+        yp = predictions["y_pred"]
         pom = {}
         for i in range(yt.shape[1]):
             out = {}
             if "precision_samples" in self.metrics:
-                out["precision"] = float(precision_score(
-                    yt[:, i], yp[:, i], zero_division=0))
+                out["precision"] = float(precision_score(yt[:, i], yp[:, i], zero_division=0))
             if "recall_samples" in self.metrics:
-                out["recall"] = float(recall_score(
-                    yt[:, i], yp[:, i], zero_division=0))
+                out["recall"] = float(recall_score(yt[:, i], yp[:, i], zero_division=0))
             if "f1_samples" in self.metrics:
-                out["f1"] = float(f1_score(
-                    yt[:, i], yp[:, i], zero_division=0))
+                out["f1"] = float(f1_score(yt[:, i], yp[:, i], zero_division=0))
             if out:
                 pom[i] = out
         if pom:
-            agg["per_output_metrics"] = pom
-        return agg
-
+            metrics["per_output_metrics"] = pom
+        return predictions, metrics, feature_importances
 
 class ClassificationPipeline:
     """
