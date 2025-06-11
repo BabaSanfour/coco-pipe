@@ -571,9 +571,6 @@ class BasePipeline(ABC):
             logger.info("Starting cross-validation...")
         cv_conf = deepcopy(self.cv_kwargs)
         cv_conf.setdefault('random_state', self.random_state)
-        groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
-        if groups_arr is not None and len(groups_arr):
-            cv_conf['groups'] = groups_arr
         cv = get_cv_splitter(**cv_conf)
 
         is_search = isinstance(estimator, (GridSearchCV, RandomizedSearchCV))
@@ -594,6 +591,7 @@ class BasePipeline(ABC):
 
         X_arr = X.values if isinstance(X, pd.DataFrame) else X
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
+        groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
 
         proba_required = {m for m, fn in self.metric_funcs.items() if hasattr(fn, '__name__') and 'proba' in fn.__name__}
         scoring = {
@@ -603,17 +601,31 @@ class BasePipeline(ABC):
             )
             for m in self.metrics
         }
+        try:
+            cv_results = cross_validate(
+                estimator=estimator,
+                X=X_arr, y=y_arr,
+                scoring=scoring,
+                cv=cv,
+                n_jobs=self.n_jobs,
+                return_estimator=True,
+                return_train_score=False,
+                error_score='raise',
+                params={'groups': groups_arr}
+            )
+        except Exception as e:
+            cv_results = cross_validate(
+                estimator=estimator,
+                X=X_arr, y=y_arr,
+                scoring=scoring,
+                cv=cv,
+                n_jobs=self.n_jobs,
+                return_estimator=True,
+                return_train_score=False,
+                error_score='raise',
+                groups = groups_arr
+            )
 
-        cv_results = cross_validate(
-            estimator=estimator,
-            X=X_arr, y=y_arr,
-            scoring=scoring,
-            cv=cv,
-            n_jobs=self.n_jobs,
-            return_estimator=True,
-            return_train_score=False,
-            error_score='raise',
-        )
 
         # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_ survive —
         raw_ests = cv_results['estimator']
