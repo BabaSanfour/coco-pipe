@@ -340,7 +340,7 @@ class BasePipeline(ABC):
         # Nothing found
         return None
 
-    def _aggregate(self, fold_preds, fold_scores, fold_importances):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
         """Aggregate predictions and compute metrics across folds."""
         # Concatenate all predictions for the predictions output
         y_true = np.concatenate([fp["y_true"] for fp in fold_preds])
@@ -403,9 +403,14 @@ class BasePipeline(ABC):
         feature_importances = {}
         if fold_importances:
             for feat_name, fi in fold_importances.items():
+                mean = np.mean(fi)
+                feat_freq = freq.get(feat_name, 1) if freq else 1
+                std = np.std(fi)
                 feature_importances[feat_name] = {
-                    "mean": np.mean(fi),
-                    "std": np.std(fi),
+                    "mean": mean,
+                    "std": std,
+                    "weighted_mean": mean * feat_freq,
+                    "weighted_std": std * feat_freq,
                     "fold_importances": fi
                 }
 
@@ -719,41 +724,46 @@ class BasePipeline(ABC):
         model_name: str,
     ) -> Dict[str, Any]:
         """
-        Evaluate a single model via cross-validation and return metrics and feature importances.
-        
-        This method performs cross-validation on a specified model, gets scores on
-        the validation folds, and returns a comprehensive evaluation summary including
-        the fitted estimators from each fold and their feature importances.
-        
+        Evaluate a single model via cross-validation and return evaluation metrics, predictions, and feature importances.
+
+        This method performs cross-validation on a specified model extracted from model_configs.
+        It collects the scoring metrics, per-fold predictions, and extracts feature importances from each fold,
+        aggregating the results into a comprehensive evaluation summary. Additionally, it refits the final model
+        on the complete dataset using the original parameters for potential deployment.
+
         Parameters
         ----------
         model_name : str
             Name of the model in model_configs to evaluate.
-            
+
         Returns
         -------
         dict
             Dictionary containing:
-            - 'model': Fitted estimator on full dataset
-            - 'feature_importances': Feature importance values or None
-            - 'metrics': Dict of metrics with mean, std, and fold scores
-            - 'predictions': Dict with y_true, y_pred, and optionally y_proba
-            
+            - 'model_name': Name of the evaluated model.
+            - 'metric_scores': Scoring metrics aggregated across folds with keys 'mean', 'std', and 'fold_scores'.
+            - 'feature_importances': Dictionary of feature importance statistics (mean, std, weighted values) or None.
+            - 'predictions': Dictionary containing concatenated y_true, y_pred, and optionally y_proba from cross-validation.
+            - 'params': The initial model parameters used during evaluation.
+            - 'folds_estimators': List of fitted estimator instances from each fold of cross-validation.
+
         Raises
         ------
         KeyError
             If model_name is not found in model_configs.
-            
+
         Notes
         -----
-        This follows scikit-learn's pattern of first evaluating performance via
-        cross-validation, then fitting a final model on all data for deployment.
-        
+        This method follows a two-step process:
+          1. Perform cross-validation to assess the model's performance, score consistency, and extract feature importances.
+          2. Refit the model on the full dataset using the original parameters for final evaluation and deployment.
+        This design aligns with common scikit-learn practices for model evaluation and ensuring reproducible results.
+
         Examples
         --------
-        >>> results = pipeline.baseline('random_forest')
-        >>> print(f"Accuracy: {results['metrics']['accuracy']['mean']:.4f}")
-        >>> feature_imp = results['feature_importances']
+        >>> results = pipeline.baseline_evaluation('random_forest')
+        >>> print(f"Accuracy: {results['metric_scores']['accuracy']['mean']:.4f}")
+        >>> print(f"Feature Importances: {results['feature_importances']}")
         """
         if model_name not in self.model_configs:
             raise KeyError(f"Model '{model_name}' not found in model_configs")
@@ -846,223 +856,66 @@ class BasePipeline(ABC):
         feat_names = np.array(self._get_feature_names(self.X))
         return pipe, feat_names, metric
 
-    def _extract_sfs_masks_and_scores(
+    def _extract_sfs_selected_features(
         self, 
-        cv_res: Dict[str, Any], 
+        cv_fold_estimators: List, 
         feat_names: np.ndarray, 
-        metric: str
-    ) -> Tuple[List[np.ndarray], Dict[str, np.ndarray], List[Dict[str, Any]]]:
+    ) -> Tuple[List[np.ndarray], Dict[str, np.ndarray]]:
         """
-        Extract feature selection masks and scores from cross-validation results.
+        Extract selected features, and selection frequency from cross-validation results.
         
-        This helper method processes cross-validation results from a Sequential Feature
-        Selection pipeline to extract the selected feature masks, test scores, and
-        a formatted list of per-fold results.
+        This helper method processes cross-validation results from a Sequential Feature Selection
+        pipeline to extract:
+          - A dictionary mapping fold indices to the list of feature names selected in that fold.
+          - A frequency dictionary for each feature representing the proportion of folds in which it was selected.
+          - A set of all features that were selected in at least one fold.
         
         Parameters
         ----------
-        cv_res : dict
-            Cross-validation results from the cross_val method containing:
-            - 'fold_estimators': List of fitted pipeline estimators from each fold
-            - 'cv_fold_scores': Dict mapping metric names to arrays of scores per fold
+        cv_fold_estimators : dict
+            Dictionary containing cross-validation fold estimators, where each estimator is a Pipeline
+            with a 'sfs' step that is a SequentialFeatureSelector.
         feat_names : ndarray
             Array of feature names corresponding to the columns in the input data.
-        metric : str
-            Name of the metric to extract from cv_fold_scores. This should be a key
-            in the cv_fold_scores dictionary.
             
         Returns
         -------
-        masks : list of ndarray
-            List of boolean masks, one per fold, indicating which features were
-            selected by the SequentialFeatureSelector in each fold.
-        fold_scores : dict
-            Dictionary mapping metric names to arrays of scores per fold.
-            Directly passed through from cv_res['cv_fold_scores'].
-        outer : list of dict
-            List of dictionaries, one per fold, with keys:
-            - 'fold': Fold index
-            - 'selected': List of feature names selected in this fold
-            - 'score': The score achieved with the selected features on this fold
+        selected_per_fold : dict
+            Dictionary mapping fold indices to lists of feature names selected in each fold.
+        selected_all : set
+            Set of all features that were selected in at least one fold.
+        freq : dict
+            Dictionary mapping each feature name to its selection frequency (a float between 0 and 1),
+            calculated as the number of folds in which the feature was selected divided by the total number of folds.
             
         Notes
         -----
-        This method is primarily used as a helper for feature_selection to:
-        1. Extract which features were selected in each cross-validation fold
-        2. Prepare a structured representation of per-fold results
-        3. Format the data for analysis of feature selection stability
+        This method is used as a helper for feature_selection to:
+          1. Extract which features were selected in each cross-validation fold.
+          2. Prepare a structured representation of per-fold feature selection results.
+          3. Format the data for analysis of feature selection stability.
         
-        It assumes that each estimator in fold_estimators is a Pipeline with
-        a 'sfs' step containing a SequentialFeatureSelector.
+        It assumes that each estimator is a Pipeline containing a 'sfs'
+        step with a SequentialFeatureSelector.
         
         See Also
         --------
         sklearn.feature_selection.SequentialFeatureSelector.get_support
         """
-        splits = len(cv_res['cv_fold_estimators'])
-        masks = [est.named_steps['sfs'].get_support()
-                for est in cv_res['cv_fold_estimators']]
-        # fold_scores: dict metric → np.ndarray of length n_folds
-        fold_scores = cv_res['cv_fold_scores']
-        outer = [
-            {'fold':i, 'selected':feat_names[m].tolist(), 'score':float(fold_scores[metric][i])}
-            for i, m in enumerate(masks)
-        ]
-        return masks, fold_scores, outer
-
-    def _aggregate_sfs_results(
-        self, 
-        masks: List[np.ndarray], 
-        scores: np.ndarray, 
-        feat_names: np.ndarray,
-        threshold: float = 0.4
-    ) -> Tuple[List[str], Dict[str, float], List[Dict[str, Any]], Dict[str, Any]]:
-        """
-        Aggregate feature selection results across cross-validation folds.
-        
-        This helper method processes the boolean feature selection masks from each fold
-        to determine feature selection frequency, identify stable features (selected in
-        majority of folds), and find the best-performing fold.
-        
-        Parameters
-        ----------
-        masks : list of ndarray
-            List of boolean masks, one per fold, indicating which features were
-            selected by the SequentialFeatureSelector in each fold.
-        scores : ndarray
-            Array of scores for the specified metric across folds, shape (n_folds,).
-        feat_names : ndarray
-            Array of feature names corresponding to the columns in the input data.
-        threshold : float, default=0.4
-            Frequency threshold for selecting stable features. Features must appear
-            in more than 40% of the folds to be considered stable.
-
-        Returns
-        -------
-        selected : list of str
-            Features selected in more than half of the cross-validation folds.
-            These are considered stable features.
-        freq : dict
-            Dictionary mapping feature names to their selection frequency (0.0 to 1.0)
-            across all folds.
-        outer_cv : list of dict
-            List of dictionaries, one per fold, with keys:
-            - 'fold': Fold index
-            - 'selected': List of feature names selected in this fold
-            - 'score': The score achieved with the selected features on this fold
-        best : dict
-            Information about the best-performing fold:
-            - 'fold': Index of the best fold
-            - 'features': List of feature names selected in the best fold
-            - 'score': Score achieved by the best fold
-            
-        Notes
-        -----
-        This method is primarily used as a helper for feature_selection to:
-        1. Identify which features are consistently selected across folds
-        2. Calculate selection frequency for stability analysis
-        3. Find the best-performing feature subset
-
-        The selection of stable features uses a majority voting approach based on a
-        given threshold, where features must appear in more than threshold% of folds
-        to be included in the final selection.
-        """
-        n_folds = len(masks)
-        all_sel = [feat for m in masks for feat in feat_names[m]]
-        freq = {f: all_sel.count(f)/n_folds for f in feat_names}
-        selected = [f for f, fr in freq.items() if fr > threshold]
-        # best fold by score
-        best_i = int(np.argmax(scores))
-        best = {'fold':best_i, 'features': feat_names[masks[best_i]].tolist(),
-                'score': float(scores[best_i])}
-        outer_cv = [
-        {'fold':i, 'selected':feat_names[m].tolist(), 'score': float(scores[i])}
-        for i, m in enumerate(masks)
-        ]
-        return selected, freq, outer_cv, best
-
-    def _compile_sfs_importances(
-        self, 
-        fold_imps: List[np.ndarray], 
-        feat_names: np.ndarray, 
-        freq: Dict[str, float], 
-        selected: List[str]
-    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, float]]:
-        """
-        Compile feature importance statistics across cross-validation folds.
-        
-        This helper method processes feature importance values from each cross-validation 
-        fold to calculate statistics (mean and standard deviation) for each feature, and
-        computes frequency-weighted importance values.
-        
-        Parameters
-        ----------
-        fold_imps : list of ndarray
-            List of feature importance arrays, one per fold. Each array has shape
-            (n_features,) and contains importance values for all features in that fold.
-            May be an empty list if importances are not available.
-        feat_names : ndarray
-            Array of feature names corresponding to the columns in the input data.
-        freq : dict
-            Dictionary mapping feature names to their selection frequency (0.0 to 1.0)
-            across all folds, as calculated by _aggregate_sfs_results.
-        selected : list of str
-            List of selected feature names (those appearing in majority of folds).
-            
-        Returns
-        -------
-        feat_imps : dict
-            Dictionary mapping feature names to dictionaries with keys:
-            - 'mean': Mean importance across folds
-            - 'std': Standard deviation of importance across folds
-            - 'values': List of raw importance values from each fold
-        weighted : dict
-            Dictionary mapping feature names to their weighted importance values,
-            calculated as mean importance multiplied by selection frequency.
-            
-        Notes
-        -----
-        This method is primarily used as a helper for feature_selection to:
-        1. Provide detailed statistics about feature importance stability
-        2. Adjust importance values by selection frequency for more robust ranking
-        
-        Features that rarely appear in the selection process will have their
-        weighted importance values reduced accordingly, while stable features
-        with consistent selection will maintain values closer to their raw importance.
-        
-        Empty results are returned if fold_imps is empty (when the base estimator
-        doesn't support feature importance extraction).
-        """
-        feat_imps, weighted = {}, {}
-        # Handle the case where fold_imps is a dictionary (from cv_fold_importances)
-        if isinstance(fold_imps, dict):
-            for name in feat_names:
-                if name in fold_imps and len(fold_imps[name]) > 0:
-                    # Convert to float array to ensure numeric values
-                    values = np.array(fold_imps[name], dtype=float)
-                    try:
-                        mean, std = float(np.mean(values)), float(np.std(values))
-                        feat_imps[name] = {'mean': mean, 'std': std, 'values': values.tolist()}
-                        weighted[name] = mean * freq.get(name, 0.0)
-                    except TypeError as e:
-                        logger.warning(f"Error calculating statistics for feature {name}: {e}")
-        
-        # Handle the case where fold_imps is a list of arrays
-        elif fold_imps:
-            for idx, name in enumerate(feat_names):
-                try:
-                    # Only use importances where idx is in range
-                    values = [float(imp[idx]) for imp in fold_imps 
-                            if imp is not None and idx < len(imp)]
-                    
-                    if values:  # Only calculate if we have values
-                        mean, std = float(np.mean(values)), float(np.std(values))
-                        feat_imps[name] = {'mean': mean, 'std': std, 'values': values}
-                        weighted[name] = mean * freq.get(name, 0.0)
-                except (IndexError, TypeError) as e:
-                    logger.warning(f"Error calculating importance for feature {name}: {e}")
-                    
-        return feat_imps, weighted
+        n_folds = len(cv_fold_estimators)
+        masks = [est.named_steps['sfs'].get_support() for est in cv_fold_estimators]
+        selected_per_fold = {
+            i: feat_names[mask].tolist()
+            for i, mask in enumerate(masks)
+        }
+        # Flatten all selected features from each fold into a set
+        selected_all = set([feat for mask in masks for feat in feat_names[mask]])
+        # Compute frequency as the number of folds in which each feature was selected divided by total folds
+        freq = {
+            f: sum(mask[i] for mask in masks) / n_folds
+            for i, f in enumerate(feat_names)
+        }
+        return selected_per_fold, selected_all, freq
 
 
     def feature_selection(
@@ -1071,94 +924,94 @@ class BasePipeline(ABC):
         n_features: Optional[int] = None,
         direction: str = 'forward',
         scoring: Optional[str] = None,
-        threshold: float = 0.4
     ) -> Dict[str, Any]:
-        """Perform feature selection via sequential feature selection (SFS) with cross-validation.
-        
-        This method selects the most informative features using an inner cross-validation 
-        loop for feature selection and an outer cross-validation loop for evaluation. It 
-        analyzes feature selection stability across folds and provides comprehensive 
-        metrics including feature importance statistics and frequency-weighted importances.
-        
+        """
+        Perform feature selection via sequential feature selection (SFS) with cross-validation.
+
+        This method selects and returns the most informative features along with their importance values
+        and selection frequencies using an inner cross-validation loop for feature selection and an outer
+        cross-validation loop for evaluation. The updated logic now returns the selection direction and the
+        corresponding feature names (values) along with detailed importance statistics.
+
         The process follows these steps:
-        1. Build a pipeline with SequentialFeatureSelector and base estimator using _build_sfs_pipeline
-        2. Perform outer cross-validation to evaluate feature selection performance
-        3. Extract feature selection masks and scores from CV results using _extract_sfs_masks_and_scores
-        4. Aggregate results to find stable features (selected in majority of folds) using _aggregate_sfs_results
-        5. Compile feature importance statistics and calculate weighted importances using _compile_sfs_importances
-        
+          1. Build a pipeline with SequentialFeatureSelector and a base estimator using _build_sfs_pipeline.
+          2. Perform outer cross-validation to evaluate feature selection performance.
+          3. Extract feature selection masks and selected feature names from CV estimators via _extract_sfs_selected_features.
+          4. Aggregate results to determine stable features (those selected in the majority of folds),
+             compute selection frequency, and compile detailed importance statistics.
+          5. Get weighted importances as the product of the mean importance and the selection frequency.
+
         Parameters
         ----------
         model_name : str
             Name of the model in model_configs to use for feature selection.
         n_features : int, optional
-            Number of features to select. If None, uses half of available features.
+            Number of features to select. If None, uses half of the available features.
         direction : str, default='forward'
-            Direction for sequential feature selection ('forward' or 'backward').
-            - 'forward': Start with no features and add one at a time
-            - 'backward': Start with all features and remove one at a time
+            Direction for sequential feature selection ('forward' or 'backward'):
+              - 'forward': Start with no features and add one at a time.
+              - 'backward': Start with all features and remove one at a time.
         scoring : str, optional
-            Metric to use for feature selection. If None, uses first metric in self.metrics.
-        threshold : float, default=0.4
-            Frequency threshold for selecting stable features. Features must appear
-            in more than threshold% of folds to be considered stable.
+            Metric to use for evaluating feature selection. If None, uses the first metric in self.metrics.
 
         Returns
         -------
         dict
             Dictionary containing:
-            
-            selected_features : list
-                Features selected in majority of cross-validation folds (stable features).
+            model_name : str
+                Name of the model used for feature selection.
+            metric_scores : dict
+                Scoring metrics aggregated across folds with keys:
+                - 'mean': Mean score across folds.
+                - 'std': Standard deviation of scores.
+                - 'fold_scores': Scores per fold.
+            selected_features : set
+                The combined set of features selected across all CV folds.
             feature_frequency : dict
-                Mapping of feature names to selection frequency (0.0 to 1.0) across folds.
+                Mapping of each feature name to its selection frequency (a float between 0 and 1).
             feature_importances : dict
                 Feature importance statistics with keys:
-                - {feature_name}: dict with 'mean', 'std', and 'values' across folds
-            weighted_importances : dict
-                Feature importances weighted by selection frequency for more robust ranking.
+                - 'mean': Mean importance across folds.
+                - 'weighted_mean': Mean importance weighted by selection frequency.
+                - 'std': Standard deviation of importances.
+                - 'weighted_std': Standard deviation of importances weighted by selection frequency.
+                - 'fold_importances': Importances per fold.
+            predictions : dict
+                Dictionary containing concatenated y_true, y_pred, and optionally y_proba from cross-validation
+                and fold-level predictions.
+            selected_per_fold : dict
+                Dictionary mapping fold indices to lists of feature names selected in each fold.
             best_fold : dict
-                Information about the best-performing fold:
-                - 'fold': Index of the best fold
-                - 'features': Features selected in the best fold
-                - 'score': Score achieved by the best fold
-            outer_cv : list
-                Per-fold results with selected features and test scores.
-            
-            Plus all standard cross-validation results from self.cross_val().
-                
-        Notes
-        -----
-        Feature stability is assessed by analyzing selection frequency across folds.
-        Only features appearing in >threshold% of folds are considered stable and returned
-        in the final selection.
-        
-        The weighted importance metric (mean importance × selection frequency) provides
-        a balance between predictive power and selection stability, giving higher weight
-        to features that are both important and consistently selected.
-        
-        To further analyze feature importance stability, examine the 'std' values in
-        feature_importances, which show how consistent a feature's importance is
-        across different data subsets.
-        
+                Information about the best-performing fold, including:
+                'fold': Index of the best fold.
+                'features': Features selected in that fold.
+                <metric>: Metric score for that fold.
+                'estimator': The fitted estimator for the best fold.
+            folds_estimators : list
+                List of fitted estimator instances from each fold of cross-validation.
+            fs parameters : dict
+                Parameters used for feature selection, including:
+                - 'n_features': Number of features selected.
+                - 'direction': Direction of feature selection ('forward' or 'backward').
+                - 'scoring': Metric used for feature selection.
+
+
         See Also
         --------
-        _build_sfs_pipeline : Builds the SFS pipeline
-        _extract_sfs_masks_and_scores : Extracts feature masks from cross-validation
-        _aggregate_sfs_results : Aggregates results across folds
-        _compile_sfs_importances : Compiles feature importance statistics
-        cross_val : Performs cross-validation
-        
+        _build_sfs_pipeline : Constructs the SFS pipeline.
+        _extract_sfs_selected_features : Extracts selected feature masks and names from CV estimators.
+        _aggregate : Aggregates predictions, scores, and importances from fold-level results.
+        cross_val : Performs outer cross-validation.
+
         Examples
         --------
         >>> from sklearn.ensemble import RandomForestClassifier
         >>> model_configs = {'rf': {'estimator': RandomForestClassifier()}}
-        >>> result = pipeline.feature_selection('rf', n_features=5)
+        >>> result = pipeline.feature_selection('rf', n_features=5, direction='forward', scoring='accuracy')
         >>> print(f"Selected features: {result['selected_features']}")
-        >>> print(f"Best features by weighted importance:")
-        >>> for f, imp in sorted(result['weighted_importances'].items(), 
-        ...                      key=lambda x: x[1], reverse=True)[:5]:
-        ...     print(f"  {f}: {imp:.4f}")
+        >>> print("Weighted importances:")
+        >>> for feat, imp in sorted(result['weighted_importances'].items(), key=lambda x: x[1], reverse=True)[:5]:
+        ...     print(f"  {feat}: {imp:.4f}")
         """
         pipe, feat_names, metric = self._build_sfs_pipeline(
             model_name, n_features, direction, scoring
@@ -1166,30 +1019,37 @@ class BasePipeline(ABC):
 
         cv_res = self.cross_val(pipe, self.X, self.y)
 
-        masks, fold_scores, outer = self._extract_sfs_masks_and_scores(cv_res, feat_names, metric)
+        selected_per_fold, selected_all, freq = self._extract_sfs_selected_features(cv_res["cv_fold_estimators"], feat_names)
 
-        selected, freq, outer_cv, best_fold = self._aggregate_sfs_results(
-            masks, fold_scores[metric], feat_names, threshold
-        )
-
-        feat_imps, weighted_imps = self._compile_sfs_importances(
-            cv_res['cv_fold_importances'], feat_names, freq, selected
-        )
-
-        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
-
+        predictions, metric_scores, feature_importances = self._aggregate(cv_res["cv_fold_predictions"],
+                                                    cv_res["cv_fold_scores"],
+                                                    cv_res["cv_fold_importances"],
+                                                    freq=freq)
+        
+        # get best fold and its selected features
+        best_fold_idx = np.argmax(metric_scores[metric]['mean'])
+        best_fold = {
+            'fold': best_fold_idx,
+            'features': selected_per_fold[best_fold_idx],
+            metric: metric_scores[metric]["fold_scores"][best_fold_idx],
+            "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
+        }
 
         return {
             'model_name': model_name,
-            **cv_res,
-            'selected_features': selected,
+            'metric_scores': metric_scores,
+            'selected_features': selected_all,
             'feature_frequency': freq,
-            'feature_importances': feat_imps,
-            'weighted_importances': weighted_imps,
-            'outer_cv': outer_cv,
-            'best_fold': best_fold,
+            'feature_importances': feature_importances,
             'predictions': predictions,
-            'metric_scores': metric_scores
+            'selected_per_fold': selected_per_fold,
+            'best_fold': best_fold,
+            'folds_estimators': cv_res['cv_fold_estimators'],
+            'fs parameters': {
+                'n_features': n_features,
+                'direction': direction,
+                'scoring': metric
+            },
         }
 
     def _build_search_estimator(
