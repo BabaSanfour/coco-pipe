@@ -477,11 +477,11 @@ class ClassificationPipeline:
         })
 
         self.pipeline = PipelineClass(
-            X=X, y=y, groups=groups,
-            models=models, metrics=metrics,
-            random_state=random_state, n_jobs=n_jobs,
+            X=self.X, y=self.y, groups=self.groups,
+            models=self.models, metrics=self.metrics,
+            random_state=self.random_state, n_jobs=self.n_jobs,
             cv_kwargs=cvk,
-            verbose=verbose,
+            verbose=self.verbose,
         )
         os.makedirs(self.results_dir, exist_ok=True)
 
