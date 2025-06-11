@@ -118,10 +118,12 @@ class MLPipeline:
         ValueError
             If the analysis_type is 'feature_selection' or 'hp_search_fs' in univariate mode.
         """
-        # Common kwargs for pipeline instantiation (including verbose and logger)
-        common_kwargs = dict(
-            X=self.X,
-            y=None,  # to be set per run
+        mode = self.config.get("mode", "multivariate")
+        if mode not in ("multivariate", "univariate"):
+            raise ValueError(f"Invalid mode: {mode!r} - must be 'multivariate' or 'univariate'.")
+
+        # Build base kwargs (excluding X and y)
+        base_kwargs = dict(
             groups=self.groups,
             analysis_type=self.config.get("analysis_type", "baseline"),
             models=self.config.get("models", "all"),
@@ -143,23 +145,28 @@ class MLPipeline:
             verbose=self.config.get("verbose", True),
         )
 
-        # Multivariate mode or single-output always treated as one run
-        if self.mode == "multivariate" or getattr(self.y, "ndim", 1) == 1:
-            common_kwargs["y"] = self.y
+        # Multivariate mode: single run on full X
+        if mode == "multivariate":
+            # If y is multi-output, multivariate is the only valid mode
+            if getattr(self.y, "ndim", 1) > 1:
+                # OK: multi-output regression/classification
+                pass
+            common_kwargs = {**base_kwargs, "X": self.X, "y": self.y}
             pipeline = self.pipeline_cls(**common_kwargs)
             return pipeline.run()
 
-        # Univariate mode on each column of a 2D target
-        # Feature selection-type analyses not supported per-target
-        if common_kwargs["analysis_type"] in ("feature_selection", "hp_search_fs"):
-            raise ValueError(f"Cannot perform {common_kwargs['analysis_type']} in univariate mode")
+        # Univariate mode: one-feature-at-a-time
+        # Disallow feature-selection or combined FS+HP search here
+        if base_kwargs["analysis_type"] in ("feature_selection", "hp_search_fs"):
+            raise ValueError(
+                f"Cannot perform {base_kwargs['analysis_type']} in univariate mode"
+            )
 
         results = {}
-        # Iterate over each column of the input features (X)
-        common_kwargs["y"] = self.y  # use the same target y for every run
         for idx in range(self.X.shape[1]):
             Xi = self.X[:, idx].reshape(-1, 1)
-            common_kwargs["X"] = Xi
+            common_kwargs = {**base_kwargs, "X": Xi, "y": self.y}
             pipeline = self.pipeline_cls(**common_kwargs)
             results[idx] = pipeline.run()
+
         return results
