@@ -464,6 +464,9 @@ def test_row_filter_column_not_found(example_df):
 def test_verbose_logging(example_df, caplog):
     # Test if verbose=True produces log output.
     # This assumes select_features uses the logging module when verbose is True.
+    logger = logging.getLogger('coco_pipe.io.select_features')
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
     with caplog.at_level(logging.INFO):
         X, y, groups = select_features(
             df=example_df,
