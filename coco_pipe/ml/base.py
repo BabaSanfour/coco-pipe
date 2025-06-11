@@ -561,74 +561,124 @@ class BasePipeline(ABC):
         return {name: type(mc.estimator).__name__
                 for name, mc in self.model_configs.items()}
 
+    def _set_inner_cv(self, estimator, inner_splits):
+        """
+        Recursively replace any .cv on an estimator (or sub‐estimator)
+        with our list of (train_idx, test_idx) tuples.
+        """
+        # 1) If it’s a search‐CV, overwrite its cv
+        if isinstance(estimator, (GridSearchCV, RandomizedSearchCV)):
+            estimator.cv = inner_splits
+
+        # 2) If it has a .cv attribute (e.g. SequentialFeatureSelector)
+        elif hasattr(estimator, 'cv'):
+            estimator.cv = inner_splits
+
+        # 3) If it’s a Pipeline, descend into each step
+        if isinstance(estimator, Pipeline):
+            for step in estimator.named_steps.values():
+                self._set_inner_cv(step, inner_splits)
+
+        return estimator
+
     def cross_val(
         self,
         estimator: BaseEstimator,
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray]
     ) -> Dict[str, Any]:
-        if self.verbose:
-            logger.info("Starting cross-validation...")
-        cv_conf = deepcopy(self.cv_kwargs)
-        cv_conf.setdefault('random_state', self.random_state)
-        cv = get_cv_splitter(**cv_conf)
-
-        is_search = isinstance(estimator, (GridSearchCV, RandomizedSearchCV))
+        # 1) Optional leakage-safe scaling
         if getattr(self, 'use_scaler', False):
-            logger.info("Using StandardScaler in the pipeline.")
             from sklearn.preprocessing import StandardScaler
-            # If estimator is a Pipeline, add scaler to the beginning
-            # If estimator is a bare estimator, wrap it in a Pipeline with scaler
             if isinstance(estimator, Pipeline):
-                steps = [('scaler', StandardScaler())] + estimator.steps
-                estimator = Pipeline(steps)
+                estimator = Pipeline(
+                    [('scaler', StandardScaler())] + estimator.steps
+                )
             else:
-                # wrap a bare estimator
                 estimator = Pipeline([
                     ('scaler', StandardScaler()),
                     ('clf',    estimator)
                 ])
 
+        # 2) Prepare data arrays & groups
         X_arr = X.values if isinstance(X, pd.DataFrame) else X
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
-        groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
+        groups_arr = (
+            self.groups.values if isinstance(self.groups, pd.Series)
+            else self.groups
+        )
 
-        proba_required = {m for m, fn in self.metric_funcs.items() if hasattr(fn, '__name__') and 'proba' in fn.__name__}
-        scoring = {
-            m: make_scorer(
-                self.metric_funcs[m],
-                **({'needs_proba': True} if m in proba_required else {})
-            )
-            for m in self.metrics
+        # 3) Outer CV with groups
+        cv_conf = deepcopy(self.cv_kwargs)
+        cv_conf.setdefault('random_state', self.random_state)
+        outer_cv = get_cv_splitter(**cv_conf, groups=groups_arr)
+        outer_splits = list(outer_cv.split(X_arr, y_arr, groups_arr))
+
+        # 4) Figure out which metrics need proba
+        proba_required = {
+            m for m, fn in self.metric_funcs.items()
+            if hasattr(fn, '__name__') and 'proba' in fn.__name__
         }
-        try:
-            cv_results = cross_validate(
-                estimator=estimator,
-                X=X_arr, y=y_arr,
-                scoring=scoring,
-                cv=cv,
-                n_jobs=self.n_jobs,
-                return_estimator=True,
-                return_train_score=False,
-                error_score='raise',
-                params={'groups': groups_arr}
-            )
-        except Exception as e:
-            cv_results = cross_validate(
-                estimator=estimator,
-                X=X_arr, y=y_arr,
-                scoring=scoring,
-                cv=cv,
-                n_jobs=self.n_jobs,
-                return_estimator=True,
-                return_train_score=False,
-                error_score='raise',
-                groups = groups_arr
-            )
 
+        # 5) Containers for fold‐level results
+        fold_predictions = []
+        fold_scores_list = []  # list of {metric:score} dicts
+        fold_importances = {f: [] for f in self.feature_names}
+        fold_estimators = []
+
+        # 6) Manual nested loop
+        for train_idx, test_idx in outer_splits:
+            X_tr, y_tr = X_arr[train_idx], y_arr[train_idx]
+            X_te, y_te = X_arr[test_idx],  y_arr[test_idx]
+            grp_tr     = groups_arr[train_idx] if groups_arr is not None else None
+
+            # 6a) Build inner CV on this train‐set (with its own groups)
+            inner_kwargs = deepcopy(self.cv_kwargs)
+            if grp_tr is not None:
+                inner_kwargs['groups'] = grp_tr
+            inner_cv = get_cv_splitter(**inner_kwargs)
+            inner_splits = list(inner_cv.split(X_tr, y_tr, grp_tr))
+
+            # 6b) Clone & patch every .cv inside the estimator
+            est = clone(estimator)
+            est = self._set_inner_cv(est, inner_splits)
+
+            # 6c) Fit on train
+            fitted = est.fit(X_tr, y_tr)
+
+            # 6d) Predict on test
+            y_pred = fitted.predict(X_te)
+            fold_pred = {'y_true': y_te, 'y_pred': y_pred}
+
+            if hasattr(fitted, 'predict_proba'):
+                try:
+                    fold_pred['y_proba'] = fitted.predict_proba(X_te)
+                except Exception:
+                    pass
+
+            fold_predictions.append(fold_pred)
+
+            # 6e) Compute metrics
+            scores = {}
+            for m in self.metrics:
+                fn = self.metric_funcs[m]
+                if m in proba_required and 'y_proba' in fold_pred:
+                    scores[m] = fn(y_te, fold_pred['y_proba'])
+                else:
+                    scores[m] = fn(y_te, y_pred)
+            fold_scores_list.append(scores)
+
+            # 6f) Extract importances
+            imp = self._extract_feature_importances(fitted)
+            if imp is not None:
+                for i, feat in enumerate(self.feature_names):
+                    if i < len(imp):
+                        fold_importances[feat].append(imp[i])
+
+            fold_estimators.append(fitted)
 
         # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_ survive —
-        raw_ests = cv_results['estimator']
+        raw_ests = fold_estimators
         cv_fold_estimators = []
         for est in raw_ests:
             if isinstance(est, Pipeline):
@@ -639,46 +689,23 @@ class BasePipeline(ABC):
                     cv_fold_estimators.append(est)
             else:
                 cv_fold_estimators.append(est)
+        fold_estimators = cv_fold_estimators
+        # 7) Pack into arrays/dicts for aggregation
+        cv_fold_scores = {
+            m: np.array([fs[m] for fs in fold_scores_list])
+            for m in self.metrics
+        }
+        cv_fold_importances = {
+            f: np.array(vals)
+            for f, vals in fold_importances.items()
+            if vals
+        }
 
-        cv_results['estimator'] = cv_fold_estimators
-        splits = list(cv.split(X_arr, y_arr, groups_arr))
-
-        fold_predictions = []
-        for idx, est_fold in enumerate(cv_results['estimator']):
-            _, val_idx = splits[idx]
-            y_true, y_pred = y_arr[val_idx], est_fold.predict(X_arr[val_idx])
-            fp = {'y_true': y_true, 'y_pred': y_pred}
-            if hasattr(est_fold, 'predict_proba'):
-                try:
-                    fp['y_proba'] = est_fold.predict_proba(X_arr[val_idx])
-                except Exception:
-                    logger.warning(
-                        "predict_proba failed for fold %d with %s",
-                        idx, type(est_fold).__name__
-                    )
-            fold_predictions.append(fp)
-
-        fold_importances = [
-            self._extract_feature_importances(est_fold) for est_fold in cv_results['estimator']
-        ]
-        
-        cv_fold_scores = {m: np.array(cv_results.get(f'test_{m}', [])) for m in self.metrics}
-        cv_fold_importances = {}
-
-        for i, feature in enumerate(self.feature_names):
-            values = []
-            for imp in fold_importances:
-                if imp is not None and i < len(imp):
-                    values.append(imp[i])
-            if values:
-                cv_fold_importances[feature] = np.array(values)
-        if self.verbose:
-            logger.info("Finished cross-validation.")
         return {
-            'cv_fold_scores': cv_fold_scores,
-            'cv_fold_importances': cv_fold_importances,
             'cv_fold_predictions': fold_predictions,
-            'cv_fold_estimators': cv_results['estimator'],
+            'cv_fold_scores':      cv_fold_scores,
+            'cv_fold_importances': cv_fold_importances,
+            'cv_fold_estimators':  fold_estimators,
         }
 
     def baseline_evaluation(
