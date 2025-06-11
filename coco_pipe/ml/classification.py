@@ -18,9 +18,7 @@ import json
 import pandas as pd
 from typing import Any, Dict, Optional, Sequence, Union
 import numpy as np
-from sklearn.metrics import (
-    precision_recall_fscore_support
-)
+from sklearn.metrics import precision_recall_fscore_support
 from sklearn.utils.multiclass import type_of_target
 
 from .base import BasePipeline
@@ -30,7 +28,6 @@ from .config import (
     MULTIOUTPUT_CLASS_METRICS, MULTIOUTPUT_CLASS_MODELS, 
     DEFAULT_CV
 )
-
 
 
 logger = logging.getLogger(__name__)
@@ -76,6 +73,7 @@ class BinaryClassificationPipeline(BasePipeline):
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
+        verbose: bool = False,
     ):
         self._validate_target(y)
 
@@ -104,7 +102,9 @@ class BinaryClassificationPipeline(BasePipeline):
             groups=groups,
             n_jobs=n_jobs,
             random_state=random_state,
+            verbose=verbose,
         )
+        self.verbose = verbose
 
     def _validate_target(self, y):
         unique = np.unique(y)
@@ -149,6 +149,7 @@ class MultiClassClassificationPipeline(BasePipeline):
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
         per_class: bool = False,
+        verbose: bool = False,
     ):
         metric_funcs = MULTICLASS_METRICS
         if isinstance(metrics, str):
@@ -173,18 +174,19 @@ class MultiClassClassificationPipeline(BasePipeline):
             n_jobs=n_jobs,
             cv_kwargs=cv_kwargs,
             groups=groups,
+            verbose=verbose,
         )
         self._validate_target(y)
         self.classes_ = np.unique(y)
         self.n_classes_ = len(self.classes_)
         self.per_class = per_class
+        self.verbose = verbose
 
     def _validate_target(self, y):
         """Ensure target is multiclass."""
         classes = np.unique(y)
         if classes.size <= 2:
             raise ValueError(f"Multiclass target requires >2 classes, got: {classes}")
-
 
     def _aggregate(
         self,
@@ -193,11 +195,9 @@ class MultiClassClassificationPipeline(BasePipeline):
         fold_importances,
         freq=None
     ):
-        # unpack the base‐class aggregation
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        # add multiclass ROC-AUC if requested and we have probabilities
         if 'roc_auc' in self.metrics and "y_proba" in predictions:
             from .config import multiclass_roc_auc_score
             proba = predictions["y_proba"]
@@ -206,7 +206,6 @@ class MultiClassClassificationPipeline(BasePipeline):
                 y_proba=proba
             )
             metrics["roc_auc"] = {"mean": score, "std": 0.0, "fold_scores": [score]}
-        # per-class precision/recall/f1
         if self.per_class:
             yt = predictions["y_true"]
             yp = predictions["y_pred"]
@@ -253,6 +252,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
+        verbose: bool = False,
     ):
 
         metric_funcs = MULTIOUTPUT_CLASS_METRICS
@@ -283,13 +283,14 @@ class MultiOutputClassificationPipeline(BasePipeline):
             groups=groups,
             n_jobs=n_jobs,
             random_state=random_state,
+            verbose=verbose,
         )
+        self.verbose = verbose
 
     def _validate_target(self, y):
         """Ensure target is multioutput."""
         if not (hasattr(y, "ndim") and y.ndim == 2):
             raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
-
 
     def _aggregate(
         self,
@@ -298,11 +299,9 @@ class MultiOutputClassificationPipeline(BasePipeline):
         fold_importances,
         freq=None
     ):
-        # unpack the base‐class aggregation
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        # per-output metrics
         from sklearn.metrics import precision_score, recall_score, f1_score
         yt = predictions["y_true"]
         yp = predictions["y_pred"]
@@ -409,6 +408,7 @@ class ClassificationPipeline:
         results_dir: str = "results",
         results_file: str = "results",
         cv_kwargs: Optional[Dict[str, Any]] = None,
+        verbose: bool = False,
     ):
         self.X = X
         self.y = y
@@ -431,10 +431,10 @@ class ClassificationPipeline:
         self.results_dir = results_dir
         self.results_file = results_file
         self.cv_kwargs = cv_kwargs
+        self.verbose = verbose
         self.pipeline = None
         self.results = {}
 
-        # pick pipeline class
         if hasattr(y, "ndim") and y.ndim == 2:
             PipelineClass = MultiOutputClassificationPipeline
         else:
@@ -462,7 +462,8 @@ class ClassificationPipeline:
             X=X, y=y,
             models=models, metrics=metrics,
             random_state=random_state, n_jobs=n_jobs,
-            cv_kwargs=cvk
+            cv_kwargs=cvk,
+            verbose=verbose,
         )
         os.makedirs(self.results_dir, exist_ok=True)
 
@@ -552,8 +553,6 @@ class ClassificationPipeline:
         )
         >>> results = pipeline.run()
         """
-
-
         base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
         if self.analysis_type == "feature_selection":
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
