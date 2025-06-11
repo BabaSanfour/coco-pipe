@@ -138,7 +138,7 @@ class MLPipeline:
             results_dir=self.config.get("results_dir", "results"),
             results_file=self.config.get("results_file", "results"),
             cv_kwargs=self.cv_kwargs,
-            verbose=self.verbose,
+            verbose=self.config.get("verbose", True),
         )
 
         # Multivariate mode or single-output always treated as one run

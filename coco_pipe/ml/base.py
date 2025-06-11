@@ -126,7 +126,7 @@ class BasePipeline(ABC):
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
         n_jobs: int = -1,
         random_state: Optional[int] = None,
-        verbose: bool = False  # new verbose flag
+        verbose: bool = True  # new verbose flag
     ):
         """
         Initialize pipeline with data, metrics, and configuration.

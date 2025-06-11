@@ -77,7 +77,7 @@ class BinaryClassificationPipeline(BasePipeline):
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
-        verbose: bool = False,
+        verbose: bool = True,
     ):
         self._validate_target(y)
 
@@ -423,7 +423,7 @@ class ClassificationPipeline:
         results_dir: str = "results",
         results_file: str = "results",
         cv_kwargs: Optional[Dict[str, Any]] = None,
-        verbose: bool = False,
+        verbose: bool = True,
     ):
         self.X = X
         self.y = y
