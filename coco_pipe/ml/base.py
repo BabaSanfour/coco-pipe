@@ -1374,15 +1374,15 @@ class BasePipeline(ABC):
         scorer = make_scorer(self.metric_funcs[metric])
 
         # Get model config and parameter grid
-        cfg = self.model_configs[model_name]
-        raw_grid = param_grid or cfg.get('params', {})
-        
+        mc = self.model_configs[model_name]
+        raw_grid = param_grid or mc.param_grid
+
         # Get inner CV splitters for both feature selection and hyperparameter tuning
         inner_cv_fs = get_cv_splitter(**self.cv_kwargs)
         inner_cv_hp = get_cv_splitter(**self.cv_kwargs)
         
         # Create base estimator
-        base_est = clone(cfg.get('estimator'))
+        base_est = clone(mc.get('estimator'))
         if hasattr(base_est, 'random_state') and self.random_state is not None:
             base_est.random_state = self.random_state
         
@@ -1425,169 +1425,7 @@ class BasePipeline(ABC):
         
         # Get feature names
         feat_names = np.array(self._get_feature_names(self.X))
-        return search_est, feat_names, metric
-
-    def _extract_combined_results(
-        self,
-        cv_res: Dict[str, Any],
-        feat_names: np.ndarray,
-        metric: str
-    ) -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, Any]]]:
-        """
-        Extract feature selection and hyperparameter results from cross-validation.
-        
-        This helper method processes cross-validation results from the combined feature
-        selection and hyperparameter search pipeline to extract selected features,
-        best parameters, and test scores for each fold.
-        
-        Parameters
-        ----------
-        cv_res : dict
-            Cross-validation results from the cross_val method.
-        feat_names : ndarray
-            Array of feature names corresponding to the columns in the input data.
-        metric : str
-            Name of the metric used for evaluation.
-            
-        Returns
-        -------
-        outer_results : list of dict
-            List of dictionaries, one per fold, with keys:
-            - 'fold': Fold index
-            - 'selected_features': List of feature names selected in this fold
-            - 'best_params': Best parameters selected for this fold
-            - 'test_scores': Dict of metric scores achieved on this fold
-            - 'feature_importances': Feature importance values for this fold (if available)
-        all_selected : list of str
-            Combined list of all selected features across all folds (with duplicates).
-        all_params : list of dict
-            List of best parameter dictionaries, one per fold.
-        """
-        estimators = cv_res['cv_fold_estimators']
-        scores = cv_res['cv_fold_scores']
-        importances = cv_res.get('cv_fold_importances', {})
-        
-        outer_results, all_selected, all_params = [], [], []
-
-        for fold_idx, est in enumerate(estimators):
-            # Extract feature selection mask and selected features
-            best_pipe = est.best_estimator_
-            mask = best_pipe.named_steps['sfs'].get_support()
-            selected = feat_names[mask].tolist()
-            
-            # Extract best parameters
-            params = est.best_params_
-            
-            # Extract feature importances for this fold (if available)
-            fold_importances = {
-                feat: float(importances[feat][fold_idx])
-                for feat in selected if feat in importances
-            }
-            
-            # Collect selected features and parameters
-            all_selected.extend(selected)
-            all_params.append(params)
-            
-            # Extract all metrics for this fold
-            test_scores = {m: float(scores[m][fold_idx]) for m in self.metrics}
-            
-            # Create detailed result entry for this fold
-            outer_results.append({
-                'fold': fold_idx,
-                'selected_features': selected,
-                'best_params': params,
-                'test_scores': test_scores,
-                'feature_importances': fold_importances
-            })
-        
-        return outer_results, all_selected, all_params
-
-    def _aggregate_combined_results(
-        self,
-        outer_results: List[Dict[str, Any]],
-        all_selected: List[str],
-        all_params: List[Dict[str, Any]],
-        feat_names: np.ndarray,
-        metric: str
-    ) -> Tuple[List[str], Dict[str, float], Dict[str, Any], Dict[str, Dict[str, float]], Dict[str, Any], Dict[str, Dict[str, Any]], Dict[str, float]]:
-        """
-        Aggregate feature selection and hyperparameter results across folds.
-        
-        This helper method processes the selected features and best parameters from each fold
-        to determine selection frequency, identify stable features and parameters, find
-        the best-performing fold, and compile feature importance statistics.
-        
-        Parameters
-        ----------
-        outer_results : list of dict
-            List of dictionaries with per-fold results.
-        all_selected : list of str
-            Combined list of all selected features across all folds (with duplicates).
-        all_params : list of dict
-            List of best parameter dictionaries, one per fold.
-        feat_names : ndarray
-            Array of feature names corresponding to the columns in the input data.
-        metric : str
-            Name of the metric to use for identifying the best fold.
-            
-        Returns
-        -------
-        selected_features : list of str
-            Features selected in more than half of the cross-validation folds.
-        feature_frequency : dict
-            Dictionary mapping feature names to their selection frequency (0.0 to 1.0).
-        best_params : dict
-            Aggregated best parameters based on majority voting across folds.
-        param_frequency : dict
-            Dictionary mapping parameter names to dictionaries of value frequencies.
-        best_fold : dict
-            Information about the best-performing fold.
-        feature_importances : dict
-            Feature importance statistics with mean, std, and values for each feature.
-        weighted_importances : dict
-            Feature importances weighted by selection frequency.
-        """
-        n_folds = len(outer_results)
-        
-        # 1. Aggregate features by frequency
-        from collections import Counter
-        feat_count = Counter(all_selected)
-        selected_features = [f for f, cnt in feat_count.items() if cnt > n_folds / 2]
-        selected_features.sort(key=lambda f: feat_count[f], reverse=True)
-        feature_frequency = {f: feat_count.get(f, 0) / n_folds for f in feat_names}
-        
-        # 2. Aggregate parameters by majority vote
-        param_results = [{'best_params': params, 'test_scores': {metric: 0}} for params in all_params]
-        best_params, param_frequency, _ = self._aggregate_hp_search_results(param_results, metric)
-        
-        # 3. Find the best-performing fold
-        fold_scores = [res['test_scores'][metric] for res in outer_results]
-        best_idx = int(np.argmax(fold_scores))
-        best_fold = {
-            'fold': best_idx,
-            'features': outer_results[best_idx]['selected_features'],
-            'params': outer_results[best_idx]['best_params'],
-            'score': fold_scores[best_idx],
-            'all_scores': outer_results[best_idx]['test_scores']
-        }      
-
-        # 4. Compile feature importance statistics - REUSING SFS METHOD
-        # Convert feature importances to format expected by _compile_sfs_importances
-        fold_imps = {}
-        for feature in feat_names:
-            values = []
-            for result in outer_results:
-                if feature in result.get('feature_importances', {}):
-                    values.append(result['feature_importances'][feature])
-            if values:
-                fold_imps[feature] = np.array(values)
-        
-        # Use the existing _compile_sfs_importances method
-        feature_importances, weighted_importances = self._compile_sfs_importances(
-            fold_imps, feat_names, feature_frequency, selected_features
-        )
-        
-        return selected_features, feature_frequency, best_params, param_frequency, best_fold, feature_importances, weighted_importances
+        return search_est, feat_names, metric            
 
     def hp_search_fs(
         self,
@@ -1603,101 +1441,107 @@ class BasePipeline(ABC):
     ) -> Dict[str, Any]:
         """
         Perform combined feature selection and hyperparameter tuning with nested cross-validation.
-        
+
         This method integrates sequential feature selection and hyperparameter optimization
-        within a nested cross-validation framework. The inner cross-validation loops handle
-        both feature selection and hyperparameter tuning, while the outer loop evaluates
-        the combined approach on held-out data.
-        
-        The process follows these steps:
-        1. Build a pipeline with SequentialFeatureSelector followed by the base estimator
-        2. Wrap this pipeline in a hyperparameter search estimator (GridSearchCV or RandomizedSearchCV)
-        3. Perform outer cross-validation to evaluate the combined approach
-        4. Extract selected features and best parameters from each fold
-        5. Aggregate results to find stable features and parameters
-        
+        into a single nested cross-validation framework. The inner CV loops optimize both
+        the feature subset and the hyperparameter configuration, while the outer CV loop evaluates
+        the overall performance on held-out data. Specifically, the pipeline is constructed with
+        a SequentialFeatureSelector followed by an estimator, which is then wrapped in a hyperparameter
+        search estimator (either GridSearchCV or RandomizedSearchCV). After performing outer CV,
+        the function extracts the selected features and best hyperparameters from each fold and aggregates
+        the results to identify stable features and parameters.
+
         Parameters
         ----------
         model_name : str
             Name of the model in model_configs to use.
         search_type : str, default='grid'
-            Type of search to perform, either 'grid' or 'random'.
+            Type of hyperparameter search to perform, either 'grid' or 'random'.
         param_grid : dict, optional
             Dictionary with parameter names as keys and lists of parameter values.
             If None, uses the 'params' from model_configs.
         n_features : int, optional
-            Number of features to select. If None, uses half of available features.
+            Number of features to select. If None, defaults to half of the available features.
         direction : str, default='forward'
             Direction for sequential feature selection ('forward' or 'backward').
         n_iter : int, default=50
-            Number of parameter settings sampled in RandomizedSearchCV.
-            Ignored for GridSearchCV.
+            Number of parameter settings sampled in RandomizedSearchCV. Ignored for GridSearchCV.
         scoring : str, optional
-            Metric to use for evaluation. If None, uses first metric in self.metrics.
-            
+            Metric to use for evaluation. If None, uses the first metric in self.metrics.
+        X : DataFrame or ndarray, optional
+            Feature matrix. If provided, overrides self.X.
+        y : Series or ndarray, optional
+            Target vector. If provided, overrides self.y.
+
         Returns
         -------
         dict
-            Dictionary containing:
-            
-            model_name : str
-                Name of the model used.
-            n_features : int
-                Number of features selected in the inner feature selection step.
-            direction : str
-                Direction used for feature selection ('forward' or 'backward').
-            scoring : str
-                Metric used for evaluation.
-            search_type : str
-                Type of search performed ('grid' or 'random').
-            selected_features : list
-                Features selected in majority of cross-validation folds (stable features).
-            feature_frequency : dict
-                Mapping of feature names to selection frequency (0.0 to 1.0) across folds.
-            best_params : dict
-                Best parameters selected based on majority voting across folds.
-            param_frequency : dict
-                Dictionary mapping parameter names to dictionaries of value frequencies.
-                Example: {'max_depth': {3: 0.6, 5: 0.4}, 'min_samples_split': {2: 1.0}}
-            feature_importances : dict
-                Feature importance statistics with keys:
-                - {feature_name}: dict with 'mean', 'std', and 'values' across folds
-            weighted_importances : dict
-                Feature importances weighted by selection frequency for more robust ranking.
-            best_fold : dict
-                Information about the best-performing fold:
-                - 'fold': Index of the best fold
-                - 'features': Features selected in the best fold
-                - 'params': Best parameters selected for that fold
-                - 'score': Score achieved by the best fold
-            outer_results : list
-                Per-fold results with selected features, best parameters, and test scores.                
+            A dictionary containing the following keys:
+            - model_name : str
+              Name of the model used.
+            - metric_scores : dict
+              Aggregated scoring metrics from cross-validation with keys:
+              'mean', 'std', and 'fold_scores' (list of scores per fold).
+            - selected_features : set
+              The union of features selected across all outer CV folds (stable features).
+            - feature_frequency : dict
+              Mapping of each feature name to its selection frequency across folds (0.0 to 1.0).
+            - feature_importances : dict
+              Feature importance statistics with keys for each feature including:
+                  'mean', 'std', and 'fold_importances'.
+            - best_params : dict
+              Aggregated best hyperparameters selected via majority voting across folds.
+            - param_frequency : dict
+              Frequency mapping of hyperparameter values across folds.
+            - predictions : dict
+              Aggregated predictions from all folds, including 'y_true', 'y_pred', and optionally 'y_proba'.
+            - selected_per_fold : dict
+              Mapping of each fold index to the list of features selected in that fold.
+            - best_params_per_fold : dict
+              Per-fold best hyperparameter configurations.
+            - best_fold : dict
+              Information about the best-performing fold, including:
+              'fold' (index), 'features' (features selected in that fold), 'params' (hyperparameters),
+              the metric score for that fold, and the corresponding fitted estimator.
+            - folds_estimators : list
+              List of fitted search estimator instances from each outer CV fold.
+            - hp search and fs parameters : dict
+              Metadata for the combined search including:
+                  'n_features' : number of features targeted for selection,
+                  'direction'  : direction used in feature selection,
+                  'search type': type of hyperparameter search ('grid' or 'random'),
+                  'param grid' : the parameter grid used,
+                  'n_iter'     : number of iterations for randomized search,
+                  'scoring'    : metric used for evaluation.
+
         Notes
         -----
-        This approach combines the benefits of feature selection and hyperparameter tuning
-        in a single nested cross-validation framework, providing a comprehensive assessment
-        of model performance and stability.
-        
-        The method returns both the stable features (selected in majority of folds) and
-        stable parameters (most frequently selected across folds), as well as detailed
-        information about each fold.
-        
+        This combined approach provides a comprehensive assessment of both feature subset stability
+        and hyperparameter robustness by leveraging nested cross-validation. It yields detailed
+        fold-level insights along with aggregated statistics for model performance, making it easier
+        to understand which features and parameter settings are consistently beneficial.
+
         See Also
         --------
-        _build_combined_fs_hp_pipeline : Builds the combined pipeline
-        _extract_combined_results : Extracts features and parameters from cross-validation
-        _aggregate_combined_results : Aggregates results across folds
-        feature_selection : Performs feature selection only
-        hp_search : Performs hyperparameter search only
-        
+        _build_combined_fs_hp_pipeline : Constructs the combined pipeline.
+        _extract_sfs_selected_features : Extracts the selected features from cross-validation estimators.
+        _extract_hp_search_params : Extracts best hyperparameter configurations from each fold.
+        _aggregate : Aggregates predictions, scores, and feature importances across folds.
+        feature_selection : Performs feature selection only.
+        hp_search : Performs hyperparameter tuning only.
+
         Examples
         --------
         >>> from sklearn.ensemble import RandomForestClassifier
-        >>> model_configs = {'rf': {'estimator': RandomForestClassifier(),
-        ...                         'params': {'max_depth': [3, 5, None]}}}
-        >>> result = pipeline.hp_search_fs('rf', search_type='grid', n_features=5)
-        >>> print(f"Selected features: {result['selected_features']}")
-        >>> print(f"Best parameters: {result['best_params']}")
+        >>> model_configs = {
+        ...     'rf': {
+        ...         'estimator': RandomForestClassifier(),
+        ...         'params': {'max_depth': [3, 5, None], 'min_samples_split': [2, 4, 6]}
+        ...     }
+        ... }
+        >>> result = pipeline.hp_search_fs('rf', search_type='grid', n_features=5, direction='forward')
+        >>> print(f"Stable selected features: {result['selected_features']}")
+        >>> print(f"Aggregated best parameters: {result['best_params']}")
         """
         
         # Set default n_features if not provided
@@ -1708,36 +1552,48 @@ class BasePipeline(ABC):
         )
         
         cv_res = self.cross_val(search_est, self.X, self.y)
-
-        # Extract results from each fold
-        outer_results, all_selected, all_params = self._extract_combined_results(
-            cv_res, feat_names, metric
-        )
+        # Extract the best estimator from each outer CV fold (search_estimator has best_estimator_ attribute)
+        estimators = [est.best_estimator_ for est in cv_res["cv_fold_estimators"]]
+        selected_per_fold, selected_all, freq = self._extract_sfs_selected_features(estimators, feat_names)
         
-        # Aggregate results across folds
-        selected_features, feature_frequency, best_params, param_frequency, best_fold, feature_importances, weighted_importances = self._aggregate_combined_results(
-            outer_results, all_selected, all_params, feat_names, metric
+        best_params_per_fold, best_params, param_frequency = self._extract_hp_search_params(cv_res["cv_fold_estimators"])
+        
+        predictions, metric_scores, feature_importances = self._aggregate(
+            cv_res["cv_fold_predictions"],
+            cv_res["cv_fold_scores"],
+            cv_res["cv_fold_importances"],
+            freq=freq
         )
-        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
-
+        best_fold_idx = np.argmax(metric_scores[metric]['mean'])
+        best_fold = {
+            'fold': best_fold_idx,
+            'features': selected_per_fold[best_fold_idx],
+            'params': best_params_per_fold[best_fold_idx],
+            metric: metric_scores[metric]["fold_scores"][best_fold_idx],
+            "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
+        }
         # Return comprehensive results
         return {
             'model_name': model_name,
-            **cv_res,
-            'n_features': n_sel,
-            'direction': direction,
-            'scoring': metric,
-            'search_type': search_type,
-            'selected_features': selected_features,
-            'feature_frequency': feature_frequency,
-            'best_params': best_params, 
-            'param_frequency': param_frequency,
-            'feature_importances': feature_importances,
-            'weighted_importances': weighted_importances,
-            'best_fold': best_fold,
-            'predictions': predictions,
             'metric_scores': metric_scores,
-            'outer_results': outer_results,
+            'selected_features': selected_all,
+            'feature_frequency': freq,
+            'feature_importances': feature_importances,
+            'best_params': best_params,
+            'param_frequency': param_frequency,
+            'predictions': predictions,
+            'selected_per_fold': selected_per_fold,
+            'best_params_per_fold': best_params_per_fold,
+            'best_fold': best_fold,
+            'folds_estimators': cv_res['cv_fold_estimators'],
+            'hp search and fs parameters': {
+            'n_features': n_features,
+            'direction': direction,
+            'search type': search_type,
+            'param grid': param_grid,
+            'n_iter': n_iter,
+            'scoring': metric,
+            },
         }
 
 
