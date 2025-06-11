@@ -28,14 +28,14 @@ def test_invalid_task_raises(single_output_data):
     X, y = single_output_data
     cfg = {"task": "unknown"}
     with pytest.raises(ValueError, match="Invalid task"):
-        MLPipeline(X, y, cfg)
+        MLPipeline(X, y, None, cfg)
 
 # Test invalid mode
 def test_invalid_mode_raises(single_output_data):
     X, y = single_output_data
     cfg = {"task": "regression", "mode": "invalid"}
     with pytest.raises(ValueError, match="Invalid mode"):
-        MLPipeline(X, y, cfg)
+        MLPipeline(X, y, None, cfg)
 
 # Test multivariate mode calls pipeline once returning dict
 def test_multivariate_mode(single_output_data, monkeypatch):
@@ -48,7 +48,7 @@ def test_multivariate_mode(single_output_data, monkeypatch):
         return {"y_shape": self.y.shape}
     monkeypatch.setattr(RegressionPipeline, "run", fake_run)
 
-    mlp = MLPipeline(X, y, cfg)
+    mlp = MLPipeline(X, y, None, cfg)
     out = mlp.run()
     assert isinstance(out, dict)
     assert out.get("y_shape") == y.shape
@@ -63,7 +63,7 @@ def test_univariate_mode_runs_per_output(monkeypatch, multi_output_data):
         return {"y_shape": self.y.shape}
     monkeypatch.setattr(RegressionPipeline, "run", fake_run)
 
-    mlp = MLPipeline(X, y, cfg)
+    mlp = MLPipeline(X, y, None, cfg)
     out = mlp.run()
     # Expect a dict with one entry per target (each target becoming a 1D array)
     assert isinstance(out, dict)
@@ -80,7 +80,7 @@ def test_univariate_mode_single_output(monkeypatch, single_output_data):
         return {"y_shape": self.y.shape}
     monkeypatch.setattr(RegressionPipeline, "run", fake_run)
     
-    mlp = MLPipeline(X, y, cfg)
+    mlp = MLPipeline(X, y, None, cfg)
     out = mlp.run()
     # Since y is single-output, expect a single dict instead of a dict of dicts
     assert isinstance(out, dict)
@@ -91,7 +91,7 @@ def test_univariate_mode_single_output(monkeypatch, single_output_data):
 def test_univariate_feature_selection_error(multi_output_data):
     X, y = multi_output_data
     cfg = {"task": "regression", "mode": "univariate", "analysis_type": "feature_selection"}
-    mlp = MLPipeline(X, y, cfg)
+    mlp = MLPipeline(X, y, None, cfg)
     with pytest.raises(ValueError, match="Cannot perform feature_selection in univariate mode"):
         mlp.run()
 
@@ -112,13 +112,13 @@ def test_classification_univariate_and_multivariate(monkeypatch):
     
     # multivariate mode returns single dict
     cfg_mv = {"task": "classification", "mode": "multivariate"}
-    mlp_mv = MLPipeline(X, y, cfg_mv)
+    mlp_mv = MLPipeline(X, y, None,  cfg_mv)
     out_mv = mlp_mv.run()
     assert out_mv["y_shape"] == y.shape
     
     # univariate mode returns dict per target # MOST LIKELY WRONG
     cfg_uv = {"task": "classification", "mode": "univariate"}
-    mlp_uv = MLPipeline(X, y, cfg_uv)
+    mlp_uv = MLPipeline(X, y, None, cfg_uv)
     out_uv = mlp_uv.run()
     assert set(out_uv.keys()) == set(range(y.shape[1]))
     for _, res in out_uv.items():
@@ -128,6 +128,6 @@ def test_classification_univariate_and_multivariate(monkeypatch):
 def test_classification_univariate_fs_error():
     X, y = np.zeros((5, 2)), np.zeros((5, 2))
     cfg = {"task": "classification", "mode": "univariate", "analysis_type": "hp_search_fs"}
-    mlp = MLPipeline(X, y, cfg)
+    mlp = MLPipeline(X, y, None, cfg)
     with pytest.raises(ValueError, match="Cannot perform hp_search_fs in univariate mode"):
         mlp.run()

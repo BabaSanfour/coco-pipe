@@ -24,9 +24,10 @@ class MLPipeline:
     ...
     """
 
-    def __init__(self, X, y, config):
+    def __init__(self, X, y, groups, config):
         self.X = X
         self.y = y
+        self.groups = groups
         self.config = config
 
         # Set verbose and logger from config (with defaults)
