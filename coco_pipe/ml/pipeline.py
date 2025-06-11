@@ -15,6 +15,8 @@ from typing import Any, Dict
 from .classification import ClassificationPipeline
 from .regression import RegressionPipeline
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class MLPipeline:
     """
@@ -29,9 +31,8 @@ class MLPipeline:
 
         # Set verbose and logger from config (with defaults)
         self.verbose = config.get("verbose", False)
-        self.logger = config.get("logger", logging.getLogger(__name__))
 
-        self.logger.debug("Initializing MLPipeline with config: %s", config)
+        logger.debug("Initializing MLPipeline with config: %s", config)
 
         # Task: classification or regression
         self.task = config.get("task")
@@ -137,7 +138,6 @@ class MLPipeline:
             results_file=self.config.get("results_file", "results"),
             cv_kwargs=self.cv_kwargs,
             verbose=self.verbose,
-            logger=self.logger
         )
 
         # Multivariate mode or single-output always treated as one run
