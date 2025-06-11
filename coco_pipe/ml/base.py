@@ -119,6 +119,7 @@ class BasePipeline(ABC):
         y: Union[pd.Series, np.ndarray],
         metric_funcs: Dict[str, Any],
         model_configs: Dict[str, Any],
+        use_scaler: bool = True,
         columns: Optional[Sequence[str]] = None,
         default_metrics: Optional[Sequence[str]] = None,
         cv_kwargs: Dict[str, Any] = DEFAULT_CV,
@@ -147,6 +148,9 @@ class BasePipeline(ABC):
             Mapping from model names to dicts with keys:
             - 'estimator': sklearn-compatible estimator instance
             - 'params': optional dict of hyperparameter grids for tuning
+        use_scaler : bool, default=True
+            Whether to use a scaler (StandardScaler) in the pipeline.
+            If True, a StandardScaler will be applied before the model.
         columns : sequence of str, optional
             Names of feature matrix columns. If None, and X is a DataFrame we will use the DataFrame's columns.
             If X is an ndarray, default names will be generated as 'feature_0', 'feature_1', etc.
@@ -193,6 +197,7 @@ class BasePipeline(ABC):
         self.y = y
         self.metric_funcs = metric_funcs
         self.metrics = list(default_metrics) if default_metrics else []
+        self.use_scaler = use_scaler
         self.cv_kwargs = deepcopy(cv_kwargs)  # shallow copy
         self.groups = groups
         self.n_jobs = n_jobs
@@ -568,6 +573,22 @@ class BasePipeline(ABC):
         cv_conf.setdefault('random_state', self.random_state)
         cv = get_cv_splitter(**cv_conf)
 
+        is_search = isinstance(estimator, (GridSearchCV, RandomizedSearchCV))
+        if getattr(self, 'use_scaler', False):
+            logger.info("Using StandardScaler in the pipeline.")
+            from sklearn.preprocessing import StandardScaler
+            # If estimator is a Pipeline, add scaler to the beginning
+            # If estimator is a bare estimator, wrap it in a Pipeline with scaler
+            if isinstance(estimator, Pipeline):
+                steps = [('scaler', StandardScaler())] + estimator.steps
+                estimator = Pipeline(steps)
+            else:
+                # wrap a bare estimator
+                estimator = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('clf',    estimator)
+                ])
+
         X_arr = X.values if isinstance(X, pd.DataFrame) else X
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
         groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
@@ -592,6 +613,20 @@ class BasePipeline(ABC):
             error_score='raise'
         )
 
+        # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_ survive —
+        raw_ests = cv_results['estimator']
+        cv_fold_estimators = []
+        for est in raw_ests:
+            if isinstance(est, Pipeline):
+                inner = est.named_steps.get('clf')
+                if isinstance(inner, (GridSearchCV, RandomizedSearchCV)):
+                    cv_fold_estimators.append(inner)
+                else:
+                    cv_fold_estimators.append(est)
+            else:
+                cv_fold_estimators.append(est)
+
+        cv_results['estimator'] = cv_fold_estimators
         splits = list(cv.split(X_arr, y_arr, groups_arr))
 
         fold_predictions = []

@@ -507,3 +507,64 @@ def test_reset_and_list_models():
     after = pipe.get_model_params('lr')
     assert after['init_params'] == orig['init_params']
     assert after['param_grid'] == orig['param_grid']
+
+def test_cross_val_scaler_injection():
+    import numpy as np
+    from sklearn.dummy import DummyClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    # simple binary classification data
+    X = np.array([[0.], [1.], [2.], [3.]])
+    y = np.array([0, 0, 1, 1])
+    def acc(y_true, y_pred): 
+        return float((y_true == y_pred).mean())
+
+    # pipeline with use_scaler=True
+    model_configs = {'d': {'estimator': DummyClassifier(strategy='most_frequent'), 'params': {}}}
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'acc': acc},
+        model_configs=model_configs,
+        use_scaler=True,
+        default_metrics=['acc'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': False},
+        n_jobs=1
+    )
+
+    cv_res = pipe.cross_val(DummyClassifier(), X, y)
+    # each fold estimator should be a Pipeline with a StandardScaler step
+    for est in cv_res['cv_fold_estimators']:
+        assert isinstance(est, Pipeline)
+        assert 'scaler' in est.named_steps
+        assert isinstance(est.named_steps['scaler'], StandardScaler)
+
+def test_baseline_evaluation_scaler():
+    import numpy as np
+    from sklearn.dummy import DummyClassifier
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    # same data, test baseline_evaluation path
+    X = np.array([[0.], [1.], [2.], [3.]])
+    y = np.array([0, 0, 1, 1])
+    def acc(y_true, y_pred): 
+        return float((y_true == y_pred).mean())
+    model_configs = {'d': {'estimator': DummyClassifier(strategy='most_frequent'), 'params': {}}}
+
+    pipe = DummyPipeline(
+        X, y,
+        metric_funcs={'acc': acc},
+        model_configs=model_configs,
+        use_scaler=True,
+        default_metrics=['acc'],
+        cv_kwargs={'cv_strategy': 'kfold', 'n_splits': 2, 'shuffle': False},
+        n_jobs=1
+    )
+
+    res = pipe.baseline_evaluation('d')
+    # and the returned fold estimators must also include the scaler
+    for est in res['folds_estimators']:
+        assert isinstance(est, Pipeline)
+        assert 'scaler' in est.named_steps
+        assert isinstance(est.named_steps['scaler'], StandardScaler)

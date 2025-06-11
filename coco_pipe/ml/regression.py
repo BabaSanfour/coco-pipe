@@ -54,6 +54,9 @@ class SingleOutputRegressionPipeline(BasePipeline):
         Models to include in the pipeline. If "all", all available models are used.
     metrics : str or list, optional (default=None)
         Metrics to evaluate. If None, default metrics are used.
+    use_scaler: bool = True,
+        Whether to use a scaler (StandardScaler) in the pipeline.
+        If True, a StandardScaler will be applied before the model.
     random_state : int, optional (default=42)
         Random state for reproducibility.
     n_jobs : int, optional (default=-1)
@@ -96,6 +99,7 @@ class SingleOutputRegressionPipeline(BasePipeline):
         y: Union[pd.Series, np.ndarray],
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
@@ -125,6 +129,7 @@ class SingleOutputRegressionPipeline(BasePipeline):
             y=y,
             metric_funcs=metric_funcs,
             model_configs=model_configs,
+            use_scaler=use_scaler,
             default_metrics=default_metrics,
             cv_kwargs=cv,
             groups=groups,
@@ -156,6 +161,9 @@ class MultiOutputRegressionPipeline(BasePipeline):
         Models to include in the pipeline. If "all", all available models are used.
     metrics : str or list, optional (default=None)
         Metrics to evaluate. If None, default metrics are used.
+    use_scaler: bool = True,
+        Whether to use a scaler (StandardScaler) in the pipeline.
+        If True, a StandardScaler will be applied before the model.
     random_state : int, optional (default=42)
         Random state for reproducibility.
     n_jobs : int, optional (default=-1)
@@ -197,6 +205,7 @@ class MultiOutputRegressionPipeline(BasePipeline):
         y: Union[pd.Series, np.ndarray],
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
@@ -226,6 +235,7 @@ class MultiOutputRegressionPipeline(BasePipeline):
             y=y,
             metric_funcs=metric_funcs,
             model_configs=model_configs,
+            use_scaler=use_scaler,
             default_metrics=default_metrics,
             cv_kwargs=cv,
             groups=groups,
@@ -260,6 +270,9 @@ class RegressionPipeline:
         Models to include in the pipeline. If "all", all available models are used.
     metrics : str or list, optional (default=None)
         Metrics to evaluate. If None, default metrics are used.
+    use_scaler: bool = True,
+        Whether to use a scaler (StandardScaler) in the pipeline.
+        If True, a StandardScaler will be applied before the model.
     random_state : int, optional (default=42)
         Random state for reproducibility.
     cv_strategy : str, optional (default="kfold")
@@ -319,6 +332,7 @@ class RegressionPipeline:
         analysis_type: str = "baseline",
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         cv_strategy: str = "kfold",
         n_splits: int = 5,
@@ -343,6 +357,7 @@ class RegressionPipeline:
         self.analysis_type = analysis_type
         self.models = models
         self.metrics = metrics
+        self.use_scaler = use_scaler
         self.random_state = random_state
         self.cv_strategy = cv_strategy
         self.n_splits = n_splits
@@ -414,6 +429,7 @@ class RegressionPipeline:
             "analysis_type": self.analysis_type,
             "models": self.models,
             "metrics": self.metrics,
+            "use_scaler": self.use_scaler,
             "random_state": self.random_state,
             "cv_strategy": self.cv_strategy,
             "n_splits": self.n_splits,

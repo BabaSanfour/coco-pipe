@@ -124,6 +124,7 @@ class MLPipeline:
             analysis_type=self.config.get("analysis_type", "baseline"),
             models=self.config.get("models", "all"),
             metrics=self.config.get("metrics", None),
+            use_scaler=self.config.get("use_scaler", True),
             random_state=self.config.get("random_state", 42),
             cv_strategy=self.config.get("cv_strategy", "stratified"),
             n_splits=self.config.get("n_splits", 5),

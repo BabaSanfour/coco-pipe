@@ -53,6 +53,9 @@ class BinaryClassificationPipeline(BasePipeline):
     metrics : str or list, optional
         Metrics to evaluate. If None, uses default metrics for binary classification.
         Default is None.
+    use_scaler: bool = True,
+        Whether to use a scaler (StandardScaler) in the pipeline.
+        If True, a StandardScaler will be applied before the model.
     random_state : int, optional
         Random state for reproducibility. Default is 42.
     n_jobs : int, optional
@@ -69,6 +72,7 @@ class BinaryClassificationPipeline(BasePipeline):
         y: Union[pd.Series, np.ndarray],
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
@@ -97,6 +101,7 @@ class BinaryClassificationPipeline(BasePipeline):
             y=y,
             metric_funcs=metric_funcs,
             model_configs=model_configs,
+            use_scaler=use_scaler,
             default_metrics=default_metrics,
             cv_kwargs=cv,
             groups=groups,
@@ -126,6 +131,9 @@ class MultiClassClassificationPipeline(BasePipeline):
         Models to include. Default is "all".
     metrics : str or list, optional
         Metrics to evaluate. Default is None.
+    use_scaler: bool = True,
+        Whether to use a scaler (StandardScaler) in the pipeline.
+        If True, a StandardScaler will be applied before the model.
     per_class : bool, optional
         Whether to compute per-class metrics (precision, recall, F1). Default is False.
     random_state : int, optional
@@ -144,6 +152,7 @@ class MultiClassClassificationPipeline(BasePipeline):
         y: Union[pd.Series, np.ndarray],
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
@@ -170,6 +179,7 @@ class MultiClassClassificationPipeline(BasePipeline):
             model_configs=model_configs,
             default_metrics=metrics,
             metric_funcs=metric_funcs,
+            use_scaler=use_scaler,
             random_state=random_state,
             n_jobs=n_jobs,
             cv_kwargs=cv_kwargs,
@@ -248,6 +258,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
         y: Union[pd.Series, np.ndarray],
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
+        use_scaler: bool = True,
         random_state: int = 42,
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
@@ -278,6 +289,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
             y=y,
             metric_funcs=metric_funcs,
             model_configs=model_configs,
+            use_scaler=use_scaler,
             default_metrics=default_metrics,
             cv_kwargs=cv,
             groups=groups,
@@ -336,6 +348,8 @@ class ClassificationPipeline:
         Models to include. Can be "all", a model name, or a list of model names.
     metrics : str or list, optional
         Metrics to evaluate. If None, uses default metrics for the task type.
+    use_scaler : bool, optional
+        Whether to use a scaler (StandardScaler) in the pipeline. Default is True.
     random_state : int, optional
         Random state for reproducibility. Default is 42.
     cv_strategy : str, optional
@@ -394,6 +408,7 @@ class ClassificationPipeline:
         y: Union[pd.Series, np.ndarray],
         analysis_type: str = "baseline",
         models: Union[str, Sequence[str]] = "all",
+        use_scaler: bool = True,
         metrics: Union[str, Sequence[str]] = "accuracy",
         random_state: int = 42,
         cv_strategy: str = "stratified",
@@ -418,6 +433,7 @@ class ClassificationPipeline:
         self.analysis_type = analysis_type
         self.models = models
         self.metrics = metrics
+        self.use_scaler = use_scaler
         self.random_state = random_state
         self.cv_strategy = cv_strategy
         self.n_splits = n_splits
@@ -569,6 +585,7 @@ class ClassificationPipeline:
             "analysis_type": self.analysis_type,
             "models": self.models,
             "metrics": self.metrics,
+            "use_scaler": self.use_scaler,
             "random_state": self.random_state,
             "cv_strategy": self.cv_strategy,
             "n_splits": self.n_splits,
