@@ -195,7 +195,6 @@ class BasePipeline(ABC):
         self.n_jobs = n_jobs
         self.random_state = random_state
 
-        self.feature_names = columns or self._get_feature_names(X)
 
         self.model_configs: Dict[str, ModelConfig] = {}
         for name, cfg in model_configs.items():
@@ -210,6 +209,7 @@ class BasePipeline(ABC):
 
         self._validate_input()
         self._validate_metrics()
+        self.feature_names = columns or self._get_feature_names(X)
 
     def _validate_input(self) -> None:
         if not isinstance(self.X, (pd.DataFrame, np.ndarray)):
