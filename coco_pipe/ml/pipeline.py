@@ -10,6 +10,7 @@ Version: 0.0.1
 License: TBD
 """
 
+import logging
 from typing import Any, Dict
 from .classification import ClassificationPipeline
 from .regression import RegressionPipeline
@@ -18,54 +19,20 @@ from .regression import RegressionPipeline
 class MLPipeline:
     """
     Unified front‐end for both classification and regression pipelines.
-
-    Parameters
-    ----------
-    X : array‐like of shape (n_samples, n_features)
-        Feature matrix.
-    y : array‐like of shape (n_samples,) or (n_samples, n_targets)
-        Target vector or matrix.
-    config : dict
-        Configuration dictionary. Must include:
-          - task: "classification" or "regression"
-          - analysis_type, models, metrics, random_state, cv_strategy, n_splits,
-            n_features, direction, search_type, n_iter, scoring, n_jobs,
-            save_intermediate, results_dir, results_file, cv_kwargs
-
-    Raises
-    ------
-    ValueError
-        If the `task` in the configuration is not "classification" or "regression".
-    KeyError
-        If any required configuration parameters are missing.
-
-    Notes
-    -----
-    This class serves as a high-level interface to either a classification or regression
-    pipeline based on the `task` specified in the configuration. It abstracts away
-    the details of the underlying pipeline classes, allowing users to focus on
-    configuring the task and running the analysis without worrying about the specifics
-    of the implementation.  
-
-    Examples
-    --------
-    >>> cfg = {
-    ...   "task": "classification",
-    ...   "analysis_type": "baseline",
-    ...   "models": ["Logistic Regression"],
-    ...   "metrics": ["accuracy"],
-    ...   "cv_strategy": "stratified",
-    ...   "n_splits": 5,
-    ...   "random_state": 42
-    ... }
-    >>> ml = MLPipeline(X, y, cfg)
-    >>> results = ml.run()
+    ...
     """
 
     def __init__(self, X, y, config):
         self.X = X
         self.y = y
         self.config = config
+
+        # Set verbose and logger from config (with defaults)
+        self.verbose = config.get("verbose", False)
+        self.logger = config.get("logger", logging.getLogger(__name__))
+
+        self.logger.debug("Initializing MLPipeline with config: %s", config)
+
         # Task: classification or regression
         self.task = config.get("task")
         if self.task == "regression":
@@ -80,11 +47,10 @@ class MLPipeline:
         if self.mode not in ("univariate", "multivariate"):
             raise ValueError(f"Invalid mode: {self.mode!r}; must be 'univariate' or 'multivariate'")
 
-        # Extract cv_kwargs without duplicates
+        # Extract cv_kwargs without duplicates (remove keys that might conflict with ours)
         cv_kwargs = config.get("cv_kwargs", {})
-        cv_kwargs.pop("cv_strategy", None)
-        cv_kwargs.pop("n_splits", None)
-        cv_kwargs.pop("random_state", None)
+        for key in ("cv_strategy", "n_splits", "random_state", "verbose", "logger"):
+            cv_kwargs.pop(key, None)
         self.cv_kwargs = cv_kwargs
 
     def run(self):
@@ -150,7 +116,7 @@ class MLPipeline:
         ValueError
             If the analysis_type is 'feature_selection' or 'hp_search_fs' in univariate mode.
         """
-        # Common kwargs for pipeline instantiation
+        # Common kwargs for pipeline instantiation (including verbose and logger)
         common_kwargs = dict(
             X=self.X,
             y=None,  # to be set per run
@@ -169,11 +135,13 @@ class MLPipeline:
             save_intermediate=self.config.get("save_intermediate", False),
             results_dir=self.config.get("results_dir", "results"),
             results_file=self.config.get("results_file", "results"),
-            cv_kwargs=self.cv_kwargs
+            cv_kwargs=self.cv_kwargs,
+            verbose=self.verbose,
+            logger=self.logger
         )
 
         # Multivariate mode or single-output always treated as one run
-        if self.mode == "multivariate" or getattr(self.y, 'ndim', 1) == 1:
+        if self.mode == "multivariate" or getattr(self.y, "ndim", 1) == 1:
             common_kwargs["y"] = self.y
             pipeline = self.pipeline_cls(**common_kwargs)
             return pipeline.run()
