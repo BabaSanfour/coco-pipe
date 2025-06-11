@@ -17,6 +17,7 @@ from sklearn.model_selection import (
     LeaveOneGroupOut,
     LeavePGroupsOut,
     GroupKFold,
+    StratifiedGroupKFold,
     train_test_split,
 )
 
@@ -136,6 +137,18 @@ def get_cv_splitter(
 
     elif strat == 'group_kfold':
         return GroupKFold(n_splits=n_splits)
+
+    elif strat == 'stratified_group_kfold':
+        if not shuffle and random_state is not None:
+            warnings.warn(
+                "random_state has no effect when shuffle=False.",
+                UserWarning
+            )
+        return StratifiedGroupKFold(
+            n_splits=n_splits,
+            shuffle=shuffle,
+            random_state=random_state if shuffle else None,
+        )
 
     elif strat == 'leave_p_out':
         n_groups = kwargs.get('n_groups')
