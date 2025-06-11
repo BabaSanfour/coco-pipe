@@ -155,47 +155,92 @@ BINARY_MODELS: Dict[str, Dict[str, Any]] = {
     "Logistic Regression": {
         "estimator": LogisticRegression,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"C": [0.1, 1, 10], "penalty": ["l2"]},
+        "hp_search_params": {
+            "C": [0.1, 1, 10, 100],
+            "penalty": ["l2", "l1", "elasticnet"],
+            "solver": ["lbfgs", "liblinear", "saga"],
+            "max_iter": [100, 200, 300],
+        },
     },
     "Decision Tree": {
         "estimator": DecisionTreeClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"max_depth": [3, 5, 10, None], "min_samples_split": [2, 5, 10]},
+        "hp_search_params": {
+            "max_depth": [3, 5, 10, None],
+            "min_samples_split": [2, 5, 10],
+            "criterion": ["gini", "entropy"],
+            "min_samples_leaf": [1, 2, 4],
+        },
     },
     "Random Forest": {
         "estimator": RandomForestClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, 10, None]},
+        "hp_search_params": {
+            "n_estimators": [100, 150, 200],
+            "max_features": ["sqrt", "log2"],
+            "max_depth": [3, 5, 10, None],
+            "min_samples_leaf": [1, 2, 4],
+            "bootstrap": [True, False],
+        },
     },
     "Gradient Boosting": {
         "estimator": GradientBoostingClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1], "max_depth": [3, 5]},
+        "hp_search_params": {
+            "n_estimators": [100, 200],
+            "learning_rate": [0.01, 0.1],
+            "max_depth": [3, 5],
+            "subsample": [0.8, 1.0],
+            "min_samples_leaf": [1, 2, 4],
+        },
     },
     "SVC": {
         "estimator": SVC,
         "default_params": {"probability": True, "random_state": 42},
-        "hp_search_params": {"C": [0.1, 1, 10], "kernel": ["linear", "rbf"]},
+        "hp_search_params": {
+            "C": [0.1, 1, 10],
+            "kernel": ["linear", "rbf"],
+            "gamma": ["scale", "auto"],
+            "degree": [3, 4],
+        },
     },
     "KNN": {
         "estimator": KNeighborsClassifier,
         "default_params": {},
-        "hp_search_params": {"n_neighbors": [3, 5, 7]},
+        "hp_search_params": {
+            "n_neighbors": [3, 5, 7],
+            "weights": ["uniform", "distance"],
+            "metric": ["euclidean", "manhattan"],
+        },
     },
     "Extra Trees": {
         "estimator": ExtraTreesClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]},
+        "hp_search_params": {
+            "n_estimators": [100, 200],
+            "max_depth": [None, 5, 10],
+            "min_samples_split": [2, 4, 6],
+            "criterion": ["gini", "entropy"],
+        },
     },
     "AdaBoost": {
         "estimator": AdaBoostClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]},
+        "hp_search_params": {
+            "n_estimators": [50, 100],
+            "learning_rate": [0.5, 1.0],
+            "algorithm": ["SAMME", "SAMME.R"],
+        },
     },
     "HistGradientBoosting": {
         "estimator": HistGradientBoostingClassifier,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]},
+        "hp_search_params": {
+            "max_iter": [100, 200],
+            "learning_rate": [0.01, 0.1],
+            "max_depth": [None, 3, 5],
+            "min_samples_leaf": [20, 30],
+        },
     },
 }
 
