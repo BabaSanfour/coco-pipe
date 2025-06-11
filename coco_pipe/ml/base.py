@@ -610,7 +610,7 @@ class BasePipeline(ABC):
             n_jobs=self.n_jobs,
             return_estimator=True,
             return_train_score=False,
-            error_score='raise'
+            error_score='raise',
             params={'groups': groups_arr}
         )
 
