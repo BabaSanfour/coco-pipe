@@ -125,6 +125,7 @@ class BasePipeline(ABC):
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
         n_jobs: int = -1,
         random_state: Optional[int] = None,
+        verbose: bool = False  # new verbose flag
     ):
         """
         Initialize pipeline with data, metrics, and configuration.
@@ -164,6 +165,8 @@ class BasePipeline(ABC):
             -1 means using all processors.
         random_state : int, optional
             Random seed for reproducibility of CV splits and model initialization.
+        verbose : bool, default=False
+            Whether to print detailed progress messages.
 
         Raises
         ------
@@ -194,7 +197,7 @@ class BasePipeline(ABC):
         self.groups = groups
         self.n_jobs = n_jobs
         self.random_state = random_state
-
+        self.verbose = verbose  
 
         self.model_configs: Dict[str, ModelConfig] = {}
         for name, cfg in model_configs.items():
@@ -308,30 +311,18 @@ class BasePipeline(ABC):
         # 1) Tree‐based or ensemble
         if hasattr(estimator, 'feature_importances_'):
             return estimator.feature_importances_
-
-        # 2) Linear models
         if hasattr(estimator, 'coef_'):
             coef = estimator.coef_
-            # single‐output
             if coef.ndim == 1:
                 return coef
-            # multiclass: average over classes
             return np.mean(coef, axis=0)
-
-        # 3) Pipeline: unwrap last step
         if hasattr(estimator, 'named_steps'):
             last = list(estimator.named_steps.values())[-1]
             return BasePipeline._extract_feature_importances(last)
-
-        # 4) SequentialFeatureSelector: use its underlying estimator_
         if hasattr(estimator, 'estimator_'):
             return BasePipeline._extract_feature_importances(estimator.estimator_)
-
-        # 5) GridSearchCV or RandomizedSearchCV: use best_estimator_
         if hasattr(estimator, 'best_estimator_'):
             return BasePipeline._extract_feature_importances(estimator.best_estimator_)
-
-        # 5) Voting or other meta-estimators: average sub-estimators
         if hasattr(estimator, 'estimators_'):
             imps = []
             for sub in estimator.estimators_:
@@ -340,8 +331,6 @@ class BasePipeline(ABC):
                     imps.append(imp)
             if imps:
                 return np.mean(imps, axis=0)
-
-        # Nothing found
         return None
 
     def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
@@ -349,61 +338,29 @@ class BasePipeline(ABC):
         # Concatenate all predictions for the predictions output
         y_true = np.concatenate([fp["y_true"] for fp in fold_preds])
         y_pred = np.concatenate([fp["y_pred"] for fp in fold_preds])
-        
         predictions = {"y_true": y_true, "y_pred": y_pred}
         
-        # Add probabilities if available - handle shape mismatches
         if all("y_proba" in fp for fp in fold_preds):
             try:
-                # Check if all probability arrays have the same shape
                 shapes = [fp["y_proba"].shape for fp in fold_preds]
                 if all(s[1] == shapes[0][1] for s in shapes):
-                    # All have same number of columns, safe to concatenate
                     y_proba = np.vstack([fp["y_proba"] for fp in fold_preds])
                     predictions["y_proba"] = y_proba
-                else:
-                    # Shape mismatch - skip probability concatenation
-                    pass
             except Exception:
-                # If concatenation fails for any reason, skip probabilities
                 pass
         
-        # add fold predictions to predictions
         predictions["fold_preds"] = fold_preds
-        # Compute metrics per fold, then average
         metrics = {}
         for metric_name in self.metrics:
-            metric_func = self.metric_funcs[metric_name]
-            # fold_scores = []
             fold_score = fold_scores[metric_name]
-            # for fs in fold_scores[metric_name]:
-
-                # DONT know why I am using this but lets skip it for now and use scores
-                # try:
-                #     # Handle probability-based metrics
-                #     if metric_name in ["roc_auc", "average_precision"] and "y_proba" in fp:
-                #         if fp["y_proba"].ndim == 2 and fp["y_proba"].shape[1] >= 2:
-                #             # Use positive class probabilities for binary classification
-                #             score = metric_func(fp["y_true"], fp["y_proba"][:, 1])
-                #         else:
-                #             score = metric_func(fp["y_true"], fp["y_proba"])
-                #     else:
-                #         # Use predictions for other metrics
-                #         score = metric_func(fp["y_true"], fp["y_pred"])
-                #     fold_scores.append(score)
-                # except Exception as e:
-                #     # Skip this fold if metric calculation fails
-                #     continue
-            
-            # if fold_score:
             metrics[metric_name] = {
                 "mean": np.mean(fold_score),
                 "std": np.std(fold_score),
                 "fold_scores": fold_score
             }
-
-        # Aggregate feature importances if available now it is a dict feat_name: array of importances!
-        # get mean std of each feature importance and also keep fold importances
+            if self.verbose:
+                logger.info("Metric '%s' - Mean: %.4f, Std: %.4f", 
+                            metric_name, np.mean(fold_score), np.std(fold_score))
         feature_importances = {}
         if fold_importances:
             for feat_name, fi in fold_importances.items():
@@ -417,7 +374,8 @@ class BasePipeline(ABC):
                     "weighted_std": std * feat_freq,
                     "fold_importances": fi
                 }
-
+                if self.verbose:
+                    logger.info("Feature '%s' - Mean importance: %.4f", feat_name, mean)
         return predictions, metrics, feature_importances
 
 
@@ -525,21 +483,16 @@ class BasePipeline(ABC):
             raise KeyError(f"Model '{model_name}' not found")
         mc = self.model_configs[model_name]
 
-        # Choose target
         if param_type not in ['default', 'hp_search']:
             raise ValueError("param_type must be 'default' or 'hp_search'")
 
-        # 1) update estimator defaults
         if update_estimator and param_type == 'default':
             temp = clone(mc.original_estimator)
-            temp.set_params(**params)  # will raise if invalid
+            temp.set_params(**params)
             mc.init_params.update(params)
             mc.estimator = temp
             logger.info(f"Updated init parameters for '{model_name}': {params}")
-
-        # 2) update config grid
         if update_config and param_type == 'hp_search':
-            # validate grid values are list-like
             for k, v in params.items():
                 if not isinstance(v, (list, tuple, np.ndarray)):
                     raise ValueError(f"Grid values for '{k}' must be a sequence")
@@ -609,43 +562,8 @@ class BasePipeline(ABC):
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray]
     ) -> Dict[str, Any]:
-        """
-        Perform cross-validation using scikit-learn's `cross_validate`.
-
-        Wraps `metric_funcs` into `scoring`, collects per-fold predictions,
-        scores, estimators, and feature importances.
-
-        Parameters
-        ----------
-        estimator : BaseEstimator
-            The base estimator to evaluate.
-        X : DataFrame or ndarray
-            Feature matrix.
-        y : Series or ndarray
-            Target vector or matrix.
-
-        Returns
-        -------
-        results : dict
-            - 'cv_fold_scores': dict mapping metric names to arrays of fold scores,
-                array shape (n_splits,).
-            - 'cv_fold_importances': dict mapping feature names to arrays of importances
-                (one array per feature), or empty dict if unsupported,
-                array shape (n_splits,).
-            - 'cv_fold_predictions': list of dicts, each with keys:
-                'y_true', 'y_pred', optional 'y_proba' if estimator supports it.
-            - 'cv_fold_estimators': list of fitted estimators from each fold.
-        Raises
-        ------
-        ValueError
-            If X and y have different numbers of samples or if no metrics are specified.
-        Notes
-        -----
-        This method performs cross-validation on the provided estimator using
-        the configured cross-validation strategy. It collects per-fold predictions,
-        scores, and feature importances.
-        """
-
+        if self.verbose:
+            logger.info("Starting cross-validation...")
         cv_conf = deepcopy(self.cv_kwargs)
         cv_conf.setdefault('random_state', self.random_state)
         cv = get_cv_splitter(**cv_conf)
@@ -654,17 +572,15 @@ class BasePipeline(ABC):
         y_arr = y.values if isinstance(y, (pd.Series, pd.DataFrame)) else y
         groups_arr = self.groups.values if isinstance(self.groups, pd.Series) else self.groups
 
-        # build scoring dictionary
         proba_required = {m for m, fn in self.metric_funcs.items() if hasattr(fn, '__name__') and 'proba' in fn.__name__}
         scoring = {
             m: make_scorer(
-            self.metric_funcs[m],
-            **({'needs_proba': True} if m in proba_required else {})
+                self.metric_funcs[m],
+                **({'needs_proba': True} if m in proba_required else {})
             )
             for m in self.metrics
         }
 
-        # run CV
         cv_results = cross_validate(
             estimator=estimator,
             X=X_arr, y=y_arr, groups=groups_arr,
@@ -676,10 +592,8 @@ class BasePipeline(ABC):
             error_score='raise'
         )
 
-        # retrieve splits
         splits = list(cv.split(X_arr, y_arr, groups_arr))
 
-        # collect fold-level predictions
         fold_predictions = []
         for idx, est_fold in enumerate(cv_results['estimator']):
             _, val_idx = splits[idx]
@@ -695,27 +609,22 @@ class BasePipeline(ABC):
                     )
             fold_predictions.append(fp)
 
-        # extract feature importances for each fold
         fold_importances = [
             self._extract_feature_importances(est_fold) for est_fold in cv_results['estimator']
         ]
         
-        # per-metric arrays
         cv_fold_scores = {m: np.array(cv_results.get(f'test_{m}', [])) for m in self.metrics}
-        # per feature importances
         cv_fold_importances = {}
 
-
         for i, feature in enumerate(self.feature_names):
-            # Only collect importances where the index is within bounds
             values = []
             for imp in fold_importances:
                 if imp is not None and i < len(imp):
                     values.append(imp[i])
-    
-            # Only add features that have at least one valid importance value
             if values:
                 cv_fold_importances[feature] = np.array(values)
+        if self.verbose:
+            logger.info("Finished cross-validation.")
         return {
             'cv_fold_scores': cv_fold_scores,
             'cv_fold_importances': cv_fold_importances,
@@ -769,6 +678,8 @@ class BasePipeline(ABC):
         >>> print(f"Accuracy: {results['metric_scores']['accuracy']['mean']:.4f}")
         >>> print(f"Feature Importances: {results['feature_importances']}")
         """
+        if self.verbose:
+            logger.info("Starting baseline evaluation for model '%s'...", model_name)
         if model_name not in self.model_configs:
             raise KeyError(f"Model '{model_name}' not found in model_configs")
 
@@ -776,9 +687,13 @@ class BasePipeline(ABC):
         clf = clone(mc.original_estimator).set_params(**mc.init_params)
 
         results_ = self.cross_val(clf, self.X, self.y)
-        predictions, metric_scores, feature_importances = self._aggregate(results_["cv_fold_predictions"], 
-                                                    results_["cv_fold_scores"],
-                                                    results_["cv_fold_importances"])
+        predictions, metric_scores, feature_importances = self._aggregate(
+            results_["cv_fold_predictions"], 
+            results_["cv_fold_scores"],
+            results_["cv_fold_importances"]
+        )
+        if self.verbose:
+            logger.info("Baseline Evaluation Metrics: %s", metric_scores)
         results = {
             'model_name': model_name,
             'metric_scores': metric_scores,
@@ -787,8 +702,6 @@ class BasePipeline(ABC):
             'params': mc.get('default_params', {}),
             'folds_estimators': results_['cv_fold_estimators'],
         }
-
-
         return results
 
     def _build_sfs_pipeline(
@@ -851,13 +764,16 @@ class BasePipeline(ABC):
         base = clone(mc.original_estimator).set_params(**mc.init_params)
         inner_cv = get_cv_splitter(**self.cv_kwargs)
         pipe = Pipeline([
-        ('sfs', SequentialFeatureSelector(
-            clone(base), n_features_to_select=n_sel,
-            direction=direction, scoring=scorer,
-            cv=inner_cv, n_jobs=self.n_jobs)),
-        ('clf', clone(base))
+            ('sfs', SequentialFeatureSelector(
+                clone(base), n_features_to_select=n_sel,
+                direction=direction, scoring=scorer,
+                cv=inner_cv, n_jobs=self.n_jobs)),
+            ('clf', clone(base))
         ])
         feat_names = np.array(self._get_feature_names(self.X))
+        if self.verbose:
+            logger.info("Built SFS pipeline for model '%s' with %d features using '%s' direction.",
+                        model_name, n_sel, direction)
         return pipe, feat_names, metric
 
     def _extract_sfs_selected_features(
@@ -912,15 +828,14 @@ class BasePipeline(ABC):
             i: feat_names[mask].tolist()
             for i, mask in enumerate(masks)
         }
-        # Flatten all selected features from each fold into a set
         selected_all = set([feat for mask in masks for feat in feat_names[mask]])
-        # Compute frequency as the number of folds in which each feature was selected divided by total folds
         freq = {
             f: sum(mask[i] for mask in masks) / n_folds
             for i, f in enumerate(feat_names)
         }
+        if self.verbose:
+            logger.info("Extracted selected features and frequency across folds.")
         return selected_per_fold, selected_all, freq
-
 
     def feature_selection(
         self,
@@ -1017,20 +932,22 @@ class BasePipeline(ABC):
         >>> for feat, imp in sorted(result['weighted_importances'].items(), key=lambda x: x[1], reverse=True)[:5]:
         ...     print(f"  {feat}: {imp:.4f}")
         """
+        if self.verbose:
+            logger.info("Starting feature selection for model '%s'...", model_name)
+
         pipe, feat_names, metric = self._build_sfs_pipeline(
             model_name, n_features, direction, scoring
         )
 
         cv_res = self.cross_val(pipe, self.X, self.y)
-
         selected_per_fold, selected_all, freq = self._extract_sfs_selected_features(cv_res["cv_fold_estimators"], feat_names)
-
-        predictions, metric_scores, feature_importances = self._aggregate(cv_res["cv_fold_predictions"],
-                                                    cv_res["cv_fold_scores"],
-                                                    cv_res["cv_fold_importances"],
-                                                    freq=freq)
+        predictions, metric_scores, feature_importances = self._aggregate(
+            cv_res["cv_fold_predictions"],
+            cv_res["cv_fold_scores"],
+            cv_res["cv_fold_importances"],
+            freq=freq
+        )
         
-        # get best fold and its selected features
         best_fold_idx = np.argmax(metric_scores[metric]['mean'])
         best_fold = {
             'fold': best_fold_idx,
@@ -1038,7 +955,8 @@ class BasePipeline(ABC):
             metric: metric_scores[metric]["fold_scores"][best_fold_idx],
             "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
         }
-
+        if self.verbose:
+            logger.info("Feature selection results: Selected features %s", selected_all)
         return {
             'model_name': model_name,
             'metric_scores': metric_scores,
@@ -1103,7 +1021,6 @@ class BasePipeline(ABC):
         if hasattr(base_est, 'random_state') and self.random_state is not None:
             base_est.random_state = self.random_state
         
-        # Build appropriate search estimator
         if search_type.lower() == 'grid':
             search_est = GridSearchCV(
                 base_est,
@@ -1113,7 +1030,7 @@ class BasePipeline(ABC):
                 n_jobs=self.n_jobs,
                 refit=True
             )
-        else:  # randomized search
+        else:
             search_est = RandomizedSearchCV(
                 base_est,
                 grid,
@@ -1125,70 +1042,39 @@ class BasePipeline(ABC):
                 refit=True
             )
 
+        if self.verbose:
+            logger.info("Built %s search estimator for model '%s'.", search_type, model_name)
         return search_est, metric
 
     def _extract_hp_search_params(
         self,
         cv_fold_estimators: List,
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """
-        Extract hyperparameter search selected parameters and their selection frequency from cross-validation.
-
-        This helper method processes the best parameters from each fold to determine
-        parameter selection frequency and identify stable parameters (selected in
-        majority of folds).
-        
-        Parameters
-        ----------
-        cv_fold_estimators : list
-            List of fitted search estimators from each fold of cross-validation.
-            Each estimator should have a 'best_params_' attribute containing the best parameters
-            selected for that fold.
-            
-        Returns
-        -------
-        best_params_per_fold : dict
-            Dictionary mapping fold indices to the best parameters selected in that fold.
-            Example: {0: {'max_depth': 5, 'min_samples_split': 2}, ...}
-        best_params : dict
-            Aggregated best parameters selected across all folds by majority voting.
-            Example: {'max_depth': 5, 'min_samples_split': 2}
-        param_frequency : dict
-            Dictionary mapping parameter names to dictionaries of value frequencies.
-            Example: {'max_depth': {3: 0.6, 5: 0.4}, 'min_samples_split': {2: 1.0}}                    
-        """
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
         best_params_per_fold = {
             i: est.best_params_
             for i, est in enumerate(cv_fold_estimators)
         }
-
         n_folds = len(best_params_per_fold)
-
-        # Count parameter value occurrences across folds
         param_counts = {}
         for params in best_params_per_fold.values():
             for k, v in params.items():
-                # Handle various parameter types (including non-hashable ones like lists)
                 v_hashable = tuple(v) if isinstance(v, list) else v
                 param_counts.setdefault(k, {}).setdefault(v_hashable, 0)
                 param_counts[k][v_hashable] += 1
         
-        # Select best parameters by majority vote
         best_params = {}
         for k, val_counts in param_counts.items():
-            # Find the value with the highest count
             best_val, _ = max(val_counts.items(), key=lambda item: item[1])
-            # Convert tuple back to list if needed
             best_params[k] = list(best_val) if isinstance(best_val, tuple) else best_val
         
-        # Compute frequency of each parameter value
         param_frequency = {
             k: {(list(v) if isinstance(v, tuple) else v): cnt / n_folds 
                 for v, cnt in vals.items()}
             for k, vals in param_counts.items()
         }
+        if self.verbose:
+            logger.info("Extracted hyperparameter search parameters from folds.")
         return best_params_per_fold, best_params, param_frequency
-
 
     def hp_search(
         self,
@@ -1285,6 +1171,9 @@ class BasePipeline(ABC):
         >>> print(f"Best parameters: {result['best_params']}")
         >>> print(f"Parameter frequency: {result['param_frequency']}")
         """
+        if self.verbose:
+            logger.info("Starting hyperparameter search for model '%s'...", model_name)
+
         search_est, metric = self._build_search_estimator(
             model_name, search_type, param_grid, n_iter, scoring
         )
@@ -1293,10 +1182,12 @@ class BasePipeline(ABC):
 
         best_params_per_fold, best_params, param_frequency = self._extract_hp_search_params(cv_res['cv_fold_estimators'])
 
-        predictions, metric_scores, feature_importances = self._aggregate(cv_res["cv_fold_predictions"],
-                                                    cv_res["cv_fold_scores"],
-                                                    cv_res["cv_fold_importances"],
-                                                    freq=None)
+        predictions, metric_scores, feature_importances = self._aggregate(
+            cv_res["cv_fold_predictions"],
+            cv_res["cv_fold_scores"],
+            cv_res["cv_fold_importances"],
+            freq=None
+        )
         
         best_fold_idx = np.argmax(metric_scores[metric]['mean'])
         best_fold = {
@@ -1305,8 +1196,8 @@ class BasePipeline(ABC):
             metric: metric_scores[metric]["fold_scores"][best_fold_idx],
             "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
         }
-
-        # Return comprehensive results
+        if self.verbose:
+            logger.info("Hyperparameter search results: Best parameters %s", best_params)
         return {
             'model_name': model_name,
             'metric_scores': metric_scores,
@@ -1372,21 +1263,15 @@ class BasePipeline(ABC):
         # Set up defaults and scoring
         metric = scoring or self.metrics[0]
         scorer = make_scorer(self.metric_funcs[metric])
-
-        # Get model config and parameter grid
         mc = self.model_configs[model_name]
         raw_grid = param_grid or mc.param_grid
-
-        # Get inner CV splitters for both feature selection and hyperparameter tuning
         inner_cv_fs = get_cv_splitter(**self.cv_kwargs)
         inner_cv_hp = get_cv_splitter(**self.cv_kwargs)
         
-        # Create base estimator
         base_est = clone(mc.get('estimator'))
         if hasattr(base_est, 'random_state') and self.random_state is not None:
             base_est.random_state = self.random_state
         
-        # Build feature selection pipeline
         fs_pipe = Pipeline([
             ('sfs', SequentialFeatureSelector(
                 clone(base_est),
@@ -1399,7 +1284,6 @@ class BasePipeline(ABC):
             ('clf', clone(base_est))
         ])
         grid = {f'clf__{param}': values for param, values in raw_grid.items()}
-        # Wrap in hyperparameter search
         if search_type.lower() == 'grid':
             search_est = GridSearchCV(
                 fs_pipe,
@@ -1410,7 +1294,7 @@ class BasePipeline(ABC):
                 return_train_score=True,
                 refit=True
             )
-        else:  # randomized search
+        else:
             search_est = RandomizedSearchCV(
                 fs_pipe,
                 grid,
@@ -1422,9 +1306,9 @@ class BasePipeline(ABC):
                 return_train_score=True,
                 refit=True
             )
-        
-        # Get feature names
         feat_names = np.array(self._get_feature_names(self.X))
+        if self.verbose:
+            logger.info("Built combined FS and HP search pipeline for model '%s'.", model_name)
         return search_est, feat_names, metric            
 
     def hp_search_fs(
@@ -1543,7 +1427,8 @@ class BasePipeline(ABC):
         >>> print(f"Stable selected features: {result['selected_features']}")
         >>> print(f"Aggregated best parameters: {result['best_params']}")
         """
-        
+        if self.verbose:
+            logger.info("Starting combined feature selection and HP search for model '%s'...", model_name)
         # Set default n_features if not provided
         n_sel = n_features or (self.X.shape[1] // 2)
 
@@ -1552,7 +1437,6 @@ class BasePipeline(ABC):
         )
         
         cv_res = self.cross_val(search_est, self.X, self.y)
-        # Extract the best estimator from each outer CV fold (search_estimator has best_estimator_ attribute)
         estimators = [est.best_estimator_ for est in cv_res["cv_fold_estimators"]]
         selected_per_fold, selected_all, freq = self._extract_sfs_selected_features(estimators, feat_names)
         
@@ -1572,7 +1456,8 @@ class BasePipeline(ABC):
             metric: metric_scores[metric]["fold_scores"][best_fold_idx],
             "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
         }
-        # Return comprehensive results
+        if self.verbose:
+            logger.info("Combined FS and HP search results: Selected features %s and best parameters %s", selected_all, best_params)
         return {
             'model_name': model_name,
             'metric_scores': metric_scores,
@@ -1587,15 +1472,14 @@ class BasePipeline(ABC):
             'best_fold': best_fold,
             'folds_estimators': cv_res['cv_fold_estimators'],
             'hp search and fs parameters': {
-            'n_features': n_features,
-            'direction': direction,
-            'search type': search_type,
-            'param grid': param_grid,
-            'n_iter': n_iter,
-            'scoring': metric,
+                'n_features': n_features,
+                'direction': direction,
+                'search type': search_type,
+                'param grid': param_grid,
+                'n_iter': n_iter,
+                'scoring': metric,
             },
         }
-
 
     def execute(self, **kwargs) -> Dict[str, Any]:
         """
@@ -1671,27 +1555,25 @@ class BasePipeline(ABC):
         """
         # Extract execution type from kwargs
         method_name = kwargs.pop('type', 'baseline')
-        
-        # Validate method type
         valid_methods = ['baseline', 'feature_selection', 'hp_search', 'hp_search_fs']
         if method_name not in valid_methods:
             raise ValueError(
                 f"Invalid execution type '{method_name}'. "
                 f"Must be one of: {', '.join(valid_methods)}"
             )
-        
-        # Map execution type to method name
         method_map = {
             'baseline': 'baseline_evaluation',
             'feature_selection': 'feature_selection',
             'hp_search': 'hp_search',
             'hp_search_fs': 'hp_search_fs'
         }
-                
-        # Get the method and execute it with the provided kwargs
+        if self.verbose:
+            logger.info("Executing method '%s' with parameters: %s", method_name, kwargs)
         try:
             method = getattr(self, method_map[method_name])
             results = method(**kwargs)
+            if self.verbose:
+                logger.info("Execution results: %s", results.get('metric_scores', {}))
             return results
         except Exception as e:
             logger.error(f"Error during {method_name} execution: {str(e)}")
