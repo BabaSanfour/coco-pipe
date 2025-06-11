@@ -90,6 +90,65 @@ class MLPipeline:
     def run(self):
         """
         Run the ML pipeline.
+        
+        Return
+        ------
+        dict
+            Mapping of model names (or output-column indices in univariate mode)
+            to their result dicts. Each result dict now has at least:
+                - 'model_name': Name of the evaluated model.
+                - 'metric_scores': Scoring metrics aggregated across folds with keys 'mean', 'std', and 'fold_scores'.
+                - 'feature_importances': Dictionary of feature importance statistics (mean, std, weighted values) or None.
+                - 'predictions': Dictionary containing concatenated y_true, y_pred, and optionally y_proba from cross-validation.
+                - 'params': The initial model parameters used during evaluation.
+                - 'folds_estimators': List of fitted estimator instances from each fold of cross-validation.
+            if the analysis_type is 'feature_selection' results will also include:
+                - 'selected_features': The combined set of features selected across all CV folds.
+                - 'feature_frequency': A dictionary mapping each feature name to its selection frequency.
+                - 'feature_importances': A dictionary with weighted mean and std of importances across folds.
+                - 'selected_per_fold': Dictionary mapping fold indices to lists of feature names selected in each fold.
+                - 'best_fold': Information about the best-performing fold, including:
+                    - 'fold': Index of the best fold.
+                    - 'features': Features selected in that fold.
+                    - <metric>: Metric score for that fold.
+                    - 'estimator': The fitted estimator for the best fold.
+                - 'fs_parameters': dict
+                    Parameters used for feature selection, including:
+                    - 'n_features': Number of features selected.
+                    - 'direction': Direction of feature selection ('forward' or 'backward').
+                    - 'scoring': Metric used for feature selection.
+            if the analysis_type is 'hp_search' results will also include:
+                - 'best_params': Aggregated best parameter settings determined by majority voting across folds.
+                - 'param_frequency': Dictionary mapping each hyperparameter value to its frequency across folds.
+                - 'best_params_per_fold': Dictionary mapping fold indices to their best parameter settings.
+                - 'best_fold': Information about the best-performing fold, including:
+                - 'hp_search_parameters': dict
+                    Meta-information on the hyperparameter search containing:
+                        - search type: The type of search performed ('grid' or 'random').
+                        - param grid: The parameter grid provided (or from model_configs if None).
+                        - scoring: The metric used for evaluation.
+                        - n_iter: The number of parameter settings sampled (for randomized search).
+            if the analysis_type is 'hp_search_fs', results will include a combination of
+            feature selection and hyperparameter search results, including:
+                - 'selected_features': The combined set of features selected across all CV folds.
+                - 'feature_frequency': A dictionary mapping each feature name to its selection frequency.
+                - 'feature_importances': A dictionary with weighted mean and std of importances across folds.
+                - 'selected_per_fold': Dictionary mapping fold indices to lists of feature names selected in each fold.
+                - 'best_fold': Information about the best-performing fold, including:
+                    - 'fold': Index of the best fold.
+                    - 'features': Features selected in that fold.
+                    - <metric>: Metric score for that fold.
+                    - 'estimator': The fitted estimator for the best fold.
+                - 'fs_parameters': dict
+                    Parameters used for feature selection, including:
+                        - 'n_features': Number of features selected.
+                        - 'direction': Direction of feature selection ('forward' or 'backward').
+                        - 'scoring': Metric used for feature selection.
+
+        Raises
+        ------
+        ValueError
+            If the analysis_type is 'feature_selection' or 'hp_search_fs' in univariate mode.
         """
         # Common kwargs for pipeline instantiation
         common_kwargs = dict(
