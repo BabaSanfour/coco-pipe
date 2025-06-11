@@ -23,6 +23,22 @@ from sklearn.model_selection import (
 
 from coco_pipe.ml.config import DEFAULT_CV
 
+class _CVWithGroups(BaseCrossValidator):
+    """
+    Wrap any existing CV splitter so that its .split always uses
+    the provided groups array.
+    """
+    def __init__(self, cv, groups):
+        self.cv = cv
+        self.groups = groups
+
+    def split(self, X, y=None, groups=None):
+        # ignore incoming groups, always use our stored one
+        return self.cv.split(X, y, self.groups)
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.cv.get_n_splits(X, y, self.groups)
+
 
 class SimpleSplit(BaseCrossValidator):
     """
@@ -87,64 +103,35 @@ def get_cv_splitter(
     **kwargs: Any
 ) -> BaseCrossValidator:
     """
-    Return a scikit-learn CV splitter based on strategy name.
-
-    Parameters
-    ----------
-    cv_strategy : {'stratified', 'kfold', 'group_kfold', 'leave_p_out', 'leave_one_out', 'split'}
-        Name of the CV strategy.
-    kwargs :
-        Additional parameters for the splitter:
-        - n_splits, shuffle, random_state for KFold types.
-        - n_repeats for repeated KFold.
-        - test_size, stratify for 'split'.
-        - n_groups for LeavePGroupsOut.
-        - groups array for group-based splitters.
-
-    Returns
-    -------
-    BaseCrossValidator
-        Configured CV splitter.
-
-    Raises
-    ------
-    ValueError
-        For unknown strategy or missing required kwargs.
+    Return a CV splitter based on strategy name, optionally carrying a groups array.
     """
+    # pull out groups if the user passed them
+    groups = kwargs.pop('groups', None)
+
     strat = cv_strategy.lower()
-    n_splits = kwargs.get('n_splits', DEFAULT_CV['n_splits'])
-    shuffle = kwargs.get('shuffle', DEFAULT_CV['shuffle'])
-    random_state = kwargs.get('random_state', DEFAULT_CV['random_state'])
+    n_splits    = kwargs.get('n_splits', DEFAULT_CV['n_splits'])
+    shuffle     = kwargs.get('shuffle', DEFAULT_CV['shuffle'])
+    random_state= kwargs.get('random_state', DEFAULT_CV['random_state'])
 
     if strat == 'stratified':
-        if not shuffle and random_state is not None:
-            warnings.warn(
-                "random_state has no effect when shuffle=False.",
-                UserWarning
-            )
-        return StratifiedKFold(
+        splitter = StratifiedKFold(
             n_splits=n_splits,
             shuffle=shuffle,
             random_state=random_state if shuffle else None,
         )
 
     elif strat == 'kfold':
-        return KFold(
+        splitter = KFold(
             n_splits=n_splits,
             shuffle=shuffle,
             random_state=random_state if shuffle else None,
         )
 
     elif strat == 'group_kfold':
-        return GroupKFold(n_splits=n_splits)
+        splitter = GroupKFold(n_splits=n_splits)
 
     elif strat == 'stratified_group_kfold':
-        if not shuffle and random_state is not None:
-            warnings.warn(
-                "random_state has no effect when shuffle=False.",
-                UserWarning
-            )
-        return StratifiedGroupKFold(
+        splitter = StratifiedGroupKFold(
             n_splits=n_splits,
             shuffle=shuffle,
             random_state=random_state if shuffle else None,
@@ -154,15 +141,15 @@ def get_cv_splitter(
         n_groups = kwargs.get('n_groups')
         if not n_groups:
             raise ValueError("`n_groups` required for leave_p_out strategy.")
-        return LeavePGroupsOut(n_groups=n_groups)
+        splitter = LeavePGroupsOut(n_groups=n_groups)
 
     elif strat == 'leave_one_out':
-        return LeaveOneGroupOut()
+        splitter = LeaveOneGroupOut()
 
     elif strat == 'split':
-        test_size = kwargs.get('test_size', 0.2)
-        stratify = kwargs.get('stratify')
-        return SimpleSplit(
+        test_size = kwargs.get('test_size', DEFAULT_CV.get('test_size', 0.2))
+        stratify  = kwargs.get('stratify')
+        splitter = SimpleSplit(
             test_size=test_size,
             shuffle=shuffle,
             random_state=random_state,
@@ -171,3 +158,10 @@ def get_cv_splitter(
 
     else:
         raise ValueError(f"Unknown CV strategy: {cv_strategy}")
+
+    # if the user provided groups, wrap the splitter so .split always sees them
+    if groups is not None:
+        splitter = _CVWithGroups(splitter, groups)
+
+    return splitter
+
