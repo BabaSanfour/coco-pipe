@@ -33,7 +33,31 @@ def test_validate_input_errors():
             model_configs={},
             default_metrics=["accuracy"]
         )
+    with pytest.raises(ValueError):
+        DummyPipeline(
+            X=np.zeros((3, 2)),
+            y=np.zeros(3),
+            metric_funcs=CLASSIFICATION_METRICS,
+            model_configs={},
+            default_metrics=["accuracy"],
+            groups=np.zeros(10)
+        )
 
+def test_select_columns():
+    df = pd.DataFrame({
+        'a': [1, 2, 3],
+        'b': [4, 5, 6],
+        'c': [7, 8, 9]
+    })
+    selected = DummyPipeline._select_columns(df, [True, False, True])
+    expected = pd.DataFrame({'a': [1, 2, 3], 'c': [7, 8, 9]})
+    pd.testing.assert_frame_equal(selected, expected)
+
+    # Test with numpy array
+    arr = np.array([[1, 2], [3, 4], [5, 6]])
+    selected_arr = DummyPipeline._select_columns(arr, [0])
+    expected_arr = np.array([[1], [3], [5]])
+    np.testing.assert_array_equal(selected_arr, expected_arr)
 
 def test_validate_metrics_error():
     X = np.zeros((5, 2)); y = np.zeros(5)
