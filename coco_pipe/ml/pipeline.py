@@ -152,10 +152,11 @@ class MLPipeline:
             raise ValueError(f"Cannot perform {common_kwargs['analysis_type']} in univariate mode")
 
         results = {}
-        # Iterate over each output column
-        for idx in range(self.y.shape[1]):
-            yi = self.y[:, idx]
-            common_kwargs["y"] = yi
+        # Iterate over each column of the input features (X)
+        common_kwargs["y"] = self.y  # use the same target y for every run
+        for idx in range(self.X.shape[1]):
+            Xi = self.X[:, idx].reshape(-1, 1)
+            common_kwargs["X"] = Xi
             pipeline = self.pipeline_cls(**common_kwargs)
             results[idx] = pipeline.run()
         return results
