@@ -327,6 +327,10 @@ class BasePipeline(ABC):
         if hasattr(estimator, 'estimator_'):
             return BasePipeline._extract_feature_importances(estimator.estimator_)
 
+        # 5) GridSearchCV or RandomizedSearchCV: use best_estimator_
+        if hasattr(estimator, 'best_estimator_'):
+            return BasePipeline._extract_feature_importances(estimator.best_estimator_)
+
         # 5) Voting or other meta-estimators: average sub-estimators
         if hasattr(estimator, 'estimators_'):
             imps = []
@@ -1123,88 +1127,46 @@ class BasePipeline(ABC):
 
         return search_est, metric
 
-    def _extract_hp_search_results(
+    def _extract_hp_search_params(
         self,
-        cv_res: Dict[str, Any],
+        cv_fold_estimators: List,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Extract hyperparameter search results from cross-validation.
-        
-        This helper method processes cross-validation results from a hyperparameter
-        search estimator to extract the best parameters and scores for each fold.
-        
-        Parameters
-        ----------
-        cv_res : dict
-            Cross-validation results from the cross_val method containing:
-            - 'cv_fold_estimators': List of fitted search estimators from each fold
-            - 'cv_fold_scores': Dict mapping metric names to arrays of scores per fold
-            
-        Returns
-        -------
-        outer_results : list of dict
-            List of dictionaries, one per fold, with keys:
-            - 'fold': Fold index
-            - 'best_params': Best parameters selected for this fold
-            - 'test_scores': Dict of metric scores achieved on this fold
-        """
-        estimators = cv_res['cv_fold_estimators']
-        scores = cv_res['cv_fold_scores']
-        outer_results = []
+        Extract hyperparameter search selected parameters and their selection frequency from cross-validation.
 
-        for fold_idx, est in enumerate(estimators):
-            best_params = est.best_params_
-            
-            # Extract all metrics for this fold
-            test_scores = {m: float(scores[m][fold_idx]) for m in self.metrics}
-            
-            # Create detailed result entry for this fold
-            outer_results.append({
-                'fold': fold_idx,
-                'best_params': best_params,
-                'test_scores': test_scores,
-            })
-
-        return outer_results
-
-    def _aggregate_hp_search_results(
-        self,
-        outer_results: List[Dict[str, Any]],
-        metric: str
-    ) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]], Dict[str, Any]]:
-        """
-        Aggregate hyperparameter search results across cross-validation folds.
-        
         This helper method processes the best parameters from each fold to determine
-        parameter selection frequency, identify stable parameters (selected in
-        majority of folds), and find the best-performing fold.
+        parameter selection frequency and identify stable parameters (selected in
+        majority of folds).
         
         Parameters
         ----------
-        outer_results : list of dict
-            List of fold results with best parameters and test scores.
-        metric : str
-            Name of the metric to use for identifying the best fold.
+        cv_fold_estimators : list
+            List of fitted search estimators from each fold of cross-validation.
+            Each estimator should have a 'best_params_' attribute containing the best parameters
+            selected for that fold.
             
         Returns
         -------
+        best_params_per_fold : dict
+            Dictionary mapping fold indices to the best parameters selected in that fold.
+            Example: {0: {'max_depth': 5, 'min_samples_split': 2}, ...}
         best_params : dict
-            Aggregated best parameters based on majority voting across folds.
+            Aggregated best parameters selected across all folds by majority voting.
+            Example: {'max_depth': 5, 'min_samples_split': 2}
         param_frequency : dict
             Dictionary mapping parameter names to dictionaries of value frequencies.
-            Example: {'max_depth': {3: 0.6, 5: 0.4}, 'min_samples_split': {2: 1.0}}
-        best_fold : dict
-            Information about the best-performing fold:
-            - 'fold': Index of the best fold
-            - 'params': Best parameters selected for that fold
-            - 'scores': Test scores achieved by that fold
+            Example: {'max_depth': {3: 0.6, 5: 0.4}, 'min_samples_split': {2: 1.0}}                    
         """
-        n_folds = len(outer_results)
-        best_params_list = [result['best_params'] for result in outer_results]
-        
+        best_params_per_fold = {
+            i: est.best_params_
+            for i, est in enumerate(cv_fold_estimators)
+        }
+
+        n_folds = len(best_params_per_fold)
+
         # Count parameter value occurrences across folds
         param_counts = {}
-        for params in best_params_list:
+        for params in best_params_per_fold.values():
             for k, v in params.items():
                 # Handle various parameter types (including non-hashable ones like lists)
                 v_hashable = tuple(v) if isinstance(v, list) else v
@@ -1225,17 +1187,8 @@ class BasePipeline(ABC):
                 for v, cnt in vals.items()}
             for k, vals in param_counts.items()
         }
-        
-        # Find the best-performing fold
-        fold_scores = [result['test_scores'][metric] for result in outer_results]
-        best_fold_idx = int(np.argmax(fold_scores))
-        best_fold = {
-            'fold': best_fold_idx,
-            'params': outer_results[best_fold_idx]['best_params'],
-            'scores': outer_results[best_fold_idx]['test_scores']
-        }
-        
-        return best_params, param_frequency, best_fold
+        return best_params_per_fold, best_params, param_frequency
+
 
     def hp_search(
         self,
@@ -1248,16 +1201,17 @@ class BasePipeline(ABC):
         """
         Perform hyperparameter search using nested cross-validation.
         
-        This method performs hyperparameter tuning using an inner cross-validation loop
-        and evaluates the tuned model using an outer cross-validation loop. It analyzes
-        parameter selection stability across folds and identifies the most robust 
-        parameter settings.
+        This method performs hyperparameter tuning using an inner cross-validation loop for
+        parameter selection and an outer cross-validation loop for model evaluation. It
+        which collectively assess parameter stability across folds and identify the most robust parameter
+        settings via majority voting.
         
         The process follows these steps:
-        1. Build a search estimator (GridSearchCV or RandomizedSearchCV) using _build_search_estimator
-        2. Perform outer cross-validation to evaluate hyperparameter search performance
-        3. Extract best parameters and scores from CV results using _extract_hp_search_results
-        4. Aggregate results to find stable parameters using _aggregate_hp_search_results
+        1. Build a search estimator (GridSearchCV or RandomizedSearchCV) using _build_search_estimator.
+        2. Execute outer cross-validation via cross_val to evaluate hyperparameter search performance.
+        3. Extract best parameters per fold and their frequencies.
+        4. Aggregate predictions, metric scores, and feature importances.
+        5. Identify the best-performing fold based on the defined metric.
         
         Parameters
         ----------
@@ -1272,7 +1226,7 @@ class BasePipeline(ABC):
             Number of parameter settings sampled in RandomizedSearchCV.
             Ignored for GridSearchCV.
         scoring : str, optional
-            Metric to use for hyperparameter selection. If None, uses first metric in self.metrics.
+            Metric to use for hyperparameter selection. If None, uses the first metric in self.metrics.
             
         Returns
         -------
@@ -1281,37 +1235,46 @@ class BasePipeline(ABC):
             
             model_name : str
                 Name of the model that was tuned.
+            metric_scores : dict
+                Dictionary mapping metric names to cross-validation scores; each entry contains the mean, 
+                standard deviation, and per-fold scores.
+            feature_importances : dict
+                Feature importance statistics aggregated across CV folds (if available).
             best_params : dict
-                Aggregated best parameters based on majority voting across folds.
+                Aggregated best parameter settings determined by majority voting across folds.
             param_frequency : dict
-                Dictionary mapping parameter names to dictionaries of value frequencies.
-                Example: {'max_depth': {3: 0.6, 5: 0.4}, 'min_samples_split': {2: 1.0}}
+                Frequency mapping of each hyperparameter value across CV folds.
+            predictions : dict
+                Aggregated predictions from all folds including y_true, y_pred, and optionally y_proba.
+            best_params_per_fold : dict
+                Per-fold best parameter configurations.
             best_fold : dict
-                Information about the best-performing fold.
-            outer_results : list
-                Per-fold results with best parameters and test scores.
-            cv_fold_scores : dict
-                Dictionary mapping metric names to arrays of scores per fold.
-            cv_fold_predictions : list
-                List of dictionaries with fold predictions.
-            cv_fold_estimators : list
-                List of fitted search estimators from each fold.
+                Information for the best-performing fold including its index, best parameters,
+                metric score, and the fitted estimator.
+            folds_estimators : list
+                List of fitted search estimator instances from each CV fold.
+            hp search parameters : dict
+                Meta-information on the hyperparameter search containing:
+                    - search type: The type of search performed ('grid' or 'random').
+                    - param grid: The parameter grid provided (or from model_configs if None).
+                    - scoring: The metric used for evaluation.
+                    - n_iter: The number of parameter settings sampled (for randomized search).
                 
         Notes
         -----
-        Parameter stability is assessed by analyzing selection frequency across folds.
-        The final parameters are chosen by majority voting across outer CV folds, which
-        provides more robust hyperparameter settings than a single run of GridSearchCV.
+        Parameter stability is assessed by analyzing selection frequency across folds. The final parameter 
+        setting is obtained by majority voting over per-fold best parameters, providing more robust 
+        hyperparameter tuning than a single GridSearchCV or RandomizedSearchCV run.
         
-        The best fold information can be used to examine which specific parameter
-        combination achieved the highest performance in cross-validation.
+        The best fold information can be used to inspect which specific parameter combination achieved the highest
+        performance in cross-validation.
         
         See Also
         --------
-        _build_search_estimator : Builds the search estimator
-        _extract_hp_search_results : Extracts parameters from cross-validation
-        _aggregate_hp_search_results : Aggregates results across folds
-        cross_val : Performs cross-validation
+        _build_search_estimator : Builds the search estimator.
+        _extract_hp_search_params : Extracts best parameter settings from each CV fold.
+        _aggregate : Aggregates predictions, metric scores, and feature importances across folds.
+        cross_val : Performs cross-validation.
         
         Examples
         --------
@@ -1321,34 +1284,45 @@ class BasePipeline(ABC):
         >>> result = pipeline.hp_search('rf', search_type='grid')
         >>> print(f"Best parameters: {result['best_params']}")
         >>> print(f"Parameter frequency: {result['param_frequency']}")
-        """        
+        """
         search_est, metric = self._build_search_estimator(
             model_name, search_type, param_grid, n_iter, scoring
         )
 
         cv_res = self.cross_val(search_est, self.X, self.y)
 
-        # Extract hyperparameter search results
-        outer_results = self._extract_hp_search_results(cv_res)
-        
-        # Aggregate results across folds
-        best_params, param_frequency, best_fold = self._aggregate_hp_search_results(
-            outer_results, metric
-        )
+        best_params_per_fold, best_params, param_frequency = self._extract_hp_search_params(cv_res['cv_fold_estimators'])
 
-        predictions, metric_scores = self._aggregate(cv_res["cv_fold_predictions"])
+        predictions, metric_scores, feature_importances = self._aggregate(cv_res["cv_fold_predictions"],
+                                                    cv_res["cv_fold_scores"],
+                                                    cv_res["cv_fold_importances"],
+                                                    freq=None)
+        
+        best_fold_idx = np.argmax(metric_scores[metric]['mean'])
+        best_fold = {
+            'fold': best_fold_idx,
+            'params': best_params_per_fold[best_fold_idx],
+            metric: metric_scores[metric]["fold_scores"][best_fold_idx],
+            "estimator": cv_res['cv_fold_estimators'][best_fold_idx]
+        }
 
         # Return comprehensive results
         return {
             'model_name': model_name,
-            **cv_res,
-            'search_type': search_type,
+            'metric_scores': metric_scores,
+            'feature_importances': feature_importances,
             'best_params': best_params,
             'param_frequency': param_frequency,
-            'best_fold': best_fold,
-            'outer_results': outer_results,
             'predictions': predictions,
-            'metric_scores': metric_scores,
+            'best_params_per_fold': best_params_per_fold,
+            'best_fold': best_fold,
+            'folds_estimators': cv_res['cv_fold_estimators'],
+            'hp search parameters': {
+                'search type': search_type,
+                'param grid': param_grid,
+                'scoring': metric,
+                'n_iter': n_iter
+            },
         }
 
     def _build_combined_fs_hp_pipeline(
