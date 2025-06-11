@@ -46,8 +46,6 @@ class SingleOutputRegressionPipeline(BasePipeline):
 
     Parameters
     ----------
-    Parameters
-    ----------
     X : np.ndarray
         Feature matrix, array-like of shape (n_samples, n_features).
     y : np.ndarray
@@ -92,7 +90,6 @@ class SingleOutputRegressionPipeline(BasePipeline):
     >>> pipeline = SingleOutputRegressionPipeline(X=X, y=y, models=["linear_regression", "random_forest"])
     >>> results = pipeline.execute()
     """
-
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -103,7 +100,9 @@ class SingleOutputRegressionPipeline(BasePipeline):
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
+        verbose: bool = False,
     ):
+        self.verbose = verbose
         self._validate_single_target(y)
 
         metric_funcs = REGRESSION_METRICS
@@ -131,6 +130,7 @@ class SingleOutputRegressionPipeline(BasePipeline):
             groups=groups,
             n_jobs=n_jobs,
             random_state=random_state,
+            verbose=verbose,
         )
 
     def _validate_single_target(self, y):
@@ -191,7 +191,6 @@ class MultiOutputRegressionPipeline(BasePipeline):
     >>> pipeline = MultiOutputRegressionPipeline(X=X, y=y, models=["linear_regression", "random_forest"])
     >>> results = pipeline.execute()
     """
-
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -202,7 +201,9 @@ class MultiOutputRegressionPipeline(BasePipeline):
         n_jobs: int = -1,
         cv_kwargs: Optional[Dict[str, Any]] = None,
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
+        verbose: bool = False,
     ):
+        self.verbose = verbose
         self._validate_multioutput_target(y)
 
         metric_funcs = MULTIOUTPUT_REG_METRICS
@@ -230,6 +231,7 @@ class MultiOutputRegressionPipeline(BasePipeline):
             groups=groups,
             n_jobs=n_jobs,
             random_state=random_state,
+            verbose=verbose,
         )
 
     def _validate_multioutput_target(self, y):
@@ -238,7 +240,6 @@ class MultiOutputRegressionPipeline(BasePipeline):
             raise ValueError(
                 f"Target must be 2D array for multi-output regression. Shape is {getattr(y,'shape',None)}"
             )
-
 
 
 class RegressionPipeline:
@@ -331,9 +332,11 @@ class RegressionPipeline:
         results_dir: str = "results",
         results_file: str = "results",
         cv_kwargs: Optional[Dict[str, Any]] = None,
+        verbose: bool = False,
     ):
         self.X = X
         self.y = y
+        self.verbose = verbose
         analysis_type = analysis_type.lower()
         if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
@@ -356,7 +359,7 @@ class RegressionPipeline:
         self.pipeline = None
         self.results = {}
 
-        # pick pipeline class
+        # pick pipeline class based on target dimension
         if hasattr(self.y, 'ndim') and self.y.ndim == 2:
             PipelineClass = MultiOutputRegressionPipeline
             self.task = "multioutput"
@@ -383,6 +386,7 @@ class RegressionPipeline:
             random_state=self.random_state,
             n_jobs=self.n_jobs,
             cv_kwargs=cvk,
+            verbose=self.verbose,
         )
 
     def save(self, name: str, res: Dict[str, Any]):
@@ -426,6 +430,10 @@ class RegressionPipeline:
             "status": "running",
         }
 
+        if self.verbose:
+            logger.info("Starting regression analysis with the following configuration:")
+            logger.info(metadata)
+
         for name in self.pipeline.model_configs:
             try:
                 if self.analysis_type == "baseline":
@@ -463,6 +471,8 @@ class RegressionPipeline:
 
                 results[name] = res
                 metadata["completed_models"].append(name)
+                if self.verbose:
+                    logger.info(f"Completed analysis for model: {name}")
             except Exception as e:
                 logger.error(f"Failed to run {name}: {e}")
                 metadata["failed_models"].append({"model": name, "error": str(e)})
@@ -475,10 +485,11 @@ class RegressionPipeline:
         metadata["successful_models"] = len(metadata["completed_models"])
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
-        # save final
+        # save final results and metadata
         self.save(base_name, results)
-        with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
+        meta_path = os.path.join(self.results_dir, f"{base_name}_metadata.json")
+        with open(meta_path, "w") as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
+        logger.info(f"Saved metadata to {meta_path}")
 
         return results
