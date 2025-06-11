@@ -329,6 +329,7 @@ class RegressionPipeline:
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray],
+        groups: Optional[Union[pd.Series, np.ndarray]] = None,
         analysis_type: str = "baseline",
         models: Union[str, Sequence[str]] = "all",
         metrics: Union[str, Sequence[str]] = None,
@@ -373,6 +374,7 @@ class RegressionPipeline:
         self.cv_kwargs = cv_kwargs
         self.pipeline = None
         self.results = {}
+        self.groups = groups
 
         # pick pipeline class based on target dimension
         if hasattr(self.y, 'ndim') and self.y.ndim == 2:
@@ -396,6 +398,7 @@ class RegressionPipeline:
         self.pipeline = PipelineClass(
             X=self.X,
             y=self.y,
+            groups=self.groups,
             models=self.models,
             metrics=self.metrics,
             random_state=self.random_state,

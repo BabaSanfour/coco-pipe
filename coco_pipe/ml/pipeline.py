@@ -122,6 +122,7 @@ class MLPipeline:
         common_kwargs = dict(
             X=self.X,
             y=None,  # to be set per run
+            groups=self.groups,
             analysis_type=self.config.get("analysis_type", "baseline"),
             models=self.config.get("models", "all"),
             metrics=self.config.get("metrics", None),

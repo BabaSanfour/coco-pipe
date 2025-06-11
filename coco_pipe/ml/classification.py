@@ -406,6 +406,7 @@ class ClassificationPipeline:
         self,
         X: Union[pd.DataFrame, np.ndarray],
         y: Union[pd.Series, np.ndarray],
+        groups: Optional[Union[pd.Series, np.ndarray]] = None,
         analysis_type: str = "baseline",
         models: Union[str, Sequence[str]] = "all",
         use_scaler: bool = True,
@@ -450,6 +451,7 @@ class ClassificationPipeline:
         self.verbose = verbose
         self.pipeline = None
         self.results = {}
+        self.groups = groups
 
         if hasattr(y, "ndim") and y.ndim == 2:
             PipelineClass = MultiOutputClassificationPipeline
@@ -475,7 +477,7 @@ class ClassificationPipeline:
         })
 
         self.pipeline = PipelineClass(
-            X=X, y=y,
+            X=X, y=y, groups=groups,
             models=models, metrics=metrics,
             random_state=random_state, n_jobs=n_jobs,
             cv_kwargs=cvk,
