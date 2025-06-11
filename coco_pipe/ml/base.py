@@ -604,13 +604,14 @@ class BasePipeline(ABC):
 
         cv_results = cross_validate(
             estimator=estimator,
-            X=X_arr, y=y_arr, groups=groups_arr,
+            X=X_arr, y=y_arr,
             scoring=scoring,
             cv=cv,
             n_jobs=self.n_jobs,
             return_estimator=True,
             return_train_score=False,
             error_score='raise'
+            params={'groups': groups_arr}
         )
 
         # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_ survive —
