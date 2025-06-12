@@ -154,10 +154,10 @@ MULTIOUTPUT_REG_METRICS: Dict[str, Callable] = {
 BINARY_MODELS: Dict[str, Dict[str, Any]] = {
     "Logistic Regression": {
         "estimator": LogisticRegression,
-        "default_params": {"random_state": 42},
+        "default_params": {"random_state": 42, "penalty": "l2", "solver": "lbfgs"},
         "hp_search_params": {
             "C": [0.1, 1, 10, 100],
-            "penalty": ["l2", "l1", "elasticnet"],
+            "penalty": ["l2"],#, "l1", "elasticnet"],
             "solver": ["lbfgs", "liblinear", "saga"],
             "max_iter": [100, 200, 300],
         },

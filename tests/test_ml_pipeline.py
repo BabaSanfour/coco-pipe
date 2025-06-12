@@ -136,3 +136,44 @@ def test_classification_univariate_fs_error():
     mlp = MLPipeline(X, y, None, cfg)
     with pytest.raises(ValueError, match="Cannot perform hp_search_fs in univariate mode"):
         mlp.run()
+
+# def test_update_model_config(monkeypatch):
+#     import numpy as np
+#     from sklearn.linear_model import LogisticRegression
+
+#     # create simple binary data
+#     X = np.random.rand(12, 4)
+#     y = np.random.choice([0, 1], size=(12,))
+
+#     # custom model_configs: LR with default C=2.5 and a small grid
+#     custom_models = {
+#         'Logistic Regression': {
+#             'default_params': {'C': 2.5},
+#             'params': {'C': [0.5, 2.5]}
+#         }
+#     }
+#     cfg = {
+#         'task': 'classification',
+#         'mode': 'multivariate',
+#         'model_configs': custom_models
+#     }
+
+#     # stub out the actual run to just return get_model_params for 'lr'
+#     def fake_run(self):
+#         return 0
+#     monkeypatch.setattr(ClassificationPipeline, 'run', fake_run)
+
+#     mlp = MLPipeline(X, y, None, cfg)
+#     out = mlp.run()
+
+#     from coco_pipe.ml.base import ModelConfig
+
+#     # ensure the pipeline saw our custom settings via ModelConfig
+#     mc = mlp.pipeline.pipeline.model_configs.get('Logistic Regression')
+#     assert isinstance(mc, ModelConfig)
+#     # estimator should be a LogisticRegression instance with C=2.5
+#     from sklearn.linear_model import LogisticRegression
+#     assert isinstance(mc.estimator, LogisticRegression)
+#     # assert mc.init_params['C'] == 2.5
+#     # hyperparameter grid lives in param_grid
+#     assert mc.param_grid['C'] == [0.5, 2.5]

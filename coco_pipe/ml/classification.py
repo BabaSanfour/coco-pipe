@@ -424,6 +424,7 @@ class ClassificationPipeline:
         results_dir: str = "results",
         results_file: str = "results",
         cv_kwargs: Optional[Dict[str, Any]] = None,
+        model_configs: Optional[Dict[str, Any]] = None,
         verbose: bool = True,
     ):
         self.X = X
@@ -452,6 +453,9 @@ class ClassificationPipeline:
         self.pipeline = None
         self.results = {}
         self.groups = groups
+        self.new_model_configs = model_configs
+        if self.new_model_configs is not None:
+            self.update_configs = True
 
         if hasattr(y, "ndim") and y.ndim == 2:
             PipelineClass = MultiOutputClassificationPipeline
@@ -603,7 +607,14 @@ class ClassificationPipeline:
             "failed_models": [],
             "status": "running",
         }
-
+        if self.update_configs:
+            logger.info("Updating model configurations with provided configs.")
+            for model_name, (default_config, params) in self.new_model_configs.items():
+                self.pipeline.update_model_config(
+                    model_name,
+                    default_params=default_config,
+                    params=params,
+                )
         for name in self.pipeline.model_configs:
             try:
                 if self.analysis_type == "baseline":

@@ -143,6 +143,7 @@ class MLPipeline:
             results_file=self.config.get("results_file", "results"),
             cv_kwargs=self.cv_kwargs,
             verbose=self.config.get("verbose", True),
+            model_configs=self.config.get("model_configs", None),
         )
 
         # Multivariate mode: single run on full X
@@ -153,6 +154,7 @@ class MLPipeline:
                 pass
             common_kwargs = {**base_kwargs, "X": self.X, "y": self.y}
             pipeline = self.pipeline_cls(**common_kwargs)
+            self.pipeline = pipeline
             return pipeline.run()
 
         # Univariate mode: one-feature-at-a-time
@@ -170,3 +172,27 @@ class MLPipeline:
             results[idx] = pipeline.run()
 
         return results
+
+if __name__ == "__main__":
+    # test model update
+    # using LogisticRegression as an example
+    from sklearn.linear_model import LogisticRegression
+    model_configs = {
+        'Logistic Regression': {
+            'default_params': {'C': 2.5},
+            'params': {'C': [0.5, 2.5]}
+        }
+    }
+    X = [[0, 1], [1, 0], [1, 1], [0, 0]]
+    y = [0, 1, 1, 0]  # Binary target for classification
+    mlp = MLPipeline(X, y, None, {
+        "task": "classification",
+        "mode": "univariate",
+        "models": "Logistic Regression",
+        "metrics": ["accuracy"],
+        "random_state": 42,
+        "cv_strategy": "kfold",
+        "n_splits": 2,
+        "n_jobs": 1,
+        "model_configs": model_configs
+    })
