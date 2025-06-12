@@ -248,7 +248,7 @@ BINARY_MODELS: Dict[str, Dict[str, Any]] = {
 # Multiclass classification models (same as binary for most)
 MULTICLASS_MODELS: Dict[str, Dict[str, Any]] = {
     name: cfg for name, cfg in BINARY_MODELS.items() if name in [
-        "Logistic Regression", "Decision Tree", "Random Forest",
+        # "Logistic Regression", "Decision Tree", "Random Forest",
         "Gradient Boosting", "SVC", "KNN", "Extra Trees", "AdaBoost", "HistGradientBoosting"
     ]
 }
