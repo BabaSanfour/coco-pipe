@@ -454,6 +454,7 @@ class ClassificationPipeline:
         self.results = {}
         self.groups = groups
         self.new_model_configs = model_configs
+        self.update_configs = False
         if self.new_model_configs is not None:
             self.update_configs = True
 
