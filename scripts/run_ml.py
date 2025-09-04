@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from copy import deepcopy
 
-from coco_pipe.io import load, select_features
+from coco_pipe.io import load, select_features, clean_features
 from coco_pipe.ml.pipeline import MLPipeline
 
 logging.basicConfig(level=logging.INFO)
@@ -98,6 +98,38 @@ def main():
         logger.info(
             f"First features: {feat_list[:5]}{'...' if len(feat_list)>5 else ''}"
         )
+
+        # 1.5) Optional: clean invalid feature columns (NaN/Inf)
+        clean_cfg = analysis_cfg.get("clean_features")
+        if clean_cfg:
+            if isinstance(clean_cfg, dict):
+                mode = clean_cfg.get("mode", "any")
+                sep = clean_cfg.get("sep", "_")
+                reverse = clean_cfg.get("reverse", False)
+                verbose_clean = clean_cfg.get("verbose", True)
+                min_abs_value = clean_cfg.get("min_abs_value")
+                min_abs_fraction = clean_cfg.get("min_abs_fraction", 0.0)
+            else:
+                # if True/any truthy: default to simple per-column cleaning
+                mode, sep, reverse, verbose_clean = "any", "_", False, True
+                min_abs_value, min_abs_fraction = None, 0.0
+            X_before = X.shape[1]
+            X, report = clean_features(
+                X,
+                mode=mode,
+                sep=sep,
+                reverse=reverse,
+                verbose=verbose_clean,
+                min_abs_value=min_abs_value,
+                min_abs_fraction=min_abs_fraction,
+            )
+            logger.info(
+                "Cleaned features (mode=%s): dropped %d columns; %d -> %d",
+                report.get("mode"),
+                len(report.get("dropped_columns", [])),
+                report.get("n_before"),
+                report.get("n_after"),
+            )
 
         # 2) Run
         # ensure results_dir/file come from global defaults if not overwritten

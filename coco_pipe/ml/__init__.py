@@ -60,5 +60,5 @@ __all__ = [
     # Regression pipelines
     "SingleOutputRegressionPipeline",
     "MultiOutputRegressionPipeline", 
-    "RegressionPipeline"
+    "RegressionPipeline",
 ]

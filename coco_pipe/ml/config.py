@@ -153,13 +153,17 @@ MULTIOUTPUT_REG_METRICS: Dict[str, Callable] = {
 # Binary classification models
 BINARY_MODELS: Dict[str, Dict[str, Any]] = {
     "Logistic Regression": {
-        "estimator": LogisticRegression(random_state=42, max_iter=300, 
-                                        penalty='l2', solver='lbfgs'),
-        "default_params": {"random_state": 42, "penalty": "l2", "solver": "lbfgs", "max_iter": 300},
+        # Default to L1-regularized logistic regression (binary):
+        # use a solver that supports L1 (liblinear). Keep max_iter generous.
+        "estimator": LogisticRegression(random_state=42, max_iter=300,
+                                        penalty='l1', solver='liblinear'),
+        "default_params": {"random_state": 42, "penalty": "l1", "solver": "liblinear", "max_iter": 300},
+        # Restrict search grid to valid solver/penalty combos to avoid invalid configurations.
+        # Both 'liblinear' and 'saga' support L1 for binary; include L2 as well if desired.
         "hp_search_params": {
             "C": [0.1, 1, 10, 100],
-            "penalty": ["l1"],#, "l1", "elasticnet"],
-            "solver": ["lbfgs", "liblinear", "saga"],
+            "penalty": ["l1", "l2"],
+            "solver": ["liblinear", "saga"],
             "max_iter": [100, 200, 300],
         },
     },

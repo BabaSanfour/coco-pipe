@@ -80,7 +80,7 @@ def _apply_row_filters(
             - 'column': column name (case-insensitive)
             - 'values': list or scalar for filtering
             - 'operator': comparison operator (optional)
-              One of ['>', '<', '>=', '<=', '==', '!=']
+              One of ['>', '<', '>=', '<=', '==', '!=', 'in', 'isin']
               Defaults to 'isin' if not provided.
     col_map : dict
         Case-insensitive mapping of column names.
@@ -104,8 +104,69 @@ def _apply_row_filters(
         "<=": lambda col, val: col <= val,
         "==": lambda col, val: col == val,
         "!=": lambda col, val: col != val,
+        # Membership operators handled specially to pass full lists
+        "in": lambda col, val: col.isin(val),
+        "isin": lambda col, val: col.isin(val),
     }
     mask = pd.Series(True, index=df.index)
+
+    # Helpers to coerce values in a type-agnostic way for comparisons
+    def _coerce_for_op(series: pd.Series, value: Any) -> Tuple[pd.Series, Any]:
+        """Coerce series and scalar value to a common comparable type.
+
+        Tries numeric, then datetime, then falls back to string comparison.
+        Returns a pair (coerced_series, coerced_value).
+        """
+        # Try numeric comparison
+        try:
+            s_num = pd.to_numeric(series, errors='coerce')
+            v_num = pd.to_numeric(pd.Series([value]), errors='coerce').iloc[0]
+            if s_num.notna().any() and pd.notna(v_num):
+                return s_num, v_num
+        except Exception:
+            pass
+
+        # Try datetime comparison
+        try:
+            s_dt = pd.to_datetime(series, errors='coerce')
+            v_dt = pd.to_datetime(value, errors='coerce')
+            if s_dt.notna().any() and pd.notna(v_dt):
+                return s_dt, v_dt
+        except Exception:
+            pass
+
+        # Fallback: string comparison
+        return series.astype(str), str(value)
+
+    def _coerce_for_isin(series: pd.Series, values: List[Any]) -> Tuple[pd.Series, List[Any]]:
+        """Coerce series and list of values to a common comparable type for isin.
+
+        Tries numeric, then datetime, then falls back to string comparison.
+        Returns a pair (coerced_series, coerced_values_list).
+        """
+        vals = values if isinstance(values, list) else [values]
+        # Try numeric containment
+        try:
+            s_num = pd.to_numeric(series, errors='coerce')
+            v_num = pd.to_numeric(pd.Series(vals), errors='coerce')
+            v_num_clean = v_num.dropna().tolist()
+            if s_num.notna().any() and len(v_num_clean) > 0:
+                return s_num, v_num_clean
+        except Exception:
+            pass
+
+        # Try datetime containment
+        try:
+            s_dt = pd.to_datetime(series, errors='coerce')
+            v_dt = pd.to_datetime(pd.Series(vals), errors='coerce')
+            v_dt_clean = v_dt.dropna().tolist()
+            if s_dt.notna().any() and len(v_dt_clean) > 0:
+                return s_dt, v_dt_clean
+        except Exception:
+            pass
+
+        # Fallback: string containment
+        return series.astype(str), [str(v) for v in vals]
     for filt in row_filters:
         if 'column' not in filt:
             raise ValueError("Row filter missing 'column' key")
@@ -119,12 +180,21 @@ def _apply_row_filters(
         if 'values' not in filt:
             raise ValueError(f"Row filter for column '{col_key}' must include 'values'.")
         values = filt['values']
-        if operator in op_map:
-            val = values if not isinstance(values, list) else values[0]
-            mask &= op_map[operator](df[actual_col], val)
-        else:
+        if operator in ("in", "isin", None):
+            # Membership: ensure values are treated as a list
             val_list = values if isinstance(values, list) else [values]
-            mask &= df[actual_col].isin(val_list)
+            s_coerced, v_list_coerced = _coerce_for_isin(df[actual_col], val_list)
+            mask &= s_coerced.isin(v_list_coerced)
+        elif operator in op_map:
+            # Comparators expect a scalar; if list provided, take the first element
+            val = values if not isinstance(values, list) else values[0]
+            s_coerced, v_coerced = _coerce_for_op(df[actual_col], val)
+            mask &= op_map[operator](s_coerced, v_coerced)
+        else:
+            # Unknown operator: default to membership for backward compatibility
+            val_list = values if isinstance(values, list) else [values]
+            s_coerced, v_list_coerced = _coerce_for_isin(df[actual_col], val_list)
+            mask &= s_coerced.isin(v_list_coerced)
     return df[mask]
 
 def select_features(
