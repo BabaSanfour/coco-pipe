@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""
+Unit tests for coco_pipe.io.meeg module.
+Tests the BIDS M/EEG loading functionality.
+"""
+import os
+import pytest
+from unittest.mock import patch, MagicMock
+import tempfile
+from pathlib import Path
+
+import mne
+import numpy as np
+from mne_bids import BIDSPath
+
+from coco_pipe.io.meeg import read_meeg_bids, load_meeg
+from coco_pipe.io.load import load
+
+
+@pytest.fixture
+def bids_test_params():
+    """Create test parameters for BIDS tests."""
+    # Create a temporary directory for mock BIDS dataset
+    temp_dir = tempfile.TemporaryDirectory()
+    bids_root = Path(temp_dir.name)
+    
+    # Define common test parameters
+    params = {
+        "subject": "01",
+        "session": "01",
+        "task": "test",
+        "datatype": "eeg",
+        "suffix": "eeg",
+        "temp_dir": temp_dir,  # Keep reference to prevent cleanup
+        "bids_root": bids_root
+    }
+    
+    yield params
+    
+    # Cleanup after tests
+    temp_dir.cleanup()
+
+
+@patch('coco_pipe.io.meeg.read_raw_bids')
+def test_read_meeg_bids_basic(mock_read_raw_bids, bids_test_params):
+    """Test that read_meeg_bids calls read_raw_bids with correct parameters."""
+    # Setup mock
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_raw_bids.return_value = mock_raw
+    
+    # Call the function
+    result = read_meeg_bids(
+        bids_root=str(bids_test_params["bids_root"]),
+        subject=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"]
+    )
+    
+    # Assert function was called correctly
+    mock_read_raw_bids.assert_called_once()
+    args, kwargs = mock_read_raw_bids.call_args
+    
+    # Check kwargs contains bids_path
+    assert 'bids_path' in kwargs
+    
+    # Check the BIDSPath was constructed correctly
+    bids_path = kwargs['bids_path']
+    # Use Path objects for comparison to handle different path representations
+    assert Path(bids_path.root) == Path(str(bids_test_params["bids_root"]))
+    assert bids_path.subject == bids_test_params["subject"]
+    assert bids_path.session == bids_test_params["session"]
+    assert bids_path.task == bids_test_params["task"]
+    assert bids_path.datatype == bids_test_params["datatype"]
+    assert bids_path.suffix == bids_test_params["suffix"]
+    
+    # Check result is the mock_raw
+    assert result == mock_raw
+
+
+@patch('coco_pipe.io.meeg.read_raw_bids')
+def test_read_meeg_bids_extension(mock_read_raw_bids, bids_test_params):
+    """Test that read_meeg_bids correctly passes extension parameter."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_raw_bids.return_value = mock_raw
+    
+    # Try with specified extension
+    extension = '.edf'
+    result = read_meeg_bids(
+        bids_root=str(bids_test_params["bids_root"]),
+        subject=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"],
+        extension=extension
+    )
+    
+    # Check extension was passed to BIDSPath
+    args, kwargs = mock_read_raw_bids.call_args
+    bids_path = kwargs['bids_path']
+    assert bids_path.extension == extension
+
+
+@patch('coco_pipe.io.meeg.read_raw_bids')
+def test_read_meeg_bids_verbose(mock_read_raw_bids, bids_test_params):
+    """Test that read_meeg_bids correctly passes verbose parameter."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_raw_bids.return_value = mock_raw
+    
+    # Call with verbose=True
+    result = read_meeg_bids(
+        bids_root=str(bids_test_params["bids_root"]),
+        subject=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"],
+        verbose=True
+    )
+    
+    # Check verbose was passed to read_raw_bids
+    args, kwargs = mock_read_raw_bids.call_args
+    assert kwargs['verbose'] is True
+
+
+@patch('coco_pipe.io.meeg.read_meeg_bids')
+def test_load_meeg_single_subject(mock_read_meeg_bids, bids_test_params):
+    """Test load_meeg function with a single subject."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_meeg_bids.return_value = mock_raw
+    
+    # Call the function with a single subject
+    result = load_meeg(
+        bids_root=str(bids_test_params["bids_root"]),
+        subjects=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"]
+    )
+    
+    # Check read_meeg_bids was called with the correct parameters
+    mock_read_meeg_bids.assert_called_once()
+    args, kwargs = mock_read_meeg_bids.call_args
+    assert kwargs['bids_root'] == str(bids_test_params["bids_root"])
+    assert kwargs['subject'] == bids_test_params["subject"]
+    assert kwargs['session'] == bids_test_params["session"]
+    assert kwargs['task'] == bids_test_params["task"]
+    
+    # Check result is the mock_raw
+    assert result == mock_raw
+
+
+@patch('coco_pipe.io.meeg.read_meeg_bids')
+def test_load_meeg_multiple_subjects(mock_read_meeg_bids, bids_test_params):
+    """Test load_meeg function with multiple subjects."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_read_meeg_bids.return_value = mock_raw
+    
+    # Call with a list of subjects
+    subject_list = ["01", "02"]
+    result = load_meeg(
+        bids_root=str(bids_test_params["bids_root"]),
+        subjects=subject_list,
+        session=bids_test_params["session"],
+        task=bids_test_params["task"]
+    )
+    
+    # Check read_meeg_bids was called for each subject
+    assert mock_read_meeg_bids.call_count == len(subject_list)
+    
+    # The result should be a list with an entry per subject
+    assert isinstance(result, list)
+    assert len(result) == len(subject_list)
+    assert all(r == mock_raw for r in result)
+
+
+@patch('coco_pipe.io.load.load_meeg')
+def test_load_with_eeg_type(mock_load_meeg, bids_test_params):
+    """Test integration with the load function for 'eeg' type."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_load_meeg.return_value = mock_raw
+    
+    # Call the load function with type="eeg"
+    result = load(
+        type="eeg",
+        data_path=str(bids_test_params["bids_root"]),
+        subjects=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"]
+    )
+    
+    # Check load_meeg was called
+    mock_load_meeg.assert_called_once()
+    
+    # Verify parameters passed
+    args, kwargs = mock_load_meeg.call_args
+    assert kwargs['bids_root'] == str(bids_test_params["bids_root"])
+    assert kwargs['subjects'] == bids_test_params["subject"]
+    assert kwargs['session'] == bids_test_params["session"]
+    assert kwargs['task'] == bids_test_params["task"]
+    
+    # Check result is the mock_raw
+    assert result == mock_raw
+
+
+@patch('coco_pipe.io.load.load_meeg')
+def test_load_with_meeg_type(mock_load_meeg, bids_test_params):
+    """Test integration with the load function for 'meeg' type."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_load_meeg.return_value = mock_raw
+    
+    # Call the load function with type="meeg"
+    result = load(
+        type="meeg",
+        data_path=str(bids_test_params["bids_root"]),
+        subjects=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"]
+    )
+    
+    # Check load_meeg was called
+    mock_load_meeg.assert_called_once()
+    
+    # Check result is the mock_raw
+    assert result == mock_raw
+
+
+@patch('coco_pipe.io.load.load_meeg')
+def test_load_with_meg_type(mock_load_meeg, bids_test_params):
+    """Test integration with the load function for 'meg' type."""
+    mock_raw = MagicMock(spec=mne.io.Raw)
+    mock_load_meeg.return_value = mock_raw
+    
+    # Call the load function with type="meg"
+    result = load(
+        type="meg",
+        data_path=str(bids_test_params["bids_root"]),
+        subjects=bids_test_params["subject"],
+        session=bids_test_params["session"],
+        task=bids_test_params["task"],
+        datatype="meg",
+        suffix="meg"
+    )
+    
+    # Check load_meeg was called with meg parameters
+    mock_load_meeg.assert_called_once()
+    args, kwargs = mock_load_meeg.call_args
+    assert kwargs['datatype'] == "meg"
+    assert kwargs['suffix'] == "meg"
+    
+    # Check result is the mock_raw
+    assert result == mock_raw
+
+
+def test_missing_subject_error(bids_test_params):
+    """Test that load raises an error when subjects is None."""
+    with pytest.raises(ValueError):
+        result = load(
+            type="eeg",
+            data_path=str(bids_test_params["bids_root"]),
+            subjects=None,  # No subject
+            session=bids_test_params["session"],
+            task=bids_test_params["task"]
+        ) 
