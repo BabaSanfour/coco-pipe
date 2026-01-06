@@ -1,31 +1,225 @@
-ID: "toy_example_01"
-data:
-  file: "data/toy_dataset.csv"
-  target: "label"
-  features_groups:
-    groups: ["sensor1", "sensor2"]
-    features: ["feat1", "feat2", "feat3", "feat4", "feat5"]
-analysis:
-  - name: "Baseline Global"
-    type: "baseline"
-    subset: "all_features_all_groups"
+# -----------------------------------------------------------------------------
+# Toy config for coco_pipe MLPipeline
+# -----------------------------------------------------------------------------
+
+# A unique identifier for this entire experiment
+global_experiment_id: "toy_ml_config"
+
+# Path to your input CSV/Parquet/etc.  
+data_path: "./datasets/toy_dataset.csv"
+
+# Where to write all the per‐analysis and final results
+results_dir: "./results"
+
+# Base filename (without extension) for per‐analysis outputs
+results_file: "toy_ml_config"
+
+# -----------------------------------------------------------------------------
+# Defaults: values here are applied to every analysis unless overridden
+# -----------------------------------------------------------------------------
+defaults:
+  # Random seed for reproducibility
+  random_state: 42
+
+  # Number of parallel jobs (−1 = all cores)
+  n_jobs: -1
+
+  # Cross‐validation settings; any can be overridden per‐analysis
+  cv_kwargs:
+    cv_strategy: "stratified"    # Options: "kfold", "stratified", "group", etc.
+    n_splits: 5                  # Number of folds
+    shuffle: true                # Whether to shuffle before splitting
+    random_state: 42             # Seed for the splitter
+
+  # Always‐include covariates (by column name) for all analyses
+  covariates: ["age"]
+
+  # If you want to do group‐ or spatial‐CV, list your grouping columns here
+  spatial_units: ["regionX", "regionY"]
+
+  # By default include all features; you can also set a list of column names
+  feature_names: "all"
+
+
+# -----------------------------------------------------------------------------
+# Analyses to run: each entry here produces one folder/file in results_dir
+# -----------------------------------------------------------------------------
+analyses:
+
+  # 1) Classification Baseline (multivariate mode)
+  - id: "classification_baseline"
+    task: "classification"         # "classification" or "regression"
+    mode: "multivariate"           # "multivariate" (one pipeline on all outputs)
+                                   # or "univariate" (loop per target column)
+    analysis_type: "baseline"      # baseline, feature_selection, hp_search, hp_search_fs
+    target_columns: ["target_class"]
+    # (optional) override defaults
+    # covariates: ["gender", "income"]
+    # feature_names: "all"
+    # spatial_units: ["regionX"]
+    # cv_kwargs:
+    #   cv_strategy: "kfold"
+    #   n_splits: 4
+
+    models:
+      - "Logistic Regression"     # must match a key in BINARY_MODELS or MULTICLASS_MODELS
+      - "Random Forest"
+
+    metrics:
+      - "accuracy"                # keys in BINARY_METRICS / MULTICLASS_METRICS
+      - "roc_auc"
+
+
+  # 2) Classification + Feature Selection
+  - id: "classification_feature_selection"
+    task: "classification"
+    mode: "multivariate"
+    analysis_type: "feature_selection"
+    target_columns: ["target_class"]
+
+    # If you only want to consider a subset of columns:
+    # feature_names: ["feat1","feat2","feat3"]
+
+    row_filter:
+      - column: "age"             # only keep samples with age < 40
+        operator: "<"
+        values: 40
+
+    models:
+      - "SVC"
+
+    metrics:
+      - "f1"
+
+    # Feature‐selection parameters
+    n_features: 3                 # how many features to pick
+    direction: "backward"         # "forward", "backward", or "both"
+    scoring: "f1"                 # which metric to use inside SFS
+
+
+  # 3) Classification Hyperparameter Search
+  - id: "classification_hp_search"
+    task: "classification"
+    mode: "multivariate"
+    analysis_type: "hp_search"
+    target_columns: ["target_class"]
+
+    models: "all"                 # run HP search on every model in your config
+
+    metrics:
+      - "accuracy"
+      - "average_precision"
+
+    # override cross‐val for this analysis
+    cv_kwargs:
+      cv_strategy: "kfold"
+      n_splits: 3
+
+    # Hyperparameter‐search parameters
+    search_type: "grid"           # "grid" or "random"
+    n_iter: 20                    # only used for random search
+    scoring: "accuracy"           # metric to optimize
+
+    # You can also supply your own grid if you like:
+    # param_grid:
+    #   max_depth: [3,5,10]
+    #   n_estimators: [50,100]
+
+
+  # 4) Classification + Combined FS & HP Search
+  - id: "classification_fs_hp_search"
+    task: "classification"
+    mode: "multivariate"
+    analysis_type: "hp_search_fs"
+    target_columns: ["target_class"]
+
+    models:
+      - "Random Forest"
+
+    metrics:
+      - "accuracy"
+
+    # Feature‐selection parameters
+    n_features: 4
+    direction: "forward"
+
+    # Hyperparameter‐search parameters
+    search_type: "random"
+    n_iter: 50
+    scoring: "roc_auc"
+
+
+  # 5) Regression Baseline (single‐output)
+  - id: "regression_baseline"
+    task: "regression"
+    mode: "multivariate"          # for regression, if y has multiple columns you can also do univariate
+    analysis_type: "baseline"
+    target_columns: ["target_reg"]
+
+    models:
+      - "Linear Regression"
+      - "Random Forest"
+
+    metrics:
+      - "r2"                      # keys in REGRESSION_METRICS
+      - "neg_mean_squared_error"
+
+
+  # 6) Regression + Feature Selection
+  - id: "regression_feature_selection"
+    task: "regression"
+    mode: "multivariate"
+    analysis_type: "feature_selection"
+    target_columns: ["target_reg"]
+
+    models:
+      - "Random Forest"
+
+    metrics:
+      - "r2"
+
+    # FS params
+    n_features: 5
+    direction: "forward"
+    scoring: "r2"
+
+
+  # 7) Regression Hyperparameter Search
+  - id: "regression_hp_search"
+    task: "regression"
+    mode: "multivariate"
+    analysis_type: "hp_search"
+    target_columns: ["target_reg"]
+
     models: "all"
-    scoring: "accuracy"
-  - name: "Baseline Per Group"
-    type: "baseline"
-    subset: "all_features_per_group"
-    models: "all"
-    scoring: "accuracy"
-  - name: "Single Feature Global"
-    type: "baseline"
-    subset: "single_feature_all_groups"
-    models: "all"
-    scoring: "f1-score"
-  - name: "FS + HP Search Global"
-    type: "fs_hp"
-    subset: "all_features_all_groups"
-    num_features: 3
-    models: ["Logistic Regression"]
-    scoring: "accuracy"
-output_dir: "results" 
-output: "toy_results"
+    metrics:
+      - "r2"
+      - "neg_mean_squared_error"
+
+    cv_kwargs:
+      cv_strategy: "kfold"
+      n_splits: 4
+
+    search_type: "random"
+    n_iter: 30
+    scoring: "neg_mean_squared_error"
+
+
+  # 8) Regression + Combined FS & HP Search
+  - id: "regression_fs_hp_search"
+    task: "regression"
+    mode: "multivariate"
+    analysis_type: "hp_search_fs"
+    target_columns: ["target_reg"]
+
+    models:
+      - "Random Forest"
+
+    metrics:
+      - "r2"
+
+    n_features: 6
+    direction: "backward"
+    search_type: "grid"
+    n_iter: 10
+    scoring: "r2"

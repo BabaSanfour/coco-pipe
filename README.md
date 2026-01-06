@@ -5,7 +5,16 @@
 [![Documentation Status](https://readthedocs.org/projects/cocopipe/badge/?version=latest)](https://cocopipe.readthedocs.io/en/latest/?badge=latest)
 [![GitHub Repository](https://img.shields.io/badge/Source%20Code-BabaSanfour%2Fcocopipe-blue)](https://github.com/BabaSanfour/coco-pipe)
 
-CoCo Pipe is a modular pipeline framework for processing bio M/EEG data with both traditional machine learning and deep learning components. The project includes tools for configuration, data processing, feature extraction, experiment design, visualization, and reporting, making it easy for users to run end-to-end experiments.
+CoCo Pipe is a comprehensive Python framework designed for advanced processing and analysis of bio M/EEG data. It seamlessly integrates traditional machine learning, deep learning, and signal processing techniques into a unified pipeline architecture. Key features include:
+
+- **Flexible Data Processing**: Support for various data formats (tabular, M/EEG, embeddings) with automated preprocessing and feature extraction
+- **Advanced ML Capabilities**: Integrated classification and regression pipelines with automated feature selection and hyperparameter optimization
+- **Modular Design**: Easy-to-extend architecture for adding custom processing steps, models, and analysis methods
+- **Experiment Management**: Built-in tools for experiment configuration, reproducibility, and results tracking
+- **Visualization & Reporting**: Comprehensive visualization tools and automated report generation for both signal processing and ML results
+- **Scientific Workflow**: End-to-end support for neuroimaging research, from raw data processing to publication-ready results
+
+Whether you're conducting clinical research, developing ML models for brain-computer interfaces, or exploring neural signal patterns, CoCo Pipe provides the tools and flexibility to streamline your workflow.
 
 ## Installation
 
@@ -35,93 +44,129 @@ CoCo Pipe is a modular pipeline framework for processing bio M/EEG data with bot
    pip install -e .
    ```
 
-## Running the Pipeline
+## Using the ML Module
 
-CoCo Pipe provides two primary ways to run analyses:
+CoCo Pipe provides two main ways to use the ML module:
 
-### 1. Using the Core Module (ml.py)
-You can directly import and use the core functionality in your Python scripts or Jupyter notebooks. For example:
+### 1. Direct Python API Usage
+
+You can use the ML module directly in your Python scripts by importing from `coco_pipe.io` for data loading/feature selection and `coco_pipe.ml` for machine learning pipelines:
 
 ```python
-import pandas as pd
-from coco_pipe.ml import pipeline_baseline
+from coco_pipe.io import load, select_features
+from coco_pipe.ml import MLPipeline
 
-# Load your dataset
-df = pd.read_csv("data/your_dataset.csv")
-X = df.drop(columns=["target"])
-y = df["target"]
+# Load your data
+X, y = load(
+    type="tabular",  # Supports: 'tabular', 'embeddings', 'meeg'
+    data_path="data/your_dataset.csv",
+)
 
-# Run a baseline analysis using all available features
-results = pipeline_baseline(X, y, scoring="accuracy")
-print(results)
+# Optionally select specific features
+X, y = select_features(
+    df=X,  # Your feature DataFrame
+    target_columns=y,  # Target variable(s)
+    covariates=["age", "sex"],  # Optional demographic/clinical variables
+    spatial_units=["left_frontal", "right_frontal"],  # Brain regions/sensors
+    feature_names=["alpha", "beta"]  # Features to include
+)
+
+# Configure and run ML pipeline
+config = {
+    "task": "classification",  # or 'regression'
+    "analysis_type": "baseline",  # Options: 'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'
+    "models": "all",  # or list of specific models
+    "metrics": ["accuracy", "f1-score"],
+    "cv_strategy": "stratified",
+    "n_splits": 5,
+    "n_features": 10,  # For feature selection
+    "direction": "forward",  # For feature selection
+    "search_type": "grid",  # For hyperparameter search
+    "n_iter": 100,  # For random search
+    "scoring": "accuracy",
+    "n_jobs": -1
+}
+
+pipeline = MLPipeline(X=X, y=y, config=config)
+results = pipeline.run()
 ```
 
-This method is ideal if you wish to embed CoCo Pipe into a custom workflow.
+### 2. Using the CLI Tool
 
-### 2. Using the CLI Script (run_ml.py)
-The CLI tool (located in the `scripts` folder) reads a YAML configuration file and runs one or more analyses as specified.
-
-#### a. Prepare a Configuration File
-Place a YAML configuration file (for example, `configs/toy_config.yml`) in your project. Below is a toy configuration example:
+For batch processing or experiment management, use the CLI tool with a YAML configuration file:
 
 ```yaml
-ID: "toy_example_01"
-data:
-  file: "data/toy_dataset.csv"
-  target: "label"
-  features_groups:
-    groups: ["sensor1", "sensor2"]
-    features: ["feat1", "feat2", "feat3", "feat4", "feat5"]
-    global:
-      - "sensor1.feat1"
-      - "sensor1.feat2"
-      - "sensor1.feat3"
-      - "sensor2.feat4"
-      - "sensor2.feat5"
-analysis:
-  - name: "Baseline Global"
-    type: "baseline"
-    subset: "all_features_all_groups"
+# -----------------------------------------------------------------------------
+# Toy config for MLPipeline
+# -----------------------------------------------------------------------------
+
+# Global parameters shared across analyses
+global_experiment_id: "toy_ml_config"
+data_path: "../datasets/toy_dataset.csv"
+results_dir: "../results"
+results_file: "toy_ml_config"
+
+# Default analysis parameters (can be overridden per analysis)
+defaults:
+  random_state: 42
+  n_jobs: -1
+  cv_kwargs:
+    strategy: "stratified"
+    n_splits: 5
+    shuffle: true
+    random_state: 42
+  covariates: ["age"]
+  spatial_units: ["regionX", "regionY"]
+  feature_names: ["feat1", "feat2", "feat3"]
+
+# List of analyses to run
+analyses:
+  - id: "classification_baseline"
+    task: "classification"
+    analysis_type: "baseline"
+    target_columns: ["target_class"]
+    row_filter:
+      - column: "age"
+        values: 13
+        operator: ">"
+      - column: "sex"
+        values: ["male"]
+    models:
+      - "Logistic Regression"
+      - "Random Forest"
+    metrics:
+      - "accuracy" 
+      - "roc_auc"
+
+  - id: "regression_hp_search"
+    task: "regression" 
+    analysis_type: "hp_search"
+    target_columns: ["target_reg"]
+    feature_names: ["feat1"]
+    spatial_units: ["regionX"]
     models: "all"
-    scoring: "accuracy"
-  - name: "Baseline Per Group"
-    type: "baseline"
-    subset: "all_features_per_group"
-    models: "all"
-    scoring: "accuracy"
-  - name: "Single Feature Global"
-    type: "baseline"
-    subset: "single_feature_all_groups"
-    models: "all"
-    scoring: "f1-score"
-  - name: "Feature Selection Per Group"
-    type: "fs"
-    subset: "single_feature_per_group"
-    num_features: 1
-    models: ["Random Forest", "SVC"]
-    scoring: "auc"
-  - name: "FS + HP Search Global"
-    type: "fs_hp"
-    subset: "all_features_all_groups"
-    num_features: 3
-    models: ["Logistic Regression"]
-    scoring: "accuracy"
-output: "toy_results"
+    metrics:
+      - "r2"
+      - "neg_mse"
+    cv_kwargs:
+      strategy: "kfold"
+      n_splits: 3
+    search_type: "grid"
+    n_iter: 20
+    scoring: "r2"
 ```
 
-#### b. Run the CLI Script
-Run the CLI tool by providing the configuration file:
+Run the analysis using:
 
 ```bash
-python scripts/run_ml.py --config configs/toy_config.yml
+python scripts/run_ml.py --config configs/your_config.yml
 ```
 
-After running, the tool will:
-- Execute the analyses defined in the config.
-- Save each subanalysis result as a separate pickle file (e.g., `toy_example_01_Baseline Global_baseline_results.pickle`).
-- Save a combined YAML file with all results (e.g., `toy_example_01_results.yaml`).
-
-*Note:* Adjust the configuration file as needed to match your dataset.
+The pipeline will:
+- Load and preprocess your data
+- Run all specified analyses
+- Save results for each model/analysis
+- Generate a combined results file
 
 ## Documentation
 

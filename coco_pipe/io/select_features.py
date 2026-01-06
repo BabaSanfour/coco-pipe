@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""
+coco_pipe/io/select_features.py
+----------------
+Select features from a DataFrame.
+Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
+Date: 2025-05-18
+Version: 0.0.1
+License: TBD
+"""
+import re
+import difflib
+import pandas as pd
+import logging
+from typing import Any, List, Optional, Union, Tuple, Dict
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.propagate = False
+
+__all__ = ["select_features"]
+
+def _get_col_map(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Build a case-insensitive mapping from lowercase column names to actual DataFrame column names.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+
+    Returns
+    -------
+    dict
+        Mapping from lowercase column names to actual column names.
+    """
+    return {col.lower(): col for col in df.columns}
+
+def _suggest_closest(name: str, choices: List[str], n: int = 3) -> List[str]:
+    """
+    Suggest closest matches for a string from a list of choices.
+
+    Parameters
+    ----------
+    name : str
+        Name to match.
+    choices : list of str
+        List of candidate names.
+    n : int, optional
+        Maximum number of suggestions to return, by default 3.
+
+    Returns
+    -------
+    list of str
+        List of suggested close matches.
+    """
+    return difflib.get_close_matches(name, choices, n)
+
+def _apply_row_filters(
+    df: pd.DataFrame,
+    row_filters: Union[Dict[str, Any], List[Dict[str, Any]]],
+    col_map: Dict[str, str]
+) -> pd.DataFrame:
+    """
+    Apply row filters to the DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    row_filters : dict or list of dict
+        Filtering conditions. Each dict must include:
+            - 'column': column name (case-insensitive)
+            - 'values': list or scalar for filtering
+            - 'operator': comparison operator (optional)
+              One of ['>', '<', '>=', '<=', '==', '!=', 'in', 'isin']
+              Defaults to 'isin' if not provided.
+    col_map : dict
+        Case-insensitive mapping of column names.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If a required key is missing or column is not found.
+    """
+    if not isinstance(row_filters, list):
+        row_filters = [row_filters]
+    op_map = {
+        ">": lambda col, val: col > val,
+        "<": lambda col, val: col < val,
+        ">=": lambda col, val: col >= val,
+        "<=": lambda col, val: col <= val,
+        "==": lambda col, val: col == val,
+        "!=": lambda col, val: col != val,
+        # Membership operators handled specially to pass full lists
+        "in": lambda col, val: col.isin(val),
+        "isin": lambda col, val: col.isin(val),
+    }
+    mask = pd.Series(True, index=df.index)
+
+    # Helpers to coerce values in a type-agnostic way for comparisons
+    def _coerce_for_op(series: pd.Series, value: Any) -> Tuple[pd.Series, Any]:
+        """Coerce series and scalar value to a common comparable type.
+
+        Tries numeric, then datetime, then falls back to string comparison.
+        Returns a pair (coerced_series, coerced_value).
+        """
+        # Try numeric comparison
+        try:
+            s_num = pd.to_numeric(series, errors='coerce')
+            v_num = pd.to_numeric(pd.Series([value]), errors='coerce').iloc[0]
+            if s_num.notna().any() and pd.notna(v_num):
+                return s_num, v_num
+        except Exception:
+            pass
+
+        # Try datetime comparison
+        try:
+            s_dt = pd.to_datetime(series, errors='coerce')
+            v_dt = pd.to_datetime(value, errors='coerce')
+            if s_dt.notna().any() and pd.notna(v_dt):
+                return s_dt, v_dt
+        except Exception:
+            pass
+
+        # Fallback: string comparison
+        return series.astype(str), str(value)
+
+    def _coerce_for_isin(series: pd.Series, values: List[Any]) -> Tuple[pd.Series, List[Any]]:
+        """Coerce series and list of values to a common comparable type for isin.
+
+        Tries numeric, then datetime, then falls back to string comparison.
+        Returns a pair (coerced_series, coerced_values_list).
+        """
+        vals = values if isinstance(values, list) else [values]
+        # Try numeric containment
+        try:
+            s_num = pd.to_numeric(series, errors='coerce')
+            v_num = pd.to_numeric(pd.Series(vals), errors='coerce')
+            v_num_clean = v_num.dropna().tolist()
+            if s_num.notna().any() and len(v_num_clean) > 0:
+                return s_num, v_num_clean
+        except Exception:
+            pass
+
+        # Try datetime containment
+        try:
+            s_dt = pd.to_datetime(series, errors='coerce')
+            v_dt = pd.to_datetime(pd.Series(vals), errors='coerce')
+            v_dt_clean = v_dt.dropna().tolist()
+            if s_dt.notna().any() and len(v_dt_clean) > 0:
+                return s_dt, v_dt_clean
+        except Exception:
+            pass
+
+        # Fallback: string containment
+        return series.astype(str), [str(v) for v in vals]
+    for filt in row_filters:
+        if 'column' not in filt:
+            raise ValueError("Row filter missing 'column' key")
+        col_key = filt['column']
+        lower = col_key.lower()
+        if lower not in col_map:
+            sugg = _suggest_closest(lower, list(col_map))
+            raise ValueError(f"Row filter column '{col_key}' not found. Did you mean {sugg}?")
+        actual_col = col_map[lower]
+        operator = filt.get('operator')
+        if 'values' not in filt:
+            raise ValueError(f"Row filter for column '{col_key}' must include 'values'.")
+        values = filt['values']
+        if operator in ("in", "isin", None):
+            # Membership: ensure values are treated as a list
+            val_list = values if isinstance(values, list) else [values]
+            s_coerced, v_list_coerced = _coerce_for_isin(df[actual_col], val_list)
+            mask &= s_coerced.isin(v_list_coerced)
+        elif operator in op_map:
+            # Comparators expect a scalar; if list provided, take the first element
+            val = values if not isinstance(values, list) else values[0]
+            s_coerced, v_coerced = _coerce_for_op(df[actual_col], val)
+            mask &= op_map[operator](s_coerced, v_coerced)
+        else:
+            # Unknown operator: default to membership for backward compatibility
+            val_list = values if isinstance(values, list) else [values]
+            s_coerced, v_list_coerced = _coerce_for_isin(df[actual_col], val_list)
+            mask &= s_coerced.isin(v_list_coerced)
+    return df[mask]
+
+def select_features(
+    df: pd.DataFrame,
+    target_columns: Union[str, List[str]],
+    groups_column: Optional[str] = None,
+    covariates: Optional[List[str]] = None,
+    spatial_units: Optional[Union[str, List[str], Dict[str, List[str]]]] = None,
+    feature_names: Union[str, List[str]] = "all",
+    sep: str = "_",
+    reverse: bool = False,
+    row_filter: Optional[Union[dict, List[dict]]] = None,
+    verbose: bool = False
+) -> Tuple[pd.DataFrame, Union[pd.Series, pd.DataFrame]]:
+    """
+    Select covariates and spatial-feature columns from a DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame.
+    target_columns : str or list of str
+        Column(s) to be used as target variable(s).
+    groups_column : str, optional
+        Column that contains group identifiers to use for cross-validation.
+    covariates : list of str, optional
+        List of additional covariates to include.
+    spatial_units : str, list of str, dict, or None
+        Spatial units to extract (e.g., sensors or brain regions).
+        If dict, keys are used as unit names.
+        If 'all', all available units are used.
+    feature_names : str or list of str
+        Features to extract (e.g., 'alpha', 'beta'). Use 'all' to select all.
+    sep : str, optional
+        Separator between spatial unit and feature, by default '_'.
+    reverse : bool, optional
+        If True, expects columns in format '<feature><sep><unit>' instead of '<unit><sep><feature>'.
+    row_filter : dict or list of dict, optional
+        Row filtering conditions. See `_apply_row_filters` for format.
+    verbose : bool, optional
+        If True, log additional information.
+
+    Returns
+    -------
+    X : pd.DataFrame
+        Feature matrix.
+    y : pd.Series or pd.DataFrame
+        Target variable(s).
+    groups : pd.Series.
+        Group identifiers if `groups_column` is provided.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing or selection fails.
+    """
+    col_map = _get_col_map(df)
+    if row_filter:
+        df = _apply_row_filters(df, row_filter, col_map)
+        if verbose:
+            logger.info("Applied row filters. New DataFrame shape: %s", df.shape)
+    parts: List[pd.DataFrame] = []
+    if covariates:
+        matched = []
+        for cov in covariates:
+            low = cov.lower()
+            if low not in col_map:
+                sugg = _suggest_closest(low, list(col_map))
+                raise ValueError(f"Covariate '{cov}' not found. Did you mean {sugg}?")
+            matched.append(col_map[low])
+        parts.append(df[matched])
+        if verbose:
+            logger.info("Selected covariates: %s", matched)
+    all_cols = df.columns.tolist()
+    pairs = []
+    for col in all_cols:
+        if sep not in col:
+            continue
+        left, right = col.split(sep, 1)
+        # Determine spatial unit and feature order
+        su, feat = (left, right) if not reverse else (right, left)
+        pairs.append({'col': col, 'su': su, 'feat': feat})
+    if verbose:
+        logger.info("Found %d candidate feature pairs.", len(pairs))
+    actual_su = sorted({p['su'] for p in pairs})
+    actual_feat = sorted({p['feat'] for p in pairs})
+    if verbose:
+        logger.info("Actual spatial units: %s", actual_su)
+        logger.info("Actual features: %s", actual_feat)
+    sel_su: List[str] = []
+    if spatial_units == 'all':
+        sel_su = actual_su
+    elif spatial_units is None:
+        sel_su = []
+    elif isinstance(spatial_units, dict):
+        keys = list(spatial_units.keys())
+        for key in keys:
+            matches = [su for su in actual_su if su.lower() == key.lower()]
+            if matches:
+                sel_su.extend(matches)
+    else:
+        for su_in in spatial_units:
+            matches = [su for su in actual_su if su.lower() == su_in.lower()]
+            if matches:
+                sel_su.extend(matches)
+    sel_feat: List[str] = []
+    if feature_names == 'all':
+        sel_feat = actual_feat
+    else:
+        feat_list = feature_names if isinstance(feature_names, list) else [feature_names]
+        for fn in feat_list:
+            matches = [f for f in actual_feat if f.lower() == fn.lower()]
+            if matches:
+                sel_feat.extend(matches)
+    if verbose:
+        logger.info("Selected spatial units: %s", sel_su)
+        logger.info("Selected features: %s", sel_feat)
+    sel_cols: List[str] = []
+    for p in pairs:
+        if p['su'] in sel_su and p['feat'] in sel_feat:
+            sel_cols.append(p['col'])
+    if sel_cols:
+        parts.append(df[sel_cols])
+    if not parts:
+        raise ValueError("No features selected: check your spatial_units and feature_names.")
+    X = pd.concat(parts, axis=1)
+    if verbose:
+        logger.info("Feature matrix shape: %s", X.shape)
+    tgt_list = target_columns if isinstance(target_columns, list) else [target_columns]
+    tcols: List[str] = []
+    for tgt in tgt_list:
+        low = tgt.lower()
+        if low not in col_map:
+            sugg = _suggest_closest(low, list(col_map))
+            raise ValueError(f"Target '{tgt}' not found. Did you mean {sugg}?")
+        tcols.append(col_map[low])
+    y = df[tcols[0]] if len(tcols) == 1 else df[tcols]
+    if verbose:
+        logger.info("Target columns selected: %s", tcols)
+
+    groups = df[groups_column] if groups_column is not None else None
+    if groups is not None:
+        groups = groups.astype(int)
+        if verbose:
+            logger.info("Groups selected with shape: %s", groups.shape)
+        return X, y, groups
+    else:
+        return X, y
