@@ -243,9 +243,8 @@ class TopologicalAEReducer(BaseReducer):
         Batch size.
     epochs : int, default=50
         Number of training epochs.
-    device : str, default='auto'
-        Device to train on ('cpu', 'cuda', 'mps', or 'auto').
-        'auto' will select 'cuda' > 'mps' > 'cpu'.
+    device : str, default='cpu'
+        Device to train on ('cpu' or 'cuda').
     **kwargs : dict
         Additional arguments.
 
