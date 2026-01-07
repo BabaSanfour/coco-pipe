@@ -133,10 +133,10 @@ def test_transform_independent():
 def test_plot_modes():
     X = np.random.rand(20, 5)
     dr = DimReduction("PCA", n_components=2)
-    dr.fit_transform(X)
+    dr.fit_transform(X) # Ensures embedding_ is set
     
-    # Error: missing X
-    with pytest.raises(ValueError, match="requires 'X'"):
+    # Error: 'shepard' requires X
+    with pytest.raises(ValueError, match="requires original data 'X'"):
         dr.plot(mode='shepard')
         
     # Success case requires 'X'
@@ -145,12 +145,74 @@ def test_plot_modes():
     plt.close(fig)
     
     # Streamlines error (requires V_emb)
-    with pytest.raises(ValueError, match="requires 'V_emb'"):
+    with pytest.raises(ValueError, match="requires velocity vectors 'V_emb'"):
         dr.plot(mode='streamlines')
         
     # Unknown mode
     with pytest.raises(ValueError, match="Unknown plot mode"):
         dr.plot(mode='invalid_mode')
+
+def test_plot_enhanced():
+    """Test enhanced plotting features (3D, metrics overlay)."""
+    # Create 3D data and embedding
+    X = np.random.rand(20, 5)
+    
+    # Mock a reducer that outputs 3 dims
+    dr = DimReduction("PCA", n_components=3)
+    # Use fit_transform to set self.embedding_
+    dr.fit_transform(X)
+    
+    # 1. Test 3D plotting
+    fig = dr.plot(dims=(0, 1, 2))
+    assert isinstance(fig, plt.Figure)
+    assert len(fig.axes) > 0
+    plt.close(fig)
+
+    # 2. Test metrics overlay (2D default dims)
+    fig = dr.plot(X=X, show_metrics=True)
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+    # 3. Test mode='metrics'
+    fig = dr.plot(mode='metrics', X=X)
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+def test_plot_diagnostics():
+    """Test diagnostic plotting modes."""
+    X = np.random.rand(20, 5)
+    
+    # 1. Linear (PCA)
+    dr = DimReduction("PCA", n_components=3)
+    dr.fit_transform(X) # Set embedding
+    
+    fig = dr.plot(mode='diagnostics')
+    assert isinstance(fig, plt.Figure)
+    assert "Explained Variance" in fig.axes[0].get_title()
+    plt.close(fig)
+    
+    # 2. Mock Neural
+    class MockNeuralReducer(BaseReducer):
+        def __init__(self):
+            super().__init__(n_components=2)
+            self.loss_history_ = [0.5, 0.4, 0.3, 0.2]
+            self.model = "MockNetwork"
+
+        def fit(self, X, y=None):
+            return self
+
+        def transform(self, X):
+            return X[:, :2]
+            
+    dr_neural = DimReduction("PCA", n_components=2)
+    dr_neural.reducer = MockNeuralReducer()
+    dr_neural.embedding_ = np.random.rand(20, 2) # Manually set embedding
+    dr_neural.method = "UseMockNeural" 
+    
+    fig = dr_neural.plot(mode='diagnostics')
+    assert isinstance(fig, plt.Figure)
+    assert "Loss History" in fig.axes[0].get_title()
+    plt.close(fig)
 
 def test_score_specific_reducers():
     """Test that score() scrapes specific attributes from different reducers."""

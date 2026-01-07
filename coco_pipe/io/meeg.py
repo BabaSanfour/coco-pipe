@@ -7,7 +7,7 @@ from pathlib import Path
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def read_meeg_bids(bids_root: str, subject: str, session: str | None, task: str | None, run: str | None = None, datatype: str = 'eeg', suffix: str = 'eeg', extension: str | None = None, verbose: bool = False):
+def read_meeg_bids(bids_root: str, subject: str, session: Optional[str], task: Optional[str], run: Optional[str] = None, datatype: str = 'eeg', suffix: str = 'eeg', extension: Optional[str] = None, verbose: bool = False):
     """
     Reads M/EEG data from a BIDS-compliant dataset.
 

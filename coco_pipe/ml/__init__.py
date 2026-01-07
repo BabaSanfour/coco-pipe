@@ -26,6 +26,7 @@ from .regression import (
     MultiOutputRegressionPipeline, 
     RegressionPipeline
 )
+from .pipeline import MLPipeline
 
 __all__ = [
     # Configuration constants
@@ -61,4 +62,7 @@ __all__ = [
     "SingleOutputRegressionPipeline",
     "MultiOutputRegressionPipeline", 
     "RegressionPipeline",
+    
+    # Unified Pipeline
+    "MLPipeline",
 ]

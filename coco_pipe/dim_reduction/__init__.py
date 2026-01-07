@@ -1,6 +1,7 @@
 from .core import DimReduction
 from .config import METHODS, METHODS_DICT
-from .benchmark import metrics
+from .benchmark import trustworthiness, continuity, lcmc, shepard_diagram_data
+
 from .reducers import (
     BaseReducer,
     PCAReducer,
@@ -23,7 +24,10 @@ __all__ = [
     "DimReduction",
     "METHODS",
     "METHODS_DICT",
-    "metrics",
+    "trustworthiness", 
+    "continuity", 
+    "lcmc", 
+    "shepard_diagram_data",
     "BaseReducer",
     "PCAReducer",
     "IsomapReducer",

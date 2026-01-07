@@ -9,5 +9,13 @@ Public API:
 - plot_bar: draw a sorted bar plot (vertical or horizontal) with optional error bars.
 """
 from .plots import plot_topomap, plot_bar, plot_scatter2d
+from .dim_reduction import plot_embedding, plot_shepard_diagram, plot_streamlines
 
-__all__ = ["plot_topomap", "plot_bar", "plot_scatter2d"]
+__all__ = [
+    "plot_topomap",
+    "plot_bar",
+    "plot_scatter2d",
+    "plot_embedding",
+    "plot_shepard_diagram",
+    "plot_streamlines"
+]

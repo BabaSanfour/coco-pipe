@@ -12,10 +12,10 @@ Date: 2026-01-07
 
 import numpy as np
 from pathlib import Path
-from typing import Optional, Union, Dict, Any, List
+from typing import Optional, Union, Dict, Any, List, Tuple
 
 from .config import METHODS, METHODS_DICT
-from .reducers.base import BaseReducer
+from .reducers.base import BaseReducer, ArrayLike
 from .benchmark import metrics
 
 class DimReduction:
@@ -281,46 +281,153 @@ class DimReduction:
 
         return scores
 
-    def plot(self, labels: Optional[Union[np.ndarray, List]] = None, mode: str = 'embedding', **kwargs):
+    def plot(self, 
+             mode: str = 'embedding', 
+             dims: Union[Tuple[int, int], Tuple[int, int, int]] = (0, 1),
+             X: Optional[ArrayLike] = None, 
+             V_emb: Optional[np.ndarray] = None, 
+             labels: Optional[np.ndarray] = None,
+             y: Optional[np.ndarray] = None,
+             show_metrics: bool = False,
+             **kwargs) -> Any:
         """
-        Visualize the result.
+        Plot the results.
 
         Parameters
         ----------
-        labels : array-like, optional
+        mode : {'embedding', 'shepard', 'streamlines', 'metrics', 'diagnostics', 'native'}
+            Type of plot.
+        dims : tuple
+            Dimensions to plot (e.g., (0, 1) for 2D, (0, 1, 2) for 3D).
+        X : ArrayLike, optional
+            Original high-dimensional data (required for 'shepard', 'metrics').
+        V_emb : np.ndarray, optional
+            Velocity vectors (required for 'streamlines').
+        labels : np.ndarray, optional
             Labels for coloring points.
-        mode : {'embedding', 'shepard', 'streamlines'}, default='embedding'
-            Plot type.
+        y : np.ndarray, optional
+            Alias for labels.
+        show_metrics : bool, default=False
+            If True, overlays quality metrics on the 'embedding' plot. Requires X.
         **kwargs : dict
-            Passed to underlying viz function (e.g. title, cmap, ax).
-            
+            Additional arguments passed to the plotting function.
+
         Returns
         -------
         fig : matplotlib.figure.Figure
         """
-        # Lazy import to avoid circular dependency or heavy load
         from ..viz import dim_reduction as viz
         
-        if self.embedding_ is None and mode != 'shepard': # shepard needs separate handling if not cached?
-             raise RuntimeError("No embedding found. Run fit_transform() first.")
+        # Dispatch 'native' mode immediately
+        if mode == 'native':
+            return self.plot_native(**kwargs)
 
-        if self.embedding_.ndim == 3:
-             raise NotImplementedError("Plotting 3D spatiotemporal embeddings is not yet supported.")
+        # Alias resolution
+        lbls = y if y is not None else labels
+
+        # Decide on embedding to use
+        # Diagnostics mode might not need embedding (e.g. loss history)
+        if mode != 'diagnostics' and self.embedding_ is None:
+             raise RuntimeError("Model is not fitted. Use fit() or fit_transform() first.")
+        
+        X_emb = self.embedding_
+
+        # Calculate metrics if requested and X provided
+        metrics_dict = None
+        if show_metrics:
+            if X is None:
+                raise ValueError("show_metrics=True requires 'X' to compute scores.")
+            metrics_dict = self.score(X)
 
         if mode == 'embedding':
-            return viz.plot_embedding(self.embedding_, labels=labels, **kwargs)
+            return viz.plot_embedding(X_emb, labels=lbls, dims=dims, 
+                                      metrics=metrics_dict, **kwargs)
+        
+        elif mode == 'metrics':
+            if X is None:
+                 raise ValueError("mode='metrics' requires 'X' to compute scores.")
+            scores = self.score(X)
+            return viz.plot_metrics(scores, **kwargs)
+
+        elif mode == 'diagnostics':
+            # Check for loss history (Neural)
+            if hasattr(self.reducer, 'loss_history_') and self.reducer.loss_history_:
+                return viz.plot_loss_history(self.reducer.loss_history_, title=f"Loss History ({self.method})", **kwargs)
+            
+            # Check for eigenvalues/explained variance (Linear)
+            if hasattr(self.reducer, 'explained_variance_ratio_'):
+                return viz.plot_eigenvalues(self.reducer.explained_variance_ratio_, title=f"Explained Variance ({self.method})", **kwargs)
+            
+            if hasattr(self.reducer, 'eigs_'):
+                # eigs_ can be complex for DMD, take magnitude
+                eigs = np.abs(self.reducer.eigs_)
+                # Sort descending
+                eigs = -np.sort(-eigs) # numpy sort is ascending
+                return viz.plot_eigenvalues(eigs, title=f"Eigenvalues ({self.method})", ylabel="Magnitude", **kwargs)
+
+            # Check for singular values
+            if hasattr(self.reducer, 'singular_values_'):
+                 return viz.plot_eigenvalues(self.reducer.singular_values_, title=f"Singular Values ({self.method})", ylabel="Value", **kwargs)
+                 
+            # Fallback: Shepard Diagram (Manifold)
+            if X is None:
+                raise ValueError("mode='diagnostics' fallback to Shepard diagram requires 'X'.")
+            return viz.plot_shepard_diagram(np.array(X), X_emb, **kwargs)
+
         elif mode == 'shepard':
-            if 'X' not in kwargs:
-                raise ValueError("Plotting Shepard diagram requires 'X' (original data) in kwargs.")
-            X = kwargs.pop('X')
-            return viz.plot_shepard_diagram(X, self.embedding_, **kwargs)
+            if X is None:
+                raise ValueError("mode='shepard' requires original data 'X'")
+            # Handle MNE object 
+            X_arr = np.array(X) if not hasattr(X, 'get_data') else X.get_data()
+            if X_arr.ndim > 2:
+                # Shepard needs 2D inputs usually (scipy pdist)
+                X_arr = X_arr.reshape(len(X_arr), -1)
+                
+            return viz.plot_shepard_diagram(X_arr, X_emb, **kwargs)
+
         elif mode == 'streamlines':
-            if 'V_emb' not in kwargs:
-                raise ValueError("Plotting streamlines requires 'V_emb' (velocity vectors) in kwargs.")
-            V_emb = kwargs.pop('V_emb')
-            return viz.plot_streamlines(self.embedding_, V_emb, **kwargs)
+            if V_emb is None:
+                raise ValueError("mode='streamlines' requires velocity vectors 'V_emb'")
+            return viz.plot_streamlines(X_emb, V_emb, **kwargs)
+        
         else:
-            raise ValueError(f"Unknown plot mode '{mode}'")
+            raise ValueError(f"Unknown plot mode: {mode}")
+
+    def plot_native(self, **kwargs) -> Any:
+        """
+        Attempt to use the underlying library's native plotting function.
+        
+        Supported:
+        - PHATE (phate.plot.*)
+        - UMAP (umap.plot.*)
+        - DMD (pydmd.plot_eigs / plot_modes_2D)
+
+        Returns
+        -------
+        result : Any
+             The result of the native plot call (usually axis or figure).
+        """
+        # PHATE
+        if self.method == "PHATE":
+             import phate
+             return phate.plot.scatter(self.reducer.model, **kwargs)
+        
+        # UMAP
+        if self.method == "UMAP":
+             try:
+                 import umap.plot
+                 return umap.plot.points(self.reducer.model, **kwargs)
+             except ImportError:
+                 raise ImportError("umap.plot requires 'umap-learn[plot]' or manually installed dependencies.")
+
+        # DMD (PyDMD)
+        if self.method == "DMD":
+             # Try plot_eigs first if not specified in kwargs?
+             # Or check kwargs? Simple default: plot_eigs
+             if hasattr(self.reducer.model, 'plot_eigs'):
+                 return self.reducer.model.plot_eigs(**kwargs)
+        
+        raise NotImplementedError(f"Native plotting not supported or implemented for {self.method}.")
 
     def save(self, path: Union[str, Path]):
         """Save the reducer to disk."""
