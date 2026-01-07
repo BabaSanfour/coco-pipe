@@ -33,6 +33,7 @@ import numpy as np
 from pydmd import DMD
 
 from meegkit.trca import TRCA
+from meegkit.utils.trca import bandpass
 
 from .base import BaseReducer, ArrayLike
 
@@ -261,16 +262,54 @@ class TRCAReducer(BaseReducer):
         """
         if self.model is None:
             raise RuntimeError("TRCAReducer must be fitted before calling transform().")
-            
-        # Transpose to (n_samples/time, n_channels, n_trials)
+
+        # X is (n_trials, n_channels, n_times)
         X_arr = np.array(X)
-        X_transposed = np.transpose(X_arr, (2, 1, 0))
-        
-        # meegkit transform returns (n_samples, n_components, n_trials)
-        X_out = self.model.transform(X_transposed)
-        
-        # Return to (n_trials, n_components, n_times)
-        return np.transpose(X_out, (2, 1, 0))
+        n_trials, n_chans, n_times = X_arr.shape
+
+        # We need to apply the spatial filters learned by TRCA
+        # self.model.coef_ shape: (n_bands, n_classes, n_chans)
+        n_bands, n_classes, _ = self.model.coef_.shape
+
+        # Prepare output container
+        # We will produce one component per (band, class) combination
+        # Total components = n_bands * n_classes
+        # Output shape: (n_trials, n_total_components, n_times)
+        X_out = []
+
+        for b in range(n_bands):
+            # 1. Filter data for this band
+            X_tmp = X_arr.transpose(2, 1, 0) # (times, chans, trials)
+            
+            # Wp, Ws from filterbank
+            # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)], ...]
+            wp = self.model.filterbank[b][0]
+            ws = self.model.filterbank[b][1]
+            
+            X_filt = bandpass(X_tmp, self.model.sfreq, Wp=wp, Ws=ws)
+            # X_filt: (times, chans, trials)
+                        
+            for k in range(n_classes):
+                w = self.model.coef_[b, k, :] # (n_chans,)
+                
+                # Project: w^T * X
+                # w is spatial filter.
+                # X_filt[t, c, tr]
+                # Result should be (times, trials) -> (trials, times)
+                
+                # Using einsum for clarity:
+                # 'ct,tcr->tr' (if c=chans, t=times, r=trials)? No.
+                # X_filt indices: t (time), c (chan), r (trial)
+                # w indices: c (chan)
+                # target: t, r
+                
+                proj = np.einsum('c,tcr->tr', w, X_filt) # (times, trials)
+                X_out.append(proj.T) # (trials, times)
+
+        # Stack predictions
+        # X_out is list of (trials, times)
+        # We want (trials, n_components, n_times)
+        return np.stack(X_out, axis=1)
 
     @property
     def coef_(self) -> np.ndarray:

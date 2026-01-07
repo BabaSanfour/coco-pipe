@@ -118,6 +118,11 @@ class IVISReducer(BaseReducer):
         -------
         loss_history_ : list of float
         """
-        if self.model is None or not hasattr(self.model, "history"):
+        if self.model is None:
              raise RuntimeError("Model is not fitted yet.")
-        return self.model.history.history['loss']
+        
+        # IVIS 2.0.11+ (git ver) exposes loss_history_ directly
+        if hasattr(self.model, 'loss_history_'):
+            return self.model.loss_history_
+            
+        raise RuntimeError("Could not retrieve loss history from IVIS model.")

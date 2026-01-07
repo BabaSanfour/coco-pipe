@@ -164,10 +164,7 @@ class TopologicalSignatureDistance(nn.Module):
     def forward(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
         Compute the signature loss.
-        """
-        if gd is None:
-            return torch.tensor(0.0, device=x.device)
-            
+        """            
         # Distance matrices
         dx = self._compute_distance_matrix(x)
         dz = self._compute_distance_matrix(z)
@@ -276,7 +273,16 @@ class TopologicalAEReducer(BaseReducer):
         self.lr = lr
         self.batch_size = batch_size
         self.epochs = epochs
-        self.device = device
+        # Device handling
+        if device == 'auto':
+            if torch.cuda.is_available():
+                self.device = 'cuda'
+            elif torch.backends.mps.is_available():
+                self.device = 'mps'
+            else:
+                self.device = 'cpu'
+        else:
+            self.device = device
         self.model = None
         self.loss_history_ = []
         
@@ -325,10 +331,8 @@ class TopologicalAEReducer(BaseReducer):
                 
                 # Topological Loss
                 loss_topo = torch.tensor(0.0).to(self.device)
-                if self.lam > 0 and gd is not None:
+                if self.lam > 0:
                      loss_topo = self.topo_loss_fn(x_batch, z)
-                elif self.lam > 0 and gd is None:
-                     pass
 
                 loss = loss_mse + self.lam * loss_topo
                 

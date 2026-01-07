@@ -325,6 +325,9 @@ class PacmapReducer(BaseReducer):
             'MN_ratio': MN_ratio,
             'FP_ratio': FP_ratio
         }
+        # Handle 'init' separately as it goes to fit_transform, not __init__
+        self.init_type = kwargs.pop('init', 'pca')
+        
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
@@ -350,7 +353,8 @@ class PacmapReducer(BaseReducer):
             **self.specific_args,
             **self.params
         )
-        self.embedding_ = self.model.fit_transform(X, init="pca")
+        # Use the stored init_type
+        self.embedding_ = self.model.fit_transform(X, init=self.init_type)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
@@ -463,23 +467,13 @@ class TrimapReducer(BaseReducer):
         """
         Transform X.
         
-        TriMap is transductive but the implementation provides a mechanism to embed
-        new points by optimizing their position fixing the existing embedding.
-        
-        Parameters
-        ----------
-        X : ArrayLike of shape (n_samples, n_features)
-             New data to transform.
-             
-        Returns
-        -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-             Projected data.
+        Raises
+        ------
+        NotImplementedError
+            PaCMAP does not support transforming new data efficiently without refitting. 
+            Use fit_transform() on the full dataset instead.
         """
-        if self.model is None:
-            raise RuntimeError("TrimapReducer must be fitted before calling transform().")
-        
-        return self.model.transform(X)
+        raise NotImplementedError("TrimapReducer cannot transform new data. Use fit_transform().")
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
