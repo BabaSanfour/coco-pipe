@@ -205,10 +205,12 @@ def test_score_allowlist():
     dr.reducer = MockReducer()
     dr.embedding_ = np.zeros((20, 2)) # Dummy embedding (20 samples)
     
+    
     X = np.zeros((20, 5))
     scores = dr.score(X)
-    
-    assert "graph" in scores
+
+    # 'graph' should be filtered out (not in allow_list and possibly large)
+    assert "graph" not in scores
     assert "diff_potential" in scores
     assert "eigs" in scores
     assert "ignored_attr" not in scores
