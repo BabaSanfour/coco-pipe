@@ -1,4 +1,42 @@
-from .reducer import DimReducer
+from .core import DimReduction
 from .config import METHODS, METHODS_DICT
-from .reducers import PCAReducer, TSNEReducer, UMAPReducer, PacmapReducer, BaseReducer
-from .dim_reduction import DimReductionPipeline
+from .benchmark import metrics
+from .reducers import (
+    BaseReducer,
+    PCAReducer,
+    IsomapReducer,
+    LLEReducer,
+    MDSReducer,
+    SpectralEmbeddingReducer,
+    TSNEReducer,
+    UMAPReducer,
+    PacmapReducer,
+    TrimapReducer,
+    PHATEReducer,
+    DMDReducer,
+    TRCAReducer,
+    IVISReducer,
+    TopologicalAEReducer
+)
+
+__all__ = [
+    "DimReduction",
+    "METHODS",
+    "METHODS_DICT",
+    "metrics",
+    "BaseReducer",
+    "PCAReducer",
+    "IsomapReducer",
+    "LLEReducer",
+    "MDSReducer",
+    "SpectralEmbeddingReducer",
+    "TSNEReducer",
+    "UMAPReducer",
+    "PacmapReducer",
+    "TrimapReducer",
+    "PHATEReducer",
+    "DMDReducer",
+    "TRCAReducer",
+    "IVISReducer",
+    "TopologicalAEReducer"
+]
