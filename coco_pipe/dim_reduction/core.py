@@ -221,18 +221,27 @@ class DimReduction:
                 raise RuntimeError("No embedding available. Call fit_transform() first or provide X_emb.")
             X_emb = self.embedding_
 
-        # Verify shapes match (number of samples)
-        # Note: TRCA returns 3D embedding (n_trials, n_chans, n_times).
-        # Benchmarking usually assumes vector-to-vector mapping.
-        # If 3D, we might need to flatten or metrics might not apply directly.
         if X_emb.ndim == 3 or X_arr.ndim == 3:
              # Skip standard metrics for spatiotemporal for now, or implement specialized ones.
              return {"trustworthiness": np.nan, "continuity": np.nan, "note": "Metrics undefined for 3D spatiotemporal data"}
 
+        from scipy.stats import spearmanr
+        
         scores = {
             "trustworthiness": metrics.trustworthiness(X_arr, X_emb, n_neighbors=n_neighbors),
-            "continuity": metrics.continuity(X_arr, X_emb, n_neighbors=n_neighbors)
+            "continuity": metrics.continuity(X_arr, X_emb, n_neighbors=n_neighbors),
+            "lcmc": metrics.lcmc(X_arr, X_emb, n_neighbors=n_neighbors)
         }
+        
+        # Shepard Correlation (Global Distance Preservation)
+        # We sample 1000 points max to keep it efficient
+        d_orig, d_emb = metrics.shepard_diagram_data(X_arr, X_emb, sample_size=1000)
+        if len(d_orig) > 1:
+            # Spearman correlation deals with non-linear monotonic relationships
+            corr, _ = spearmanr(d_orig, d_emb)
+            scores["shepard_correlation"] = float(corr)
+        else:
+            scores["shepard_correlation"] = np.nan
         
         
         # Scrape reducer-specific metrics (attributes ending in _ or in allow-list)

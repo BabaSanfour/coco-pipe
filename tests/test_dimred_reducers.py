@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import tempfile
 from sklearn.datasets import make_blobs
+from coco_pipe.dim_reduction.config import METHODS_DICT
 
 # --- Import Reducers ---
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
@@ -251,3 +252,10 @@ def test_topo_ae_reducer(data_ts):
     
     reducer_cpu = TopologicalAEReducer(device='cpu')
     assert reducer_cpu.device == 'cpu'
+
+def test_all_reducers_instantiation():
+    """Test that all registered reducers can be instantiated."""
+    for method, cls in METHODS_DICT.items():
+        reducer = cls(n_components=2)
+        assert isinstance(reducer, BaseReducer)
+        assert reducer.n_components == 2
