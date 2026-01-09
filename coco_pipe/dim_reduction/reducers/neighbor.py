@@ -44,6 +44,11 @@ import pacmap
 import trimap
 import phate
 
+try:
+    from umap.parametric_umap import ParametricUMAP
+except ImportError:
+    ParametricUMAP = None
+
 from .base import BaseReducer, ArrayLike
 
 
@@ -610,3 +615,91 @@ class PHATEReducer(BaseReducer):
         if self.model is None or not hasattr(self.model, "graph"):
              raise RuntimeError("Model is not fitted yet.")
         return self.model.graph
+
+
+class ParametricUMAPReducer(BaseReducer):
+    """
+    Parametric UMAP Reducer (TensorFlow backed).
+    
+    Learns a neural network to approximate the UMAP embedding.
+    Wrapper for umap.parametric_umap.ParametricUMAP.
+    
+    Parameters
+    ----------
+    n_components : int, default=2
+        The dimension of the space to embed into.
+    n_neighbors : int, default=15
+        The size of local neighborhood.
+    min_dist : float, default=0.1
+        The effective minimum distance between embedded points.
+    metric : str, default='euclidean'
+        The metric to use to compute distances.
+    n_epochs : int, default=None
+        The number of training epochs.
+    batch_size : int, default=1000
+        Batch size.
+    verbose : bool, default=False
+        Whether to print progress messages.
+    **kwargs : dict
+        Additional arguments.
+        
+    Attributes
+    ----------
+    model : umap.parametric_umap.ParametricUMAP
+        The fitted estimator.
+    """
+
+    def __init__(self, n_components: int = 2, n_neighbors: int = 15,
+                 min_dist: float = 0.1, metric: str = 'euclidean',
+                 n_epochs: Optional[int] = None, batch_size: int = 1000,
+                 verbose: bool = False, **kwargs):
+        super().__init__(n_components=n_components, **kwargs)
+        self.n_neighbors = n_neighbors
+        self.min_dist = min_dist
+        self.metric = metric
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
+        self.verbose = verbose
+        self.model = None
+
+    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "ParametricUMAPReducer":
+        """
+        Fit the Parametric UMAP model.
+        """
+        if ParametricUMAP is None:
+            raise ImportError(
+                "ParametricUMAP requires 'umap-learn' and 'tensorflow'. "
+                "Install with `pip install umap-learn[plot] tensorflow`."
+            )
+
+        self.model = ParametricUMAP(
+            n_components=self.n_components,
+            n_neighbors=self.n_neighbors,
+            min_dist=self.min_dist,
+            metric=self.metric,
+            n_epochs=self.n_epochs,
+            batch_size=self.batch_size,
+            verbose=self.verbose,
+            **self.params
+        )
+        
+        self.model.fit(X, y=y)
+        return self
+
+    def transform(self, X: ArrayLike) -> np.ndarray:
+        """
+        Transform X into the low-dimensional space.
+        """
+        if self.model is None:
+            raise RuntimeError("ParametricUMAPReducer must be fitted before calling transform().")
+            
+        return self.model.transform(X)
+
+    def save(self, filepath: str) -> None:
+        """
+        Save using joblib (wrapper).
+        """
+        if self.model is None:
+             raise RuntimeError("Model is not fitted.")
+             
+        super().save(filepath)

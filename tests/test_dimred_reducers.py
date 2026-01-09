@@ -12,20 +12,23 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import tempfile
 from sklearn.datasets import make_blobs
-from coco_pipe.dim_reduction.config import METHODS_DICT
+
+import dask.array as da
+import dask_ml
 
 # --- Import Reducers ---
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
-from coco_pipe.dim_reduction.reducers.linear import PCAReducer
+from coco_pipe.dim_reduction.reducers.linear import PCAReducer, IncrementalPCAReducer, DaskPCAReducer, DaskTruncatedSVDReducer
 from coco_pipe.dim_reduction.reducers.manifold import (
     IsomapReducer, LLEReducer, MDSReducer, SpectralEmbeddingReducer
 )
 from coco_pipe.dim_reduction.reducers.neighbor import (
-    TSNEReducer, UMAPReducer, PacmapReducer, TrimapReducer, PHATEReducer
+    TSNEReducer, UMAPReducer, PacmapReducer, TrimapReducer, PHATEReducer, ParametricUMAPReducer
 )
 from coco_pipe.dim_reduction.reducers.spatiotemporal import DMDReducer, TRCAReducer
 from coco_pipe.dim_reduction.reducers.neural import IVISReducer
 from coco_pipe.dim_reduction.reducers.topology import TopologicalAEReducer
+from coco_pipe.dim_reduction.config import ParametricUMAPConfig, DimReductionConfig, METHODS_DICT
 
 
 # --- Fixtures ---
@@ -145,7 +148,7 @@ def test_umap_reducer(data):
     assert X_new.shape == (500, 2)
     assert hasattr(reducer, 'graph_')
 
-@pytest.mark.randomly_dont_reset_seed
+
 def test_pacmap_reducer(data):
     # Use random init to avoid PCA broadcast error on CI
     reducer = PacmapReducer(n_components=2, init="random")
@@ -232,7 +235,7 @@ def test_ivis_reducer(data_ts):
 
 def test_topo_ae_reducer(data_ts):
     # Basic fit
-    reducer = TopologicalAEReducer(n_components=2, epochs=2, batch_size=16)
+    reducer = TopologicalAEReducer(n_components=2, epochs=2, batch_size=16, device='cpu')
     reducer.fit(data_ts)
     
     X_emb = reducer.transform(data_ts)
@@ -241,7 +244,7 @@ def test_topo_ae_reducer(data_ts):
     assert len(reducer.loss_history_) > 0
     
     # Topological loss fit (requires gudhi logic inside)
-    reducer_topo = TopologicalAEReducer(n_components=2, epochs=2, lam=0.1, batch_size=16)
+    reducer_topo = TopologicalAEReducer(n_components=2, epochs=2, lam=0.1, batch_size=16, device='cpu')
     reducer_topo.fit(data_ts)
     X_emb2 = reducer_topo.transform(data_ts)
     assert X_emb2.shape == (200, 2)
@@ -259,3 +262,103 @@ def test_all_reducers_instantiation():
         reducer = cls(n_components=2)
         assert isinstance(reducer, BaseReducer)
         assert reducer.n_components == 2
+
+def test_skorch_topological_ae():
+    """Test TopologicalAEReducer (Skorch version)."""
+    X = np.random.rand(20, 10).astype(np.float32)
+    # Reduced epochs for speed
+    reducer = TopologicalAEReducer(n_components=2, epochs=2, batch_size=10, lam=0.1, device='cpu')
+    reducer.fit(X)
+    
+    assert reducer.model.initialized_
+    
+    z = reducer.transform(X)
+    assert z.shape == (20, 2)
+    
+    # Check history
+    assert len(reducer.loss_history_) == 2
+
+def test_parametric_umap_config():
+    """Test Pydantic configuration for ParametricUMAP."""
+    conf = ParametricUMAPConfig(n_epochs=10)
+    assert conf.method == "ParametricUMAP"
+    assert conf.n_epochs == 10
+    
+    # Test wrapping in DimReductionConfig
+    wrapper = DimReductionConfig(config=conf)
+    assert wrapper.config.method == "ParametricUMAP"
+
+def test_parametric_umap_mock():
+    """
+    Test ParametricUMAPReducer.
+    Warning: This requires tensorflow and umap-learn[plot].
+    We wrap in try/except to avoid crashing if dependencies are missing in dev environment.
+    """
+    try:
+        import tensorflow as tf
+        from umap.parametric_umap import ParametricUMAP
+    except ImportError:
+        pytest.skip("TensorFlow or ParametricUMAP not installed.")
+        
+    X = np.random.rand(20, 10).astype(np.float32)
+    reducer = ParametricUMAPReducer(n_components=2, n_epochs=2, verbose=False)
+    reducer.fit(X)
+    z = reducer.transform(X)
+    assert z.shape == (20, 2)
+
+def test_incremental_pca_reducer():
+    """Test IncrementalPCAReducer (sklearn based)."""
+    X = np.random.rand(100, 10)
+    
+    # Test batch fit (init)
+    reducer = IncrementalPCAReducer(n_components=2, batch_size=20)
+    reducer.fit(X)
+    
+    X_emb = reducer.transform(X)
+    assert X_emb.shape == (100, 2)
+    assert reducer.model is not None
+    
+    # Test partial fit manually
+    reducer2 = IncrementalPCAReducer(n_components=2)
+    # Feed 2 batches
+    reducer2.partial_fit(X[:50])
+    reducer2.partial_fit(X[50:])
+    
+    X_emb2 = reducer2.transform(X)
+    assert X_emb2.shape == (100, 2)
+
+def test_dask_pca_reducer():
+    """Test DaskPCAReducer."""
+    # Create dask array
+    X_np = np.random.rand(100, 10)
+    X_da = da.from_array(X_np, chunks=(20, 10))
+    
+    reducer = DaskPCAReducer(n_components=2)
+    reducer.fit(X_da)
+    
+    # Transform returns dask array
+    X_emb_da = reducer.transform(X_da)
+    assert isinstance(X_emb_da, da.Array)
+    
+    X_emb = X_emb_da.compute()
+    assert X_emb.shape == (100, 2)
+    
+    # Check if fit also accepts numpy (should convert implicitly or error depending on dask-ml version)
+    # Dask-ML PCA typically handles numpy arrays by converting them or treating them as single chunk
+    try:
+        reducer.fit(X_np)
+    except Exception as e:
+        warnings.warn(f"DaskPCA on numpy raised: {e}")
+
+def test_dask_truncated_svd_reducer():
+    """Test DaskTruncatedSVDReducer."""
+    X_np = np.random.rand(100, 10)
+    X_da = da.from_array(X_np, chunks=(20, 10))
+    
+    reducer = DaskTruncatedSVDReducer(n_components=2)
+    reducer.fit(X_da)
+    
+    X_emb_da = reducer.transform(X_da)
+    X_emb = X_emb_da.compute()
+    
+    assert X_emb.shape == (100, 2)

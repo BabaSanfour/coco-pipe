@@ -1,9 +1,11 @@
 pyyaml
+pydantic
+hydra-core
 numpy
 pandas
 scikit-learn
 matplotlib
-umap-learn
+umap-learn[plot]
 annoy @ git+https://github.com/BabaSanfour/annoy.git
 pacmap @ git+https://github.com/BabaSanfour/PaCMAP.git
 trimap
@@ -19,3 +21,6 @@ gudhi
 tensorflow
 keras
 torch
+skorch
+dask[array]
+dask-ml

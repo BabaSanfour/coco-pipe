@@ -80,21 +80,42 @@ class DimReduction:
     >>> reducer.from_config({'method': 'UMAP', 'n_components': 2})
     """
 
-    def __init__(self, method: str, n_components: int = 2, params: Optional[Dict[str, Any]] = None, **kwargs):
-        self.method = method.upper()
-        if self.method not in METHODS:
-            valid = ", ".join(METHODS)
-            raise ValueError(f"Unknown method '{method}'. Valid options are: {valid}")
+    def __init__(self, method: Union[str, "DimReductionConfig"], n_components: int = 2, params: Optional[Dict[str, Any]] = None, name: Optional[str] = None, **kwargs):
+        from .config import DimReductionConfig
 
-        self.n_components = n_components
-        
-        reducer_kwargs = params.copy() if params else {}
-        reducer_kwargs.update(kwargs)
-        self.reducer_kwargs = reducer_kwargs
+        if isinstance(method, DimReductionConfig):
+            # Handle Pydantic Config
+            self.config = method
+            # access the inner discriminated union
+            inner_conf = self.config.config
+            
+            self.method = inner_conf.method.upper()
+            self.n_components = inner_conf.n_components
+            
+            # Convert to dict and remove init-arguments (Pydantic V2)
+            self.reducer_kwargs = inner_conf.model_dump(exclude={'method', 'n_components'})
+            # Merge any extra overrides provided at runtime
+            if params:
+                self.reducer_kwargs.update(params)
+            self.reducer_kwargs.update(kwargs)
+            
+        else:
+            # Legacy/String initialization
+            self.method = method.upper()
+            if self.method not in METHODS:
+                valid = ", ".join(METHODS)
+                raise ValueError(f"Unknown method '{method}'. Valid options are: {valid}")
+
+            self.n_components = n_components
+            
+            self.reducer_kwargs = params.copy() if params else {}
+            self.reducer_kwargs.update(kwargs)
+
+        self.name = name or self.method
 
         ReducerCls = METHODS_DICT[self.method]
         self.reducer: BaseReducer = ReducerCls(
-            n_components=n_components,
+            n_components=self.n_components,
             **self.reducer_kwargs
         )
         

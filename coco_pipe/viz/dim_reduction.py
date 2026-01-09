@@ -538,3 +538,129 @@ def plot_streamlines(X_emb: np.ndarray,
     ax.set_ylabel("Dimension 2", fontweight='bold')
     
     return fig
+
+
+def plot_comparison(comparison_manager: Any,
+                    metric: str = 'trustworthiness',
+                    title: Optional[str] = None,
+                    figsize: Tuple[int, int] = (10, 6),
+                    ax: Optional[plt.Axes] = None) -> plt.Figure:
+    """
+    Plot metric comparison curves across different reducers.
+
+    Parameters
+    ----------
+    comparison_manager : MethodSelector
+        The manager containing results_.
+    metric : str
+        Metric column to plot (e.g. 'trustworthiness', 'lcmc', 'mrre_total').
+    title : str, optional
+        Plot title.
+    figsize : tuple
+        Figure size.
+    ax : plt.Axes, optional
+        Existing axes.
+
+    Returns
+    -------
+    plt.Figure
+    """
+    _set_style()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    if not comparison_manager.results_:
+        raise ValueError("No results found. Run comparison.run() first.")
+
+    # Plot lines
+    for name, df in comparison_manager.results_.items():
+        if metric not in df.columns:
+            continue
+            
+        sns.lineplot(data=df, x='k', y=metric, marker='o', label=name, ax=ax, linewidth=2.5)
+
+    ax.set_xlabel("Neighborhood Size (k)", fontweight='bold')
+    ax.set_ylabel(metric.replace('_', ' ').title(), fontweight='bold')
+    
+    if title is None:
+        title = f"Comparison: {metric.replace('_', ' ').title()}"
+        
+    ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+    ax.legend(title="Method", frameon=False, bbox_to_anchor=(1.02, 1), loc='upper left')
+    ax.grid(True, linestyle='--', alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
+
+
+def plot_feature_importance(scores: Dict[str, float],
+                            title: str = "Feature Importance",
+                            top_n: int = 20,
+                            figsize: Tuple[int, int] = (8, 6),
+                            ax: Optional[plt.Axes] = None) -> plt.Figure:
+    """
+    Plot feature importance bar chart.
+
+    Parameters
+    ----------
+    scores : dict
+        Mapping feature_name -> score.
+    title : str
+        Plot title.
+    top_n : int
+        Number of top features to show.
+    figsize : tuple
+        Figure size.
+    ax : plt.Axes
+        Existing axes.
+
+    Returns
+    -------
+    plt.Figure
+    """
+    _set_style()
+    
+    # Sort scores
+    sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    names = [x[0] for x in sorted_items]
+    values = [x[1] for x in sorted_items]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    sns.barplot(x=values, y=names, ax=ax, palette="magma", orient='h')
+    
+    ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+    ax.set_xlabel("Importance Score", fontweight='bold')
+    
+    return fig
+
+
+def plot_local_metrics(X_emb: np.ndarray,
+                       local_scores: np.ndarray,
+                       title: str = "Local Quality Map",
+                       cmap: str = 'RdYlGn',
+                       ax: Optional[plt.Axes] = None) -> plt.Figure:
+    """
+    Plot the embedding colored by local quality (e.g. point-wise trustworthiness).
+
+    Parameters
+    ----------
+    X_emb : np.ndarray
+        Embedding coordinates (2D).
+    local_scores : np.ndarray
+        Score per sample.
+    title : str
+        Plot title.
+    cmap : str
+        Colormap (Green=Good, Red=Bad).
+
+    Returns
+    -------
+    plt.Figure
+    """
+    return plot_embedding(X_emb, labels=local_scores, title=title, cmap=cmap, ax=ax)
