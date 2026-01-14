@@ -1,84 +1,80 @@
-#!/usr/bin/env python3
 """
-coco_pipe/io/utils.py
----------------------
-Generic I/O utilities for data quality assessment and row selection.
+IO Utilities
+============
+
+Helper functions for IO operations.
 """
-from __future__ import annotations
-
-from typing import List, Optional
-
+from typing import Any, Dict, Optional, List, Tuple
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
 
-
-def row_quality_score(
-    df: pd.DataFrame,
-    exclude_cols: Optional[List[str]] = None,
-    count_zero: bool = True,
-) -> pd.Series:
-    """Compute a per-row quality score: lower is cleaner (fewer NaN/inf/zeros).
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input data.
-    exclude_cols : list of str, optional
-        Columns to exclude from the assessment (e.g., target, covariates).
-    count_zero : bool, default=True
-        Whether to count exact zeros as undesirable.
-
-    Returns
-    -------
-    pd.Series
-        Quality score per row (int). Lower values indicate cleaner rows.
+def row_quality_score(df: 'pd.DataFrame', exclude_cols: Optional[List[str]] = None, count_zero: bool = True) -> 'pd.Series':
+    """
+    Calculate a 'badness' score for each row (NaNs + Infs + Zeros).
+    Lower is better.
     """
     use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
-    # Consider only numeric columns for NaN/inf/zero assessment
     num = use_df.select_dtypes(include=[np.number])
-    if num.shape[1] == 0:
-        return pd.Series(0, index=df.index)
-
+    if num.shape[1] == 0: return np.zeros(len(df), dtype=int)
+    
     nan_cnt = num.isna().sum(axis=1)
-    # Convert to numpy for isinf check; treat NaN as not inf (already counted)
     arr = num.to_numpy()
     with np.errstate(divide='ignore', invalid='ignore'):
         inf_mask = np.isinf(arr)
-    inf_cnt = pd.Series(inf_mask.sum(axis=1), index=num.index)
-    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0 ## This to check the validity as some values could be legitly 0!
+    inf_cnt = inf_mask.sum(axis=1)
+    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
+    return (nan_cnt + inf_cnt + zero_cnt).astype(int)
 
-    score = nan_cnt.add(inf_cnt, fill_value=0).add(zero_cnt, fill_value=0)
-    return score.astype(int)
-
-
-def select_cleanest_rows(
-    df: pd.DataFrame,
-    k: int,
-    exclude_cols: Optional[List[str]] = None,
-    count_zero: bool = True,
-) -> pd.DataFrame:
-    """Return top-k cleanest rows by minimal NaN/inf/zero counts.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input data.
-    k : int
-        Number of rows to return.
-    exclude_cols : list of str, optional
-        Columns to exclude from the assessment (e.g., target, covariates).
-    count_zero : bool, default=True
-        Whether to count exact zeros as undesirable.
-
-    Returns
-    -------
-    pd.DataFrame
-        Subset with top-k cleanest rows.
+def make_strata(df: 'pd.DataFrame', covariates: List[str], n_bins: int=5, binning: str="quantile") -> 'pd.Series':
     """
-    q = row_quality_score(df, exclude_cols=exclude_cols, count_zero=count_zero)
-    # stable sort; return top k
-    return df.loc[q.sort_values(kind='mergesort').index[:k]]
+    Create a single stratification label from multiple covariates.
+    Numeric covariates are binned.
+    """
+    labels = []
+    for cov in covariates:
+        s = df[cov]
+        if is_numeric_dtype(s) or is_datetime64_any_dtype(s):
+            if binning == "uniform":
+                b = pd.cut(s, bins=n_bins)
+            else:
+                try: b = pd.qcut(s, q=n_bins, duplicates="drop")
+                except: b = pd.cut(s, bins=n_bins)
+            labels.append(b.astype(str).fillna("NA"))
+        else:
+            labels.append(s.astype(str).fillna("NA"))
+    
+    if len(labels) == 1: return labels[0].astype("category")
+    return pd.concat(labels, axis=1).astype(str).agg("|".join, axis=1).astype("category")
 
-
-__all__ = ["row_quality_score", "select_cleanest_rows"]
-
+def sample_indices(df: 'pd.DataFrame', target: str, size_map: Dict[Any, int], rng, replace: bool, prefer_clean: bool, exclude: List[str]) -> 'pd.Index':
+    """
+    Sample indices for each class based on size_map.
+    """
+    indices = []
+    for cls, n in size_map.items():
+        sub = df[df[target] == cls]
+        if n <= 0: continue
+        
+        if prefer_clean:
+            q = row_quality_score(sub, exclude_cols=exclude)
+            if not replace:
+                sub_shuf = sub.sample(frac=1.0, random_state=rng.integers(0, 1<<32))
+                idx_top = q.loc[sub_shuf.index].sort_values(kind='mergesort').index[:n]
+                indices.append(idx_top)
+            else:
+                w = (1.0 / (1.0 + q)).astype(float)
+                sampled = sub.sample(n=n, replace=True, weights=w, random_state=rng.integers(0, 1<<32))
+                indices.append(sampled.index)
+        else:
+            if n <= len(sub) and not replace:
+                sampled = sub.sample(n=n, replace=False, random_state=rng.integers(0, 1<<32))
+                indices.append(sampled.index)
+            else:
+                sampled = sub.sample(n=n, replace=True, random_state=rng.integers(0, 1<<32))
+                indices.append(sampled.index)
+    
+    if not indices: return pd.Index([])
+    # Concat the indices, shuffle, and return the VALUES as the new Index
+    combined = pd.concat([pd.Series(i) for i in indices]).sample(frac=1.0, random_state=rng)
+    return pd.Index(combined.values)
