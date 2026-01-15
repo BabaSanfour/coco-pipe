@@ -668,6 +668,230 @@ class DataContainer:
             meta={**self.meta, 'flattened_from': self.dims}
         )
 
+    def stack(self, dims: Sequence[str], new_dim: str = "obs") -> 'DataContainer':
+        """
+        Stack multiple dimensions into a single new dimension.
+        
+        This reshapes N-dimensional data into (N-K) dimensions by combining 
+        specified dimensions. It is useful for transforming spatiotemporal data 
+        (Trials, Channels, Time) -> (Trials*Time, Channels) for trajectory analysis.
+
+        Parameters
+        ----------
+        dims : sequence of str
+            Dimensions to stack. The order determines the nesting (slowest to fastest).
+            e.g., ('obs', 'time') means 'obs' changes slowly, 'time' cycles fast.
+        new_dim : str, default='obs'
+            Name of the resulting stacked dimension.
+
+        Returns
+        -------
+        DataContainer
+            New container with stacked dimension. Metadata (coords/ids) are 
+            expanded/tiled to match the new shape.
+
+        Examples
+        --------
+        >>> # Stack time into observations: (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
+        >>> stacked = container.stack(dims=('obs', 'time'), new_dim='obs')
+        >>> stacked.shape
+        (5000, 64)
+        """
+        for d in dims:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
+                
+        # 1. Permute
+        preserved = [d for d in self.dims if d not in dims]
+        stack_indices = [self.dims.index(d) for d in dims]
+        preserve_indices = [self.dims.index(d) for d in preserved]
+        
+        permute_order = stack_indices + preserve_indices
+        X_trans = np.transpose(self.X, axes=permute_order)
+        
+        # 2. Reshape
+        stack_shape = [self.X.shape[i] for i in stack_indices]
+        prod_len = int(np.prod(stack_shape))
+        preserved_shape = [self.X.shape[i] for i in preserve_indices]
+        
+        new_shape = (prod_len,) + tuple(preserved_shape)
+        X_new = X_trans.reshape(new_shape)
+        
+        # 3. Handle Metadata Expansion (if new_dim is 'obs' or overrides it)
+        new_ids = None
+        new_y = None
+        new_coords = self.coords.copy()
+        
+        # Drop old coords keys that are being stacked
+        for d in dims:
+            if d in new_coords: del new_coords[d]
+
+        # Logic for IDs/Y expansion if 'obs' is involved
+        if 'obs' in dims and new_dim == 'obs':
+            obs_idx = dims.index('obs')
+            
+            # Repeats (inner) and Tiles (outer) logic
+            # product(dims after obs) -> repeats
+            # product(dims before obs) -> tiles
+            n_repeats = int(np.prod([self.X.shape[self.dims.index(d)] for d in dims[obs_idx+1:]]))
+            n_tiles = int(np.prod([self.X.shape[self.dims.index(d)] for d in dims[:obs_idx]]))
+            
+            # Expand Y
+            if self.y is not None:
+                new_y = np.tile(np.repeat(self.y, n_repeats), n_tiles)
+                
+            # Expand IDs
+            if self.ids is not None:
+                # We want composite IDs: "sub-0_t-0", "sub-0_t-1"
+                # Construct MultiIndex details
+                idx_components = []
+                for d in dims:
+                    if d == 'obs':
+                        idx_components.append(self.ids)
+                    else:
+                        # Use coordinate labels if available, else range
+                        c = self.coords.get(d)
+                        if c is None: 
+                            c = np.arange(self.X.shape[self.dims.index(d)])
+                        idx_components.append(c)
+                
+                # Cartesian Product
+                # Use pandas for robust string joining
+                mi = pd.MultiIndex.from_product(idx_components, names=dims)
+                new_ids = mi.to_frame(index=False).astype(str).agg('_'.join, axis=1).values
+
+        new_dims_final = (new_dim,) + tuple(preserved)
+        
+        return replace(
+            self,
+            X=X_new,
+            dims=new_dims_final,
+            ids=new_ids,
+            y=new_y,
+            coords=new_coords,
+            meta={**self.meta, 'stacked_from': dims}
+        )
+
+    def center(self, dim: str = 'time', inplace: bool = False) -> "DataContainer":
+        """
+        Remove mean along a specified dimension (Centering/Baseline Correction).
+        
+        This operation computes the mean along `dim` (ignoring NaNs) and subtracts it.
+        Commonly used in EEG for baseline correction (subtracting mean of pre-stimulus interval)
+        or centering features before covariance calculation.
+
+        Parameters
+        ----------
+        dim : str, default='time'
+            Dimension name to center over (e.g., 'time', 'channel', 'obs').
+        inplace : bool, default=False
+            If True, modifies X in-place to save memory. 
+            Returns self.
+
+        Returns
+        -------
+        DataContainer
+            Container with centered data.
+
+        Examples
+        --------
+        >>> # Baseline correction over time
+        >>> container.center(dim='time')
+        """
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        
+        axis = self.dims.index(dim)
+        X = self.X if inplace else self.X.copy()
+        
+        mean = np.nanmean(X, axis=axis, keepdims=True)
+        X -= mean
+        
+        if inplace:
+            return self
+        else:
+            return replace(self, X=X)
+
+    def zscore(self, dim: str = 'time', eps: float = 1e-8, inplace: bool = False) -> "DataContainer":
+        """
+        Standardize (Z-score) along a specified dimension.
+        
+        Computes `(X - mean) / std` along the given dimension. Robust to NaNs.
+        Useful for normalizing features or standardizing temporal dynamics.
+
+        Parameters
+        ----------
+        dim : str
+            Dimension to standardize.
+        eps : float
+            Stability epsilon to avoid division by zero.
+        inplace : bool
+
+        Returns
+        -------
+        DataContainer
+
+        Examples
+        --------
+        >>> # Standardize each channel's timecourse
+        >>> container.zscore(dim='time')
+        """
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        
+        axis = self.dims.index(dim)
+        X = self.X if inplace else self.X.copy()
+        
+        mean = np.nanmean(X, axis=axis, keepdims=True)
+        std = np.nanstd(X, axis=axis, keepdims=True)
+        
+        X -= mean
+        X /= (std + eps)
+        
+        if inplace:
+            return self
+        else:
+            return replace(self, X=X)
+
+    def rms_scale(self, dim: str = 'time', eps: float = 1e-8, inplace: bool = False) -> "DataContainer":
+        """
+        Scale by Root Mean Square (RMS) amplitude along a dimension.
+        
+        Divides data by `sqrt(mean(X**2))` along the dimension.
+        Preserves relative shape but normalizes energy.
+
+        Parameters
+        ----------
+        dim : str
+            Dimension to scale.
+        eps : float
+            Stability epsilon.
+        inplace : bool
+
+        Returns
+        -------
+        DataContainer
+        """
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+            
+        axis = self.dims.index(dim)
+        X = self.X if inplace else self.X.copy()
+        
+        mean_sq = np.nanmean(X**2, axis=axis, keepdims=True)
+        rms = np.sqrt(mean_sq)
+        
+        X /= (rms + eps)
+        
+        if inplace:
+            return self
+        else:
+            return replace(self, X=X)
+
+    def baseline_correction(self, dim: str = 'time', inplace: bool = False) -> "DataContainer":
+        """Alias for center(). Common in EEG."""
+        return self.center(dim=dim, inplace=inplace)
+
     def aggregate(self, by: Union[str, np.ndarray, List[Any]], method: str = 'mean') -> 'DataContainer':
         """
         Aggregate observations by groups (vectorized implementation).
