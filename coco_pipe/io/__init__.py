@@ -1,11 +1,26 @@
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
-from .loaders import load_mne_epochs, load_csv_features
+from .load import load_data
+from .dataset import BIDSDataset, TabularDataset, EmbeddingDataset
+from .config import (
+    BaseDatasetConfig, 
+    BIDSConfig, 
+    TabularConfig, 
+    EmbeddingConfig, 
+    DatasetConfig
+)
 
 __all__ = [
     "DataContainer",
     "SklearnWrapper",
     "SpatialWhitener",
-    "load_mne_epochs",
-    "load_csv_features",
+    "load_data",
+    "BIDSDataset",
+    "TabularDataset",
+    "EmbeddingDataset",
+    "BaseDatasetConfig",
+    "BIDSConfig",
+    "TabularConfig",
+    "EmbeddingConfig",
+    "DatasetConfig",
 ]

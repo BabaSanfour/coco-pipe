@@ -1,0 +1,12 @@
+# @package _global_
+dataset:
+  mode: bids
+  path: "/path/to/bids/root"
+  task: null
+  session: null
+  datatype: eeg
+  suffix: null
+  loading_mode: epochs
+  window_length: 1.0
+  stride: 1.0
+  subjects: null
