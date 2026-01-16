@@ -1,6 +1,6 @@
 from .core import DimReduction
 from .config import METHODS, METHODS_DICT
-from .benchmark import trustworthiness, continuity, lcmc, shepard_diagram_data
+from .evaluation.metrics import trustworthiness, continuity, lcmc, shepard_diagram_data
 
 from .reducers import (
     BaseReducer,

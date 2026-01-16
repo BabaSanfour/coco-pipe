@@ -24,3 +24,5 @@ torch
 skorch
 dask[array]
 dask-ml
+joblib
+scipy

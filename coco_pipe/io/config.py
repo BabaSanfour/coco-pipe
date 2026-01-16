@@ -42,6 +42,7 @@ class TabularConfig(BaseDatasetConfig):
     meta_columns: Optional[List[str]] = Field(None, description="Columns to extract as metadata.")
     clean: bool = False
     clean_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    select_kwargs: Dict[str, Any] = Field(default_factory=dict, description="Arguments for feature selection.")
 
 class BIDSConfig(BaseDatasetConfig):
     """Configuration for BIDSDataset."""

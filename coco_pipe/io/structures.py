@@ -118,6 +118,50 @@ class DataContainer:
     def shape(self) -> Tuple[int, ...]:
         return self.X.shape
 
+    def save(self, path: Union[str, Any]) -> None:
+        """
+        Save the DataContainer to disk using joblib.
+        
+        Parameters
+        ----------
+        path : str or Path
+            Destination file path.
+        """
+        import joblib
+        from pathlib import Path
+        
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, p)
+        logger.info(f"DataContainer saved to {p}")
+
+    @classmethod
+    def load(cls, path: Union[str, Any]) -> 'DataContainer':
+        """
+        Load a DataContainer from disk.
+        
+        Parameters
+        ----------
+        path : str or Path
+            Source file path.
+            
+        Returns
+        -------
+        DataContainer
+        """
+        import joblib
+        from pathlib import Path
+        
+        p = Path(path)
+        if not p.exists():
+            raise FileNotFoundError(f"File not found: {p}")
+            
+        obj = joblib.load(p)
+        if not isinstance(obj, cls):
+            raise TypeError(f"Loaded object is {type(obj)}, expected {cls.__name__}")
+            
+        return obj
+
     def __repr__(self) -> str:
         dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape)]
         return f"<DataContainer [{' x '.join(dim_strs)}], coords={list(self.coords.keys())}>"
