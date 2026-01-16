@@ -16,7 +16,7 @@ from typing import Optional, Union, Dict, Any, List, Tuple
 
 from .config import METHODS, METHODS_DICT
 from .reducers.base import BaseReducer, ArrayLike
-from .benchmark import metrics
+from .evaluation import metrics
 
 class DimReduction:
     """
@@ -213,6 +213,44 @@ class DimReduction:
         X_arr = self._validate_input(X)
         self.embedding_ = self.reducer.fit_transform(X_arr, y=y)
         return self.embedding_
+
+    def get_components(self) -> np.ndarray:
+        """
+        Extract feature weights (filters/patterns) from linear models.
+
+        Useful for visualization (e.g., Topomaps).
+        
+        Tries to find:
+        1. `components_` (PCA, ICA, etc.)
+        2. `patterns_` (CSP, TRCA - Spatial Patterns)
+        3. `filters_` (CSP, TRCA - Spatial Filters)
+
+        Returns
+        -------
+        components : np.ndarray
+            Shape (n_components, n_features).
+
+        Raises
+        ------
+        ValueError
+            If the underlying model does not expose linear components.
+        """
+        # 1. Check the wrapper first (e.g. TRCAReducer might expose patterns_)
+        candidates = ['components_', 'patterns_', 'filters_']
+        
+        # Check wrapper
+        for attr in candidates:
+            if hasattr(self.reducer, attr):
+                return getattr(self.reducer, attr)
+                
+        # Check internal model (e.g. sklearn PCA inside Wrapper)
+        if hasattr(self.reducer, 'model'):
+            for attr in candidates:
+                if hasattr(self.reducer.model, attr):
+                    return getattr(self.reducer.model, attr)
+                    
+        raise ValueError(f"Method '{self.method}' does not appear to have linear components/patterns. "
+                         f"Checked: {candidates}")
 
     def score(self, X: Any, X_emb: Optional[np.ndarray] = None, n_neighbors: int = 5) -> Dict[str, float]:
         """

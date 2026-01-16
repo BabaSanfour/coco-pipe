@@ -31,6 +31,7 @@ Date: 2026-01-08
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from typing import Tuple, Optional, Union
+from scipy.spatial.distance import pdist
 
 def compute_coranking_matrix(X: np.ndarray, X_emb: np.ndarray) -> np.ndarray:
     """
@@ -277,11 +278,6 @@ def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
     # weight = |rank_low - rank_high| / rank_high
     #        = |(c+1) - (r+1)| / (r+1) = |c-r| / (r+1)
     
-    # Create meshgrid for weights
-    # But full meshgrid is O(N^2), maybe expensive? 
-    # But Q is (N, N), so we need to process it. Q is sparse mostly diagonal but filled elsewhere.
-    # Actually Q is size (N-1, N-1).
-    
     # Slice for Intrusions: Q[k:, :k]
     # r from k to n-2 (indices), c from 0 to k-1 (indices)
     rows_int = np.arange(k, n-1)
@@ -315,3 +311,40 @@ def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
     mrre_ext = ext_sum / (n * H_k)
     
     return mrre_int, mrre_ext
+
+
+def shepard_diagram_data(X: np.ndarray, X_embedded: np.ndarray, sample_size: int = 1000) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute pairwise distances for Shepard Diagram.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Original data.
+    X_embedded : np.ndarray
+        Embedded data.
+    sample_size : int, default=1000
+        Number of points to sample if N is large (to avoid N^2 complexity).
+        If N <= sample_size, uses all points.
+
+    Returns
+    -------
+    dist_orig : np.ndarray
+        Pairwise distances in high-dimensional space.
+    dist_emb : np.ndarray
+        Pairwise distances in low-dimensional space.
+    """
+    n_samples = X.shape[0]
+    
+    if n_samples > sample_size:
+        indices = np.random.choice(n_samples, sample_size, replace=False)
+        X_sub = X[indices]
+        Emb_sub = X_embedded[indices]
+    else:
+        X_sub = X
+        Emb_sub = X_embedded
+        
+    dist_orig = pdist(X_sub)
+    dist_emb = pdist(Emb_sub)
+    
+    return dist_orig, dist_emb

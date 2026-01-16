@@ -31,7 +31,7 @@ import matplotlib.ticker as ticker
 import seaborn as sns
 import matplotlib.colors as mcolors
 
-from ..dim_reduction.benchmark.metrics import shepard_diagram_data
+from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 
 # --- Style Constants ---
 STYLE_CONFIG = {

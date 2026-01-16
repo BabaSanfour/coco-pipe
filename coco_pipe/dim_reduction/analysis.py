@@ -1,20 +1,72 @@
 """
-Feature Attribution
-===================
+Feature Attribution and Analysis
+================================
 
-Methods for explaining embedding axes using feature importance.
+Methods for explaining and interpreting embedding axes.
 
 Functions
 ---------
 compute_feature_importance
     Compute feature importance using perturbation or gradient (if available).
+correlate_features
+    Compute Spearman correlation between input features and embedding dimensions.
 
-Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
-Date: 2026-01-08
+Author: Hamza Abdelhedi
+Date: 2026-01-16
 """
 
 import numpy as np
 from typing import Optional, List, Union, Any
+from scipy.stats import spearmanr
+
+def correlate_features(X_orig: np.ndarray, 
+                       X_emb: np.ndarray, 
+                       feature_names: Optional[List[str]] = None) -> dict:
+    """
+    Compute correlation between original features and embedding dimensions.
+    
+    Helps interpret non-linear embeddings by identifying which original features
+    covary most strongly with the reduced dimensions.
+
+    Parameters
+    ----------
+    X_orig : np.ndarray
+        Original high-dimensional data (N_samples, N_features).
+    X_emb : np.ndarray
+        Low-dimensional embedding (N_samples, N_components).
+    feature_names : list, optional
+        Names of the original features. If None, uses "Feature {i}".
+
+    Returns
+    -------
+    correlations : dict
+        Nested dictionary: {
+            'Component 1': {'Feature A': 0.8, 'Feature B': -0.1, ...},
+            'Component 2': ...
+        }
+        ordered by magnitude of correlation.
+    """
+    n_features = X_orig.shape[1]
+    n_components = X_emb.shape[1]
+    
+    if feature_names is None:
+        feature_names = [f"Feature {i}" for i in range(n_features)]
+        
+    results = {}
+    
+    for j in range(n_components):
+        comp_res = {}
+        for i in range(n_features):
+            # Spearman Rank Correlation (Robust to non-linear monotonic relationships)
+            rho, _ = spearmanr(X_orig[:, i], X_emb[:, j])
+            comp_res[feature_names[i]] = float(rho)
+            
+        # Sort by absolute correlation
+        sorted_res = dict(sorted(comp_res.items(), key=lambda item: abs(item[1]), reverse=True))
+        results[f"Component {j+1}"] = sorted_res
+        
+    return results
+
 
 def perturbation_importance(model: Any, 
                             X: np.ndarray, 
@@ -61,9 +113,6 @@ def perturbation_importance(model: Any,
             
             emb_permuted = model.transform(X_permuted)
             
-            # Measure displacement
-            # MSE between original and permuted embedding
-            # High displacement = Feature was important for structure
             dist = np.mean((original_emb - emb_permuted) ** 2)
             feature_score += dist
             
@@ -146,29 +195,37 @@ def gradient_importance(wrapper: Any, X: np.ndarray, **kwargs) -> dict:
     model = wrapper.model
     device = next(model.parameters()).device
     
-    X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
-    
-    # Forward pass
+    # Check dimensions
+    if X.ndim == 2:
+        # (N, Features)
+        X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
+    else:
+        X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
+
     Z = model.encoder(X_tensor)
     
-    # Compute gradients of the sum of embeddings (Saliency)
-    n_features = X.shape[1]
-    importances = torch.zeros(n_features).to(device)
-    
-    # We can just backward on the sum of all embeddings
-    # grad = d(sum(Z)) / dX
     target = Z.sum()
     target.backward()
     
-    grads = X_tensor.grad # (N, Features)
+    grads = X_tensor.grad 
     
     # Mean absolute gradient per feature
-    mean_grads = torch.mean(torch.abs(grads), dim=0)
-    
+    if X.ndim == 2:
+        mean_grads = torch.mean(torch.abs(grads), dim=0) # (Features,)
+    else:
+        mean_grads = torch.mean(torch.abs(grads), dim=0) # (Ch, Time)
+
     scores = mean_grads.detach().cpu().numpy()
-    scores /= np.sum(scores) # Normalize
+    
+    if np.sum(scores) > 0:
+        scores /= np.sum(scores) # Normalize
     
     feature_names = kwargs.get('feature_names')
     if feature_names is None:
-        return {f"Feature {i}": s for i, s in enumerate(scores)}
-    return {n: s for n, s in zip(feature_names, scores)}
+        if scores.ndim == 1:
+            return {f"Feature {i}": s for i, s in enumerate(scores)}
+        else:
+            # Return raw array for complex shapes if no names
+            return {"importance_matrix": scores}
+            
+    return {n: s for n, s in zip(feature_names, scores.flatten())}
