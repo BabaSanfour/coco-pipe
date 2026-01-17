@@ -35,7 +35,7 @@ jobs:
         pytest tests/ --cov=coco_pipe/ --cov-report=xml --verbose -s
 
     - name: Upload coverage reports to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -48,7 +48,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.9"
+        python-version: "3.10"
         cache: 'pip'
     - name: Install dependencies
       run: |
