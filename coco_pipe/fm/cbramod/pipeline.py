@@ -151,7 +151,12 @@ class CBRAModRegressionPipeline(BasePipeline):
         scoring: Optional[str] = None,
     ) -> Dict[str, Any]:
         analysis_type = analysis_type.lower()
-        if analysis_type not in {"baseline", "feature_selection", "hp_search", "hp_search_fs"}:
+        if analysis_type not in {
+            "baseline",
+            "feature_selection",
+            "hp_search",
+            "hp_search_fs",
+        }:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
 
         if analysis_type == "baseline":

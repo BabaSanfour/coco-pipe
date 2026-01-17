@@ -11,12 +11,15 @@ License: TBD
 """
 
 import logging
-from typing import Any, Dict
+
 from .classification import ClassificationPipeline
 from .regression import RegressionPipeline
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
 
 class MLPipeline:
     """
@@ -47,7 +50,9 @@ class MLPipeline:
         # Mode: univariate (per-target) or multivariate (all targets)
         self.mode = config.get("mode", "multivariate")
         if self.mode not in ("univariate", "multivariate"):
-            raise ValueError(f"Invalid mode: {self.mode!r}; must be 'univariate' or 'multivariate'")
+            raise ValueError(
+                f"Invalid mode: {self.mode!r}; must be 'univariate' or 'multivariate'"
+            )
 
         # Extract cv_kwargs without duplicates (remove keys that might conflict with ours)
         cv_kwargs = config.get("cv_kwargs", {})
@@ -58,7 +63,7 @@ class MLPipeline:
     def run(self):
         """
         Run the ML pipeline.
-        
+
         Return
         ------
         dict
@@ -120,7 +125,9 @@ class MLPipeline:
         """
         mode = self.config.get("mode", "multivariate")
         if mode not in ("multivariate", "univariate"):
-            raise ValueError(f"Invalid mode: {mode!r} - must be 'multivariate' or 'univariate'.")
+            raise ValueError(
+                f"Invalid mode: {mode!r} - must be 'multivariate' or 'univariate'."
+            )
 
         # Build base kwargs (excluding X and y)
         base_kwargs = dict(
@@ -173,26 +180,32 @@ class MLPipeline:
 
         return results
 
+
 if __name__ == "__main__":
     # test model update
     # using LogisticRegression as an example
-    from sklearn.linear_model import LogisticRegression
+
     model_configs = {
-        'Logistic Regression': {
-            'default_params': {'C': 2.5},
-            'params': {'C': [0.5, 2.5]}
+        "Logistic Regression": {
+            "default_params": {"C": 2.5},
+            "params": {"C": [0.5, 2.5]},
         }
     }
     X = [[0, 1], [1, 0], [1, 1], [0, 0]]
     y = [0, 1, 1, 0]  # Binary target for classification
-    mlp = MLPipeline(X, y, None, {
-        "task": "classification",
-        "mode": "univariate",
-        "models": "Logistic Regression",
-        "metrics": ["accuracy"],
-        "random_state": 42,
-        "cv_strategy": "kfold",
-        "n_splits": 2,
-        "n_jobs": 1,
-        "model_configs": model_configs
-    })
+    mlp = MLPipeline(
+        X,
+        y,
+        None,
+        {
+            "task": "classification",
+            "mode": "univariate",
+            "models": "Logistic Regression",
+            "metrics": ["accuracy"],
+            "random_state": 42,
+            "cv_strategy": "kfold",
+            "n_splits": 2,
+            "n_jobs": 1,
+            "model_configs": model_configs,
+        },
+    )

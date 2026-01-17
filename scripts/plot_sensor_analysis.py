@@ -28,13 +28,12 @@ Usage example:
 import argparse
 import json
 import os
-from typing import Dict, Tuple, Optional, Sequence
+from typing import Dict, Optional, Sequence
 
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 
-from coco_pipe.viz import plot_topomap, plot_bar
+from coco_pipe.viz import plot_bar, plot_topomap
 
 
 def load_coords(path: str) -> pd.DataFrame:
@@ -71,7 +70,9 @@ def load_coords(path: str) -> pd.DataFrame:
         if df.shape[1] >= 3:
             name_col = df.columns[0]
         else:
-            raise ValueError("Coordinates file must include a sensor name column (e.g., 'name').")
+            raise ValueError(
+                "Coordinates file must include a sensor name column (e.g., 'name')."
+            )
 
     # Find x/y columns
     x_col = None
@@ -101,8 +102,9 @@ def load_coords(path: str) -> pd.DataFrame:
     return cdf.dropna()
 
 
-def generate_coords_from_mne(montage: str = "standard_1020",
-                             restrict_to: Optional[Sequence[str]] = None) -> pd.DataFrame:
+def generate_coords_from_mne(
+    montage: str = "standard_1020", restrict_to: Optional[Sequence[str]] = None
+) -> pd.DataFrame:
     """Generate 2D sensor coordinates from an MNE template montage.
 
     Parameters
@@ -132,7 +134,7 @@ def generate_coords_from_mne(montage: str = "standard_1020",
 
     std_montage = mne.channels.make_standard_montage(montage)
     pos = std_montage.get_positions()
-    ch_pos = pos.get('ch_pos', {})
+    ch_pos = pos.get("ch_pos", {})
     rows = []
     if restrict_to is None:
         names = list(ch_pos.keys())
@@ -160,7 +162,9 @@ def generate_coords_from_mne(montage: str = "standard_1020",
     return df
 
 
-def pick_model(results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None) -> str:
+def pick_model(
+    results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None
+) -> str:
     preferred = preferred or ("Logistic Regression",)
     for m in preferred:
         if m in results_per_model:
@@ -183,23 +187,58 @@ def analysis_to_sensor(analysis_id: str, known_sensors: Sequence[str]) -> Option
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot sensor accuracies topomap and best sensor feature importances.")
-    parser.add_argument("--results", required=True, help="Path to aggregated results pickle (from run_ml.py)")
-    parser.add_argument("--coords", required=False, help="Path to sensor coordinates (CSV/TSV/JSON)")
-    parser.add_argument("--use-mne", action="store_true", help="Generate sensor coordinates from MNE standard montage")
-    parser.add_argument("--montage", default="standard_1020", help="MNE montage name (default: standard_1020)")
-    parser.add_argument("--model", default=None, help="Model name to use (default: try 'Logistic Regression' else first)")
-    parser.add_argument("--metric", default="accuracy", help="Metric to plot for sensors (default: accuracy)")
-    parser.add_argument("--top-n", type=int, default=20, help="Top-N features in bar plot (default: 20)")
-    parser.add_argument("--save-topo", default=None, help="Path to save topomap image (optional)")
-    parser.add_argument("--save-bar", default=None, help="Path to save barplot image (optional)")
-    parser.add_argument("--no-show", action="store_true", help="Do not open interactive windows; save only")
+    parser = argparse.ArgumentParser(
+        description="Plot sensor accuracies topomap and best sensor feature importances."
+    )
+    parser.add_argument(
+        "--results",
+        required=True,
+        help="Path to aggregated results pickle (from run_ml.py)",
+    )
+    parser.add_argument(
+        "--coords", required=False, help="Path to sensor coordinates (CSV/TSV/JSON)"
+    )
+    parser.add_argument(
+        "--use-mne",
+        action="store_true",
+        help="Generate sensor coordinates from MNE standard montage",
+    )
+    parser.add_argument(
+        "--montage",
+        default="standard_1020",
+        help="MNE montage name (default: standard_1020)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name to use (default: try 'Logistic Regression' else first)",
+    )
+    parser.add_argument(
+        "--metric",
+        default="accuracy",
+        help="Metric to plot for sensors (default: accuracy)",
+    )
+    parser.add_argument(
+        "--top-n", type=int, default=20, help="Top-N features in bar plot (default: 20)"
+    )
+    parser.add_argument(
+        "--save-topo", default=None, help="Path to save topomap image (optional)"
+    )
+    parser.add_argument(
+        "--save-bar", default=None, help="Path to save barplot image (optional)"
+    )
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="Do not open interactive windows; save only",
+    )
 
     args = parser.parse_args()
 
     # Non-interactive backend if --no-show and saving
     if args.no_show:
         import matplotlib
+
         matplotlib.use("Agg")
 
     if not os.path.exists(args.results):
@@ -210,13 +249,20 @@ def main():
     # Quick heuristic: collect all tokens from analysis ids that look like EEG names (letters+digits+optional z)
     candidate_tokens = set()
     for aid in all_results.keys():
-        toks = aid.replace('-', '_').replace(' ', '_').split('_')
+        toks = aid.replace("-", "_").replace(" ", "_").split("_")
         for t in toks:
-            if len(t) <= 5 and any(c.isalpha() for c in t) and any(c.isdigit() for c in t):
+            if (
+                len(t) <= 5
+                and any(c.isalpha() for c in t)
+                and any(c.isdigit() for c in t)
+            ):
                 candidate_tokens.add(t)
 
     if args.use_mne or not args.coords:
-        coords_df = generate_coords_from_mne(args.montage, restrict_to=sorted(candidate_tokens) if candidate_tokens else None)
+        coords_df = generate_coords_from_mne(
+            args.montage,
+            restrict_to=sorted(candidate_tokens) if candidate_tokens else None,
+        )
     else:
         if not os.path.exists(args.coords):
             raise FileNotFoundError(args.coords)
@@ -232,7 +278,9 @@ def main():
         sensor = analysis_to_sensor(analysis_id, sensor_names)
         if not sensor:
             continue
-        model_name = pick_model(results_per_model, preferred=(args.model,) if args.model else None)
+        model_name = pick_model(
+            results_per_model, preferred=(args.model,) if args.model else None
+        )
         metrics = results_per_model[model_name].get("metric_scores", {})
         if metric_name not in metrics:
             # fallback to first metric if requested not found
@@ -240,12 +288,18 @@ def main():
                 metric_name = next(iter(metrics.keys()))
             else:
                 continue
-        mean_val = float(metrics[metric_name]["mean"]) if isinstance(metrics[metric_name], dict) else float(metrics[metric_name])
+        mean_val = (
+            float(metrics[metric_name]["mean"])
+            if isinstance(metrics[metric_name], dict)
+            else float(metrics[metric_name])
+        )
         sensor_acc[sensor] = mean_val
         model_name_used = model_name
 
     if not sensor_acc:
-        raise RuntimeError("No sensor accuracies found. Ensure analysis IDs include sensor names and coords match.")
+        raise RuntimeError(
+            "No sensor accuracies found. Ensure analysis IDs include sensor names and coords match."
+        )
 
     # Topomap
     fig1, ax1 = plot_topomap(
@@ -266,16 +320,24 @@ def main():
     # Best sensor feature importances
     best_sensor = max(sensor_acc, key=sensor_acc.get)
     # find the analysis id for this sensor
-    best_analysis_id = next(a for a in all_results if analysis_to_sensor(a, sensor_names) == best_sensor)
+    best_analysis_id = next(
+        a for a in all_results if analysis_to_sensor(a, sensor_names) == best_sensor
+    )
     best_model_results = all_results[best_analysis_id][model_name_used]
     fi_dict = best_model_results.get("feature_importances", {})
 
     if not fi_dict:
-        print(f"No feature_importances available for {best_sensor} / {model_name_used}.")
+        print(
+            f"No feature_importances available for {best_sensor} / {model_name_used}."
+        )
         return
 
-    imp_mean = pd.Series({k: v.get("mean", 0.0) for k, v in fi_dict.items()}).sort_values(ascending=False)
-    imp_std = pd.Series({k: v.get("std", 0.0) for k, v in fi_dict.items()}).reindex(imp_mean.index)
+    imp_mean = pd.Series(
+        {k: v.get("mean", 0.0) for k, v in fi_dict.items()}
+    ).sort_values(ascending=False)
+    imp_std = pd.Series({k: v.get("std", 0.0) for k, v in fi_dict.items()}).reindex(
+        imp_mean.index
+    )
 
     fig2, ax2 = plot_bar(
         imp_mean,

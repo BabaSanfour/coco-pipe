@@ -41,4 +41,8 @@ coverage.xml
 .dmypy.json
 *.log
 results/
-.venv_coco_pipe/
+.venv*/
+.ruff_cache
+docs/source/auto_examples/
+docs/source/generated/
+docs/source/autoapi/

@@ -30,18 +30,20 @@ python scripts/plot_lasso_importances.py \
 import argparse
 import json
 import os
-from typing import Dict, Optional, Sequence, Mapping
+import re
+from typing import Dict, Mapping, Optional, Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import re
 
-from coco_pipe.viz import plot_bar, plot_scatter2d
 from coco_pipe.io import load as load_data
+from coco_pipe.viz import plot_bar, plot_scatter2d
 
 
-def pick_analysis(all_results: Dict[str, Dict[str, dict]], analysis_id: Optional[str]) -> str:
+def pick_analysis(
+    all_results: Dict[str, Dict[str, dict]], analysis_id: Optional[str]
+) -> str:
     if analysis_id:
         if analysis_id not in all_results:
             raise KeyError(f"Analysis id '{analysis_id}' not found in results.")
@@ -50,7 +52,9 @@ def pick_analysis(all_results: Dict[str, Dict[str, dict]], analysis_id: Optional
     return next(iter(all_results))
 
 
-def pick_model(results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None) -> str:
+def pick_model(
+    results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None
+) -> str:
     preferred = preferred or ("Logistic Regression",)
     for m in preferred:
         if m in results_per_model:
@@ -125,31 +129,99 @@ def make_label_map_keep_sensor(cols: Sequence[str]) -> Dict[str, str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot L1-LR feature importances (top-N) with zeroed count and accuracy.")
-    parser.add_argument("--results", required=True, help="Path to aggregated results pickle (from run_ml.py)")
-    parser.add_argument("--analysis-id", default=None, help="Analysis id key from the aggregated results dict")
-    parser.add_argument("--model", default=None, help="Model name (default: try 'Logistic Regression' else first)")
-    parser.add_argument("--metric", default="accuracy", help="Metric name to show in title (default: accuracy)")
-    parser.add_argument("--top-n", type=int, default=20, help="Top-N features to plot (default: 20)")
-    parser.add_argument("--abs", dest="use_abs", action="store_true", help="Rank by absolute importance (default)")
-    parser.add_argument("--no-abs", dest="use_abs", action="store_false", help="Rank by signed importance")
+    parser = argparse.ArgumentParser(
+        description="Plot L1-LR feature importances (top-N) with zeroed count and accuracy."
+    )
+    parser.add_argument(
+        "--results",
+        required=True,
+        help="Path to aggregated results pickle (from run_ml.py)",
+    )
+    parser.add_argument(
+        "--analysis-id",
+        default=None,
+        help="Analysis id key from the aggregated results dict",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name (default: try 'Logistic Regression' else first)",
+    )
+    parser.add_argument(
+        "--metric",
+        default="accuracy",
+        help="Metric name to show in title (default: accuracy)",
+    )
+    parser.add_argument(
+        "--top-n", type=int, default=20, help="Top-N features to plot (default: 20)"
+    )
+    parser.add_argument(
+        "--abs",
+        dest="use_abs",
+        action="store_true",
+        help="Rank by absolute importance (default)",
+    )
+    parser.add_argument(
+        "--no-abs",
+        dest="use_abs",
+        action="store_false",
+        help="Rank by signed importance",
+    )
     parser.set_defaults(use_abs=True)
-    parser.add_argument("--zero-threshold", type=float, default=1e-12, help="Threshold to treat coefficients as zero across folds")
-    parser.add_argument("--label-map", default=None, help="Optional JSON mapping from feature name to display label")
-    parser.add_argument("--xlabel", default=None, help="X-axis label (default: 'Coefficient magnitude' if --abs else 'Coefficient')")
-    parser.add_argument("--save", default=None, help="Path to save the figure (optional)")
+    parser.add_argument(
+        "--zero-threshold",
+        type=float,
+        default=1e-12,
+        help="Threshold to treat coefficients as zero across folds",
+    )
+    parser.add_argument(
+        "--label-map",
+        default=None,
+        help="Optional JSON mapping from feature name to display label",
+    )
+    parser.add_argument(
+        "--xlabel",
+        default=None,
+        help="X-axis label (default: 'Coefficient magnitude' if --abs else 'Coefficient')",
+    )
+    parser.add_argument(
+        "--save", default=None, help="Path to save the figure (optional)"
+    )
     # For scatter plots
-    parser.add_argument("--data", required=False, help="Path to original dataset (CSV/TSV/Excel) for scatter plots")
-    parser.add_argument("--target", required=False, help="Target column name in the dataset")
-    parser.add_argument("--sep", dest="csv_sep", default=None, help="CSV separator if needed (auto by extension otherwise)")
-    parser.add_argument("--sheet", dest="sheet_name", default=None, help="Excel sheet name if applicable")
-    parser.add_argument("--scatter-dir", default=None, help="Directory to save scatter plots (optional)")
-    parser.add_argument("--no-show", action="store_true", help="Do not open interactive windows; save only")
+    parser.add_argument(
+        "--data",
+        required=False,
+        help="Path to original dataset (CSV/TSV/Excel) for scatter plots",
+    )
+    parser.add_argument(
+        "--target", required=False, help="Target column name in the dataset"
+    )
+    parser.add_argument(
+        "--sep",
+        dest="csv_sep",
+        default=None,
+        help="CSV separator if needed (auto by extension otherwise)",
+    )
+    parser.add_argument(
+        "--sheet",
+        dest="sheet_name",
+        default=None,
+        help="Excel sheet name if applicable",
+    )
+    parser.add_argument(
+        "--scatter-dir", default=None, help="Directory to save scatter plots (optional)"
+    )
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="Do not open interactive windows; save only",
+    )
 
     args = parser.parse_args()
 
     if args.no_show:
         import matplotlib
+
         matplotlib.use("Agg")
 
     if not os.path.exists(args.results):
@@ -158,18 +230,30 @@ def main():
     all_results: Dict[str, Dict[str, dict]] = pd.read_pickle(args.results)
     aid = pick_analysis(all_results, args.analysis_id)
     res_per_model = all_results[aid]
-    model_name = pick_model(res_per_model, preferred=(args.model,) if args.model else None)
+    model_name = pick_model(
+        res_per_model, preferred=(args.model,) if args.model else None
+    )
     res = res_per_model[model_name]
 
     # Accuracy (or desired metric)
     metrics = res.get("metric_scores", {})
-    metric_name = args.metric if args.metric in metrics else (next(iter(metrics)) if metrics else None)
-    acc_mean = float(metrics[metric_name]["mean"]) if metric_name and isinstance(metrics[metric_name], dict) else None
+    metric_name = (
+        args.metric
+        if args.metric in metrics
+        else (next(iter(metrics)) if metrics else None)
+    )
+    acc_mean = (
+        float(metrics[metric_name]["mean"])
+        if metric_name and isinstance(metrics[metric_name], dict)
+        else None
+    )
 
     # Feature importances
     fi = res.get("feature_importances", {})
     if not fi:
-        raise RuntimeError("No feature_importances found in results for the selected model.")
+        raise RuntimeError(
+            "No feature_importances found in results for the selected model."
+        )
 
     # Build series of importance (weighted_mean if present else mean)
     values = {}
@@ -217,7 +301,7 @@ def main():
         title=title,
         xlabel=xlabel,
         cmap="magma",
-        figsize=(10, 4)
+        figsize=(10, 4),
     )
 
     if args.save:
@@ -228,8 +312,12 @@ def main():
 
     # Scatter plots for top importances if data is available
     if args.data and args.target:
-        os.makedirs(args.scatter_dir or os.path.dirname(args.save or "") or ".", exist_ok=True)
-        df = load_data("tabular", args.data, sheet_name=args.sheet_name, sep=args.csv_sep)
+        os.makedirs(
+            args.scatter_dir or os.path.dirname(args.save or "") or ".", exist_ok=True
+        )
+        df = load_data(
+            "tabular", args.data, sheet_name=args.sheet_name, sep=args.csv_sep
+        )
         if not isinstance(df, pd.DataFrame):
             raise RuntimeError("Expected a DataFrame from data loader.")
 
@@ -257,7 +345,11 @@ def main():
             out_path = None
             if args.scatter_dir:
                 out_path = os.path.join(args.scatter_dir, f"scatter_{name}.png")
-            title = f"{model_name} – {name} (top features)\n{metric_name.capitalize()}: {acc_mean:.3f}" if acc_mean is not None else f"{model_name} – {name} (top features)"
+            title = (
+                f"{model_name} – {name} (top features)\n{metric_name.capitalize()}: {acc_mean:.3f}"
+                if acc_mean is not None
+                else f"{model_name} – {name} (top features)"
+            )
             fig_s, ax_s = plot_scatter2d(
                 df[fx].values,
                 df[fy].values,

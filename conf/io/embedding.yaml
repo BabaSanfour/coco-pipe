@@ -1,0 +1,9 @@
+# @package _global_
+dataset:
+  mode: embedding
+  path: "/path/to/embeddings"
+  pattern: "*.pkl"
+  dims:
+    - obs
+    - feature
+  coords: null

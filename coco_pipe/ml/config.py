@@ -4,31 +4,50 @@ coco_pipe/ml/config.py
 Default cross-validation parameters, metric functions, and model configurations
 for binary, multiclass, multi-output, and regression tasks.
 """
+from typing import Any, Callable, Dict
+
 import numpy as np
-from typing import Callable, Dict, Any
-from sklearn.metrics import (
-    recall_score, accuracy_score, f1_score,
-    precision_score, matthews_corrcoef, balanced_accuracy_score,
-    r2_score, mean_squared_error, mean_absolute_error, explained_variance_score,
-    max_error, roc_auc_score, average_precision_score,
-    hamming_loss, jaccard_score,
-)
-from sklearn.preprocessing import label_binarize
-from sklearn.linear_model import (
-    LogisticRegression, LinearRegression, Ridge, Lasso,
-    ElasticNet
-)
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import (
-    RandomForestClassifier, GradientBoostingClassifier,
-    RandomForestRegressor, GradientBoostingRegressor,
-    ExtraTreesClassifier, ExtraTreesRegressor,
-    AdaBoostClassifier, AdaBoostRegressor,
-    HistGradientBoostingClassifier, HistGradientBoostingRegressor
+    AdaBoostClassifier,
+    AdaBoostRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
 )
-from sklearn.svm import SVC, SVR
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.linear_model import (
+    ElasticNet,
+    Lasso,
+    LinearRegression,
+    LogisticRegression,
+    Ridge,
+)
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    explained_variance_score,
+    f1_score,
+    hamming_loss,
+    jaccard_score,
+    matthews_corrcoef,
+    max_error,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    r2_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.multioutput import MultiOutputClassifier, MultiOutputRegressor
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.preprocessing import label_binarize
+from sklearn.svm import SVC, SVR
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 # Default cross-validation kwargs
 DEFAULT_CV: Dict[str, Any] = {
@@ -43,7 +62,9 @@ CLASSIFICATION_METRICS: Dict[str, Callable] = {
     "accuracy": accuracy_score,
     "balanced_accuracy": balanced_accuracy_score,
     "f1": lambda y_true, y_pred: f1_score(y_true, y_pred, average="weighted"),
-    "precision": lambda y_true, y_pred: precision_score(y_true, y_pred, average="weighted"),
+    "precision": lambda y_true, y_pred: precision_score(
+        y_true, y_pred, average="weighted"
+    ),
     "recall": lambda y_true, y_pred: recall_score(y_true, y_pred, average="weighted"),
     "mcc": matthews_corrcoef,
 }
@@ -55,6 +76,7 @@ BINARY_METRICS: Dict[str, Callable] = {
     "average_precision": average_precision_score,
 }
 
+
 def multiclass_roc_auc_score(y_true, y_proba):
     """
     Compute one-vs-rest multiclass ROC AUC.
@@ -62,13 +84,15 @@ def multiclass_roc_auc_score(y_true, y_proba):
     # Ensure y_proba is 2D
     if y_proba.ndim == 1:
         y_proba = y_proba.reshape(-1, 1)
-    
+
     # Ensure we have the right shape
     if y_proba.shape[0] != len(y_true):
-        raise ValueError(f"Shape mismatch: y_true has {len(y_true)} samples, y_proba has {y_proba.shape[0]}")
-    
+        raise ValueError(
+            f"Shape mismatch: y_true has {len(y_true)} samples, y_proba has {y_proba.shape[0]}"
+        )
+
     classes = np.unique(y_true)
-    
+
     # Handle binary case
     if len(classes) == 2:
         if y_proba.shape[1] == 2:
@@ -77,10 +101,10 @@ def multiclass_roc_auc_score(y_true, y_proba):
             return roc_auc_score(y_true, y_proba[:, 0])
         else:
             return roc_auc_score(y_true, y_proba)
-    
+
     # Handle multiclass case
     if y_proba.shape[1] == len(classes):
-        return roc_auc_score(y_true, y_proba, average='weighted', multi_class='ovr')
+        return roc_auc_score(y_true, y_proba, average="weighted", multi_class="ovr")
     else:
         # Shape mismatch - fallback to simpler approach
         try:
@@ -88,12 +112,15 @@ def multiclass_roc_auc_score(y_true, y_proba):
             if y_true_bin.shape[1] == 1:
                 # Binary case disguised as multiclass
                 return roc_auc_score(y_true_bin[:, 0], y_proba[:, 0])
-            return roc_auc_score(y_true_bin, y_proba, average='weighted', multi_class='ovr')
+            return roc_auc_score(
+                y_true_bin, y_proba, average="weighted", multi_class="ovr"
+            )
         except Exception:
             return 0.5
-            
-            
+
             # Multiclass metrics
+
+
 MULTICLASS_METRICS: Dict[str, Callable] = {
     **CLASSIFICATION_METRICS,
     "roc_auc": multiclass_roc_auc_score,
@@ -127,21 +154,31 @@ REGRESSION_METRICS: Dict[str, Callable] = {
     "max_error": max_error,
 }
 
+
 # Multi-output regression metrics
 def mean_r2_score(y_true, y_pred):
     """Mean R2 over multiple outputs."""
-    return np.mean([r2_score(y_true[:, i], y_pred[:, i])
-                    for i in range(y_true.shape[1])])
+    return np.mean(
+        [r2_score(y_true[:, i], y_pred[:, i]) for i in range(y_true.shape[1])]
+    )
+
 
 def neg_mean_mse(y_true, y_pred):
     """Negative mean MSE over multiple outputs."""
-    return -np.mean([mean_squared_error(y_true[:, i], y_pred[:, i])
-                     for i in range(y_true.shape[1])])
+    return -np.mean(
+        [mean_squared_error(y_true[:, i], y_pred[:, i]) for i in range(y_true.shape[1])]
+    )
+
 
 def neg_mean_mae(y_true, y_pred):
     """Negative mean MAE over multiple outputs."""
-    return -np.mean([mean_absolute_error(y_true[:, i], y_pred[:, i])
-                     for i in range(y_true.shape[1])])
+    return -np.mean(
+        [
+            mean_absolute_error(y_true[:, i], y_pred[:, i])
+            for i in range(y_true.shape[1])
+        ]
+    )
+
 
 MULTIOUTPUT_REG_METRICS: Dict[str, Callable] = {
     **REGRESSION_METRICS,
@@ -155,9 +192,15 @@ BINARY_MODELS: Dict[str, Dict[str, Any]] = {
     "Logistic Regression": {
         # Default to L1-regularized logistic regression (binary):
         # use a solver that supports L1 (liblinear). Keep max_iter generous.
-        "estimator": LogisticRegression(random_state=42, max_iter=1000,
-                                        penalty='l1', solver='liblinear'),
-        "default_params": {"random_state": 42, "penalty": "l1", "solver": "liblinear", "max_iter": 1000},
+        "estimator": LogisticRegression(
+            random_state=42, max_iter=1000, penalty="l1", solver="liblinear"
+        ),
+        "default_params": {
+            "random_state": 42,
+            "penalty": "l1",
+            "solver": "liblinear",
+            "max_iter": 1000,
+        },
         # Restrict search grid to valid solver/penalty combos to avoid invalid configurations.
         # Both 'liblinear' and 'saga' support L1 for binary; include L2 as well if desired.
         "hp_search_params": {
@@ -251,9 +294,17 @@ BINARY_MODELS: Dict[str, Dict[str, Any]] = {
 
 # Multiclass classification models (same as binary for most)
 MULTICLASS_MODELS: Dict[str, Dict[str, Any]] = {
-    name: cfg for name, cfg in BINARY_MODELS.items() if name in [
+    name: cfg
+    for name, cfg in BINARY_MODELS.items()
+    if name
+    in [
         # "Logistic Regression", "Decision Tree", "Random Forest",
-        "Gradient Boosting", "SVC", "KNN", "Extra Trees", "AdaBoost", "HistGradientBoosting"
+        "Gradient Boosting",
+        "SVC",
+        "KNN",
+        "Extra Trees",
+        "AdaBoost",
+        "HistGradientBoosting",
     ]
 }
 
@@ -262,7 +313,9 @@ MULTIOUTPUT_CLASS_MODELS: Dict[str, Dict[str, Any]] = {
     name: {
         "estimator": MultiOutputClassifier,
         "default_params": {"estimator": cfg["estimator"](**cfg["default_params"])},
-        "hp_search_params": {f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()}
+        "hp_search_params": {
+            f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()
+        },
     }
     for name, cfg in MULTICLASS_MODELS.items()
 }
@@ -272,63 +325,63 @@ REGRESSION_MODELS: Dict[str, Dict[str, Any]] = {
     "Linear Regression": {
         "estimator": LinearRegression,
         "default_params": {},
-        "hp_search_params": {}
+        "hp_search_params": {},
     },
     "Ridge": {
         "estimator": Ridge,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]}
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]},
     },
     "Lasso": {
         "estimator": Lasso,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]}
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0]},
     },
     "ElasticNet": {
         "estimator": ElasticNet,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]}
+        "hp_search_params": {"alpha": [0.1, 1.0, 10.0], "l1_ratio": [0.1, 0.5, 0.9]},
     },
     "Decision Tree": {
         "estimator": DecisionTreeRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"max_depth": [None, 3, 5], "min_samples_split": [2, 5]}
+        "hp_search_params": {"max_depth": [None, 3, 5], "min_samples_split": [2, 5]},
     },
     "Random Forest": {
         "estimator": RandomForestRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, None]}
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [3, 5, None]},
     },
     "Gradient Boosting": {
         "estimator": GradientBoostingRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1]}
+        "hp_search_params": {"n_estimators": [100, 200], "learning_rate": [0.01, 0.1]},
     },
     "SVR": {
         "estimator": SVR,
         "default_params": {},
-        "hp_search_params": {"kernel": ["linear", "rbf"], "C": [0.1, 1.0]}
+        "hp_search_params": {"kernel": ["linear", "rbf"], "C": [0.1, 1.0]},
     },
     "KNN": {
         "estimator": KNeighborsRegressor,
         "default_params": {},
-        "hp_search_params": {"n_neighbors": [3, 5, 7]}
+        "hp_search_params": {"n_neighbors": [3, 5, 7]},
     },
     "Extra Trees": {
         "estimator": ExtraTreesRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]}
+        "hp_search_params": {"n_estimators": [100, 200], "max_depth": [None, 5, 10]},
     },
     "AdaBoost": {
         "estimator": AdaBoostRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]}
+        "hp_search_params": {"n_estimators": [50, 100], "learning_rate": [0.5, 1.0]},
     },
     "HistGradientBoosting": {
         "estimator": HistGradientBoostingRegressor,
         "default_params": {"random_state": 42},
-        "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]}
-    }
+        "hp_search_params": {"max_iter": [100, 200], "learning_rate": [0.01, 0.1]},
+    },
 }
 
 # Multi-output regression models
@@ -336,7 +389,9 @@ MULTIOUTPUT_REG_MODELS: Dict[str, Dict[str, Any]] = {
     name: {
         "estimator": MultiOutputRegressor,
         "default_params": {"estimator": cfg["estimator"](**cfg["default_params"])},
-        "hp_search_params": {f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()}
+        "hp_search_params": {
+            f"estimator__{k}": v for k, v in cfg["hp_search_params"].items()
+        },
     }
     for name, cfg in REGRESSION_MODELS.items()
 }

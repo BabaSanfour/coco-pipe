@@ -1,0 +1,15 @@
+ID: decoding_test
+description: Decoding Multi feature every regions
+data:
+  file: /Users/hamzaabdelhedi/Projects/data/EEG_psychostimulant_data/EEG_psychostimulants_2025-02/csv/demo_psychostim_vs_none.csv
+  target: target
+  features_groups:
+    groups: ['C3', 'C4', 'Cz', 'F3', 'F4', 'F7', 'F8', 'Fp1', 'Fp2', 'Fz', 'O1', 'O2', 'P3', 'P4', 'Pz', 'T3', 'T4', 'T5', 'T6']
+    features: ["feature-foofOffset.spaces-"]
+analysis:
+  - name: "Baseline Global"
+    type: "baseline"
+    subset: "all_features_all_groups"
+    models: "all"
+    scoring: "accuracy"
+output: test

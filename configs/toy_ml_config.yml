@@ -5,7 +5,7 @@
 # A unique identifier for this entire experiment
 global_experiment_id: "toy_ml_config"
 
-# Path to your input CSV/Parquet/etc.  
+# Path to your input CSV/Parquet/etc.
 data_path: "./datasets/toy_dataset.csv"
 
 # Where to write all the per‐analysis and final results

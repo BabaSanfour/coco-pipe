@@ -21,39 +21,45 @@ sys.path.append(os.path.abspath(os.path.join(curdir, "..", "coco-pipe")))
 
 import shutil
 
+
 def copy_readme():
     """Copy README.md from the root directory to docs/source/."""
     source = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../README.md"))
     destination = os.path.abspath(os.path.join(os.path.dirname(__file__), "README.md"))
-    
+
     if os.path.exists(source):
         shutil.copyfile(source, destination)
         print(f"Copied {source} -> {destination}")
 
+
 def cleanup_readme(app, exception):
     """Delete README.md in docs/source/ after the build."""
     destination = os.path.abspath(os.path.join(os.path.dirname(__file__), "README.md"))
-    
+
     if os.path.exists(destination):
         os.remove(destination)
         print(f"Deleted {destination} after build.")
+
 
 # Register the cleanup function to run at the end
 def setup(app):
     app.connect("build-finished", cleanup_readme)
 
+
 copy_readme()
 
 # -- Project information -----------------------------------------------------
 
-project = 'coco-pipe'
-copyright = '2025, HA'
+project = "coco-pipe"
+copyright = "2025, HA"
 author = "coco-pipe developers"
 _today = date.today()
-copyright = f"2025-{_today.year}, cocopipe developers. Last updated {_today.isoformat()}"
+copyright = (
+    f"2025-{_today.year}, cocopipe developers. Last updated {_today.isoformat()}"
+)
 
 # The short X.Y version
-version = '0.0.1'
+version = "0.0.1"
 release = version
 
 # -- General configuration ---------------------------------------------------
@@ -64,20 +70,20 @@ release = version
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
-#    "sphinx.ext.intersphinx",
-    #"numpydoc",
+    #    "sphinx.ext.intersphinx",
+    # "numpydoc",
     "sphinx_gallery.gen_gallery",
-    #"gh_substitutions",  # custom extension, see ./sphinxext/gh_substitutions.py
+    # "gh_substitutions",  # custom extension, see ./sphinxext/gh_substitutions.py
     "sphinx_copybutton",
-    'sphinxcontrib.mermaid',
-    'sphinx.ext.napoleon',
+    "sphinxcontrib.mermaid",
+    "sphinx.ext.napoleon",
     "myst_parser",
 ]
 
 # Allow Markdown files to be used as documentation pages
 source_suffix = {
-    '.rst': 'restructuredtext',
-    '.md': 'markdown',
+    ".rst": "restructuredtext",
+    ".md": "markdown",
 }
 
 copybutton_prompt_text = r">>> |\.\.\. "
@@ -102,31 +108,30 @@ sphinx_gallery_conf = {
     "gallery_dirs": "auto_examples",
     "filename_pattern": "^((?!sgskip).)*$",
     "backreferences_dir": "generated",
-    'run_stale_examples': True, #Force (or not) re running examples,
-    #"default_thumb_file": "_static/default_thumbnail.png",  # Set a global default thumbnail
-
+    "run_stale_examples": True,  # Force (or not) re running examples,
+    # "default_thumb_file": "_static/default_thumbnail.png",  # Set a global default thumbnail
 }
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store",'_ideas']
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "_ideas"]
 
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
+templates_path = ["_templates"]
 
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'furo'
+html_theme = "furo"
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-#html_static_path = ['_static'] #already done in the setup(app) section
-html_extra_path = ['_copyover']
+# html_static_path = ['_static'] #already done in the setup(app) section
+html_extra_path = ["_copyover"]
 
 
 ###################################################################################################
@@ -142,9 +147,11 @@ html_extra_path = ['_copyover']
 ###################################################################################################
 
 # Auto API
-extensions += ['autoapi.extension']
+extensions += ["autoapi.extension"]
 
-autoapi_type = 'python'
+autoapi_type = "python"
 autoapi_dirs = ["../../coco_pipe"]
 
-extensions += ['sphinx.ext.viewcode'] #see https://github.com/readthedocs/sphinx-autoapi/issues/422
+extensions += [
+    "sphinx.ext.viewcode"
+]  # see https://github.com/readthedocs/sphinx-autoapi/issues/422

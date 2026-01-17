@@ -1,20 +1,17 @@
-import pytest
 import numpy as np
+import pytest
 from sklearn.datasets import make_regression
 
 from coco_pipe.ml.config import (
-    REGRESSION_METRICS,
-    REGRESSION_MODELS,
-    MULTIOUTPUT_REG_MODELS,
-    MULTIOUTPUT_REG_METRICS,
     DEFAULT_CV,
+    MULTIOUTPUT_REG_MODELS,
+    REGRESSION_MODELS,
 )
 from coco_pipe.ml.regression import (
-    SingleOutputRegressionPipeline,
     MultiOutputRegressionPipeline,
     RegressionPipeline,
+    SingleOutputRegressionPipeline,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper small datasets
@@ -23,11 +20,11 @@ X_single = np.arange(40).reshape(20, 2)  # enough samples for 2-fold CV
 y_single = X_single[:, 0] * 2.0 + 1.0
 
 X_multi, y_multi = make_regression(
-    n_samples=50,   # enough samples for 2-fold CV
+    n_samples=50,  # enough samples for 2-fold CV
     n_features=4,
     n_targets=3,
     noise=0.1,
-    random_state=0
+    random_state=0,
 )
 
 
@@ -58,7 +55,9 @@ def test_pipeline_detect_and_run_baseline(
         X, y = X_multi, y_multi
 
     saved = []
-    monkeypatch.setattr(RegressionPipeline, "save", lambda self, name, res: saved.append(name))
+    monkeypatch.setattr(
+        RegressionPipeline, "save", lambda self, name, res: saved.append(name)
+    )
 
     pipe = RegressionPipeline(
         X=X,
@@ -71,7 +70,7 @@ def test_pipeline_detect_and_run_baseline(
         n_splits=2,
         n_jobs=1,
         save_intermediate=True,
-        results_file="testres"
+        results_file="testres",
     )
     results = pipe.run()
 
@@ -107,8 +106,8 @@ def test_single_output_metrics_correctness():
     ]
     # define fold-level scores manually
     fold_scores = {
-        "r2": np.array([1.0, 0.5]),           # perfect then half explained
-        "mse": np.array([0.0, 0.25])          # zero then (0.5^2 + 0.5^2)/2 = 0.25
+        "r2": np.array([1.0, 0.5]),  # perfect then half explained
+        "mse": np.array([0.0, 0.25]),  # zero then (0.5^2 + 0.5^2)/2 = 0.25
     }
     fold_importances = {}
 
@@ -117,8 +116,8 @@ def test_single_output_metrics_correctness():
         y=np.zeros(4),
         models="all",
         metrics=["r2", "mse"],
-        cv_kwargs={**DEFAULT_CV, "n_splits":2, "cv_strategy":"kfold"},
-        n_jobs=1
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
+        n_jobs=1,
     )
     # BasePipeline._aggregate returns tuple
     predictions, metrics, feature_importances = pipe._aggregate(
@@ -126,7 +125,9 @@ def test_single_output_metrics_correctness():
     )
 
     # check concatenated predictions
-    assert np.array_equal(predictions["y_true"], np.concatenate([fp["y_true"] for fp in fold_preds]))
+    assert np.array_equal(
+        predictions["y_true"], np.concatenate([fp["y_true"] for fp in fold_preds])
+    )
     assert "y_pred" in predictions
 
     # metric means
@@ -139,11 +140,7 @@ def test_single_output_metrics_correctness():
 
 def test_baseline_all_models_run_single():
     X, y = make_regression(
-        n_samples=100,
-        n_features=10,
-        n_informative=3,
-        noise=0.1,
-        random_state=0
+        n_samples=100, n_features=10, n_informative=3, noise=0.1, random_state=0
     )
     metrics = ["r2", "mse", "mae"]
     seen = 0
@@ -155,7 +152,7 @@ def test_baseline_all_models_run_single():
             metrics=metrics,
             random_state=0,
             n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits":5, "cv_strategy":"kfold"}
+            cv_kwargs={**DEFAULT_CV, "n_splits": 5, "cv_strategy": "kfold"},
         )
         out = pipe.baseline_evaluation(name)
         # essential keys
@@ -179,11 +176,7 @@ def test_target_validation_error_multioutput():
 
 def test_baseline_all_models_multioutput():
     X, y = make_regression(
-        n_samples=100,
-        n_features=6,
-        n_targets=3,
-        noise=0.1,
-        random_state=0
+        n_samples=100, n_features=6, n_targets=3, noise=0.1, random_state=0
     )
     metrics = ["mean_r2", "neg_mean_mse", "neg_mean_mae"]
     seen = 0
@@ -195,7 +188,7 @@ def test_baseline_all_models_multioutput():
             metrics=metrics,
             random_state=42,
             n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits":4, "cv_strategy":"kfold"}
+            cv_kwargs={**DEFAULT_CV, "n_splits": 4, "cv_strategy": "kfold"},
         )
         out = pipe.baseline_evaluation(name)
         # essential keys

@@ -1,0 +1,9 @@
+# @package _global_
+metrics:
+  - trustworthiness
+  - continuity
+  - lcmc
+  - mrre_total
+
+k_range: [5, 10, 20, 50, 100]
+viz_metric: trustworthiness

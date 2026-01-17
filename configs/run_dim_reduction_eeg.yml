@@ -1,0 +1,43 @@
+# Config for EEG data dimension reduction
+
+# -------------------------------------------------------------------
+# Data loading section: specify loader and its parameters
+# -------------------------------------------------------------------
+data:
+  # Choose the EEG data loader
+  type: eeg
+
+  # Path to BIDS-compliant EEG dataset
+  data_path: ./test_data/bids_eeg
+
+  # BIDS entities
+  task: rest
+
+  # Optional: list specific subjects
+  subjects: ["pd6"]
+
+  # BIDS session - ensure it's a string
+  session: "on"
+
+# -------------------------------------------------------------------
+# Reducers section: list one or more methods to apply
+# -------------------------------------------------------------------
+reducers:
+  - method: PCA
+    n_components: 10
+
+  - method: UMAP
+    n_components: 2
+    reducer_kwargs:
+      # umap-learn parameters
+      n_neighbors: 15
+      min_dist: 0.1
+
+# -------------------------------------------------------------------
+# Execution options
+# -------------------------------------------------------------------
+# Run multiple reducers in parallel if true.
+parallel: false
+
+# Where to save the overall summary JSON.
+summary_path: ./dr_summary_eeg.json
