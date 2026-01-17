@@ -147,6 +147,12 @@ def plot_embedding(X_emb: np.ndarray,
     """
     _set_style()
     
+    # Handle DataContainer inputs
+    if hasattr(X_emb, 'X') and hasattr(X_emb, 'y'):
+        if labels is None and X_emb.y is not None:
+            labels = X_emb.y
+        X_emb = X_emb.X
+    
     n_plot_dim = len(dims)
     if n_plot_dim not in [2, 3]:
         raise ValueError(f"plot_embedding only supports 2D or 3D plotting, got {n_plot_dim}.")

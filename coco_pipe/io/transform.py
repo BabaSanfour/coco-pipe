@@ -194,7 +194,7 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
         
         if self.method == 'pca':
             self.whitener_ = W_pca
-            self.inverse_whitener_ = (V.T * np.sqrt(S)).T
+            self.inverse_whitener_ = (V.T * np.sqrt(S))
             
         elif self.method == 'zca':
             # W_zca = V.T * diag(1/sqrt(S)) * V

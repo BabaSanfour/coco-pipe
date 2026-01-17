@@ -6,8 +6,11 @@ import pytest
 import numpy as np
 import pandas as pd
 from sklearn.datasets import make_s_curve, make_blobs
+import sys
+import types
 
-from coco_pipe.dim_reduction.evaluation.core import MethodSelector
+from coco_pipe.dim_reduction.evaluation.core import MethodSelector, _evaluate_single_method
+from coco_pipe.dim_reduction.config import EvaluationConfig
 from coco_pipe.dim_reduction.reducers.linear import PCAReducer
 from coco_pipe.dim_reduction.reducers.neighbor import UMAPReducer
 from coco_pipe.dim_reduction.core import DimReduction
@@ -19,14 +22,10 @@ from coco_pipe.dim_reduction.evaluation import (
     compute_mrre,
     MethodSelector,
     compute_velocity_fields,
-    perturbation_importance,
-    compute_feature_importance,
-    compute_coranking_matrix, 
-    trustworthiness, 
-    continuity, 
-    lcmc, 
     compute_mrre,
+    shepard_diagram_data,
 )
+from coco_pipe.dim_reduction.analysis import perturbation_importance
 
 @pytest.fixture
 def data():
@@ -48,7 +47,7 @@ def test_method_selector(data):
     evaluator.run(k_range=[5, 10, 20])
     
     assert "PCA" in evaluator.results_
-    assert "Isomap" in evaluator.results_
+    assert "ISOMAP" in evaluator.results_
     
     res_pca = evaluator.results_["PCA"]
     assert isinstance(res_pca, pd.DataFrame)
@@ -64,7 +63,8 @@ def test_velocity_fields(linear_data):
     V_valid = V_emb[1:-2]
     mean_v = np.mean(V_valid, axis=0)
     
-    target_dir = np.array([1, 2]) / np.linalg.norm([1, 2])
+    # Target is [1, 1, 1, 1, 1] because all coords increase linearly
+    target_dir = np.ones(5) / np.linalg.norm(np.ones(5))
     calc_dir = mean_v / np.linalg.norm(mean_v)
     
     dot_prod = np.dot(target_dir, calc_dir)
@@ -188,3 +188,149 @@ def test_method_selector_single_method():
     
     assert "PCA" in selector.results_
     assert len(selector.results_["PCA"]) == 1
+
+def test_evaluation_plot(monkeypatch, data):
+    """Test plotting of evaluation results."""
+    X, y = data
+    import matplotlib.pyplot as plt
+    
+    # Mock running
+    selector = MethodSelector([], data=X)
+    selector.results_ = {
+        "PCA": pd.DataFrame({'k': [1,2], 'trustworthiness': [0.9, 0.8]}),
+        "UMAP": pd.DataFrame({'k': [1,2], 'trustworthiness': [0.95, 0.85]})
+    }
+    
+    # Mock viz.plot_comparison
+    mock_plot = types.SimpleNamespace(plot_comparison=lambda *a, **k: plt.figure())
+    # We need to inject this mock where MethodSelector imports it
+    # MethodSelector calls: from ...viz.dim_reduction import plot_comparison
+    # This import happens INSIDE plot().
+    # So we need to mock coco_pipe.viz.dim_reduction
+    
+    mock_viz = types.SimpleNamespace(plot_comparison=lambda *a, **k: plt.figure())
+    monkeypatch.setitem(sys.modules, 'coco_pipe.viz.dim_reduction', mock_viz)
+    
+    # Or force the import if it's already imported?
+    # Since the import is inside the function, we can pre-seed sys.modules
+    
+    fig = selector.plot(metric='trustworthiness')
+    fig = selector.plot(metric='trustworthiness')
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+# --- Coverage Tests Merged ---
+
+def test_trustworthiness_edge_cases():
+    """Test trustworthy edge cases including small N."""
+    # Q matrix for N=5
+    # perfect matching
+    Q = np.diag([1]*4)
+    
+    # 1. Trivial k >= n-1
+    t = trustworthiness(Q, k=4)
+    assert t == 1.0
+    
+    # 2. Small N logic (N=5, K=1)
+    # n=5 is the cutoff for small sample handling
+    t_small = trustworthiness(Q, k=1)
+    assert t_small == 1.0
+
+def test_continuity_edge_cases():
+    """Test continuity edge cases."""
+    Q = np.diag([1]*4)
+    
+    # 1. Trivial k >= n-1
+    c = continuity(Q, k=4)
+    assert c == 1.0
+    
+    # 2. Small N logic
+    c_small = continuity(Q, k=1)
+    assert c_small == 1.0
+    
+def test_lcmc_edge_cases():
+    """Test LCMC edge cases."""
+    Q = np.diag([1]*4)
+    Q[3, 0] = 1.0 # Add some overlap noise if needed, but diag is fine
+    
+    # k >= n-1
+    l = lcmc(Q, k=4)
+    assert l == 0.0
+    
+    # Normal case
+    l_norm = lcmc(Q, k=2)
+    assert isinstance(l_norm, float)
+
+def test_mrre_edge_cases():
+    """Test MRRE edge cases."""
+    Q = np.diag([1]*4) # N=5
+    
+    # MRRE calculation involves H_k normalization
+    m_int, m_ext = compute_mrre(Q, k=2)
+    assert isinstance(m_int, float)
+    assert m_ext == 0.0 # Perfect embedding has 0 error
+
+def test_shepard_diagram_data():
+    """Test shepard diagram data generation."""
+    X = np.random.rand(10, 5)
+    X_emb = np.random.rand(10, 2)
+    
+    # 1. Full sample (N <= sample_size)
+    d_orig, d_emb = shepard_diagram_data(X, X_emb, sample_size=20)
+    assert len(d_orig) == 45 # 10*9/2
+    assert len(d_emb) == 45
+    
+    # 2. Subsample (N > sample_size)
+    d_orig_sub, d_emb_sub = shepard_diagram_data(X, X_emb, sample_size=5)
+    assert len(d_orig_sub) == 10 # 5*4/2
+
+def test_method_selector_config_object():
+    """Test passing EvaluationConfig object to run()."""
+    reducers = [DimReduction("PCA", n_components=2)]
+    X = np.random.rand(20, 5)
+    
+    selector = MethodSelector(reducers, data=X)
+    
+    # Create config
+    config = EvaluationConfig(k_range=[2, 5], metrics=["trustworthiness"])
+    
+    selector.run(k_range=config)
+    
+    assert "PCA" in selector.results_
+    res = selector.results_["PCA"]
+    assert len(res) == 2 # k=2, 5
+
+def test_method_selector_no_data_error():
+    """Test error when no data is provided."""
+    reducers = [DimReduction("PCA")]
+    selector = MethodSelector(reducers) # No data in init
+    
+    with pytest.raises(ValueError, match="No data provided"):
+        selector.run()
+
+def test_evaluate_single_method_skip_large_k():
+    """Test that _evaluate_single_method skips k >= n_samples."""
+    X = np.random.rand(10, 5) # 10 samples
+    reducer = DimReduction("PCA", n_components=2)
+    
+    # Request k=5 (valid) and k=15 (invalid for n=10)
+    k_vals = [5, 15]
+    
+    name, emb, Q, df = _evaluate_single_method("PCA", reducer, X, None, k_vals)
+    
+    assert len(df) == 1
+    assert df.iloc[0]['k'] == 5
+    # k=15 should be skipped
+
+def test_method_selector_update_data():
+    """Test updating data via run() arguments."""
+    reducers = [DimReduction("PCA", n_components=2)]
+    X_init = np.random.rand(20, 5)
+    selector = MethodSelector(reducers, data=X_init)
+    
+    X_new = np.random.rand(30, 5)
+    selector.run(X=X_new)
+    
+    assert selector.data.shape == (30, 5)
+    assert selector.embeddings_["PCA"].shape == (30, 2)

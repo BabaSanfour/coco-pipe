@@ -112,7 +112,7 @@ class TabularDataset(BaseDataset):
         self.col_sep = col_sep
         self.meta_columns = meta_columns or []
         
-        self.clean = clean
+        self.do_clean = clean
         self.clean_kwargs = clean_kwargs or {}
         self.select_kwargs = select_kwargs or {}
         self.strict_reshaping = True
@@ -165,7 +165,7 @@ class TabularDataset(BaseDataset):
                 X_df = X_df.drop(columns=found_meta)
 
         # 4. Cleaning
-        if self.clean:
+        if self.do_clean:
              X_df, report = self.clean(X_df, **self.clean_kwargs)
         else:
              report = None
@@ -400,9 +400,7 @@ class EmbeddingDataset(BaseDataset):
 
     def load(self) -> DataContainer:
         # Find files
-        files = sorted(list(self.path.glob(self.pattern)))
-        if not files:
-             files = sorted(list(self.path.rglob(self.pattern)))
+        files = sorted(list(self.path.rglob(self.pattern)))
              
         if not files:
             raise FileNotFoundError(f"No files matched pattern '{self.pattern}' in {self.path}")
@@ -682,7 +680,7 @@ class BIDSDataset(BaseDataset):
              raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
 
         coords = {}
-        if ch_names:
+        if ch_names is not None and len(ch_names) > 0:
             coords['channel'] = np.array(ch_names)
         if times is not None:
             coords['time'] = times

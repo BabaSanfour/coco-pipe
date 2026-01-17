@@ -228,11 +228,12 @@ class TRCAReducer(BaseReducer):
         self : TRCAReducer
             Returns the instance itself.
         """
-        self.model = TRCA(**self.params)
-        
         X_arr = np.array(X)
         if X_arr.ndim != 3:
             raise ValueError("TRCA requires 3D input: (n_trials, n_channels, n_times)")
+
+        # Initialize TRCA
+        self.model = TRCA(**self.params)
 
         # Input X from MNE is (n_trials, n_channels, n_times).
         # We transform (trials, chans, times) -> (times, chans, trials)

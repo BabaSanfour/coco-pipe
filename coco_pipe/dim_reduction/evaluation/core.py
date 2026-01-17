@@ -19,7 +19,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from ..core import DimReduction
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..core import DimReduction
+
 from .metrics import compute_coranking_matrix, trustworthiness, continuity, lcmc, compute_mrre
 
 class MethodSelector:
@@ -61,7 +65,7 @@ class MethodSelector:
     """
 
     def __init__(self, 
-                 reducers: Union[List[DimReduction], Dict[str, DimReduction]], 
+                 reducers: Union[List["DimReduction"], Dict[str, "DimReduction"]], 
                  data: Optional[np.ndarray] = None,
                  target: Optional[np.ndarray] = None):
         
@@ -144,7 +148,26 @@ class MethodSelector:
             
         return self
 
-def _evaluate_single_method(name: str, reducer: DimReduction, 
+    def plot(self, metric: str = 'trustworthiness', ax=None) -> Any:
+        """
+        Plot comparison curves (Quality vs Neighborhood Size).
+        
+        Parameters
+        ----------
+        metric : str, default='trustworthiness'
+            The metric to plot. Options: 'trustworthiness', 'continuity', 'lcmc', 'mrre_total'.
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to plot on.
+
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The figure object.
+        """
+        from ...viz.dim_reduction import plot_comparison
+        return plot_comparison(self, metric=metric, ax=ax)
+
+def _evaluate_single_method(name: str, reducer: "DimReduction", 
                             data: np.ndarray, target: Optional[np.ndarray], 
                             k_vals: List[int]) -> Tuple[str, np.ndarray, np.ndarray, pd.DataFrame]:
     """
@@ -183,22 +206,3 @@ def _evaluate_single_method(name: str, reducer: DimReduction,
         })
     
     return name, emb, Q, pd.DataFrame(metrics_list)
-
-    def plot(self, metric: str = 'trustworthiness', ax=None) -> Any:
-        """
-        Plot comparison curves (Quality vs Neighborhood Size).
-        
-        Parameters
-        ----------
-        metric : str, default='trustworthiness'
-            The metric to plot. Options: 'trustworthiness', 'continuity', 'lcmc', 'mrre_total'.
-        ax : matplotlib.axes.Axes, optional
-            Existing axes to plot on.
-
-        Returns
-        -------
-        fig : matplotlib.figure.Figure
-            The figure object.
-        """
-        from ...viz.dim_reduction import plot_comparison
-        return plot_comparison(self, metric=metric, ax=ax)

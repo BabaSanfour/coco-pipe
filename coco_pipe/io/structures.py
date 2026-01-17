@@ -223,22 +223,36 @@ class DataContainer:
                 
             d_idx = self.dims.index(dim_name)
             
+            # Normalize int to list to preserve dimension
+            if isinstance(indices, int):
+                indices = [indices]
+            
             # Update specific dim slice
             slices[d_idx] = indices
             
             # Handle metadata alignment
             dim_len_old = self.X.shape[d_idx]
             
+            # We must be careful not to update coords twice if orthogonal slicing
+            # But here we just prepare new_coords values
+            
             for k, v in self.coords.items():
                 if dim_name in self.dims and k == dim_name:
                      # This IS the coordinate for this dimension
                      new_coords[k] = np.array(v)[indices]
-                elif len(v) == dim_len_old:
+                elif len(v) == dim_len_old and k not in self.dims: # Don't overwrite other dim labels
                      # Heuristic match
                      new_coords[k] = np.array(v)[indices]
 
+        # Orthogonal Application
         try:
-             new_X = self.X[tuple(slices)]
+             new_X = self.X
+             for axis, sl in enumerate(slices):
+                 if isinstance(sl, slice) and sl == slice(None):
+                     continue
+                 indexer = [slice(None)] * new_X.ndim
+                 indexer[axis] = sl
+                 new_X = new_X[tuple(indexer)]
         except Exception as e:
              logger.error(f"Slicing failed with slices {slices}: {e}")
              raise
@@ -249,10 +263,11 @@ class DataContainer:
         if obs_dim_idx != -1:
             obs_sl = slices[obs_dim_idx]
             # Slicing y/ids if they exist
-            if self.y is not None:
-                new_y = self.y[obs_sl]
-            if self.ids is not None:
-                new_ids = self.ids[obs_sl]
+            if not (isinstance(obs_sl, slice) and obs_sl == slice(None)): 
+                if self.y is not None:
+                    new_y = self.y[obs_sl]
+                if self.ids is not None:
+                    new_ids = self.ids[obs_sl] # ids is numpy array
 
         return replace(
             self,
@@ -594,16 +609,49 @@ class DataContainer:
                      raise ValueError(f"Conflicting selections for axis {axis} ({key}) resulted in empty set.")
                 slices[axis] = common
 
-        # Final Application
-        X_new = self.X[tuple(slices)]
+        # Final Application (Orthogonal Indexing)
+        # Apply slices sequentially to avoid broadcasting issues
+        X_new = self.X
+        for axis, sl in enumerate(slices):
+             if isinstance(sl, slice) and sl == slice(None):
+                 continue
+             
+             indexer = [slice(None)] * X_new.ndim
+             indexer[axis] = sl
+             X_new = X_new[tuple(indexer)]
         
         # Update coordinates to match new X
         final_coords = {}
-        for dim, labels in self.coords.items():
-            if dim in self.dims:
-                ax = self.dims.index(dim)
-                sl = slices[ax]
-                final_coords[dim] = np.array(labels)[sl]
+        for coord_name, labels in self.coords.items():
+            # Check if coordinate aligns with any dimension
+            aligned_dim_idx = -1
+            
+            if coord_name in self.dims:
+                aligned_dim_idx = self.dims.index(coord_name)
+            else:
+                 # Heuristic: Find matching dimension length
+                 # Note: Ambiguity if multiple dims have same length. 
+                 # We prioritize 'obs' if length matches, then others.
+                 
+                 # Check obs first
+                 if obs_dim_idx != -1 and len(labels) == self.X.shape[obs_dim_idx]:
+                     aligned_dim_idx = obs_dim_idx
+                 else:
+                     for d_i, d_len in enumerate(self.X.shape):
+                         if len(labels) == d_len:
+                             aligned_dim_idx = d_i
+                             break
+            
+            if aligned_dim_idx != -1:
+                 sl = slices[aligned_dim_idx]
+                 if isinstance(sl, slice):
+                      final_coords[coord_name] = np.array(labels)[sl]
+                 else:
+                      final_coords[coord_name] = np.array(labels)[sl]
+            else:
+                 # Coordinate didn't match any dimension? Drop it to be safe, or keep?
+                 # If validation passes, this shouldn't happen unless corrupt.
+                 pass
 
         # Update y/ids
         y_new = self.y
@@ -612,7 +660,7 @@ class DataContainer:
         # If obs was sliced (even indirectly via y/ids)
         if obs_dim_idx != -1:
             obs_sl = slices[obs_dim_idx]
-            if not isinstance(obs_sl, slice):
+            if not isinstance(obs_sl, slice) or obs_sl != slice(None):
                 if y_new is not None:
                     y_new = y_new[obs_sl]
                 if ids_new is not None:

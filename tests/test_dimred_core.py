@@ -1,8 +1,12 @@
 import pytest
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
+import types
+from unittest.mock import MagicMock, patch
 from coco_pipe.dim_reduction.core import DimReduction
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
+from coco_pipe.dim_reduction.config import DimReductionConfig, UMAPConfig
 
 def test_factory():
     dr = DimReduction("PCA", n_components=2)
@@ -276,3 +280,170 @@ def test_score_allowlist():
     assert "diff_potential" in scores
     assert "eigs" in scores
     assert "ignored_attr" not in scores
+
+def test_plot_native(monkeypatch):
+    """Test native plotting calls with mocks."""
+    X = np.random.rand(20, 5)
+    
+    # 1. Test PHATE
+    dr_phate = DimReduction("PHATE")
+    
+    # Mock phate module
+    mock_phate = types.SimpleNamespace(plot=types.SimpleNamespace(scatter=lambda *a, **k: plt.figure()))
+    monkeypatch.setitem(sys.modules, 'phate', mock_phate)
+    
+    dr_phate.reducer.model = "MockPHATEModel"
+    
+    fig = dr_phate.plot(mode='native')
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+    
+    # 2. Test UMAP
+    # Mock umap.plot (requires umap to be imported)
+    import umap
+    mock_plot_mod = types.SimpleNamespace(points=lambda *a, **k: plt.figure().add_subplot(111))
+    monkeypatch.setattr(umap, 'plot', mock_plot_mod, raising=False)
+    monkeypatch.setitem(sys.modules, 'umap.plot', mock_plot_mod)
+    
+    dr_umap = DimReduction("UMAP")
+    dr_umap.reducer.model = "MockUMAPModel"
+    
+    ax = dr_umap.plot(mode='native')
+    assert isinstance(ax, plt.Axes)
+    plt.close(ax.figure)
+
+    # 3. Test DMD
+    # Mock DMD plotting
+    dr_dmd = DimReduction("DMD")
+    mock_dmd_model = types.SimpleNamespace(plot_eigs=lambda **k: plt.figure())
+    dr_dmd.reducer.model = mock_dmd_model
+    
+    fig = dr_dmd.plot(mode='native')
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+    
+    # 4. Unsupported
+    dr_pca = DimReduction("PCA")
+    with pytest.raises(NotImplementedError, match="Native plotting not supported"):
+        dr_pca.plot(mode='native')
+
+def test_get_components():
+    """Test retrieval of linear components/patterns."""
+    # 1. PCA (sklearn has components_)
+    X = np.random.rand(20, 5)
+    dr = DimReduction("PCA", n_components=2)
+    dr.fit(X)
+    
+    comps = dr.get_components()
+    assert comps.shape == (2, 5)
+    
+    # 2. Mock model with patterns_ (e.g. TRCA-like)
+    class MockPatternReducer(BaseReducer):
+        def __init__(self):
+            super().__init__(n_components=2)
+            self.patterns_ = np.ones((2, 5))
+            
+        def fit(self, X, y=None): return self
+        def transform(self, X): return X
+        
+    dr_mock = DimReduction("PCA") # method name doesn't matter for custom reducer injection
+    dr_mock.reducer = MockPatternReducer()
+    
+    pats = dr_mock.get_components()
+    assert np.all(pats == 1)
+    
+    # 3. Fail case (Neural/Non-linear)
+    dr_umap = DimReduction("UMAP")
+    dr_umap.fit(X)
+    with pytest.raises(ValueError, match="does not appear to have linear components"):
+        dr_umap.get_components()
+
+def test_init_from_config_object():
+    """Test initialization with a Pydantic DimReductionConfig object."""
+    mock_config = MagicMock(spec=DimReductionConfig)
+    mock_inner = MagicMock()
+    mock_inner.method = "UMAP"
+    mock_inner.n_components = 2
+    mock_inner.model_dump.return_value = {"n_neighbors": 15}
+    mock_config.config = mock_inner
+    
+    dr = DimReduction(mock_config)
+    assert dr.method == "UMAP"
+    assert dr.n_components == 2
+    assert dr.reducer_kwargs["n_neighbors"] == 15
+
+def test_validate_input_errors():
+    """Test validation errors for dimension mismatches."""
+    # Test 3D method with 2D data
+    dr = DimReduction("TRCA", n_components=2)
+    X_2d = np.zeros((10, 5))
+    with pytest.raises(ValueError, match="requires 3D input"):
+        dr._validate_input(X_2d)
+        
+    # Test 2D method with 3D data
+    dr2 = DimReduction("PCA", n_components=2)
+    X_3d = np.zeros((10, 5, 2))
+    with pytest.raises(ValueError, match="requires 2D input"):
+        dr2._validate_input(X_3d)
+
+def test_score_errors_and_edge_cases():
+    """Test score method edge cases."""
+    dr = DimReduction("PCA", n_components=2)
+    
+    # Error: No embedding available
+    X = np.zeros((10, 5))
+    with pytest.raises(RuntimeError, match="No embedding available"):
+        dr.score(X)
+        
+    # Edge case: 3D data returns NaNs
+    dr_trca = DimReduction("TRCA", n_components=2)
+    dr_trca.embedding_ = np.zeros((10, 2, 5)) # Fake 3D embedding
+    scores = dr_trca.score(np.zeros((10, 5, 5)), X_emb=dr_trca.embedding_)
+    assert np.isnan(scores["trustworthiness"])
+    assert "undefined for 3D" in scores.get("note", "")
+
+def test_plot_errors_coverage():
+    """Test plot method error branches."""
+    dr = DimReduction("PCA", n_components=2)
+    
+    # Error: Not fitted (mode='embedding')
+    with pytest.raises(RuntimeError, match="Model is not fitted"):
+        dr.plot(mode="embedding")
+        
+    dr.embedding_ = np.zeros((10, 2))
+    
+    # Error: show_metrics=True without X
+    with pytest.raises(ValueError, match="requires 'X'"):
+        dr.plot(mode="embedding", show_metrics=True)
+        
+    # Error: mode='metrics' without X
+    with pytest.raises(ValueError, match="requires 'X'"):
+        dr.plot(mode="metrics")
+        
+    # Error: mode='streamlines' without V_emb
+    with pytest.raises(ValueError, match="requires velocity vectors"):
+        dr.plot(mode="streamlines")
+        
+    # Error: Unknown mode
+    with pytest.raises(ValueError, match="Unknown plot mode"):
+        dr.plot(mode="super_cool_mode")
+
+class DummyForPickle(BaseReducer):
+    def __init__(self, n_components=2):
+        super().__init__(n_components=n_components)
+    def fit(self, X, y=None): return self
+    def transform(self, X): return X
+
+def test_load_wrapper_reconstruction_coverage(tmp_path):
+    """Test that DimReduction.load() correctly reconstructs the manager."""
+    dummy = DummyForPickle(n_components=3)
+    save_path = tmp_path / "dummy.pkl"
+    dummy.save(save_path)
+    
+    with patch.dict("coco_pipe.dim_reduction.core.METHODS_DICT", {"DUMMY": DummyForPickle}), \
+         patch("coco_pipe.dim_reduction.core.METHODS", ["DUMMY"]):
+        loaded = DimReduction.load(save_path, method="DUMMY")
+        
+    assert isinstance(loaded, DimReduction)
+    assert loaded.method == "DUMMY"
+    assert loaded.n_components == 3

@@ -3,7 +3,8 @@ import numpy as np
 import os
 from pydantic import ValidationError
 from coco_pipe.dim_reduction.config import (
-    DimReductionConfig, UMAPConfig, PCAConfig, EvaluationConfig
+    DimReductionConfig, UMAPConfig, PCAConfig, EvaluationConfig,
+    TSNEConfig, MDSConfig, PacmapConfig
 )
 from coco_pipe.dim_reduction import DimReduction
 from coco_pipe.dim_reduction.evaluation import MethodSelector
@@ -70,3 +71,22 @@ def test_evaluation_config():
     assert len(res) == 2
     assert 10 in res['k'].values
     assert 20 in res['k'].values
+
+def test_tsne_config_validation():
+    # Valid
+    TSNEConfig(method="TSNE", perplexity=30)
+    
+    # Invalid perplexity (negative)
+    with pytest.raises(ValidationError):
+        TSNEConfig(method="TSNE", perplexity=-5)
+
+def test_mds_config_defaults():
+    c = MDSConfig(method="MDS")
+    assert c.metric is True
+    assert c.n_init == 4
+
+def test_pacmap_config():
+    c = PacmapConfig(method="PaCMAP", n_neighbors=10, MN_ratio=0.5)
+    assert c.n_neighbors == 10
+    assert c.MN_ratio == 0.5
+    assert c.FP_ratio == 2.0 # default check

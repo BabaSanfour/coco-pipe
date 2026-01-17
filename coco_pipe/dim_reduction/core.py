@@ -284,13 +284,18 @@ class DimReduction:
              # Skip standard metrics for spatiotemporal for now, or implement specialized ones.
              return {"trustworthiness": np.nan, "continuity": np.nan, "note": "Metrics undefined for 3D spatiotemporal data"}
 
-        from scipy.stats import spearmanr
+        from .evaluation import metrics
         
+        # Compute Co-ranking Matrix Q once
+        Q = metrics.compute_coranking_matrix(X_arr, X_emb)
+
         scores = {
-            "trustworthiness": metrics.trustworthiness(X_arr, X_emb, n_neighbors=n_neighbors),
-            "continuity": metrics.continuity(X_arr, X_emb, n_neighbors=n_neighbors),
-            "lcmc": metrics.lcmc(X_arr, X_emb, n_neighbors=n_neighbors)
+            "trustworthiness": metrics.trustworthiness(Q, k=n_neighbors),
+            "continuity": metrics.continuity(Q, k=n_neighbors),
+            "lcmc": metrics.lcmc(Q, k=n_neighbors)
         }
+        
+        from scipy.stats import spearmanr
         
         # Shepard Correlation (Global Distance Preservation)
         # We sample 1000 points max to keep it efficient

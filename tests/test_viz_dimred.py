@@ -109,3 +109,20 @@ def test_plot_streamlines_error(mock_embedding_3d, mock_velocities):
     """Test error raising for 3D streamlines."""
     with pytest.raises(ValueError, match="only supported for 2D"):
         plot_streamlines(mock_embedding_3d, mock_velocities)
+
+def test_viz_hybrid_support():
+    """Test plotting with DataContainer input."""
+    from coco_pipe.io import DataContainer
+    
+    X = np.random.randn(20, 10)
+    Y = np.array([0]*10 + [1]*10)
+    
+    # Create DataContainer wrapper for embedding manually
+    # (Simulating user pipeline output)
+    emb_data = np.random.randn(20, 2)
+    container = DataContainer(X=emb_data, dims=['obs', 'comp'], y=Y)
+    
+    # Plot should accept container and extract Y automatically
+    fig = plot_embedding(container, title="Test Hybrid Plot")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)

@@ -3,7 +3,9 @@ from .metrics import (
     trustworthiness,
     continuity,
     lcmc,
-    compute_mrre
+    lcmc,
+    compute_mrre,
+    shepard_diagram_data
 )
 
 from .core import MethodSelector
@@ -15,6 +17,7 @@ __all__ = [
     "continuity",
     "lcmc",
     "compute_mrre",
+    "shepard_diagram_data",
     "MethodSelector",
     "compute_velocity_fields"
 ]
