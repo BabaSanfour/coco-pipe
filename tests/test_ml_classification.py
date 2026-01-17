@@ -1,27 +1,21 @@
-import os
-import json
-import pytest
+
 import numpy as np
-import pandas as pd
-from sklearn.datasets import make_multilabel_classification, make_classification
-from sklearn.metrics import roc_auc_score, average_precision_score
+import pytest
+from sklearn.datasets import make_classification, make_multilabel_classification
+from sklearn.metrics import average_precision_score, roc_auc_score
 
-from coco_pipe.ml.config import (
-    BINARY_METRICS,
-    BINARY_MODELS,
-    MULTICLASS_METRICS,
-    MULTICLASS_MODELS,
-    MULTIOUTPUT_CLASS_METRICS,
-    MULTIOUTPUT_CLASS_MODELS,
-    DEFAULT_CV
-)
 from coco_pipe.ml.classification import (
-    ClassificationPipeline,
     BinaryClassificationPipeline,
+    ClassificationPipeline,
     MultiClassClassificationPipeline,
-    MultiOutputClassificationPipeline
+    MultiOutputClassificationPipeline,
 )
-
+from coco_pipe.ml.config import (
+    BINARY_MODELS,
+    DEFAULT_CV,
+    MULTICLASS_MODELS,
+    MULTIOUTPUT_CLASS_MODELS,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # small datasets
@@ -38,7 +32,7 @@ X_multiout, y_multiout = make_multilabel_classification(
     n_classes=3,
     n_labels=2,
     random_state=0,
-    allow_unlabeled=False
+    allow_unlabeled=False,
 )
 
 
@@ -57,7 +51,12 @@ def tmp_working_dir(tmp_path, monkeypatch):
     [
         ("baseline", [list(BINARY_MODELS.keys())[0]], ["accuracy"], "binary"),
         ("baseline", [list(MULTICLASS_MODELS.keys())[0]], ["accuracy"], "multiclass"),
-        ("baseline", [list(MULTIOUTPUT_CLASS_MODELS.keys())[0]], ["subset_accuracy"], "multioutput"),
+        (
+            "baseline",
+            [list(MULTIOUTPUT_CLASS_MODELS.keys())[0]],
+            ["subset_accuracy"],
+            "multioutput",
+        ),
     ],
 )
 def test_pipeline_detect_and_run_baseline(
@@ -72,8 +71,10 @@ def test_pipeline_detect_and_run_baseline(
 
     # capture save() calls
     saved = []
+
     def fake_save(self, name, res):
         saved.append(name)
+
     monkeypatch.setattr(ClassificationPipeline, "save", fake_save)
 
     pipe = ClassificationPipeline(
@@ -86,7 +87,7 @@ def test_pipeline_detect_and_run_baseline(
         cv_strategy="kfold",
         n_jobs=1,
         save_intermediate=True,
-        results_file="testres"
+        results_file="testres",
     )
     results = pipe.run()
 
@@ -119,35 +120,36 @@ def test_invalid_analysis_type_raises():
 def test_binary_aggregate_metrics_correctness():
     fold_preds = [
         {
-            "y_true": np.array([0,1,0]),
-            "y_pred": np.array([0,1,1]),
-            "y_proba": np.array([[0.8,0.2],[0.3,0.7],[0.4,0.6]])
+            "y_true": np.array([0, 1, 0]),
+            "y_pred": np.array([0, 1, 1]),
+            "y_proba": np.array([[0.8, 0.2], [0.3, 0.7], [0.4, 0.6]]),
         },
         {
-            "y_true": np.array([1,0]),
-            "y_pred": np.array([1,0]),
-            "y_proba": np.array([[0.2,0.8],[0.6,0.4]])
-        }
+            "y_true": np.array([1, 0]),
+            "y_pred": np.array([1, 0]),
+            "y_proba": np.array([[0.2, 0.8], [0.6, 0.4]]),
+        },
     ]
     # compute per-fold scores
-    aucs = [roc_auc_score(fp["y_true"], fp["y_proba"][:,1]) for fp in fold_preds]
-    aps = [average_precision_score(fp["y_true"], fp["y_proba"][:,1]) for fp in fold_preds]
-    fold_scores = {
-        "roc_auc": np.array(aucs),
-        "average_precision": np.array(aps)
-    }
+    aucs = [roc_auc_score(fp["y_true"], fp["y_proba"][:, 1]) for fp in fold_preds]
+    aps = [
+        average_precision_score(fp["y_true"], fp["y_proba"][:, 1]) for fp in fold_preds
+    ]
+    fold_scores = {"roc_auc": np.array(aucs), "average_precision": np.array(aps)}
     # no importances in this dummy test
     fold_imps = {}
 
     pipe = BinaryClassificationPipeline(
-        X=np.zeros((5,2)),
-        y=np.array([0,1,0,1,0]),
+        X=np.zeros((5, 2)),
+        y=np.array([0, 1, 0, 1, 0]),
         models="all",
         metrics=["roc_auc", "average_precision"],
-        cv_kwargs={**DEFAULT_CV, "n_splits":2, "cv_strategy":"kfold"},
-        n_jobs=1
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
+        n_jobs=1,
     )
-    predictions, metrics, feature_importances = pipe._aggregate(fold_preds, fold_scores, fold_imps)
+    predictions, metrics, feature_importances = pipe._aggregate(
+        fold_preds, fold_scores, fold_imps
+    )
 
     expected_auc = np.mean(aucs)
     expected_ap = np.mean(aps)
@@ -162,24 +164,28 @@ def test_binary_aggregate_metrics_correctness():
 
 def test_baseline_all_models_run_binary():
     X, y = make_classification(
-        n_samples=100,
-        n_features=5,
-        n_informative=2,
-        n_classes=2,
-        random_state=0
+        n_samples=100, n_features=5, n_informative=2, n_classes=2, random_state=0
     )
-    metrics = ["accuracy","roc_auc","average_precision"]
+    metrics = ["accuracy", "roc_auc", "average_precision"]
     for name in BINARY_MODELS:
         pipe = BinaryClassificationPipeline(
-            X=X, y=y,
-            models=[name], metrics=metrics,
-            random_state=0, n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits":3, "shuffle":True}
+            X=X,
+            y=y,
+            models=[name],
+            metrics=metrics,
+            random_state=0,
+            n_jobs=1,
+            cv_kwargs={**DEFAULT_CV, "n_splits": 3, "shuffle": True},
         )
         out = pipe.baseline_evaluation(name)
-        for key in ("predictions","metric_scores",
-                    "feature_importances","model_name",
-                    "params","folds_estimators"):
+        for key in (
+            "predictions",
+            "metric_scores",
+            "feature_importances",
+            "model_name",
+            "params",
+            "folds_estimators",
+        ):
             assert key in out
         # check y_true length and score bounds
         assert out["predictions"]["y_true"].shape[0] == len(y)
@@ -194,67 +200,65 @@ def test_baseline_all_models_run_binary():
 def test_multiclass_aggregate_and_per_class():
     fold_preds = [
         {
-            "y_true": np.array([0,1,2]),
-            "y_pred": np.array([0,2,1]),
-            "y_proba": np.array([[0.7,0.2,0.1],
-                                 [0.1,0.1,0.8],
-                                 [0.2,0.6,0.2]])
+            "y_true": np.array([0, 1, 2]),
+            "y_pred": np.array([0, 2, 1]),
+            "y_proba": np.array([[0.7, 0.2, 0.1], [0.1, 0.1, 0.8], [0.2, 0.6, 0.2]]),
         },
         {
-            "y_true": np.array([1,2]),
-            "y_pred": np.array([1,2]),
-            "y_proba": np.array([[0.1,0.8,0.1],
-                                 [0.9,0.05,0.05]])
+            "y_true": np.array([1, 2]),
+            "y_pred": np.array([1, 2]),
+            "y_proba": np.array([[0.1, 0.8, 0.1], [0.9, 0.05, 0.05]]),
         },
     ]
     # compute fold scores
-    accs = [(fp["y_true"]==fp["y_pred"]).mean() for fp in fold_preds]
+    accs = [(fp["y_true"] == fp["y_pred"]).mean() for fp in fold_preds]
     # aucs = [roc_auc_score(fp["y_true"], fp["y_proba"], multi_class='ovo') for fp in fold_preds]
     fold_scores = {
         "accuracy": np.array(accs),
         # "roc_auc": np.array(aucs)
     }
     pipe = MultiClassClassificationPipeline(
-        X=np.zeros((5,4)),
-        y=np.array([0,1,2,1,0]),
+        X=np.zeros((5, 4)),
+        y=np.array([0, 1, 2, 1, 0]),
         models="all",
-        metrics=["accuracy"],#,"roc_auc"],
+        metrics=["accuracy"],  # ,"roc_auc"],
         per_class=True,
-        cv_kwargs={**DEFAULT_CV, "n_splits":2},
-        n_jobs=1
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2},
+        n_jobs=1,
     )
-    predictions, metrics, feature_importances = pipe._aggregate(fold_preds, fold_scores, {})
+    predictions, metrics, feature_importances = pipe._aggregate(
+        fold_preds, fold_scores, {}
+    )
 
     assert pytest.approx(np.mean(accs), rel=1e-6) == metrics["accuracy"]["mean"]
     # assert "roc_auc" in agg["metrics"]
     pcm = metrics["per_class_metrics"]
     assert set(pcm.keys()) == set(pipe.classes_)
     for stats in pcm.values():
-        assert all(k in stats for k in ("precision","recall","f1"))
+        assert all(k in stats for k in ("precision", "recall", "f1"))
 
 
 def test_baseline_all_multiclass_models():
     X, y = make_classification(
-        n_samples=150,
-        n_features=6,
-        n_informative=3,
-        n_classes=3,
-        random_state=1
+        n_samples=150, n_features=6, n_informative=3, n_classes=3, random_state=1
     )
-    metrics = ["accuracy","roc_auc"]
+    metrics = ["accuracy", "roc_auc"]
     for name in MULTICLASS_MODELS:
         pipe = MultiClassClassificationPipeline(
-            X=X, y=y,
-            models=[name], metrics=metrics,
+            X=X,
+            y=y,
+            models=[name],
+            metrics=metrics,
             per_class=False,
-            random_state=0, n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits":4}
+            random_state=0,
+            n_jobs=1,
+            cv_kwargs={**DEFAULT_CV, "n_splits": 4},
         )
         out = pipe.baseline_evaluation(name)
         assert "predictions" in out
         assert "metric_scores" in out
         assert "y_true" in out["predictions"]
-        assert out["predictions"]["y_true"].shape #[0] == len(y)
+        assert out["predictions"]["y_true"].shape  # [0] == len(y)
         for m in metrics:
             assert 0.0 <= out["metric_scores"][m]["mean"] <= 1.0
 
@@ -265,27 +269,28 @@ def test_baseline_all_multiclass_models():
 def test_multioutput_aggregate_per_output():
     fold_preds = [
         {
-            "y_true": np.array([[1,0],[0,1],[1,1]]),
-            "y_pred": np.array([[1,0],[1,0],[1,1]])
+            "y_true": np.array([[1, 0], [0, 1], [1, 1]]),
+            "y_pred": np.array([[1, 0], [1, 0], [1, 1]]),
         },
-        {
-            "y_true": np.array([[0,1],[1,0]]),
-            "y_pred": np.array([[0,1],[0,0]])
-        },
+        {"y_true": np.array([[0, 1], [1, 0]]), "y_pred": np.array([[0, 1], [0, 0]])},
     ]
     # subset_accuracy only uses y_true and y_pred
     # so fold_scores can be dummy
-    subset_scores = [ (fp["y_true"]==fp["y_pred"]).all(axis=1).mean() for fp in fold_preds ]
+    subset_scores = [
+        (fp["y_true"] == fp["y_pred"]).all(axis=1).mean() for fp in fold_preds
+    ]
     fold_scores = {"subset_accuracy": np.array(subset_scores)}
     pipe = MultiOutputClassificationPipeline(
-        X=np.zeros((5,2)),
-        y=np.zeros((5,2)),
+        X=np.zeros((5, 2)),
+        y=np.zeros((5, 2)),
         models=list(MULTIOUTPUT_CLASS_MODELS.keys()),
         metrics=["subset_accuracy"],
-        cv_kwargs={**DEFAULT_CV, "n_splits":2, "cv_strategy":"kfold"},
-        n_jobs=1
+        cv_kwargs={**DEFAULT_CV, "n_splits": 2, "cv_strategy": "kfold"},
+        n_jobs=1,
     )
-    predictions, metrics, feature_importances = pipe._aggregate(fold_preds, fold_scores, {})
+    predictions, metrics, feature_importances = pipe._aggregate(
+        fold_preds, fold_scores, {}
+    )
 
     for m in pipe.metrics:
         assert m in metrics
@@ -302,15 +307,18 @@ def test_baseline_all_models_multioutput():
         n_classes=3,
         n_labels=2,
         random_state=0,
-        allow_unlabeled=False
+        allow_unlabeled=False,
     )
-    metrics = ["subset_accuracy","hamming_loss"]
+    metrics = ["subset_accuracy", "hamming_loss"]
     for name in MULTIOUTPUT_CLASS_MODELS:
         pipe = MultiOutputClassificationPipeline(
-            X=X, y=y,
-            models=[name], metrics=metrics,
-            random_state=42, n_jobs=1,
-            cv_kwargs={**DEFAULT_CV, "n_splits":3, "cv_strategy":"kfold"}
+            X=X,
+            y=y,
+            models=[name],
+            metrics=metrics,
+            random_state=42,
+            n_jobs=1,
+            cv_kwargs={**DEFAULT_CV, "n_splits": 3, "cv_strategy": "kfold"},
         )
         out = pipe.baseline_evaluation(name)
         assert "predictions" in out

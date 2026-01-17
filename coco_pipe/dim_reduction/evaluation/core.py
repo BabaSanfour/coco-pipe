@@ -11,11 +11,12 @@ MethodSelector
     Orchestrates the training, embedding, and evaluation of multiple reducers.
 """
 
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Union, Optional, Any, Tuple
 from tqdm.auto import tqdm
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..core import DimReduction
 
-from .metrics import compute_coranking_matrix, trustworthiness, continuity, lcmc, compute_mrre
+from .metrics import (
+    compute_coranking_matrix,
+    compute_mrre,
+    continuity,
+    lcmc,
+    trustworthiness,
+)
+
 
 class MethodSelector:
     """
     Select the best dimensionality reduction method via quantitative evaluation.
 
     This class runs multiple `DimReduction` instances on the same data, computes
-    rigorous quality metrics (Trustworthiness, Continuity, LCMC, MRRE) across a 
-    range of neighborhood sizes (scale-space analysis), and provides visualization 
+    rigorous quality metrics (Trustworthiness, Continuity, LCMC, MRRE) across a
+    range of neighborhood sizes (scale-space analysis), and provides visualization
     tools to compare them.
 
     Parameters
@@ -44,14 +52,14 @@ class MethodSelector:
         Data to fit/transform. Can be passed later in `run`.
     target : np.ndarray, optional
         Labels for plotting.
-    
+
     Attributes
     ----------
     results_ : Dict[str, pd.DataFrame]
         Dictionary mapping reducer names to DataFrames containing metrics vs k.
     embeddings_ : Dict[str, np.ndarray]
         Computed embeddings.
-    
+
     Examples
     --------
     >>> from coco_pipe.dim_reduction import DimReduction
@@ -64,29 +72,38 @@ class MethodSelector:
     >>> selector.plot(metric='trustworthiness')
     """
 
-    def __init__(self, 
-                 reducers: Union[List["DimReduction"], Dict[str, "DimReduction"]], 
-                 data: Optional[np.ndarray] = None,
-                 target: Optional[np.ndarray] = None):
-        
+    def __init__(
+        self,
+        reducers: Union[List["DimReduction"], Dict[str, "DimReduction"]],
+        data: Optional[np.ndarray] = None,
+        target: Optional[np.ndarray] = None,
+    ):
         if isinstance(reducers, list):
             self.reducers = {}
             for r in reducers:
-                name = getattr(r, 'name', r.__class__.__name__)
+                name = getattr(r, "name", r.__class__.__name__)
                 self.reducers[name] = r
         else:
             self.reducers = reducers
-            
+
         self.data = data
         self.target = target
         self.embeddings_ = {}
         self.results_ = {}
-        self.Qs_ = {} 
+        self.Qs_ = {}
 
-    def run(self, 
-            X: Optional[np.ndarray] = None, 
-            y: Optional[np.ndarray] = None, 
-            k_range: Union[List[int], np.ndarray, "EvaluationConfig"] = [5, 10, 20, 50, 100]) -> "MethodSelector":
+    def run(
+        self,
+        X: Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
+        k_range: Union[List[int], np.ndarray, "EvaluationConfig"] = [
+            5,
+            10,
+            20,
+            50,
+            100,
+        ],
+    ) -> "MethodSelector":
         """
         Run the evaluation pipeline.
 
@@ -124,34 +141,37 @@ class MethodSelector:
             self.data = X
         if y is not None:
             self.target = y
-            
+
         if self.data is None:
             raise ValueError("No data provided.")
-            
-        logger.info(f"Evaluating {len(self.reducers)} methods on {self.data.shape[0]} samples...")
-        
+
+        logger.info(
+            f"Evaluating {len(self.reducers)} methods on {self.data.shape[0]} samples..."
+        )
+
         from joblib import Parallel, delayed
-        
+
         # Helper function for parallel execution
         # Must be picklable, so we use a static method or standalone function
         results_list = Parallel(n_jobs=-1)(
             delayed(_evaluate_single_method)(
                 name, reducer, self.data, self.target, k_vals
-            ) for name, reducer in tqdm(self.reducers.items(), desc="Methods")
+            )
+            for name, reducer in tqdm(self.reducers.items(), desc="Methods")
         )
-        
+
         # Aggregate results
         for name, emb, Q, df_metrics in results_list:
             self.embeddings_[name] = emb
             self.Qs_[name] = Q
             self.results_[name] = df_metrics
-            
+
         return self
 
-    def plot(self, metric: str = 'trustworthiness', ax=None) -> Any:
+    def plot(self, metric: str = "trustworthiness", ax=None) -> Any:
         """
         Plot comparison curves (Quality vs Neighborhood Size).
-        
+
         Parameters
         ----------
         metric : str, default='trustworthiness'
@@ -165,44 +185,52 @@ class MethodSelector:
             The figure object.
         """
         from ...viz.dim_reduction import plot_comparison
+
         return plot_comparison(self, metric=metric, ax=ax)
 
-def _evaluate_single_method(name: str, reducer: "DimReduction", 
-                            data: np.ndarray, target: Optional[np.ndarray], 
-                            k_vals: List[int]) -> Tuple[str, np.ndarray, np.ndarray, pd.DataFrame]:
+
+def _evaluate_single_method(
+    name: str,
+    reducer: "DimReduction",
+    data: np.ndarray,
+    target: Optional[np.ndarray],
+    k_vals: List[int],
+) -> Tuple[str, np.ndarray, np.ndarray, pd.DataFrame]:
     """
     Evaluate a single reducer. Worker function for parallel execution.
     """
     # Fit/Transform
-    if hasattr(reducer, 'embedding_') and reducer.embedding_ is not None:
+    if hasattr(reducer, "embedding_") and reducer.embedding_ is not None:
         emb = reducer.embedding_
     else:
         emb = reducer.fit_transform(data, target)
-    
+
     # Compute Q matrix
     Q = compute_coranking_matrix(data, emb)
-    
+
     # Calculate Metrics across k
     metrics_list = []
     n_samples = data.shape[0]
-    
+
     for k in k_vals:
         if k >= n_samples:
             continue
-            
+
         t_score = trustworthiness(Q, k)
         c_score = continuity(Q, k)
         l_score = lcmc(Q, k)
         mrre_int, mrre_ext = compute_mrre(Q, k)
-        
-        metrics_list.append({
-            'k': k,
-            'trustworthiness': t_score,
-            'continuity': c_score,
-            'lcmc': l_score,
-            'mrre_intrusion': mrre_int,
-            'mrre_extrusion': mrre_ext,
-            'mrre_total': mrre_int + mrre_ext
-        })
-    
+
+        metrics_list.append(
+            {
+                "k": k,
+                "trustworthiness": t_score,
+                "continuity": c_score,
+                "lcmc": l_score,
+                "mrre_intrusion": mrre_int,
+                "mrre_extrusion": mrre_ext,
+                "mrre_total": mrre_int + mrre_ext,
+            }
+        )
+
     return name, emb, Q, pd.DataFrame(metrics_list)

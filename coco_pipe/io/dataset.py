@@ -8,28 +8,23 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-
-import numpy as np
-import pandas as pd
-from typing import Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import mne
-from mne_bids import BIDSPath, read_raw_bids
+import numpy as np
+import pandas as pd
+from mne_bids import BIDSPath
 
 from .structures import DataContainer
 from .utils import (
-    detect_sessions,
     default_id_extractor,
-    smart_reader,
-    split_column,
+    detect_sessions,
     detect_subjects,
     load_participants_tsv,
-    read_bids_entry
+    read_bids_entry,
+    smart_reader,
+    split_column,
 )
-    
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +38,7 @@ class BaseDataset(ABC):
 class TabularDataset(BaseDataset):
     """
     Dataset for loading tabular feature data (CSV, TSV, Excel).
-    
+
     This class handles loading, optional clearing, and reshaping of 2D tabular data
     into multi-dimensional DataContainers.
 
@@ -80,7 +75,7 @@ class TabularDataset(BaseDataset):
     >>> # Load a simple CSV
     >>> ds = TabularDataset("data.csv", target_col="label")
     >>> container = ds.load()
-    
+
     >>> # Load and reshape wide data (e.g. time series in columns)
     >>> # Columns: T0_F1, T0_F2, T1_F1... -> dims=('time', 'freq')
     >>> ds = TabularDataset("wide.csv", columns_to_dims=['time', 'freq'], col_sep='_')
@@ -107,11 +102,11 @@ class TabularDataset(BaseDataset):
         self.sep = sep
         self.header = header
         self.sheet_name = sheet_name
-        
+
         self.columns_to_dims = columns_to_dims
         self.col_sep = col_sep
         self.meta_columns = meta_columns or []
-        
+
         self.do_clean = clean
         self.clean_kwargs = clean_kwargs or {}
         self.select_kwargs = select_kwargs or {}
@@ -124,23 +119,20 @@ class TabularDataset(BaseDataset):
         # 1. Load DataFrame
         if self.path.suffix in [".csv", ".tsv", ".txt"]:
             df = pd.read_csv(
-                self.path, 
-                sep=self.sep, 
-                index_col=self.index_col, 
-                header=self.header
+                self.path, sep=self.sep, index_col=self.index_col, header=self.header
             )
         elif self.path.suffix in [".xls", ".xlsx"]:
             df = pd.read_excel(
-                self.path, 
-                index_col=self.index_col, 
+                self.path,
+                index_col=self.index_col,
                 header=self.header,
-                sheet_name=self.sheet_name
+                sheet_name=self.sheet_name,
             )
         else:
             raise ValueError(f"Unsupported file extension: {self.path.suffix}")
 
         # Dtype Check
-        non_numeric = df.select_dtypes(include=['object', 'string', 'category'])
+        non_numeric = df.select_dtypes(include=["object", "string", "category"])
         if not non_numeric.empty and self.target_col not in non_numeric.columns:
             logger.warning(
                 f"Tabular data contains non-numeric columns: {non_numeric.columns.tolist()}. "
@@ -166,17 +158,17 @@ class TabularDataset(BaseDataset):
 
         # 4. Cleaning
         if self.do_clean:
-             X_df, report = self.clean(X_df, **self.clean_kwargs)
+            X_df, report = self.clean(X_df, **self.clean_kwargs)
         else:
-             report = None
+            report = None
 
         ids = df.index.astype(str).values if self.index_col is not None else None
-        
+
         # 5. Reshaping Logic (2D -> ND)
         coords = {}
         if ids is not None:
-            coords['obs'] = np.array(ids)
-        
+            coords["obs"] = np.array(ids)
+
         # Add covariates to coords (Auxiliary Coords)
         coords.update(covariates)
 
@@ -187,7 +179,7 @@ class TabularDataset(BaseDataset):
             parsed_cols = []
             valid_cols = []
             failed_cols = []
-            
+
             for col in X_df.columns:
                 parts = str(col).split(self.col_sep)
                 if len(parts) == len(self.columns_to_dims):
@@ -195,7 +187,7 @@ class TabularDataset(BaseDataset):
                     valid_cols.append(col)
                 else:
                     failed_cols.append(col)
-            
+
             if failed_cols:
                 msg = f"{len(failed_cols)} columns failed reshaping pattern (sep='{self.col_sep}', expected {len(self.columns_to_dims)} parts). Examples: {failed_cols[:5]}"
                 if self.strict_reshaping:
@@ -204,39 +196,43 @@ class TabularDataset(BaseDataset):
                 logger.warning(msg)
 
             if not parsed_cols:
-                 raise ValueError(f"No columns matched the reshaping pattern with sep='{self.col_sep}'.")
+                raise ValueError(
+                    f"No columns matched the reshaping pattern with sep='{self.col_sep}'."
+                )
 
             # Create MultiIndex to sort and structure
             mi = pd.MultiIndex.from_tuples(parsed_cols, names=self.columns_to_dims)
-            
+
             # Reorder columns to match sorted MultiIndex (Cartesian Product order)
             # This ensures reshape works correctly
             X_subset = X_df[valid_cols]
-            
+
             X_subset.columns = mi
-            X_sorted = X_subset.sort_index(axis=1) # Sorts lexically by levels
-            
+            X_sorted = X_subset.sort_index(axis=1)  # Sorts lexically by levels
+
             # Extract Levels to Coords
             for i, dim_name in enumerate(self.columns_to_dims):
                 unique_vals = X_sorted.columns.unique(level=i)
                 coords[dim_name] = unique_vals.values
-            
+
             # Verify Shape
             n_obs = X_sorted.shape[0]
             dim_sizes = [len(coords[d]) for d in self.columns_to_dims]
             expected_total = np.prod(dim_sizes)
-            
+
             if X_sorted.shape[1] != expected_total:
-                 raise ValueError(f"Reshaping failed. Found {X_sorted.shape[1]} columns, expected full product {expected_total} ({dim_sizes}). Missing combinations?")
-            
+                raise ValueError(
+                    f"Reshaping failed. Found {X_sorted.shape[1]} columns, expected full product {expected_total} ({dim_sizes}). Missing combinations?"
+                )
+
             # Reshape: (N_obs, Dim1, Dim2, ...)
             new_shape = (n_obs,) + tuple(dim_sizes)
             X_final = X_sorted.values.reshape(new_shape)
             dims = tuple(["obs"] + self.columns_to_dims)
 
         else:
-             # Default 2D
-             coords['feature'] = np.array(X_df.columns.tolist())
+            # Default 2D
+            coords["feature"] = np.array(X_df.columns.tolist())
 
         return DataContainer(
             X=X_final,
@@ -244,9 +240,8 @@ class TabularDataset(BaseDataset):
             ids=np.array(ids) if ids is not None else None,
             dims=tuple(dims),
             coords=coords,
-            meta={"filename": self.path.name, "cleaning_report": report}
+            meta={"filename": self.path.name, "cleaning_report": report},
         )
-
 
     @staticmethod
     def clean(
@@ -262,7 +257,13 @@ class TabularDataset(BaseDataset):
         Remove invalid feature columns containing NaN, ±Inf, and optionally very small values.
         """
         if X.shape[1] == 0:
-            return X.copy(), {"dropped_columns": [], "dropped_features": [], "mode": mode, "n_before": 0, "n_after": 0}
+            return X.copy(), {
+                "dropped_columns": [],
+                "dropped_features": [],
+                "mode": mode,
+                "n_before": 0,
+                "n_after": 0,
+            }
 
         # Identify columns with NaN/Inf
         num = X.select_dtypes(include=[np.number])
@@ -271,14 +272,14 @@ class TabularDataset(BaseDataset):
         bad_cols = []
         if not num.empty:
             arr = num.to_numpy()
-            with np.errstate(divide='ignore', invalid='ignore'):
+            with np.errstate(divide="ignore", invalid="ignore"):
                 inf_mask = np.isinf(arr)
             bad_mask = num.isna().to_numpy() | inf_mask
             bad_any = bad_mask.any(axis=0)
             bad_cols.extend(num.columns[bad_any].tolist())
 
             if min_abs_value is not None:
-                with np.errstate(invalid='ignore'):
+                with np.errstate(invalid="ignore"):
                     tiny_mask = np.abs(arr) < float(min_abs_value)
                 if min_abs_fraction <= 0.0:
                     tiny_cols = num.columns[tiny_mask.any(axis=0)].tolist()
@@ -286,7 +287,7 @@ class TabularDataset(BaseDataset):
                     frac = tiny_mask.mean(axis=0)
                     tiny_cols = num.columns[(frac >= min_abs_fraction)].tolist()
                 bad_cols.extend(tiny_cols)
-        
+
         if not other.empty:
             obj_bad = other.isna().all(axis=0)
             bad_cols.extend(other.columns[obj_bad].tolist())
@@ -328,9 +329,9 @@ class TabularDataset(BaseDataset):
 class EmbeddingDataset(BaseDataset):
     """
     Generic Dataset for loading embedding files (Pickle, NPY, JSON, H5).
-    
+
     This class decouples file discovery (via patterns and IDs) from content reading.
-    It supports structured formats (e.g., Layers x Features) and user-supplied 
+    It supports structured formats (e.g., Layers x Features) and user-supplied
     metadata coordinates.
 
     Parameters
@@ -345,10 +346,10 @@ class EmbeddingDataset(BaseDataset):
     coords : dict, optional
         Dictionary of coordinates for dimensions. E.g., {'layer': ['L1', 'L2']}.
     reader : callable, optional
-        Custom function to read a Path and return a numpy array or dict. 
+        Custom function to read a Path and return a numpy array or dict.
         If None, uses `smart_reader` based on file extension.
     id_fn : callable, optional
-        Custom function to extract subject ID from a Path. 
+        Custom function to extract subject ID from a Path.
         If None, uses `default_id_extractor`.
     task : str, optional
         (Legacy BIDS) Task name to construct search pattern.
@@ -365,11 +366,12 @@ class EmbeddingDataset(BaseDataset):
     >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=('feature',))
     >>> container = ds.load()
     """
+
     def __init__(
         self,
         path: Union[str, Path],
         pattern: str = "*.pkl",
-        dims: Tuple[str, ...] = ('obs', 'feature'),
+        dims: Tuple[str, ...] = ("obs", "feature"),
         coords: Optional[Dict[str, Union[List, np.ndarray]]] = None,
         reader: Optional[Any] = None,
         id_fn: Optional[Any] = None,
@@ -382,18 +384,20 @@ class EmbeddingDataset(BaseDataset):
         self.subjects = subjects
         self.dims = dims
         self.coords_in = coords or {}
-        
+
         # 1. Determine Pattern
         if any([task, run, processing]):
             # Legacy BIDS-like construction
             p_parts = ["sub-*"]
-            if task: p_parts.append(f"task-{task}")
-            if run: p_parts.append(f"run-{run}")
+            if task:
+                p_parts.append(f"task-{task}")
+            if run:
+                p_parts.append(f"run-{run}")
             p_parts.append(f"embeddings{processing or ''}.pkl")
             self.pattern = "_".join(p_parts)
         else:
             self.pattern = pattern
-            
+
         # 2. Set Reader
         self.reader = reader if reader else smart_reader
         self.id_fn = id_fn if id_fn else default_id_extractor
@@ -401,47 +405,53 @@ class EmbeddingDataset(BaseDataset):
     def load(self) -> DataContainer:
         # Find files
         files = sorted(list(self.path.rglob(self.pattern)))
-             
+
         if not files:
-            raise FileNotFoundError(f"No files matched pattern '{self.pattern}' in {self.path}")
+            raise FileNotFoundError(
+                f"No files matched pattern '{self.pattern}' in {self.path}"
+            )
 
         # Filter by subjects
         if self.subjects is not None:
             if isinstance(self.subjects, int):
-                files = files[:self.subjects]
+                files = files[: self.subjects]
             else:
                 target_ids = set(str(s) for s in self.subjects)
                 files = [f for f in files if self.id_fn(f) in target_ids]
 
         data_list = []
         ids_list = []
-        
+
         logger.info(f"Loading {len(files)} embedding files...")
-        
+
         for fpath in files:
             try:
                 # Reader returns (N, ...) or Dict
                 content = self.reader(fpath)
                 sid = self.id_fn(fpath)
-                
+
                 if isinstance(content, dict):
                     # Dict {segment_id: array}
                     for seg_k in sorted(content.keys()):
-                        arr = np.array(content[seg_k]) # Ensure array
-                        
+                        arr = np.array(content[seg_k])  # Ensure array
+
                         if arr.ndim == len(self.dims) + 1:
                             data_list.append(arr)
-                            ids_list.extend([f"{sid}_{seg_k}_{i}" for i in range(len(arr))])
+                            ids_list.extend(
+                                [f"{sid}_{seg_k}_{i}" for i in range(len(arr))]
+                            )
                         elif arr.ndim == len(self.dims):
                             data_list.append(arr[np.newaxis, ...])
                             ids_list.append(f"{sid}_{seg_k}")
                         else:
-                            logger.warning(f"Shape mismatch in {fpath.name} key {seg_k}: {arr.shape} vs dims {self.dims}")
+                            logger.warning(
+                                f"Shape mismatch in {fpath.name} key {seg_k}: {arr.shape} vs dims {self.dims}"
+                            )
 
                 else:
                     # Single Array or List
                     arr = np.array(content)
-                    
+
                     if arr.ndim == len(self.dims) + 1:
                         data_list.append(arr)
                         ids_list.extend([f"{sid}_{i}" for i in range(len(arr))])
@@ -449,7 +459,9 @@ class EmbeddingDataset(BaseDataset):
                         data_list.append(arr[np.newaxis, ...])
                         ids_list.append(sid)
                     else:
-                        logger.warning(f"Shape mismatch in {fpath.name}: {arr.shape} vs dims {self.dims}")
+                        logger.warning(
+                            f"Shape mismatch in {fpath.name}: {arr.shape} vs dims {self.dims}"
+                        )
 
             except Exception as e:
                 logger.error(f"Failed to read {fpath.name}: {e}")
@@ -459,27 +471,24 @@ class EmbeddingDataset(BaseDataset):
             raise RuntimeError("No valid data loaded.")
 
         try:
-             X_final = np.concatenate(data_list, axis=0)
+            X_final = np.concatenate(data_list, axis=0)
         except ValueError as e:
-             shapes = [d.shape for d in data_list[:5]]
-             raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
-             
+            shapes = [d.shape for d in data_list[:5]]
+            raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
+
         # Obs Dim + User Dims
         final_dims = ("obs",) + self.dims
-        
+
         # Build coordinates
         coords = {}
         if ids_list:
-            coords['obs'] = np.array(ids_list)
-        
+            coords["obs"] = np.array(ids_list)
+
         # Add user-provided coords (e.g. {'layer': ['L1', 'L2']})
         coords.update(self.coords_in)
 
         return DataContainer(
-            X=X_final,
-            dims=final_dims,
-            coords=coords,
-            ids=np.array(ids_list)
+            X=X_final, dims=final_dims, coords=coords, ids=np.array(ids_list)
         )
 
 
@@ -546,7 +555,7 @@ class BIDSDataset(BaseDataset):
         self.window_length = window_length
         self.stride = stride
         self.subjects = subjects
-        
+
         if mne is None:
             raise ImportError("mne and mne-bids are required.")
 
@@ -574,25 +583,32 @@ class BIDSDataset(BaseDataset):
 
         # Load participants.tsv metadata
         meta_lookup = load_participants_tsv(self.root)
-        
+
         data_list = []
         ids_list = []
-        meta_columns = {k: [] for k in next(iter(meta_lookup.values())).keys()} if meta_lookup else {}
-        
+        meta_columns = (
+            {k: [] for k in next(iter(meta_lookup.values())).keys()}
+            if meta_lookup
+            else {}
+        )
+
         ch_names = None
         times = None
         sfreq = None
-        
+
         # Determine Loading Strategy
         # If suffix implies pre-computed data
-        is_pre_epoched = (self.suffix and 'epo' in self.suffix) or (self.mode == 'load_existing')
-        is_evoked = (self.suffix and 'ave' in self.suffix) or (self.datatype == 'ave')
-        
+        is_pre_epoched = (self.suffix and "epo" in self.suffix) or (
+            self.mode == "load_existing"
+        )
+        is_evoked = (self.suffix and "ave" in self.suffix) or (self.datatype == "ave")
+
         for sub in subjects:
             # Resolve sessions
             if self.session is None:
                 sessions = detect_sessions(self.root, sub)
-                if not sessions: sessions = [None]
+                if not sessions:
+                    sessions = [None]
             elif isinstance(self.session, str):
                 sessions = [self.session]
             else:
@@ -607,18 +623,18 @@ class BIDSDataset(BaseDataset):
                     task=self.task,
                     datatype=self.datatype,
                     root=self.root,
-                    suffix=self.suffix or self.datatype
+                    suffix=self.suffix or self.datatype,
                 )
-                
+
                 try:
                     # --- LOAD STRATEGY (Delegated) ---
                     data, current_times, current_ch, current_sfreq = read_bids_entry(
-                        bids_path, 
-                        is_pre_epoched=is_pre_epoched, 
+                        bids_path,
+                        is_pre_epoched=is_pre_epoched,
                         is_evoked=is_evoked,
                         mode=self.mode,
                         window_length=self.window_length,
-                        stride=self.stride
+                        stride=self.stride,
                     )
 
                     # --- CONSISTENCY CHECKS ---
@@ -635,7 +651,7 @@ class BIDSDataset(BaseDataset):
                                 f"Expected {len(ch_names)}, got {len(current_ch)}. "
                                 f"Differing channels: {list(diff)[:5]}..."
                             )
-                        
+
                         # 2. Time/Length Consistency
                         if len(current_times) != len(times):
                             logger.warning(
@@ -644,22 +660,23 @@ class BIDSDataset(BaseDataset):
                                 "This may cause concatenation failure."
                             )
                         elif not np.allclose(current_times, times, atol=1e-5):
-                             # Often simple jitter in start times, but important if rigorous
-                             pass
-                            
+                            # Often simple jitter in start times, but important if rigorous
+                            pass
+
                     # --- APPEND DATA ---
                     data_list.append(data)
-                    
+
                     # --- GENERATE IDs & METADATA ---
                     # data shape is (N_epochs, C, T)
                     n_epochs = data.shape[0]
-                    
+
                     sid_base = f"{sub}"
-                    if ses: sid_base += f"_{ses}"
-                    
+                    if ses:
+                        sid_base += f"_{ses}"
+
                     new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
                     ids_list.extend(new_ids)
-                    
+
                     # Repeatedly append subject metadata for each epoch
                     for k, v in sub_meta.items():
                         meta_columns.setdefault(k, []).extend([v] * n_epochs)
@@ -673,32 +690,32 @@ class BIDSDataset(BaseDataset):
 
         # --- CONCATENATE ---
         try:
-             # data_list contains (N_i, C, T)
-             X_out = np.concatenate(data_list, axis=0)
+            # data_list contains (N_i, C, T)
+            X_out = np.concatenate(data_list, axis=0)
         except ValueError as e:
-             shapes = [d.shape for d in data_list[:5]]
-             raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
+            shapes = [d.shape for d in data_list[:5]]
+            raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
 
         coords = {}
         if ch_names is not None and len(ch_names) > 0:
-            coords['channel'] = np.array(ch_names)
+            coords["channel"] = np.array(ch_names)
         if times is not None:
-            coords['time'] = times
+            coords["time"] = times
         if ids_list:
-            coords['obs'] = np.array(ids_list)
-            
+            coords["obs"] = np.array(ids_list)
+
         # Add metadata coords
         for k, v in meta_columns.items():
             if len(v) == len(ids_list):
-                 coords[k] = np.array(v)
+                coords[k] = np.array(v)
 
         dims = ("obs", "channel", "time")
 
         return DataContainer(
             X=X_out,
-            y=None, 
+            y=None,
             ids=np.array(ids_list),
             dims=dims,
             coords=coords,
-            meta={"sfreq": sfreq, "source": str(self.root)}
+            meta={"sfreq": sfreq, "source": str(self.root)},
         )

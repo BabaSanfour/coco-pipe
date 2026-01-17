@@ -12,10 +12,10 @@ data:
 
   # BIDS entities
   task: rest
-  
+
   # Subject identifier
   subjects: ["pd6"]
-  
+
   # No sessions specified - will automatically detect and load all available sessions
 
 # -------------------------------------------------------------------
@@ -32,4 +32,4 @@ reducers:
 parallel: false
 
 # Where to save the overall summary JSON.
-summary_path: ./dr_summary_eeg_auto_sessions.json 
+summary_path: ./dr_summary_eeg_auto_sessions.json

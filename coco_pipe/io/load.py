@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
+from .dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 from .structures import DataContainer
-from .dataset import BIDSDataset, TabularDataset, EmbeddingDataset
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ def load_data(
         - y: Targets (if available)
         - ids: Observation identifiers
         - coords: Coordinate metadata
-        """
+    """
     path = Path(path)
 
     # 1. Simple Inference

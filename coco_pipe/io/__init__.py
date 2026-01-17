@@ -1,14 +1,14 @@
+from .config import (
+    BaseDatasetConfig,
+    BIDSConfig,
+    DatasetConfig,
+    EmbeddingConfig,
+    TabularConfig,
+)
+from .dataset import BIDSDataset, EmbeddingDataset, TabularDataset
+from .load import load_data
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
-from .load import load_data
-from .dataset import BIDSDataset, TabularDataset, EmbeddingDataset
-from .config import (
-    BaseDatasetConfig, 
-    BIDSConfig, 
-    TabularConfig, 
-    EmbeddingConfig, 
-    DatasetConfig
-)
 
 __all__ = [
     "DataContainer",

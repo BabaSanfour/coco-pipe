@@ -5,27 +5,30 @@ Template Rendering Engine
 Manages the Jinja2 environment and template loading for the report module.
 """
 
-import jinja2
-import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+import jinja2
 
 # Define template directory relative to this file
 MODULE_DIR = Path(__file__).parent
 TEMPLATE_DIR = MODULE_DIR / "templates"
+
 
 def _create_env() -> jinja2.Environment:
     """Create and configure the Jinja2 environment."""
     loader = jinja2.FileSystemLoader(str(TEMPLATE_DIR))
     env = jinja2.Environment(
         loader=loader,
-        autoescape=jinja2.select_autoescape(['html', 'xml']),
+        autoescape=jinja2.select_autoescape(["html", "xml"]),
         trim_blocks=True,
-        lstrip_blocks=True
+        lstrip_blocks=True,
     )
     return env
 
+
 _ENV: Optional[jinja2.Environment] = None
+
 
 def get_env() -> jinja2.Environment:
     """Get or create the global Jinja2 environment."""
@@ -33,6 +36,7 @@ def get_env() -> jinja2.Environment:
     if _ENV is None:
         _ENV = _create_env()
     return _ENV
+
 
 def render_template(template_name: str, **context: Any) -> str:
     """

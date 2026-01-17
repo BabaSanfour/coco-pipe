@@ -20,20 +20,20 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-06
 """
 
-from typing import Optional, Any
-import numpy as np
+from typing import Optional
 
+import numpy as np
 from ivis import Ivis
 
-from .base import BaseReducer, ArrayLike
+from .base import ArrayLike, BaseReducer
 
 
 class IVISReducer(BaseReducer):
     """
     IVIS Dimensionality Reducer.
 
-    IVIS uses a Siamese Neural Network with a triplet loss function to learn a 
-    low-dimensional representation. It is highly scalable and supports 
+    IVIS uses a Siamese Neural Network with a triplet loss function to learn a
+    low-dimensional representation. It is highly scalable and supports
     out-of-sample extension.
 
     Parameters
@@ -52,7 +52,7 @@ class IVISReducer(BaseReducer):
     ----------
     model : ivis.Ivis
         The underlying fitted IVIS estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -65,9 +65,9 @@ class IVISReducer(BaseReducer):
     (100, 2)
     """
 
-    def __init__(self, n_components: int = 2, **kwargs):        
+    def __init__(self, n_components: int = 2, **kwargs):
         # IVIS uses 'embedding_dims' instead of n_components
-        kwargs['embedding_dims'] = n_components
+        kwargs["embedding_dims"] = n_components
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
@@ -103,7 +103,7 @@ class IVISReducer(BaseReducer):
         Returns
         -------
         X_new : np.ndarray of shape (n_samples, n_components)
-             Transformed data.        
+             Transformed data.
         """
         if self.model is None:
             raise RuntimeError("IVISReducer must be fitted before calling transform().")
@@ -113,16 +113,16 @@ class IVISReducer(BaseReducer):
     def loss_history_(self) -> list:
         """
         History of loss values during training.
-        
+
         Returns
         -------
         loss_history_ : list of float
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
-        
+            raise RuntimeError("Model is not fitted yet.")
+
         # IVIS 2.0.11+ (git ver) exposes loss_history_ directly
-        if hasattr(self.model, 'loss_history_'):
+        if hasattr(self.model, "loss_history_"):
             return self.model.loss_history_
-            
+
         raise RuntimeError("Could not retrieve loss history from IVIS model.")

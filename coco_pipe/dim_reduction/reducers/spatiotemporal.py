@@ -27,23 +27,22 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-06
 """
 
-from typing import Optional, Any
+from typing import Optional
+
 import numpy as np
-
-from pydmd import DMD
-
 from meegkit.trca import TRCA
 from meegkit.utils.trca import bandpass
+from pydmd import DMD
 
-from .base import BaseReducer, ArrayLike
+from .base import ArrayLike, BaseReducer
 
 
 class DMDReducer(BaseReducer):
     """
     Dynamic Mode Decomposition (DMD) reducer.
 
-    DMD decomposes a time-series dataset into dynamic modes, capturing the 
-    temporal evolution of spatial patterns. It is particularly useful for 
+    DMD decomposes a time-series dataset into dynamic modes, capturing the
+    temporal evolution of spatial patterns. It is particularly useful for
     extracting coherent structures from fluid flows or neural activity.
 
     Power User Access
@@ -69,7 +68,7 @@ class DMDReducer(BaseReducer):
     ----------
     model : pydmd.DMD
         The underlying fitted DMD estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -87,7 +86,7 @@ class DMDReducer(BaseReducer):
 
     def __init__(self, n_components: int = 0, **kwargs):
         # pydmd uses 'svd_rank' for n_components
-        kwargs['svd_rank'] = n_components
+        kwargs["svd_rank"] = n_components
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
@@ -99,10 +98,10 @@ class DMDReducer(BaseReducer):
         ----------
         X : ArrayLike of shape (n_features, n_snapshots)
             Training data.
-            **CRITICAL NOTE**: PyDMD expects the input matrix such that columns 
-            are snapshots in time. This input shape (features x samples) differs 
-            from the standard sklearn convention (samples x features). 
-            
+            **CRITICAL NOTE**: PyDMD expects the input matrix such that columns
+            are snapshots in time. This input shape (features x samples) differs
+            from the standard sklearn convention (samples x features).
+
         y : Ignored
             Not used.
 
@@ -113,7 +112,7 @@ class DMDReducer(BaseReducer):
         """
         # Initialize DMD
         self.model = DMD(**self.params)
-        
+
         # Fit expects (n_features, n_snapshots)
         self.model.fit(X)
         return self
@@ -121,7 +120,7 @@ class DMDReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Parameters
         ----------
         X : ArrayLike of shape (n_features, n_snapshots)
@@ -131,7 +130,7 @@ class DMDReducer(BaseReducer):
         -------
         X_new : np.ndarray of shape (n_snapshots, n_components)
              Projected data (time dynamics amplitudes).
-        
+
         Raises
         ------
         RuntimeError
@@ -139,7 +138,7 @@ class DMDReducer(BaseReducer):
         """
         if self.model is None:
             raise RuntimeError("DMDReducer must be fitted before calling transform().")
-            
+
         modes = self.model.modes
 
         X_arr = np.array(X)
@@ -155,20 +154,20 @@ class DMDReducer(BaseReducer):
         eigs_ : np.ndarray
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.eigs
 
     @property
     def modes_(self) -> np.ndarray:
         """
         Spatial modes (dynamic modes).
-        
+
         Returns
         -------
         modes_ : np.ndarray
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.modes
 
 
@@ -176,8 +175,8 @@ class TRCAReducer(BaseReducer):
     """
     Task-Related Component Analysis (TRCA) reducer.
 
-    TRCA finds linear combinations of channels that maximize the reproducibility 
-    of the signal components across trials. Excellent for SSVEP-based BCI and 
+    TRCA finds linear combinations of channels that maximize the reproducibility
+    of the signal components across trials. Excellent for SSVEP-based BCI and
     ERP analysis.
 
     Parameters
@@ -191,7 +190,7 @@ class TRCAReducer(BaseReducer):
     ----------
     model : meegkit.trca.TRCA
         The underlying TRCA estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -238,7 +237,7 @@ class TRCAReducer(BaseReducer):
         # Input X from MNE is (n_trials, n_channels, n_times).
         # We transform (trials, chans, times) -> (times, chans, trials)
         X_transposed = np.transpose(X_arr, (2, 1, 0))
-        
+
         self.model.fit(X_transposed, y)
         return self
 
@@ -255,7 +254,7 @@ class TRCAReducer(BaseReducer):
         -------
         X_new : np.ndarray of shape (n_trials, n_components, n_times)
              Transformed data.
-        
+
         Raises
         ------
         RuntimeError
@@ -280,32 +279,32 @@ class TRCAReducer(BaseReducer):
 
         for b in range(n_bands):
             # 1. Filter data for this band
-            X_tmp = X_arr.transpose(2, 1, 0) # (times, chans, trials)
-            
+            X_tmp = X_arr.transpose(2, 1, 0)  # (times, chans, trials)
+
             # Wp, Ws from filterbank
             # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)], ...]
             wp = self.model.filterbank[b][0]
             ws = self.model.filterbank[b][1]
-            
+
             X_filt = bandpass(X_tmp, self.model.sfreq, Wp=wp, Ws=ws)
             # X_filt: (times, chans, trials)
-                        
+
             for k in range(n_classes):
-                w = self.model.coef_[b, k, :] # (n_chans,)
-                
+                w = self.model.coef_[b, k, :]  # (n_chans,)
+
                 # Project: w^T * X
                 # w is spatial filter.
                 # X_filt[t, c, tr]
                 # Result should be (times, trials) -> (trials, times)
-                
+
                 # Using einsum for clarity:
                 # 'ct,tcr->tr' (if c=chans, t=times, r=trials)? No.
                 # X_filt indices: t (time), c (chan), r (trial)
                 # w indices: c (chan)
                 # target: t, r
-                
-                proj = np.einsum('c,tcr->tr', w, X_filt) # (times, trials)
-                X_out.append(proj.T) # (trials, times)
+
+                proj = np.einsum("c,tcr->tr", w, X_filt)  # (times, trials)
+                X_out.append(proj.T)  # (trials, times)
 
         # Stack predictions
         # X_out is list of (trials, times)
@@ -316,11 +315,11 @@ class TRCAReducer(BaseReducer):
     def coef_(self) -> np.ndarray:
         """
         Spatial filters per component.
-        
+
         Returns
         -------
         coef_ : np.ndarray
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.coef_

@@ -1,15 +1,107 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "coco-pipe"
 version = "0.0.1"
+description = "A pipeline for EEG bio-data analysis with ML and Deep Learning components"
+authors = [
+  { name = "Hamza Abdelhedi", email = "hamza.abdelhedii@gmail.com" },
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "numpy",
-    "scipy",
+    "numpy>=2.0.0",
+    "pandas",
+    "scikit-learn",
     "matplotlib",
     "seaborn",
-    "scikit-learn",
-    "pandas"
+    "scipy",
+    "pyyaml",
+    "pydantic",
+    "hydra-core",
+    "umap-learn[plot]",
+    "trimap",
+    "phate",
+    "mne>=1.9.0",
+    "mne-bids>=0.10.0",
+    "requests",
+    "openpyxl",
+    "meegkit",
+    "pydmd",
+    "gudhi",
+    "tensorflow",
+    "keras",
+    "torch",
+    "skorch",
+    "dask[array]",
+    "dask-ml",
+    "joblib",
+    "annoy @ git+https://github.com/BabaSanfour/annoy.git",
+    "pacmap @ git+https://github.com/BabaSanfour/PaCMAP.git",
+    "ivis @ git+https://github.com/beringresearch/ivis.git",
+    "plotly",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "black",
+    "isort",
+    "sphinx>=4.0.0",
+    "insegel",
+    "furo",
+    "sphinx_gallery",
+    "sphinx-copybutton",
+    "sphinxcontrib-mermaid",
+    "sphinx-autoapi",
+    "myst-parser",
+]
+docs = [
+    "sphinx>=4.0.0",
+    "insegel",
+    "furo",
+    "sphinx_gallery",
+    "sphinx-copybutton",
+    "sphinxcontrib-mermaid",
+    "sphinx-autoapi",
+    "myst-parser",
+]
+
+[project.urls]
+Homepage = "https://github.com/BabaSanfour/coco-pipe"
+Documentation = "https://cocopipe.readthedocs.io/"
+Repository = "https://github.com/BabaSanfour/coco-pipe.git"
+
+[project.scripts]
+run-coco-pipe = "scripts.run_ml:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["coco_pipe*", "scripts*"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 88

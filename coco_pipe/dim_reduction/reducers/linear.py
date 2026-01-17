@@ -23,15 +23,14 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-06
 """
 
-from typing import Optional, Any
-import numpy as np
-from sklearn.decomposition import PCA, IncrementalPCA
+from typing import Any, Optional
 
-import dask.array as da
+import numpy as np
 from dask_ml.decomposition import PCA as DaskPCA
 from dask_ml.decomposition import TruncatedSVD as DaskTruncatedSVD
+from sklearn.decomposition import PCA, IncrementalPCA
 
-from .base import BaseReducer, ArrayLike
+from .base import ArrayLike, BaseReducer
 
 
 class PCAReducer(BaseReducer):
@@ -122,7 +121,7 @@ class PCAReducer(BaseReducer):
         """
         if self.model is None:
             raise RuntimeError("PCAReducer must be fitted before calling transform().")
-        
+
         return self.model.transform(X)
 
     @property
@@ -134,7 +133,7 @@ class PCAReducer(BaseReducer):
         -------
         explained_variance_ratio_ : np.ndarray of shape (n_components,)
             The percentage of variance explained by each of the selected components.
-        
+
         Raises
         ------
         RuntimeError
@@ -153,7 +152,7 @@ class PCAReducer(BaseReducer):
         -------
         components_ : np.ndarray of shape (n_components, n_features)
             The principal components.
-        
+
         Raises
         ------
         RuntimeError
@@ -167,11 +166,11 @@ class PCAReducer(BaseReducer):
 class IncrementalPCAReducer(BaseReducer):
     """
     Incremental PCA reducer.
-    
-    Incremental Principal Component Analysis (IPCA) is typically used as a replacement 
-    for Principal Component Analysis (PCA) when the dataset to be decomposed is too 
+
+    Incremental Principal Component Analysis (IPCA) is typically used as a replacement
+    for Principal Component Analysis (PCA) when the dataset to be decomposed is too
     large to fit in memory.
-    
+
     Parameters
     ----------
     n_components : int, default=2
@@ -180,35 +179,39 @@ class IncrementalPCAReducer(BaseReducer):
         The number of samples to use for each batch.
     **kwargs : dict
         Additional arguments passed to sklearn.decomposition.IncrementalPCA.
-    
+
     Attributes
     ----------
     model : sklearn.decomposition.IncrementalPCA
         The underlying fitted estimator.
     """
-    
-    def __init__(self, n_components: int = 2, batch_size: Optional[int] = None, **kwargs):
+
+    def __init__(
+        self, n_components: int = 2, batch_size: Optional[int] = None, **kwargs
+    ):
         super().__init__(n_components=n_components, **kwargs)
         self.batch_size = batch_size
         self.model = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IncrementalPCAReducer":
+    def fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "IncrementalPCAReducer":
         """Fit model."""
         self.model = IncrementalPCA(
-            n_components=self.n_components, 
-            batch_size=self.batch_size,
-            **self.params
+            n_components=self.n_components, batch_size=self.batch_size, **self.params
         )
         self.model.fit(X)
         return self
-        
-    def partial_fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IncrementalPCAReducer":
+
+    def partial_fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "IncrementalPCAReducer":
         """Incremental fit."""
         if self.model is None:
-             self.model = IncrementalPCA(
-                n_components=self.n_components, 
+            self.model = IncrementalPCA(
+                n_components=self.n_components,
                 batch_size=self.batch_size,
-                **self.params
+                **self.params,
             )
         self.model.partial_fit(X, y=y)
         return self
@@ -216,16 +219,18 @@ class IncrementalPCAReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """Transform X."""
         if self.model is None:
-            raise RuntimeError("IncrementalPCAReducer must be fitted before calling transform().")
+            raise RuntimeError(
+                "IncrementalPCAReducer must be fitted before calling transform()."
+            )
         return self.model.transform(X)
 
 
 class DaskPCAReducer(BaseReducer):
     """
     Dask-based PCA reducer for large-scale data.
-    
+
     Wraps dask_ml.decomposition.PCA. Expects Dask Arrays or compatible inputs.
-    
+
     Parameters
     ----------
     n_components : int, default=2
@@ -235,17 +240,15 @@ class DaskPCAReducer(BaseReducer):
     **kwargs : dict
         Additional arguments.
     """
-    
-    def __init__(self, n_components: int = 2, svd_solver: str = 'auto', **kwargs):
+
+    def __init__(self, n_components: int = 2, svd_solver: str = "auto", **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.svd_solver = svd_solver
         self.model = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":             
+    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":
         self.model = DaskPCA(
-            n_components=self.n_components,
-            svd_solver=self.svd_solver,
-            **self.params
+            n_components=self.n_components, svd_solver=self.svd_solver, **self.params
         )
         self.model.fit(X)
         return self
@@ -260,9 +263,9 @@ class DaskPCAReducer(BaseReducer):
 class DaskTruncatedSVDReducer(BaseReducer):
     """
     Dask-based Truncated SVD reducer.
-    
+
     Wraps dask_ml.decomposition.TruncatedSVD.
-    
+
     Parameters
     ----------
     n_components : int, default=2
@@ -272,25 +275,25 @@ class DaskTruncatedSVDReducer(BaseReducer):
     **kwargs : dict
         Additional arguments.
     """
-    
-    def __init__(self, n_components: int = 2, algorithm: str = 'tsqr', **kwargs):
+
+    def __init__(self, n_components: int = 2, algorithm: str = "tsqr", **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.algorithm = algorithm
         self.model = None
-        
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskTruncatedSVDReducer":
+
+    def fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "DaskTruncatedSVDReducer":
         if DaskTruncatedSVD is None:
-             raise ImportError("dask-ml is required.")
-             
+            raise ImportError("dask-ml is required.")
+
         self.model = DaskTruncatedSVD(
-            n_components=self.n_components,
-            algorithm=self.algorithm,
-            **self.params
+            n_components=self.n_components, algorithm=self.algorithm, **self.params
         )
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> Any:
         if self.model is None:
-             raise RuntimeError("DaskTruncatedSVDReducer must be fitted.")
+            raise RuntimeError("DaskTruncatedSVDReducer must be fitted.")
         return self.model.transform(X)

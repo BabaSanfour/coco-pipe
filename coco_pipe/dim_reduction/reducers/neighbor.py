@@ -35,31 +35,31 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-06
 """
 
-from typing import Optional, Any
-import numpy as np
+from typing import Any, Optional
 
-from sklearn.manifold import TSNE
-import umap
+import numpy as np
 import pacmap
-import trimap
 import phate
+import trimap
+import umap
+from sklearn.manifold import TSNE
 
 try:
     from umap.parametric_umap import ParametricUMAP
 except ImportError:
     ParametricUMAP = None
 
-from .base import BaseReducer, ArrayLike
+from .base import ArrayLike, BaseReducer
 
 
 class TSNEReducer(BaseReducer):
     """
     t-SNE dimensionality reducer.
 
-    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a technique for dimensionality 
+    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a technique for dimensionality
     reduction that is particularly well suited for the visualization of high-dimensional datasets.
-    It converts similarities between data points to joint probabilities and tries to minimize 
-    the Kullback-Leibler divergence between the joint probabilities of the low-dimensional 
+    It converts similarities between data points to joint probabilities and tries to minimize
+    the Kullback-Leibler divergence between the joint probabilities of the low-dimensional
     embedding and the high-dimensional data.
 
     Note: t-SNE does not support out-of-sample transformation (transform() raises error).
@@ -104,7 +104,7 @@ class TSNEReducer(BaseReducer):
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TSNEReducer":
         """
         Fit t-SNE with X.
-        
+
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
@@ -126,13 +126,15 @@ class TSNEReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Raises
         ------
         NotImplementedError
             t-SNE does not support transforming new data.
         """
-        raise NotImplementedError("TSNEReducer cannot transform new data. Use fit_transform().")
+        raise NotImplementedError(
+            "TSNEReducer cannot transform new data. Use fit_transform()."
+        )
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
@@ -164,7 +166,7 @@ class TSNEReducer(BaseReducer):
         kl_divergence_ : float
         """
         if self.model is None or not hasattr(self.model, "kl_divergence_"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.kl_divergence_
 
     @property
@@ -177,7 +179,7 @@ class TSNEReducer(BaseReducer):
         n_iter_ : int
         """
         if self.model is None or not hasattr(self.model, "n_iter_"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.n_iter_
 
 
@@ -185,9 +187,9 @@ class UMAPReducer(BaseReducer):
     """
     UMAP dimensionality reducer.
 
-    Uniform Manifold Approximation and Projection (UMAP) is a dimension reduction technique 
-    that can be used for visualization similarly to t-SNE, but also for general non-linear 
-    dimension reduction. It constructs a high dimensional graph representation of the data 
+    Uniform Manifold Approximation and Projection (UMAP) is a dimension reduction technique
+    that can be used for visualization similarly to t-SNE, but also for general non-linear
+    dimension reduction. It constructs a high dimensional graph representation of the data
     then optimizes a low-dimensional graph to be structurally similar.
 
     Unlike t-SNE, UMAP supports out-of-sample transformation.
@@ -231,7 +233,7 @@ class UMAPReducer(BaseReducer):
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "UMAPReducer":
         """
         Fit UMAP with X.
-        
+
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
@@ -274,14 +276,14 @@ class UMAPReducer(BaseReducer):
     def graph_(self) -> Any:
         """
         The fuzzy simplicial set graph computed by UMAP.
-        
+
         Returns
         -------
         graph_ : scipy.sparse.csr.csr_matrix
             The graph of the fuzzy simplicial set.
         """
         if self.model is None or not hasattr(self.model, "graph_"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.graph_
 
 
@@ -289,8 +291,8 @@ class PacmapReducer(BaseReducer):
     """
     PaCMAP dimensionality reducer.
 
-    Pairwise Controlled Manifold Approximation (PaCMAP) is a dimensionality reduction 
-    method that preserves both local and global structure of the data. It achieves this 
+    Pairwise Controlled Manifold Approximation (PaCMAP) is a dimensionality reduction
+    method that preserves both local and global structure of the data. It achieves this
     using three kinds of pairs (near, mid-near, and far) to optimize the embedding.
 
     Parameters
@@ -310,7 +312,7 @@ class PacmapReducer(BaseReducer):
     ----------
     model : pacmap.PaCMAP
         The underlying PaCMAP estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -322,17 +324,23 @@ class PacmapReducer(BaseReducer):
     (100, 2)
     """
 
-    def __init__(self, n_components: int = 2, n_neighbors: int = 10,
-                 MN_ratio: float = 0.5, FP_ratio: float = 2.0, **kwargs):        
+    def __init__(
+        self,
+        n_components: int = 2,
+        n_neighbors: int = 10,
+        MN_ratio: float = 0.5,
+        FP_ratio: float = 2.0,
+        **kwargs,
+    ):
         # We manually handle these specific args to pass them cleanly
         self.specific_args = {
-            'n_neighbors': n_neighbors,
-            'MN_ratio': MN_ratio,
-            'FP_ratio': FP_ratio
+            "n_neighbors": n_neighbors,
+            "MN_ratio": MN_ratio,
+            "FP_ratio": FP_ratio,
         }
         # Handle 'init' separately as it goes to fit_transform, not __init__
-        self.init_type = kwargs.pop('init', 'pca')
-        
+        self.init_type = kwargs.pop("init", "pca")
+
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
@@ -354,9 +362,7 @@ class PacmapReducer(BaseReducer):
             Returns the instance itself.
         """
         self.model = pacmap.PaCMAP(
-            n_components=self.n_components,
-            **self.specific_args,
-            **self.params
+            n_components=self.n_components, **self.specific_args, **self.params
         )
         # Use the stored init_type
         self.embedding_ = self.model.fit_transform(X, init=self.init_type)
@@ -365,14 +371,16 @@ class PacmapReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Raises
         ------
         NotImplementedError
-            PaCMAP does not support transforming new data efficiently without refitting. 
+            PaCMAP does not support transforming new data efficiently without refitting.
             Use fit_transform() on the full dataset instead.
         """
-        raise NotImplementedError("PaCMAPReducer cannot transform new data. Use fit_transform().")
+        raise NotImplementedError(
+            "PaCMAPReducer cannot transform new data. Use fit_transform()."
+        )
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
@@ -399,9 +407,9 @@ class TrimapReducer(BaseReducer):
     """
     TriMap dimensionality reducer.
 
-    TriMap (Large-scale Dimensionality Reduction Using Triplets) is a dimensionality 
-    reduction technique that preserves global structure better than t-SNE and UMAP 
-    while being efficient. It uses triplet constraints (i, j, k) to capture the 
+    TriMap (Large-scale Dimensionality Reduction Using Triplets) is a dimensionality
+    reduction technique that preserves global structure better than t-SNE and UMAP
+    while being efficient. It uses triplet constraints (i, j, k) to capture the
     relative similarity between points.
 
     Parameters
@@ -433,12 +441,18 @@ class TrimapReducer(BaseReducer):
     (100, 2)
     """
 
-    def __init__(self, n_components: int = 2, n_inliers: int = 10,
-                 n_outliers: int = 5, n_random: int = 5, **kwargs):
+    def __init__(
+        self,
+        n_components: int = 2,
+        n_inliers: int = 10,
+        n_outliers: int = 5,
+        n_random: int = 5,
+        **kwargs,
+    ):
         self.specific_args = {
-            'n_inliers': n_inliers,
-            'n_outliers': n_outliers,
-            'n_random': n_random
+            "n_inliers": n_inliers,
+            "n_outliers": n_outliers,
+            "n_random": n_random,
         }
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
@@ -461,9 +475,7 @@ class TrimapReducer(BaseReducer):
             Returns the instance itself.
         """
         self.model = trimap.TRIMAP(
-            n_dims=self.n_components,
-            **self.specific_args,
-            **self.params
+            n_dims=self.n_components, **self.specific_args, **self.params
         )
         self.embedding_ = self.model.fit_transform(X)
         return self
@@ -471,14 +483,16 @@ class TrimapReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Raises
         ------
         NotImplementedError
-            PaCMAP does not support transforming new data efficiently without refitting. 
+            PaCMAP does not support transforming new data efficiently without refitting.
             Use fit_transform() on the full dataset instead.
         """
-        raise NotImplementedError("TrimapReducer cannot transform new data. Use fit_transform().")
+        raise NotImplementedError(
+            "TrimapReducer cannot transform new data. Use fit_transform()."
+        )
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
@@ -504,9 +518,9 @@ class PHATEReducer(BaseReducer):
     """
     PHATE dimensionality reducer.
 
-    Potential of Heat-diffusion for Affinity-based Trajectory Embedding (PHATE) is 
-    designed to visualize high-dimensional data, specifically biological data with 
-    continuous progression structures (trajectories). It uses information-theoretic 
+    Potential of Heat-diffusion for Affinity-based Trajectory Embedding (PHATE) is
+    designed to visualize high-dimensional data, specifically biological data with
+    continuous progression structures (trajectories). It uses information-theoretic
     distances based on diffusion probabilities.
 
     Parameters
@@ -515,7 +529,7 @@ class PHATEReducer(BaseReducer):
         Number of dimensions.
     knn : int, default=5
         Number of nearest neighbors for kernel construction.
-    decay : int, default=40 
+    decay : int, default=40
         Decay rate for kernel.
     **kwargs : dict
         Additional arguments.
@@ -536,7 +550,7 @@ class PHATEReducer(BaseReducer):
     (100, 2)
     """
 
-    def __init__(self, n_components: int = 2, **kwargs):        
+    def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
@@ -574,56 +588,58 @@ class PHATEReducer(BaseReducer):
             Projected data.
         """
         if self.model is None:
-            raise RuntimeError("PHATEReducer must be fitted before calling transform().")
+            raise RuntimeError(
+                "PHATEReducer must be fitted before calling transform()."
+            )
         return self.model.transform(X)
 
     @property
     def diff_potential(self) -> np.ndarray:
         """
         The diffusion potential of the data.
-        
+
         Returns
         -------
         diff_potential : np.ndarray
         """
         if self.model is None or not hasattr(self.model, "diff_potential"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.diff_potential
 
     @property
     def diff_op(self) -> Any:
         """
         The diffusion operator.
-        
+
         Returns
         -------
         diff_op : scipy.sparse.csr_matrix or np.ndarray
         """
         if self.model is None or not hasattr(self.model, "diff_op"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.diff_op
 
     @property
     def graph(self) -> Any:
         """
         The k-nearest neighbor graph.
-        
+
         Returns
         -------
         graph : scipy.sparse.csr_matrix
         """
         if self.model is None or not hasattr(self.model, "graph"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.graph
 
 
 class ParametricUMAPReducer(BaseReducer):
     """
     Parametric UMAP Reducer (TensorFlow backed).
-    
+
     Learns a neural network to approximate the UMAP embedding.
     Wrapper for umap.parametric_umap.ParametricUMAP.
-    
+
     Parameters
     ----------
     n_components : int, default=2
@@ -642,17 +658,24 @@ class ParametricUMAPReducer(BaseReducer):
         Whether to print progress messages.
     **kwargs : dict
         Additional arguments.
-        
+
     Attributes
     ----------
     model : umap.parametric_umap.ParametricUMAP
         The fitted estimator.
     """
 
-    def __init__(self, n_components: int = 2, n_neighbors: int = 15,
-                 min_dist: float = 0.1, metric: str = 'euclidean',
-                 n_epochs: Optional[int] = None, batch_size: int = 1000,
-                 verbose: bool = False, **kwargs):
+    def __init__(
+        self,
+        n_components: int = 2,
+        n_neighbors: int = 15,
+        min_dist: float = 0.1,
+        metric: str = "euclidean",
+        n_epochs: Optional[int] = None,
+        batch_size: int = 1000,
+        verbose: bool = False,
+        **kwargs,
+    ):
         super().__init__(n_components=n_components, **kwargs)
         self.n_neighbors = n_neighbors
         self.min_dist = min_dist
@@ -662,7 +685,9 @@ class ParametricUMAPReducer(BaseReducer):
         self.verbose = verbose
         self.model = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "ParametricUMAPReducer":
+    def fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "ParametricUMAPReducer":
         """
         Fit the Parametric UMAP model.
         """
@@ -680,9 +705,9 @@ class ParametricUMAPReducer(BaseReducer):
             n_epochs=self.n_epochs,
             batch_size=self.batch_size,
             verbose=self.verbose,
-            **self.params
+            **self.params,
         )
-        
+
         self.model.fit(X, y=y)
         return self
 
@@ -691,8 +716,10 @@ class ParametricUMAPReducer(BaseReducer):
         Transform X into the low-dimensional space.
         """
         if self.model is None:
-            raise RuntimeError("ParametricUMAPReducer must be fitted before calling transform().")
-            
+            raise RuntimeError(
+                "ParametricUMAPReducer must be fitted before calling transform()."
+            )
+
         return self.model.transform(X)
 
     def save(self, filepath: str) -> None:
@@ -700,6 +727,6 @@ class ParametricUMAPReducer(BaseReducer):
         Save using joblib (wrapper).
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted.")
-             
+            raise RuntimeError("Model is not fitted.")
+
         super().save(filepath)

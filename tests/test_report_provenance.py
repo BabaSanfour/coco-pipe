@@ -1,6 +1,6 @@
 
-import pytest
 from coco_pipe.report.provenance import get_environment_info
+
 
 def test_get_environment_info():
     info = get_environment_info()

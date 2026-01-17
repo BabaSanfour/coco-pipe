@@ -1,32 +1,31 @@
-from .core import DimReduction
 from .config import METHODS, METHODS_DICT
-from .evaluation.metrics import trustworthiness, continuity, lcmc, shepard_diagram_data
-
+from .core import DimReduction
+from .evaluation.metrics import continuity, lcmc, shepard_diagram_data, trustworthiness
 from .reducers import (
     BaseReducer,
-    PCAReducer,
+    DMDReducer,
     IsomapReducer,
+    IVISReducer,
     LLEReducer,
     MDSReducer,
+    PacmapReducer,
+    PCAReducer,
+    PHATEReducer,
     SpectralEmbeddingReducer,
+    TopologicalAEReducer,
+    TRCAReducer,
+    TrimapReducer,
     TSNEReducer,
     UMAPReducer,
-    PacmapReducer,
-    TrimapReducer,
-    PHATEReducer,
-    DMDReducer,
-    TRCAReducer,
-    IVISReducer,
-    TopologicalAEReducer
 )
 
 __all__ = [
     "DimReduction",
     "METHODS",
     "METHODS_DICT",
-    "trustworthiness", 
-    "continuity", 
-    "lcmc", 
+    "trustworthiness",
+    "continuity",
+    "lcmc",
     "shepard_diagram_data",
     "BaseReducer",
     "PCAReducer",
@@ -42,5 +41,5 @@ __all__ = [
     "DMDReducer",
     "TRCAReducer",
     "IVISReducer",
-    "TopologicalAEReducer"
+    "TopologicalAEReducer",
 ]

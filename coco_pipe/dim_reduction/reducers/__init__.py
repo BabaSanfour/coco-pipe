@@ -1,9 +1,21 @@
 from .base import BaseReducer
-from .linear import PCAReducer, IncrementalPCAReducer, DaskPCAReducer, DaskTruncatedSVDReducer
+from .linear import (
+    DaskPCAReducer,
+    DaskTruncatedSVDReducer,
+    IncrementalPCAReducer,
+    PCAReducer,
+)
 from .manifold import IsomapReducer, LLEReducer, MDSReducer, SpectralEmbeddingReducer
-from .neighbor import TSNEReducer, UMAPReducer, PacmapReducer, TrimapReducer, PHATEReducer, ParametricUMAPReducer
-from .spatiotemporal import DMDReducer, TRCAReducer
+from .neighbor import (
+    PacmapReducer,
+    ParametricUMAPReducer,
+    PHATEReducer,
+    TrimapReducer,
+    TSNEReducer,
+    UMAPReducer,
+)
 from .neural import IVISReducer
+from .spatiotemporal import DMDReducer, TRCAReducer
 from .topology import TopologicalAEReducer
 
 __all__ = [

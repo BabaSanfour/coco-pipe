@@ -11,24 +11,27 @@ License: TBD
 """
 
 import datetime
-import logging
-import pickle
-import os
 import json
-import pandas as pd
+import logging
+import os
+import pickle
 from typing import Any, Dict, Optional, Sequence, Union
+
 import numpy as np
+import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.utils.multiclass import type_of_target
 
 from .base import BasePipeline
 from .config import (
-    BINARY_METRICS, BINARY_MODELS, 
-    MULTICLASS_METRICS, MULTICLASS_MODELS,
-    MULTIOUTPUT_CLASS_METRICS, MULTIOUTPUT_CLASS_MODELS, 
-    DEFAULT_CV
+    BINARY_METRICS,
+    BINARY_MODELS,
+    DEFAULT_CV,
+    MULTICLASS_METRICS,
+    MULTICLASS_MODELS,
+    MULTIOUTPUT_CLASS_METRICS,
+    MULTIOUTPUT_CLASS_MODELS,
 )
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -37,10 +40,11 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
 class BinaryClassificationPipeline(BasePipeline):
     """
     Binary classification pipeline.
-        
+
     Parameters
     ----------
     X : np.ndarray
@@ -65,7 +69,7 @@ class BinaryClassificationPipeline(BasePipeline):
     groups : np.ndarray, optional
         Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
     """
-    
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -81,8 +85,10 @@ class BinaryClassificationPipeline(BasePipeline):
     ):
         self._validate_target(y)
 
-        metric_funcs =  BINARY_METRICS
-        default_metrics = [metrics] if isinstance(metrics, str) else (metrics or ["accuracy"])
+        metric_funcs = BINARY_METRICS
+        default_metrics = (
+            [metrics] if isinstance(metrics, str) else (metrics or ["accuracy"])
+        )
 
         base = BINARY_MODELS
         if models == "all":
@@ -114,13 +120,15 @@ class BinaryClassificationPipeline(BasePipeline):
     def _validate_target(self, y):
         unique = np.unique(y)
         if unique.size != 2:
-            raise ValueError(f"Target must be binary. Found {unique.size} classes: {unique}")
+            raise ValueError(
+                f"Target must be binary. Found {unique.size} classes: {unique}"
+            )
 
 
 class MultiClassClassificationPipeline(BasePipeline):
     """
     Multiclass classification pipeline.
-        
+
     Parameters
     ----------
     X : np.ndarray
@@ -145,7 +153,7 @@ class MultiClassClassificationPipeline(BasePipeline):
     groups : np.ndarray, optional
         Group labels for samples. Default is None.
     """
-    
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -162,9 +170,9 @@ class MultiClassClassificationPipeline(BasePipeline):
     ):
         metric_funcs = MULTICLASS_METRICS
         if isinstance(metrics, str):
-            default_metrics = [metrics]
+            pass
         else:
-            default_metrics = metrics or list(MULTICLASS_METRICS.keys())
+            metrics or list(MULTICLASS_METRICS.keys())
 
         base = MULTICLASS_MODELS.copy()
         if models == "all":
@@ -198,22 +206,16 @@ class MultiClassClassificationPipeline(BasePipeline):
         if classes.size <= 2:
             raise ValueError(f"Multiclass target requires >2 classes, got: {classes}")
 
-    def _aggregate(
-        self,
-        fold_preds,
-        fold_scores,
-        fold_importances,
-        freq=None
-    ):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        if 'roc_auc' in self.metrics and "y_proba" in predictions:
+        if "roc_auc" in self.metrics and "y_proba" in predictions:
             from .config import multiclass_roc_auc_score
+
             proba = predictions["y_proba"]
             score = multiclass_roc_auc_score(
-                y_true=predictions["y_true"],
-                y_proba=proba
+                y_true=predictions["y_true"], y_proba=proba
             )
             metrics["roc_auc"] = {"mean": score, "std": 0.0, "fold_scores": [score]}
         if self.per_class:
@@ -224,7 +226,11 @@ class MultiClassClassificationPipeline(BasePipeline):
             )
             pcm = {}
             for cls, p, r, f in zip(np.unique(yt), prec, rec, f1):
-                pcm[int(cls)] = {"precision": float(p), "recall": float(r), "f1": float(f)}
+                pcm[int(cls)] = {
+                    "precision": float(p),
+                    "recall": float(r),
+                    "f1": float(f),
+                }
             metrics["per_class_metrics"] = pcm
         return predictions, metrics, feature_importances
 
@@ -252,6 +258,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
     groups : np.ndarray, optional
         Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
     """
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -265,7 +272,6 @@ class MultiOutputClassificationPipeline(BasePipeline):
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
         verbose: bool = False,
     ):
-
         metric_funcs = MULTIOUTPUT_CLASS_METRICS
         if isinstance(metrics, str):
             default_metrics = [metrics]
@@ -302,26 +308,25 @@ class MultiOutputClassificationPipeline(BasePipeline):
     def _validate_target(self, y):
         """Ensure target is multioutput."""
         if not (hasattr(y, "ndim") and y.ndim == 2):
-            raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
+            raise ValueError(
+                f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}"
+            )
 
-    def _aggregate(
-        self,
-        fold_preds,
-        fold_scores,
-        fold_importances,
-        freq=None
-    ):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        from sklearn.metrics import precision_score, recall_score, f1_score
+        from sklearn.metrics import f1_score, precision_score, recall_score
+
         yt = predictions["y_true"]
         yp = predictions["y_pred"]
         pom = {}
         for i in range(yt.shape[1]):
             out = {}
             if "precision_samples" in self.metrics:
-                out["precision"] = float(precision_score(yt[:, i], yp[:, i], zero_division=0))
+                out["precision"] = float(
+                    precision_score(yt[:, i], yp[:, i], zero_division=0)
+                )
             if "recall_samples" in self.metrics:
                 out["recall"] = float(recall_score(yt[:, i], yp[:, i], zero_division=0))
             if "f1_samples" in self.metrics:
@@ -331,6 +336,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
         if pom:
             metrics["per_output_metrics"] = pom
         return predictions, metrics, feature_importances
+
 
 class ClassificationPipeline:
     """
@@ -430,7 +436,12 @@ class ClassificationPipeline:
         self.X = X
         self.y = y
         analysis_type = analysis_type.lower()
-        if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
+        if analysis_type not in [
+            "baseline",
+            "feature_selection",
+            "hp_search",
+            "hp_search_fs",
+        ]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
         self.analysis_type = analysis_type
         self.models = models
@@ -475,16 +486,22 @@ class ClassificationPipeline:
         cvk = dict(DEFAULT_CV)
         if cv_kwargs:
             cvk.update(cv_kwargs)
-        cvk.update({
-            "cv_strategy": self.cv_strategy,
-            "n_splits": self.n_splits,
-            "random_state": self.random_state
-        })
+        cvk.update(
+            {
+                "cv_strategy": self.cv_strategy,
+                "n_splits": self.n_splits,
+                "random_state": self.random_state,
+            }
+        )
 
         self.pipeline = PipelineClass(
-            X=self.X, y=self.y, groups=self.groups,
-            models=self.models, metrics=self.metrics,
-            random_state=self.random_state, n_jobs=self.n_jobs,
+            X=self.X,
+            y=self.y,
+            groups=self.groups,
+            models=self.models,
+            metrics=self.metrics,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
             cv_kwargs=cvk,
             verbose=self.verbose,
         )
@@ -541,7 +558,7 @@ class ClassificationPipeline:
         Raises
         ValueError
             If the analysis type is not recognized or if there is an error during the run.
-        
+
         Notes
         The results are saved in the specified results directory with a filename
         formatted as `<results_file>_<task>_<analysis_type>_rs<random_state>.pkl`.
@@ -602,7 +619,7 @@ class ClassificationPipeline:
             "n_iter": self.n_iter,
             "n_jobs": self.n_jobs,
             "X_shape": self.X.shape,
-            "y_shape": getattr(self.y, 'shape', (len(self.y),)),
+            "y_shape": getattr(self.y, "shape", (len(self.y),)),
             "start_time": datetime.datetime.now().isoformat(),
             "completed_models": [],
             "failed_models": [],
@@ -666,8 +683,12 @@ class ClassificationPipeline:
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
         self.save(base_name, self.results)
-        with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
+        with open(
+            os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w"
+        ) as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
+        logger.info(
+            f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}"
+        )
 
         return self.results

@@ -31,11 +31,12 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-06
 """
 
-from typing import Optional, Any
-import numpy as np
-from sklearn.manifold import Isomap, LocallyLinearEmbedding, MDS, SpectralEmbedding
+from typing import Optional
 
-from .base import BaseReducer, ArrayLike
+import numpy as np
+from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
+
+from .base import ArrayLike, BaseReducer
 
 
 class IsomapReducer(BaseReducer):
@@ -62,7 +63,7 @@ class IsomapReducer(BaseReducer):
     ----------
     model : sklearn.manifold.Isomap
         The underlying fitted Isomap estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -112,23 +113,25 @@ class IsomapReducer(BaseReducer):
         Returns
         -------
         X_new : np.ndarray of shape (n_samples, n_components)
-            Transformed data.        
+            Transformed data.
         """
         if self.model is None:
-            raise RuntimeError("IsomapReducer must be fitted before calling transform().")
+            raise RuntimeError(
+                "IsomapReducer must be fitted before calling transform()."
+            )
         return self.model.transform(X)
-    
+
     @property
     def reconstruction_error_(self) -> float:
         """
         Reconstruction error associated with the embedding.
-        
+
         Returns
         -------
         reconstruction_error_ : float or None
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return getattr(self.model, "reconstruction_error_", None)
 
     @property
@@ -137,7 +140,7 @@ class IsomapReducer(BaseReducer):
         Number of features seen during fit.
         """
         if self.model is None:
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.n_features_in_
 
 
@@ -165,7 +168,7 @@ class LLEReducer(BaseReducer):
     ----------
     model : sklearn.manifold.LocallyLinearEmbedding
         The underlying fitted LLE estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -198,14 +201,16 @@ class LLEReducer(BaseReducer):
         self : LLEReducer
             Returns the instance itself.
         """
-        self.model = LocallyLinearEmbedding(n_components=self.n_components, **self.params)
+        self.model = LocallyLinearEmbedding(
+            n_components=self.n_components, **self.params
+        )
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
@@ -224,13 +229,13 @@ class LLEReducer(BaseReducer):
     def reconstruction_error_(self) -> float:
         """
         Reconstruction error associated with the embedding.
-        
+
         Returns
         -------
         reconstruction_error_ : float
         """
         if self.model is None or not hasattr(self.model, "reconstruction_error_"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.reconstruction_error_
 
 
@@ -260,7 +265,7 @@ class MDSReducer(BaseReducer):
     ----------
     model : sklearn.manifold.MDS
         The underlying MDS estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -280,7 +285,7 @@ class MDSReducer(BaseReducer):
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "MDSReducer":
         """
         Fit the MDS model.
-        
+
         Note: MDS does not implement a separate fit/transform paradigm in the same
         way as other estimators in scikit-learn. fit_transform remains the primary usage.
         However, for consistency, we initialize the model here.
@@ -304,14 +309,14 @@ class MDSReducer(BaseReducer):
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
         Transform X.
-        
+
         Raises
         ------
         NotImplementedError
             MDS does not support transforming new data.
         """
         raise NotImplementedError("MDS cannot transform new data. Use fit_transform().")
-    
+
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
         Fit the data from X, and returns the embedded coordinates.
@@ -334,15 +339,15 @@ class MDSReducer(BaseReducer):
     @property
     def stress_(self) -> float:
         """
-        The final value of the stress (sum of squared distance of the disparities and the 
+        The final value of the stress (sum of squared distance of the disparities and the
         distances for all constrained points).
-        
+
         Returns
         -------
         stress_ : float
         """
         if self.model is None or not hasattr(self.model, "stress_"):
-             raise RuntimeError("Model is not fitted yet.")
+            raise RuntimeError("Model is not fitted yet.")
         return self.model.stress_
 
 
@@ -370,7 +375,7 @@ class SpectralEmbeddingReducer(BaseReducer):
     ----------
     model : sklearn.manifold.SpectralEmbedding
         The underlying estimator.
-    
+
     Examples
     --------
     >>> import numpy as np
@@ -386,7 +391,9 @@ class SpectralEmbeddingReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "SpectralEmbeddingReducer":
+    def fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "SpectralEmbeddingReducer":
         """
         Fit the Spectral model.
 

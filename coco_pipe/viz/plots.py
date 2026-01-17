@@ -12,18 +12,19 @@ for any analysis unit (sensors, features, regions).
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 import math
 import re
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
-
-def _coerce_series(data: Union[pd.Series, Mapping[str, float], Sequence[float]],
-                   index: Optional[Sequence[str]] = None) -> pd.Series:
+def _coerce_series(
+    data: Union[pd.Series, Mapping[str, float], Sequence[float]],
+    index: Optional[Sequence[str]] = None,
+) -> pd.Series:
     if isinstance(data, pd.Series):
         return data.dropna()
     if isinstance(data, Mapping):
@@ -34,8 +35,12 @@ def _coerce_series(data: Union[pd.Series, Mapping[str, float], Sequence[float]],
     return pd.Series(values, index=index).dropna()
 
 
-def _coerce_coords(coords: Union[pd.DataFrame, Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]],
-                   index: Optional[Sequence[str]] = None) -> pd.DataFrame:
+def _coerce_coords(
+    coords: Union[
+        pd.DataFrame, Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]
+    ],
+    index: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
     if isinstance(coords, pd.DataFrame):
         if coords.shape[1] < 2:
             raise ValueError("coords DataFrame must have at least two columns (x, y)")
@@ -55,18 +60,20 @@ def _coerce_coords(coords: Union[pd.DataFrame, Mapping[str, Tuple[float, float]]
 
 def plot_topomap(
     values: Union[pd.Series, Mapping[str, float], Sequence[float]],
-    coords: Union[pd.DataFrame, Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]],
+    coords: Union[
+        pd.DataFrame, Mapping[str, Tuple[float, float]], Sequence[Tuple[float, float]]
+    ],
     *,
     index: Optional[Sequence[str]] = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     cmap: str = "RdBu_r",
     head_radius: float = 0.5,  # kept for API compatibility; not used by MNE
-    levels: int = 64,          # kept for API compatibility; not used by MNE
-    fill: bool = True,         # kept for API compatibility; not used by MNE
+    levels: int = 64,  # kept for API compatibility; not used by MNE
+    fill: bool = True,  # kept for API compatibility; not used by MNE
     sensors: str = "markers",  # "markers"->True, "labels"->'labels', "none"->False
-    sensor_size: float = 30.0, # kept for API compatibility
-    outlines: bool = True,     # True->'head', False->'none'
+    sensor_size: float = 30.0,  # kept for API compatibility
+    outlines: bool = True,  # True->'head', False->'none'
     contours: int = 0,
     symmetric: bool = True,
     title: Optional[str] = None,
@@ -140,7 +147,7 @@ def plot_topomap(
         if ax == 0 or not np.isfinite(ax):
             return 1.0
         e = math.floor(math.log10(ax))
-        return 10.0 ** e
+        return 10.0**e
 
     def _nice_floor(x: float) -> float:
         s = _nice_step(x)
@@ -173,11 +180,11 @@ def plot_topomap(
     if sensors == "none":
         sensors_opt: Union[bool, str] = False
     elif sensors == "labels":
-        sensors_opt = 'labels'
+        sensors_opt = "labels"
     else:
         sensors_opt = True  # markers
 
-    outlines_opt: Union[str, dict] = 'head' if outlines else 'none'
+    outlines_opt: Union[str, dict] = "head" if outlines else "none"
 
     # Create axes if needed
     if ax is None:
@@ -193,7 +200,7 @@ def plot_topomap(
         vlim=(vmin_r, vmax_r),
         cmap=cmap,
         sensors=sensors_opt,
-        names=list(common) if sensors == 'labels' else None,
+        names=list(common) if sensors == "labels" else None,
         contours=contours,
         outlines=outlines_opt,
         show=False,
@@ -203,7 +210,15 @@ def plot_topomap(
     _title_fs = title_size if title_size is not None else text_size
     _tick_fs = tick_size if tick_size is not None else text_size
     _cbar_fs = cbar_size if cbar_size is not None else text_size
-    _title_loc = None if title_loc is None else ("center" if str(title_loc).lower() in {"center", "centre"} else str(title_loc).lower())
+    _title_loc = (
+        None
+        if title_loc is None
+        else (
+            "center"
+            if str(title_loc).lower() in {"center", "centre"}
+            else str(title_loc).lower()
+        )
+    )
 
     if title:
         ax.set_title(title, fontsize=_title_fs, loc=_title_loc)
@@ -215,7 +230,7 @@ def plot_topomap(
             cb.set_label(cbar_label, fontsize=_cbar_fs)
 
     if _tick_fs is not None:
-        ax.tick_params(axis='both', labelsize=_tick_fs)
+        ax.tick_params(axis="both", labelsize=_tick_fs)
 
     if save:
         fig.savefig(save, dpi=150)
@@ -370,7 +385,7 @@ def plot_bar(
         if ax == 0 or not np.isfinite(ax):
             return 1.0
         e = math.floor(math.log10(ax))
-        return 10.0 ** e
+        return 10.0**e
 
     def _nice_floor(x: float) -> float:
         s = _nice_step(x)
@@ -384,7 +399,6 @@ def plot_bar(
     # Conditions: axis_break_orders set, at least two values, all non-negative after optional abs,
     # and axis_lim is None. Uses simple two-panel broken axis with diagonal marks.
     do_axis_break = False
-    idx_primary_ax_return: Optional[plt.Axes] = None
     if (
         axis_break_orders is not None
         and axis_lim is None
@@ -412,7 +426,9 @@ def plot_bar(
         vmax1 = float(vals_with_err[order[0]])
         vmax2 = float(vals_with_err[order[1]]) if len(order) > 1 else 0.0
         # Lower panel upper bound based on second max (or fraction of top if others are 0)
-        lower_upper = vmax2 if vmax2 > 0 else (vmax1 / (10.0 ** float(axis_break_orders)))
+        lower_upper = (
+            vmax2 if vmax2 > 0 else (vmax1 / (10.0 ** float(axis_break_orders)))
+        )
         lower_upper = max(lower_upper, 0.0) * (1.0 + float(axis_break_pad))
         upper_lower = lower_upper  # join point
         upper_upper = vmax1 * (1.0 + float(axis_break_pad))
@@ -421,10 +437,16 @@ def plot_bar(
         if orientation == "horizontal":
             # Side-by-side axes sharing y
             if created_fig and ax is not None and len(fig.axes) == 1:
-                plt.close(fig)  # close single-axes fig before creating new layout to avoid duplicates
+                plt.close(
+                    fig
+                )  # close single-axes fig before creating new layout to avoid duplicates
                 fig, (ax_left, ax_right) = plt.subplots(
-                    1, 2, sharey=True, figsize=figsize, constrained_layout=True,
-                    gridspec_kw={"width_ratios": [3, 1]}
+                    1,
+                    2,
+                    sharey=True,
+                    figsize=figsize,
+                    constrained_layout=True,
+                    gridspec_kw={"width_ratios": [3, 1]},
                 )
             else:
                 # Replace provided ax with two new axes in the same position
@@ -434,8 +456,17 @@ def plot_bar(
                 gap = 0.02 * w_total
                 w_left = w_total * 0.72
                 w_right = w_total * 0.28
-                ax_left = fig.add_axes([bbox.x0, bbox.y0, w_left - gap / 2, bbox.height])
-                ax_right = fig.add_axes([bbox.x0 + w_left + gap / 2, bbox.y0, w_right - gap / 2, bbox.height])
+                ax_left = fig.add_axes(
+                    [bbox.x0, bbox.y0, w_left - gap / 2, bbox.height]
+                )
+                ax_right = fig.add_axes(
+                    [
+                        bbox.x0 + w_left + gap / 2,
+                        bbox.y0,
+                        w_right - gap / 2,
+                        bbox.height,
+                    ]
+                )
                 # share y manually
                 ax_right.get_shared_y_axes().join(ax_right, ax_left)
 
@@ -444,30 +475,34 @@ def plot_bar(
             idx_out = int(order[0])
             mask = np.zeros(len(vals), dtype=bool)
             mask[idx_out] = True
+
             # color handling for subset
             def _subset_colors(mask_bool):
                 if isinstance(colors, (list, tuple, np.ndarray)):
                     return [colors[i] for i, m in enumerate(mask_bool) if m]
                 return colors
+
             ax_left.barh(
-                y_pos, vals,
+                y_pos,
+                vals,
                 xerr=e.values if e is not None else None,
                 color=colors,
             )
             ax_right.barh(
-                y_pos[mask], vals[mask],
+                y_pos[mask],
+                vals[mask],
                 xerr=(e.values[mask] if e is not None else None),
                 color=_subset_colors(mask),
             )
             # Ticks/labels
             ax_left.set_yticks(y_pos, labels=disp_labels)
-            ax_right.tick_params(axis='y', labelleft=False)
+            ax_right.tick_params(axis="y", labelleft=False)
             # Limits per panel
             ax_left.set_xlim((0.0, lower_upper))
             ax_right.set_xlim((upper_lower, upper_upper))
             # Diagonal break marks (only on primary/left axis)
-            d = .015
-            kwargs = dict(transform=ax_left.transAxes, color='k', clip_on=False)
+            d = 0.015
+            kwargs = dict(transform=ax_left.transAxes, color="k", clip_on=False)
             ax_left.plot((1 - d, 1 + d), (-d, +d), **kwargs)
             ax_left.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
             # No start lines on the secondary/right axis
@@ -477,15 +512,23 @@ def plot_bar(
             _label_fs = axis_label_size if axis_label_size is not None else text_size
             _tick_fs = tick_size if tick_size is not None else text_size
             if title:
-                _title_loc = None if title_loc is None else ("center" if str(title_loc).lower() in {"center", "centre"} else str(title_loc).lower())
+                _title_loc = (
+                    None
+                    if title_loc is None
+                    else (
+                        "center"
+                        if str(title_loc).lower() in {"center", "centre"}
+                        else str(title_loc).lower()
+                    )
+                )
                 ax_left.set_title(title, fontsize=_title_fs, loc=_title_loc)
             if xlabel:
                 ax_left.set_xlabel(xlabel, fontsize=_label_fs)
             if ylabel:
                 ax_left.set_ylabel(ylabel, fontsize=_label_fs)
             if _tick_fs is not None:
-                ax_left.tick_params(axis='both', labelsize=_tick_fs)
-                ax_right.tick_params(axis='both', labelsize=_tick_fs)
+                ax_left.tick_params(axis="both", labelsize=_tick_fs)
+                ax_right.tick_params(axis="both", labelsize=_tick_fs)
 
             # Grid configuration
             axis_opt = None if grid_axis is None else str(grid_axis).lower()
@@ -498,8 +541,8 @@ def plot_bar(
                     axis_val = axis_opt
                 else:
                     axis_val = "x"
-                ax_left.grid(True, axis=axis_val, linestyle='--', alpha=0.3)
-                ax_right.grid(True, axis=axis_val, linestyle='--', alpha=0.3)
+                ax_left.grid(True, axis=axis_val, linestyle="--", alpha=0.3)
+                ax_right.grid(True, axis=axis_val, linestyle="--", alpha=0.3)
 
             # Apply spines/ticks removal to both axes if requested
             def _apply_styling_axes(ax_list: List[plt.Axes]):
@@ -552,8 +595,12 @@ def plot_bar(
             if created_fig and ax is not None and len(fig.axes) == 1:
                 plt.close(fig)  # close single-axes fig
                 fig, (ax_top, ax_bottom) = plt.subplots(
-                    2, 1, sharex=True, figsize=figsize, constrained_layout=True,
-                    gridspec_kw={"height_ratios": [1, 3]}
+                    2,
+                    1,
+                    sharex=True,
+                    figsize=figsize,
+                    constrained_layout=True,
+                    gridspec_kw={"height_ratios": [1, 3]},
                 )
             else:
                 bbox = ax.get_position()
@@ -562,8 +609,12 @@ def plot_bar(
                 gap = 0.02 * h_total
                 h_top = h_total * 0.35
                 h_bottom = h_total * 0.65
-                ax_top = fig.add_axes([bbox.x0, bbox.y0 + h_bottom + gap / 2, bbox.width, h_top - gap / 2])
-                ax_bottom = fig.add_axes([bbox.x0, bbox.y0, bbox.width, h_bottom - gap / 2])
+                ax_top = fig.add_axes(
+                    [bbox.x0, bbox.y0 + h_bottom + gap / 2, bbox.width, h_top - gap / 2]
+                )
+                ax_bottom = fig.add_axes(
+                    [bbox.x0, bbox.y0, bbox.width, h_bottom - gap / 2]
+                )
                 # share x manually
                 ax_top.get_shared_x_axes().join(ax_top, ax_bottom)
 
@@ -571,30 +622,34 @@ def plot_bar(
             idx_out = int(order[0])
             mask = np.zeros(len(vals), dtype=bool)
             mask[idx_out] = True
+
             def _subset_colors(mask_bool):
                 if isinstance(colors, (list, tuple, np.ndarray)):
                     return [colors[i] for i, m in enumerate(mask_bool) if m]
                 return colors
+
             # Top shows only outlier; bottom shows all
             ax_top.bar(
-                x_pos[mask], vals[mask],
+                x_pos[mask],
+                vals[mask],
                 yerr=(e.values[mask] if e is not None else None),
                 color=_subset_colors(mask),
             )
             ax_bottom.bar(
-                x_pos, vals,
+                x_pos,
+                vals,
                 yerr=e.values if e is not None else None,
                 color=colors,
             )
             # Tick labels only on bottom
-            ax_bottom.set_xticks(x_pos, labels=disp_labels, rotation=45, ha='right')
-            ax_top.tick_params(axis='x', labelbottom=False)
+            ax_bottom.set_xticks(x_pos, labels=disp_labels, rotation=45, ha="right")
+            ax_top.tick_params(axis="x", labelbottom=False)
             # Limits per panel
             ax_bottom.set_ylim((0.0, lower_upper))
             ax_top.set_ylim((upper_lower, upper_upper))
             # Diagonal marks (only on primary/top axis)
-            d = .015
-            kwargs = dict(transform=ax_top.transAxes, color='k', clip_on=False)
+            d = 0.015
+            kwargs = dict(transform=ax_top.transAxes, color="k", clip_on=False)
             ax_top.plot((-d, +d), (-d, +d), **kwargs)
             ax_top.plot((1 - d, 1 + d), (-d, +d), **kwargs)
             # No start lines on the secondary/bottom axis
@@ -604,15 +659,23 @@ def plot_bar(
             _label_fs = axis_label_size if axis_label_size is not None else text_size
             _tick_fs = tick_size if tick_size is not None else text_size
             if title:
-                _title_loc = None if title_loc is None else ("center" if str(title_loc).lower() in {"center", "centre"} else str(title_loc).lower())
+                _title_loc = (
+                    None
+                    if title_loc is None
+                    else (
+                        "center"
+                        if str(title_loc).lower() in {"center", "centre"}
+                        else str(title_loc).lower()
+                    )
+                )
                 ax_top.set_title(title, fontsize=_title_fs, loc=_title_loc)
             if xlabel:
                 ax_bottom.set_xlabel(xlabel, fontsize=_label_fs)
             if ylabel:
                 ax_bottom.set_ylabel(ylabel, fontsize=_label_fs)
             if _tick_fs is not None:
-                ax_top.tick_params(axis='both', labelsize=_tick_fs)
-                ax_bottom.tick_params(axis='both', labelsize=_tick_fs)
+                ax_top.tick_params(axis="both", labelsize=_tick_fs)
+                ax_bottom.tick_params(axis="both", labelsize=_tick_fs)
 
             # Grid configuration
             axis_opt = None if grid_axis is None else str(grid_axis).lower()
@@ -625,8 +688,8 @@ def plot_bar(
                     axis_val = axis_opt
                 else:
                     axis_val = "y"
-                ax_top.grid(True, axis=axis_val, linestyle='--', alpha=0.3)
-                ax_bottom.grid(True, axis=axis_val, linestyle='--', alpha=0.3)
+                ax_top.grid(True, axis=axis_val, linestyle="--", alpha=0.3)
+                ax_bottom.grid(True, axis=axis_val, linestyle="--", alpha=0.3)
 
             # Apply spines/ticks removal to both axes if requested
             def _apply_styling_axes(ax_list: List[plt.Axes]):
@@ -702,7 +765,7 @@ def plot_bar(
     else:
         x_pos = np.arange(len(labels))
         ax.bar(x_pos, vals, yerr=e.values if e is not None else None, color=colors)
-        ax.set_xticks(x_pos, labels=disp_labels, rotation=45, ha='right')
+        ax.set_xticks(x_pos, labels=disp_labels, rotation=45, ha="right")
         # Resolve sizes
         _title_fs = title_size if title_size is not None else text_size
         _label_fs = axis_label_size if axis_label_size is not None else text_size
@@ -727,7 +790,15 @@ def plot_bar(
 
     if title:
         _title_fs = title_size if title_size is not None else text_size
-        _title_loc = None if title_loc is None else ("center" if str(title_loc).lower() in {"center", "centre"} else str(title_loc).lower())
+        _title_loc = (
+            None
+            if title_loc is None
+            else (
+                "center"
+                if str(title_loc).lower() in {"center", "centre"}
+                else str(title_loc).lower()
+            )
+        )
         ax.set_title(title, fontsize=_title_fs, loc=_title_loc)
 
     # Grid configuration
@@ -741,12 +812,12 @@ def plot_bar(
             axis_val = axis_opt
         else:
             axis_val = "y"  # fallback to previous default
-        ax.grid(True, axis=axis_val, linestyle='--', alpha=0.3)
+        ax.grid(True, axis=axis_val, linestyle="--", alpha=0.3)
 
     # Apply tick label size if requested
     _tick_fs = tick_size if tick_size is not None else text_size
     if _tick_fs is not None:
-        ax.tick_params(axis='both', labelsize=_tick_fs)
+        ax.tick_params(axis="both", labelsize=_tick_fs)
 
     # Optionally remove specific spines
     if remove_spines is not None:
@@ -833,10 +904,8 @@ def plot_scatter2d(
     x_arr = x.values if isinstance(x, pd.Series) else np.asarray(x)
     y_arr = y.values if isinstance(y, pd.Series) else np.asarray(y)
 
-    created_fig = False
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=figsize, constrained_layout=True)
-        created_fig = True
     else:
         fig = ax.figure
 
@@ -847,17 +916,24 @@ def plot_scatter2d(
         uniq = pd.unique(lab_arr)
         # Colors
         if palette is None:
-            cmap = plt.get_cmap('tab10')
+            cmap = plt.get_cmap("tab10")
             colors = [cmap(i % 10) for i in range(len(uniq))]
         else:
             colors = list(palette)
             if len(colors) < len(uniq):
                 # repeat if needed
                 k = int(np.ceil(len(uniq) / len(colors)))
-                colors = (colors * k)[:len(uniq)]
+                colors = (colors * k)[: len(uniq)]
         for c, u in zip(colors, uniq):
-            mask = (lab_arr == u)
-            ax.scatter(x_arr[mask], y_arr[mask], s=s, alpha=alpha, label=label_map.get(u, u) if label_map else u, color=c)
+            mask = lab_arr == u
+            ax.scatter(
+                x_arr[mask],
+                y_arr[mask],
+                s=s,
+                alpha=alpha,
+                label=label_map.get(u, u) if label_map else u,
+                color=c,
+            )
 
     # Resolve sizes
     _title_fs = title_size if title_size is not None else text_size
@@ -866,7 +942,15 @@ def plot_scatter2d(
     _legend_fs = legend_size if legend_size is not None else text_size
 
     if title:
-        _title_loc = None if title_loc is None else ("center" if str(title_loc).lower() in {"center", "centre"} else str(title_loc).lower())
+        _title_loc = (
+            None
+            if title_loc is None
+            else (
+                "center"
+                if str(title_loc).lower() in {"center", "centre"}
+                else str(title_loc).lower()
+            )
+        )
         ax.set_title(title, fontsize=_title_fs, loc=_title_loc)
     if xlabel:
         ax.set_xlabel(xlabel, fontsize=_label_fs)
@@ -876,7 +960,7 @@ def plot_scatter2d(
         ax.legend(frameon=False, fontsize=_legend_fs)
 
     if _tick_fs is not None:
-        ax.tick_params(axis='both', labelsize=_tick_fs)
+        ax.tick_params(axis="both", labelsize=_tick_fs)
 
     if save:
         fig.savefig(save, dpi=150)

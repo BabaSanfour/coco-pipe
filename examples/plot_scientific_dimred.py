@@ -2,14 +2,15 @@
 Scientific vs. Generic Dimensionality Reduction
 ===============================================
 
-This example demonstrates the "Scientific Imperative" for domain-specific reduction 
-as outlined in the ``coco_pipe`` strategic vision. We compare generic methods 
-(PCA, UMAP) against physics-informed methods (TRCA, DMD) on synthetic oscillatory data 
+This example demonstrates the "Scientific Imperative" for domain-specific reduction
+as outlined in the ``coco_pipe`` strategic vision. We compare generic methods
+(PCA, UMAP) against physics-informed methods (TRCA, DMD) on synthetic oscillatory data
 that mimics neural signals.
 
 """
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+
 from coco_pipe.dim_reduction import DimReduction
 
 ###############################################################################
@@ -61,7 +62,7 @@ print(f"Data shape: {X_full.shape}")
 dr_pca = DimReduction("PCA", n_components=2)
 X_pca = dr_pca.fit_transform(X_full)
 
-dr_pca.plot(y=labels, title="PCA: Variance Dependent", xlabel="PC1", ylabel="PC2")
+dr_pca.plot(y=labels, title="PCA: Variance Dependent")
 
 ###############################################################################
 # 3. Generic Reduction: UMAP
@@ -89,22 +90,24 @@ n_channels = X_full.shape[1]
 
 # Reshape data to [epochs, channels, times]
 # We take a subset that divides evenly
-X_trca_input = X_full[:n_trials*samples_per_trial, :].T.reshape(n_channels, samples_per_trial, n_trials)
-X_trca_input = np.transpose(X_trca_input, (2, 0, 1)) # (trials, channels, samples)
+X_trca_input = X_full[: n_trials * samples_per_trial, :].T.reshape(
+    n_channels, samples_per_trial, n_trials
+)
+X_trca_input = np.transpose(X_trca_input, (2, 0, 1))  # (trials, channels, samples)
 
 print(f"TRCA Input shape: {X_trca_input.shape}")
 
 try:
     # Initialize TRCA
     dr_trca = DimReduction("TRCA", n_components=2)
-    
+
     # TRCA usually fits on training trials and transforms.
     # We fit on the data itself for this demo.
     dr_trca.fit(X_trca_input)
-    
+
     # Transform specific trial or average
-    X_trca = dr_trca.transform(X_trca_input) 
-    
+    X_trca = dr_trca.transform(X_trca_input)
+
     # Visualize weight maps (Topomaps) or simply the components
     plt.figure(figsize=(10, 4))
     plt.plot(X_trca[0, 0, :], label="TRCA Comp 1")
@@ -112,25 +115,27 @@ try:
     plt.title("TRCA Components (Single Trial)")
     plt.legend()
     plt.show()
-    
+
 except Exception as e:
-    print(f"TRCA Visualization skipped due to setup complexity in this toy example: {e}")
+    print(
+        f"TRCA Visualization skipped due to setup complexity in this toy example: {e}"
+    )
 
 
 ###############################################################################
 # 5. Scientific Reduction: DMD
 # ----------------------------
-# Dynamic Mode Decomposition extracts dynamical modes. 
+# Dynamic Mode Decomposition extracts dynamical modes.
 # It is excellent for time-series data.
 
 try:
     dr_dmd = DimReduction("DMD", n_components=2)
     # DMD expects (n_samples, n_features) but treats rows as snapshots
     X_dmd = dr_dmd.fit_transform(X_full)
-    
+
     # DMD modes often reveal the frequency content
     dr_dmd.plot(y=labels, title="DMD: Dynamics Dependent")
-    
+
 except Exception as e:
     print(f"DMD Visualization skipped: {e}")
 

@@ -6,26 +6,27 @@ This example demonstrates the "Visualizing Dynamics" pillar of the ``coco_pipe``
 strategic vision. We generate a synthetic dynamical system (a noisy limit cycle)
 and visualize its temporal flow using **Streamlines**.
 
-This is conceptually similar to ``scVelo`` [1]_ but applied to generalized state 
+This is conceptually similar to ``scVelo`` [1]_ but applied to generalized state
 spaces like M/EEG or simulation data.
 
 .. [1] La Manno et al. (2018). RNA velocity of single cells. Nature.
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+
 from coco_pipe.viz import dim_reduction
 
 ###############################################################################
 # 1. Simulate Dynamical System (Limit Cycle)
 # ------------------------------------------
 # We create a noisy circle where points naturally flow counter-clockwise.
-# System: 
+# System:
 # dx/dt = -y
 # dy/dt = x
 
 n_points = 500
-t = np.linspace(0, 2*np.pi, n_points)
+t = np.linspace(0, 2 * np.pi, n_points)
 
 # Underlying manifold (Circle)
 x = np.cos(t)
@@ -56,10 +57,10 @@ print(f"Velocity Shape: {V_emb.shape}")
 # velocity projection (see Vision Document Section 4.1.1).
 
 fig = dim_reduction.plot_streamlines(
-    X_emb[::2], # Subsample for clearer scatter plot background
-    V_emb[::2], 
-    grid_density=20, 
-    title="Neural State Dynamics (Simulated Limit Cycle)"
+    X_emb[::2],  # Subsample for clearer scatter plot background
+    V_emb[::2],
+    grid_density=20,
+    title="Neural State Dynamics (Simulated Limit Cycle)",
 )
 
 plt.show()

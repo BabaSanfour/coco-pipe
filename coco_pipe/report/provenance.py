@@ -5,18 +5,18 @@ Provenance Capture
 Utilities for capturing reproducibility metadata (Git hash, environment, versions).
 """
 
-import sys
-import os
-import platform
-import subprocess
 import datetime
 import importlib.metadata
-from typing import Dict, Any
+import platform
+import subprocess
+import sys
+from typing import Any, Dict
+
 
 def get_git_revision_hash() -> str:
     """
     Return the current git hash if available.
-    
+
     Returns
     -------
     str
@@ -25,11 +25,11 @@ def get_git_revision_hash() -> str:
     try:
         # We need to run this from the package root ideally, or CWD
         result = subprocess.run(
-            ['git', 'rev-parse', '--short', 'HEAD'],
+            ["git", "rev-parse", "--short", "HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=1
+            timeout=1,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -37,15 +37,16 @@ def get_git_revision_hash() -> str:
         pass
     return "Unknown"
 
+
 def get_package_version(package_name: str) -> str:
     """
     Safely get package version.
-    
+
     Parameters
     ----------
     package_name : str
         Name of the pip package.
-        
+
     Returns
     -------
     str
@@ -56,15 +57,16 @@ def get_package_version(package_name: str) -> str:
     except importlib.metadata.PackageNotFoundError:
         return "Unknown"
 
+
 def get_environment_info() -> Dict[str, Any]:
     """
     Capture runtime environment information for reproducibility.
-    
+
     Returns
     -------
     Dict[str, Any]
         Dictionary containing timestamp, os, python version, git hash, etc.
-        
+
     Examples
     --------
     >>> info = get_environment_info()
@@ -77,12 +79,12 @@ def get_environment_info() -> Dict[str, Any]:
         "python_version": platform.python_version(),
         "command": " ".join(sys.argv),
         "git_hash": get_git_revision_hash(),
-        "coco_pipe_version": "0.0.1", # TODO: fetch dynamically if setup properly
+        "coco_pipe_version": "0.0.1",  # TODO: fetch dynamically if setup properly
         "versions": {
             "numpy": get_package_version("numpy"),
             "pandas": get_package_version("pandas"),
             "scipy": get_package_version("scipy"),
             "plotly": get_package_version("plotly"),
-        }
+        },
     }
     return info

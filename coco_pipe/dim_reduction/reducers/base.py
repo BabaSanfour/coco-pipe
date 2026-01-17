@@ -14,9 +14,10 @@ BaseReducer
 """
 
 import os
-import joblib
 from abc import ABC, abstractmethod
-from typing import Optional, Union, Any
+from typing import Optional, Union
+
+import joblib
 import numpy as np
 
 # Type alias for array-like objects
@@ -26,22 +27,22 @@ ArrayLike = Union[np.ndarray, list]
 class BaseReducer(ABC):
     """
     Abstract base class for all dimensionality reduction implementations.
-    
+
     This class defines the standard interface that all reducers must implement.
     It provides built-in support for model persistence (save/load) using joblib.
-    
+
     Attributes
     ----------
     model : Any
         The underlying model object (e.g., sklearn estimator, pydmd object).
         This attribute should be populated by the `fit` method.
-    
+
     """
-    
+
     def __init__(self, n_components: int = 2, **kwargs):
         """
         Initialize the reducer.
-        
+
         Parameters
         ----------
         n_components : int, default=2
@@ -92,7 +93,7 @@ class BaseReducer(ABC):
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
         Fit the model to data and return the transformed data.
-        
+
         This method usually just calls fit() then transform(), but can be overridden
         for efficiency if the underlying algorithm supports it.
 

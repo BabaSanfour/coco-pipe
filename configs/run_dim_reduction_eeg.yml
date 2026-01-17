@@ -12,10 +12,10 @@ data:
 
   # BIDS entities
   task: rest
-  
+
   # Optional: list specific subjects
   subjects: ["pd6"]
-  
+
   # BIDS session - ensure it's a string
   session: "on"
 
@@ -40,4 +40,4 @@ reducers:
 parallel: false
 
 # Where to save the overall summary JSON.
-summary_path: ./dr_summary_eeg.json 
+summary_path: ./dr_summary_eeg.json

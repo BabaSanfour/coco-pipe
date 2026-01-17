@@ -1,14 +1,16 @@
-import pytest
 import numpy as np
+import pytest
 from sklearn.model_selection import (
-    StratifiedKFold,
-    KFold,
-    LeavePGroupsOut,
-    LeaveOneGroupOut,
     GroupKFold,
+    KFold,
+    LeaveOneGroupOut,
+    LeavePGroupsOut,
+    StratifiedKFold,
 )
-from coco_pipe.ml.utils import get_cv_splitter, SimpleSplit
+
 from coco_pipe.ml.config import DEFAULT_CV
+from coco_pipe.ml.utils import SimpleSplit, get_cv_splitter
+
 
 def test_stratified_no_shuffle_behavior():
     # shuffle=False should force random_state=None
@@ -20,14 +22,14 @@ def test_stratified_no_shuffle_behavior():
     assert splitter.shuffle is False
     assert splitter.random_state is None
 
+
 def test_stratified_with_shuffle_preserves_seed():
-    splitter = get_cv_splitter(
-        "stratified", n_splits=4, shuffle=True, random_state=99
-    )
+    splitter = get_cv_splitter("stratified", n_splits=4, shuffle=True, random_state=99)
     assert isinstance(splitter, StratifiedKFold)
     assert splitter.n_splits == 4
     assert splitter.shuffle is True
     assert splitter.random_state == 99
+
 
 def test_kfold_defaults_and_override():
     # default KFold
@@ -48,10 +50,12 @@ def test_kfold_defaults_and_override():
     assert kf2.shuffle is False
     assert kf2.random_state is None
 
+
 def test_group_kfold_n_splits():
     gk = get_cv_splitter("group_kfold", n_splits=7)
     assert isinstance(gk, GroupKFold)
     assert gk.n_splits == 7
+
 
 def test_leave_p_out_requires_n_groups_and_behavior():
     with pytest.raises(ValueError):
@@ -61,9 +65,11 @@ def test_leave_p_out_requires_n_groups_and_behavior():
     # scikit-learn leaves n_groups stored privately, but repr shows the parameter
     assert "n_groups=2" in repr(lp)
 
+
 def test_leave_one_out_behavior():
     loo = get_cv_splitter("leave_one_out")
     assert isinstance(loo, LeaveOneGroupOut)
+
 
 def test_simple_split_default_vs_custom():
     # default test_size=0.2
@@ -82,6 +88,7 @@ def test_simple_split_default_vs_custom():
     train2, test2 = next(sp2.split(idx2))
     assert len(test2) == 30
     assert len(train2) == 70
+
 
 def test_unknown_strategy_raises():
     with pytest.raises(ValueError):
