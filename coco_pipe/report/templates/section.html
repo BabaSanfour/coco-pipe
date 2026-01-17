@@ -1,0 +1,13 @@
+<section class="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden mb-8">
+    <div class="bg-gray-50 px-6 py-4 border-b border-gray-100">
+        <h2 class="text-lg font-semibold text-gray-900 flex items-center">
+            {% if icon %}
+            <span class="mr-2">{{ icon | safe }}</span>
+            {% endif %}
+            {{ title }}
+        </h2>
+    </div>
+    <div class="p-6 space-y-4">
+        {{ content | safe }}
+    </div>
+</section>
