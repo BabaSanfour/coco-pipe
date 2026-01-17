@@ -41,7 +41,10 @@ def test_from_container(mock_container):
     
     assert "Test Report" in html
     assert "Data Overview" in html
+    assert "Data Overview" in html
     assert "Dimensions" in html
+    assert "Raw Data Inspector" in html
+    assert "🔍" in html
 
 @patch("coco_pipe.report.api.BIDSDataset")
 def test_from_bids(MockBIDSDataset, mock_container, tmp_path):
@@ -58,7 +61,13 @@ def test_from_bids(MockBIDSDataset, mock_container, tmp_path):
     
     html = rep.render()
     assert "BIDS Report: rest" in html
+    html = rep.render()
+    assert "BIDS Report: rest" in html
     assert "Data Overview" in html
+    
+    assert "source" in html
+    assert "BIDS" in html
+    assert f"{tmp_path}" in html
 
 def test_from_tabular(tmp_path):
     # We can actually run this one with a real file since it's easy

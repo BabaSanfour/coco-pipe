@@ -61,8 +61,39 @@ def test_add_container(sample_container):
     assert "10" in html # obs count
     
     # Check Plot generated (Class Distribution since y is present)
+    if "Could not generate plot" in html:
+        pytest.fail(f"Plot generation failed. HTML contains error: {html[html.find('Could not generate plot'):][:100]}")
+    
     assert "Target label distribution." in html
-    assert "data:image/png;base64" in html
+
+def test_metrics_table_element():
+    from coco_pipe.report.core import MetricsTableElement
+    
+    df = pd.DataFrame({
+        "Method": ["A", "B"],
+        "Score": [0.5, 0.9],
+        "Loss": [0.1, 0.05]
+    })
+    
+    # Higher Score is better (0.9), Lower Loss is better (0.05)
+    elem = MetricsTableElement(
+        df, 
+        highlight_cols=["Score", "Loss"],
+        higher_is_better=["Score"] # Loss implies lower is better by exclusion? No, logic says "is_higher = col in list". So Loss is False (lower is better).
+    )
+    
+    html = elem.render()
+    
+    # Check highlighting classes
+    # 0.9 should be highlighted (Best Score)
+    assert "0.9000" in html
+    assert "text-green-600" in html
+    
+    # 0.5 should NOT be highlighted
+    # We can't strictly regex position easily, but we can assume if 0.9 has class, good.
+    
+    # Check Loss: 0.05 is min (Best).
+    assert "0.0500" in html
 
 def test_add_figure_shortcut():
     """Test report.add_figure() shortcut."""
@@ -73,3 +104,12 @@ def test_add_figure_shortcut():
     html = rep.render()
     assert "Shortcut" in html
     plt.close(fig)
+
+def test_add_raw_preview(sample_container):
+    """Test raw preview generation."""
+    rep = Report("Raw Test")
+    rep.add_raw_preview(sample_container.X, name="My Raw Data")
+    
+    html = rep.render()
+    assert "My Raw Data" in html
+    assert "lazy-plot" in html

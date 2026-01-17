@@ -50,3 +50,19 @@ def test_add_reduction_logic():
     # Needs to find multiple plots (Main + Loss + Scree)
     # We count occurrences of 'lazy-plot'
     assert html.count("lazy-plot") >= 3
+
+def test_plot_radar():
+    from coco_pipe.viz.plotly_utils import plot_radar_comparison
+    import pandas as pd
+    
+    df = pd.DataFrame({
+        "Method": ["PCA", "UMAP"],
+        "Trustworthiness": [0.8, 0.9],
+        "Continuity": [0.7, 0.95],
+        "LCMC": [0.5, 0.2]
+    }).set_index("Method")
+    
+    fig = plot_radar_comparison(df, normalize=True)
+    assert isinstance(fig, go.Figure)
+    # Check trace count (should be 2 methods)
+    assert len(fig.data) == 2
