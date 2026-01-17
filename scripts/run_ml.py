@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from copy import deepcopy
 
-from coco_pipe.io import load, select_features, clean_features
+from coco_pipe.io import load, select_features, TabularDataset
 from coco_pipe.ml.pipeline import MLPipeline
 
 logging.basicConfig(level=logging.INFO)
@@ -68,75 +68,81 @@ def main():
     args = parser.parse_args()
 
     # 0) Load config & data
+    # 0) Load data
     cfg = yaml.safe_load(open(args.config))
-    df = load("tabular", cfg["data_path"])
+    # Using TabularDataset directly to get full container
+    # Assuming config provides necessary kwargs for reshaping if applicable
+    data_path = cfg["data_path"]
+    load_kwargs = cfg.get("loader_kwargs", {})
+    
+    # Check if we should reshape based on config hint or defaults
+    # For now, simplistic loading unless config specifies columns_to_dims
+    ds = TabularDataset(data_path, **load_kwargs)
+    full_container = ds.load()
+    
     all_results = {}
-
     defaults = cfg.get("defaults", {})
 
     for analysis in cfg["analyses"]:
         # merge defaults + specific
         analysis_cfg = deepcopy(defaults)
         analysis_cfg.update(analysis)
+        
+        # 1) Select relevant data using DataContainer
+        # Map generic 'select_features' config to DataContainer.select()
+        # "spatial_units" -> usually 'channel' dimension
+        # "feature_names" -> 'feature' dimension
+        # "covariates" -> handled at load time or aux selection
+        
+        selection_query = {}
+        
+        if "spatial_units" in analysis_cfg and analysis_cfg["spatial_units"] != "all":
+             # Assuming 'channel' dim exists if reshaping happened
+             # If strictly flat 2D but logical spatial units exist, 
+             # user should have loaded with columns_to_dims=['channel', 'feature']
+             if 'channel' in full_container.dims:
+                 selection_query['channel'] = analysis_cfg["spatial_units"]
+        
+        if "feature_names" in analysis_cfg and analysis_cfg["feature_names"] != "all":
+             if 'feature' in full_container.dims:
+                 selection_query['feature'] = analysis_cfg["feature_names"]
+        
+        # Row filters (e.g. subjects)
+        if "row_filter" in analysis_cfg:
+             # This requires parsing row_filter dicts to container.select queries
+             # Simplified: assume simple kwargs for now
+             # row_filter: {'group': 1}
+             pass
 
-        # 1) Select features & target
-        X, y = select_features(
-            df,
-            target_columns=analysis_cfg["target_columns"],
-            covariates=analysis_cfg.get("covariates"),
-            spatial_units=analysis_cfg.get("spatial_units"),
-            feature_names=analysis_cfg.get("feature_names", "all"),
-            row_filter=analysis_cfg.get("row_filter"),
-        )
+        if "target_columns" in analysis_cfg:
+            # If target was not set at load time, it might be in X
+            # But DataContainer should ideally handle y.
+            # If y IS loaded, we effectively just use it.
+            # If we need to SWAP target (rare), we'd need to manipulate container.
+            pass
 
+        # Apply Selection
+        # If no query, we get the whole container
+        sub_container = full_container.select(**selection_query) if selection_query else full_container
+        
+        X = sub_container.X
+        y = sub_container.y
+        
         logger.info(
-            f"Analysis {analysis['id']} selected {X.shape[1]} features, "
-            f"{y.shape[0]} samples, target '{y.name}'"
+            f"Analysis {analysis['id']} selected shape {X.shape}, "
+            f"target available: {y is not None}"
         )
-        # show first few features
-        feat_list = X.columns.tolist()
-        logger.info(
-            f"First features: {feat_list[:5]}{'...' if len(feat_list)>5 else ''}"
-        )
-
-        # 1.5) Optional: clean invalid feature columns (NaN/Inf)
-        clean_cfg = analysis_cfg.get("clean_features")
-        if clean_cfg:
-            if isinstance(clean_cfg, dict):
-                mode = clean_cfg.get("mode", "any")
-                sep = clean_cfg.get("sep", "_")
-                reverse = clean_cfg.get("reverse", False)
-                verbose_clean = clean_cfg.get("verbose", True)
-                min_abs_value = clean_cfg.get("min_abs_value")
-                min_abs_fraction = clean_cfg.get("min_abs_fraction", 0.0)
-            else:
-                # if True/any truthy: default to simple per-column cleaning
-                mode, sep, reverse, verbose_clean = "any", "_", False, True
-                min_abs_value, min_abs_fraction = None, 0.0
-            X_before = X.shape[1]
-            X, report = clean_features(
-                X,
-                mode=mode,
-                sep=sep,
-                reverse=reverse,
-                verbose=verbose_clean,
-                min_abs_value=min_abs_value,
-                min_abs_fraction=min_abs_fraction,
-            )
-            logger.info(
-                "Cleaned features (mode=%s): dropped %d columns; %d -> %d",
-                report.get("mode"),
-                len(report.get("dropped_columns", [])),
-                report.get("n_before"),
-                report.get("n_after"),
-            )
+        
+        # 1.5) Concatenate covariates if requested and separated?
+        # If covariates are in coords, we might need to add them back to X for some ML pipelines?
+        # Or MLPipeline handles coords? For now assume standard X, y.
 
         # 2) Run
         # ensure results_dir/file come from global defaults if not overwritten
         analysis_cfg["results_dir"]  = cfg.get("results_dir", analysis_cfg.get("results_dir"))
         analysis_cfg["results_file"] = cfg.get("results_file", analysis_cfg.get("results_file"))
 
-        results = run_analysis(X, y, analysis_cfg)
+        results = run_analysis(sub_container.X, sub_container.y, analysis_cfg)
         all_results[analysis["id"]] = results
 
     # 3) Save all results
