@@ -42,8 +42,8 @@ dependencies = [
     "dask[array]",
     "dask-ml",
     "joblib",
-    "annoy @ git+https://github.com/BabaSanfour/annoy.git",
-    "pacmap @ git+https://github.com/BabaSanfour/PaCMAP.git",
+    "annoy>=1.17.3",
+    "pacmap",
     "ivis @ git+https://github.com/beringresearch/ivis.git",
     "plotly",
 ]

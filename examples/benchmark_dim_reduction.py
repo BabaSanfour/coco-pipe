@@ -17,7 +17,7 @@ from sklearn.datasets import load_digits
 from sklearn.preprocessing import StandardScaler
 
 from coco_pipe.dim_reduction import DimReduction
-from coco_pipe.dim_reduction.benchmark import continuity, lcmc, trustworthiness
+from coco_pipe.dim_reduction.evaluation.metrics import continuity, lcmc, trustworthiness, compute_coranking_matrix
 from coco_pipe.viz.dim_reduction import plot_embedding, plot_shepard_diagram
 
 
@@ -45,13 +45,14 @@ def main():
         print(f"\nRunning {name}...")
 
         # Initialize and Fit
-        reducer = DimReducer(method=name, **kwargs)
+        reducer = DimReduction(method=name, **kwargs)
         X_emb = reducer.fit_transform(X)
 
         # Compute Metrics
-        t_score = trustworthiness(X, X_emb, n_neighbors=12)
-        c_score = continuity(X, X_emb, n_neighbors=12)
-        l_score = lcmc(X, X_emb, n_neighbors=12)
+        Q = compute_coranking_matrix(X, X_emb)
+        t_score = trustworthiness(Q, k=12)
+        c_score = continuity(Q, k=12)
+        l_score = lcmc(Q, k=12)
 
         print(f"  Trustworthiness: {t_score:.4f}")
         print(f"  Continuity:      {c_score:.4f}")

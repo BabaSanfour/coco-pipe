@@ -4,13 +4,7 @@ Data Structures Demo
 
 Demonstrates the DataContainer and other core IO structures.
 """
-import os
-import sys
-
 import numpy as np
-
-# Ensure we can import coco_pipe
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from coco_pipe.io.structures import DataContainer
 
@@ -101,20 +95,6 @@ try:
 except Exception as e:
     print(f"Epoch selection failed: {e}")
 
-
-# Test ReshapeStrategy: TimeStack
-print("\n--- TimeStack Strategy Test ---")
-from coco_pipe.preprocessing.reshaping import TimeStack
-
-try:
-    ts_strategy = TimeStack(time_dim="time", obs_dim="obs")
-    # Use container_eeg (16, 3, 10). Result should be (160, 3).
-    stacked = ts_strategy.apply(container_eeg)
-    print(f"TimeStacked: {stacked.shape} dims={stacked.dims}")
-    if stacked.ids is not None:
-        print(f"Expanded IDs (First 12): {stacked.ids[:12]}")
-except Exception as e:
-    print(f"TimeStack failed: {e}")
 
 # Test Enhanced Selection
 print("\n--- Enhanced Selection Test ---")

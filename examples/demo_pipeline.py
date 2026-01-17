@@ -54,23 +54,29 @@ def main():
 
     # 1. Load Data
     logger.info("1. Loading Data...")
-    ds = TabularDataset(data_path, target_col="label")
+    ds = TabularDataset(data_path, target_col="label", sep=",")
     container = ds.load()
 
     # 2. Preprocessing (simulate via manual scaling)
     logger.info("2. Preprocessing...")
+    # Ensure X is numeric
+    if isinstance(container.X, pd.DataFrame):
+        container.X = container.X.select_dtypes(include=[np.number])
+    elif hasattr(container.X, "dtype") and container.X.dtype == object:
+         container.X = pd.DataFrame(container.X).select_dtypes(include=[np.number]).values
+
     container.X = (container.X - container.X.mean(axis=0)) / container.X.std(axis=0)
 
     # 3. Dimensionality Reduction
     logger.info("3. Running Reductions...")
 
     # PCA
-    pca = DimReducer(method="PCA", n_components=2)
-    pca.fit(container.X)
+    pca = DimReduction(method="PCA", n_components=2)
+    pca.fit_transform(container.X)
 
     # UMAP
-    umap = DimReducer(method="UMAP", n_components=2, n_neighbors=15)
-    umap.fit(container.X)
+    umap = DimReduction(method="UMAP", n_components=2, n_neighbors=15)
+    umap.fit_transform(container.X)
 
     # 4. Generate Comparative Report
     logger.info("4. Generating Report...")
