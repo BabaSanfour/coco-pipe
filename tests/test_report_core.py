@@ -45,7 +45,7 @@ def test_report_creation_and_save(tmp_report_file):
     rep.save(str(tmp_report_file))
 
     assert tmp_report_file.exists()
-    content = tmp_report_file.read_text()
+    content = tmp_report_file.read_text(encoding="utf-8")
 
     # Verify Content
     assert "<!DOCTYPE html>" in content

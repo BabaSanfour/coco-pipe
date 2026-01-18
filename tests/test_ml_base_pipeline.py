@@ -161,13 +161,13 @@ def test_cross_val_requires_groups_for_group_kfold():
 
 
 def test_baseline_evaluation_errors_and_params():
-    X = np.random.randn(10, 2)
-    y = np.random.randint(0, 2, 10)
+    X = np.vstack([np.random.randn(5, 2), np.random.randn(5, 2) + 2])
+    y = np.array([0] * 5 + [1] * 5)
     pipe = DummyPipeline(
         X,
         y,
         metric_funcs=CLASSIFICATION_METRICS,
-        model_configs={"clf": {"estimator": LogisticRegression(), "params": {"C": 1}}},
+        model_configs={"clf": {"estimator": LogisticRegression(multi_class="ovr"), "params": {"C": 1}}},
         default_metrics=["accuracy"],
         cv_kwargs={
             "cv_strategy": "stratified",
@@ -285,7 +285,7 @@ def _make_pipeline():
     y = np.array([0] * 5 + [1] * 5)
     model_configs = {
         "dummy": {
-            "estimator": LogisticRegression(solver="liblinear"),
+            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
             "params": {"C": [0.1, 1.0]},
         }
     }
@@ -432,7 +432,7 @@ def test_hp_search_fs_end_to_end():
 
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(solver="liblinear"),
+            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
             "params": {"C": [0.1, 1.0, 10.0], "penalty": ["l2", "l1"]},
         }
     }
@@ -481,7 +481,7 @@ def test_execute_method():
 
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(solver="liblinear"),
+            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
             "default_params": {"C": 0.1, "penalty": "l2"},
             "hp_search_params": {"C": [0.1, 1.0], "penalty": ["l2", "l1"]},
         }
@@ -619,7 +619,7 @@ def test_reset_and_list_models():
     y = np.random.randint(0, 2, 10)
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(C=1.0, solver="liblinear"),
+            "estimator": LogisticRegression(C=1.0, solver="liblinear", multi_class="ovr"),
             "params": {"C": [1, 2]},
         },
         "rf": {"estimator": RandomForestClassifier(n_estimators=5), "params": {}},
