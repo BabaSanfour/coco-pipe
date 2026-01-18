@@ -77,7 +77,7 @@ def test_feature_names_and_importances():
     y = np.concatenate([np.zeros(10), np.ones(10)])
     np.random.shuffle(y)
 
-    lr = LogisticRegression(solver="liblinear").fit(X, y)
+    lr = LogisticRegression(solver="saga").fit(X, y)
     imp = DummyPipeline._extract_feature_importances(lr)
     assert isinstance(imp, np.ndarray) and imp.shape == (3,)
 
@@ -167,7 +167,7 @@ def test_baseline_evaluation_errors_and_params():
         X,
         y,
         metric_funcs=CLASSIFICATION_METRICS,
-        model_configs={"clf": {"estimator": LogisticRegression(multi_class="ovr"), "params": {"C": 1}}},
+        model_configs={"clf": {"estimator": LogisticRegression(), "params": {"C": 1}}},
         default_metrics=["accuracy"],
         cv_kwargs={
             "cv_strategy": "stratified",
@@ -285,7 +285,7 @@ def _make_pipeline():
     y = np.array([0] * 5 + [1] * 5)
     model_configs = {
         "dummy": {
-            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
+            "estimator": LogisticRegression(solver="saga"),
             "params": {"C": [0.1, 1.0]},
         }
     }
@@ -432,7 +432,7 @@ def test_hp_search_fs_end_to_end():
 
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
+            "estimator": LogisticRegression(solver="saga"),
             "params": {"C": [0.1, 1.0, 10.0], "penalty": ["l2", "l1"]},
         }
     }
@@ -481,7 +481,7 @@ def test_execute_method():
 
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(solver="liblinear", multi_class="ovr"),
+            "estimator": LogisticRegression(solver="saga"),
             "default_params": {"C": 0.1, "penalty": "l2"},
             "hp_search_params": {"C": [0.1, 1.0], "penalty": ["l2", "l1"]},
         }
@@ -619,7 +619,7 @@ def test_reset_and_list_models():
     y = np.random.randint(0, 2, 10)
     model_configs = {
         "lr": {
-            "estimator": LogisticRegression(C=1.0, solver="liblinear", multi_class="ovr"),
+            "estimator": LogisticRegression(C=1.0, solver="saga"),
             "params": {"C": [1, 2]},
         },
         "rf": {"estimator": RandomForestClassifier(n_estimators=5), "params": {}},
