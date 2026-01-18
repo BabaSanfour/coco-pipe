@@ -322,7 +322,17 @@
                     const activeLink = document.querySelector(`.toc-link[href="#${id}"]`);
                     if (activeLink) {
                         activeLink.classList.add('active', 'bg-brand-50', 'text-brand-600', 'border-r-4', 'border-brand-500', 'dark:bg-brand-900/20', 'dark:text-brand-100');
-                        activeLink.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        
+                        const tocList = document.getElementById('toc-list');
+                        if (tocList) {
+                            const linkTop = activeLink.offsetTop;
+                            const listHeight = tocList.clientHeight;
+                            const listScroll = tocList.scrollTop;
+                            
+                            if (linkTop < listScroll || linkTop > (listScroll + listHeight)) {
+                                tocList.scrollTo({ top: linkTop - (listHeight / 2), behavior: 'smooth' });
+                            }
+                        }
                     }
                 }
             });
@@ -344,9 +354,15 @@
 
                     // A. Try Global Store (Phase D)
                     const dataId = target.getAttribute('data-id');
-                    if (dataId && REPORT_DATA[dataId]) {
-                        figureData = REPORT_DATA[dataId];
+                    
+                    if (dataId) {
+                        if (REPORT_DATA && REPORT_DATA[dataId]) {
+                            figureData = REPORT_DATA[dataId];
+                        } else {
+                            console.warn(`[Report] Data ID ${dataId} not found in REPORT_DATA. Keys: ${Object.keys(REPORT_DATA).length}`);
+                        }
                     }
+                    
                     // B. Try Inline JSON (Legacy/Fallback)
                     else if (target.hasAttribute('data-figure')) {
                         figureData = JSON.parse(target.getAttribute('data-figure'));
@@ -359,9 +375,12 @@
                         // Don't remove data-id, might need for debug?
                         obs.unobserve(target);
                     } else {
-                        console.warn("[Report] No data found for plot:", dataId || "inline");
-                        target.innerHTML = `<div class="text-red-500 text-xs">Error: Plot data missing (${dataId})</div>`;
-                        target.classList.remove('animate-pulse');
+                        if (REPORT_DATA && Object.keys(REPORT_DATA).length > 0) {
+                             console.warn("[Report] No data found for plot:", dataId || "inline");
+                             target.innerHTML = `<div class="text-red-500 text-xs">Error: Plot data missing (${dataId})</div>`;
+                             target.classList.remove('animate-pulse');
+                             obs.unobserve(target);
+                        }
                     }
                 }
             });
