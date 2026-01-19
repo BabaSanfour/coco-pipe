@@ -68,6 +68,12 @@ def plot_embedding_interactive(
     color_col = "Label" if labels is not None else None
 
     # Use WebGL traces (scatter_gl) for performance on 2D
+    # Smart Rendering: Use WebGL only for large datasets to improve compatibility
+    # SVG is more robust for export and standard viewing for <15k points.
+    render_mode = "svg"
+    if df.shape[0] > 15000:
+        render_mode = "webgl"
+
     if dimensions == 3 and "z" in df.columns:
         fig = px.scatter_3d(
             df,
@@ -88,7 +94,7 @@ def plot_embedding_interactive(
             color=color_col,
             title=title,
             hover_data=hover_data,
-            render_mode="webgl",  # Explicitly use WebGL
+            render_mode=render_mode,
             opacity=0.7,
         )
         fig.update_traces(marker=dict(size=5))

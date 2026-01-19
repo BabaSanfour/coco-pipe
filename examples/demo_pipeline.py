@@ -63,7 +63,7 @@ def main():
     if isinstance(container.X, pd.DataFrame):
         container.X = container.X.select_dtypes(include=[np.number])
     elif hasattr(container.X, "dtype") and container.X.dtype == object:
-         container.X = pd.DataFrame(container.X).select_dtypes(include=[np.number]).values
+        container.X = pd.DataFrame(container.X).select_dtypes(include=[np.number]).values
 
     container.X = (container.X - container.X.mean(axis=0)) / container.X.std(axis=0)
 

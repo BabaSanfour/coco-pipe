@@ -172,8 +172,38 @@ class PlotlyElement(Element):
         if self.registry_id is None:
             self.registry_id = str(uuid.uuid4())
 
-        fig_dict = self.figure.to_dict()
+        json_str = self.figure.to_json()
+        fig_dict = json.loads(json_str)
+
+        fig_dict = self._force_standard_json(fig_dict)
+        
         registry[self.registry_id] = fig_dict
+
+    def _force_standard_json(self, obj: Any) -> Any:
+        """Recursively convert Plotly binary-encoded arrays to standard lists."""
+        if isinstance(obj, dict):
+            # Check for Plotly binary format
+            if 'dtype' in obj and 'bdata' in obj and len(obj) <= 3:
+                # Identify keys like 'shape'? Usually just dtype/bdata.
+                # Decode!
+                try:
+                    import base64
+                    dtype = obj['dtype']
+                    bdata = obj['bdata']
+                    
+                    # Map dtype string to numpy type
+                    # common: 'f4' (float32), 'f8' (float64), 'i4' (int32), 'u4'...
+                    decoded = base64.b64decode(bdata)
+                    arr = np.frombuffer(decoded, dtype=dtype)
+                    return arr.tolist()
+                except Exception as e:
+                    print(f"[Report] Warning: Failed to decode binary data: {e}")
+                    return obj
+            
+            return {k: self._force_standard_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._force_standard_json(x) for x in obj]
+        return obj
 
     def render(self) -> str:
         # Instead of dumping JSON, we reference the ID
