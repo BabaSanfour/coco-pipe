@@ -171,7 +171,7 @@ def read_bids_entry(
         # Load Raw (default)
         raw = read_raw_bids(bids_path, verbose=False)
         raw.load_data()
-        raw.pick_types(eeg=True, meg=True, eog=False, check=False)
+        raw.pick_types(eeg=True, meg=True, eog=False)
 
         if mode == "continuous":
             data_raw = raw.get_data()  # (C, T)
