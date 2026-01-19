@@ -87,6 +87,9 @@ run-coco-pipe = "scripts.run_ml:main"
 where = ["."]
 include = ["coco_pipe*", "scripts*"]
 
+[tool.setuptools.package-data]
+"coco_pipe.report.templates" = ["*.html"]
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q"
