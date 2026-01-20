@@ -21,6 +21,8 @@ import pandas as pd
 from coco_pipe.viz.plotly_utils import (
     plot_embedding_interactive,
     plot_loss_history_interactive,
+    plot_metric_details,
+    plot_radar_comparison,
     plot_raw_preview,
     plot_scree_interactive,
 )
@@ -688,9 +690,16 @@ class Report(ContainerElement):
                 dimensions = 3
             else:
                 dimensions = dims
+            
+            meta = getattr(reducer, "metadata_", None)
+            labels = getattr(reducer, "labels_", None)
 
             fig = plot_embedding_interactive(
-                embedding=emb, title=f"{name} Embedding", dimensions=dimensions
+                embedding=emb, 
+                labels=labels,
+                meta=meta,
+                title=f"{name} Embedding", 
+                dimensions=dimensions
             )
             sec.add_element(PlotlyElement(fig))
 
@@ -751,6 +760,42 @@ class Report(ContainerElement):
 
         fig = plot_raw_preview(X, names=names, title=name)
         sec.add_element(PlotlyElement(fig, height="450px"))
+
+        self.add_section(sec)
+        return self
+
+    def add_comparison(
+        self, 
+        metrics_df: pd.DataFrame, 
+        name: str = "Method Comparison"
+    ) -> "Report":
+        """
+        Add a comparison section for multiple reduction methods (Radar + Bar Chart).
+
+        Parameters
+        ----------
+        metrics_df : pd.DataFrame
+            DataFrame with Index=Method, Columns=Metrics.
+        name : str
+            Section Title.
+        """
+        sec = Section(title=name, icon="📊")
+
+        # 1. Metrics Table (Best values highlighted)
+        sec.add_element(MetricsTableElement(metrics_df, title="Quality Metrics"))
+
+        # 2. Side-by-Side Visuals (Grid)
+        
+        # Radar Chart
+        fig_radar = plot_radar_comparison(metrics_df, normalize=True)
+        elem_radar = PlotlyElement(fig_radar, height="400px")
+
+        # Metric Details
+        fig_bars = plot_metric_details(metrics_df)
+        elem_bars = PlotlyElement(fig_bars, height="400px")
+
+        sec.add_element(elem_radar)
+        sec.add_element(elem_bars)
 
         self.add_section(sec)
         return self

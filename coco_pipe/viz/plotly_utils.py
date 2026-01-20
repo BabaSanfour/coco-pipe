@@ -21,16 +21,17 @@ def plot_embedding_interactive(
     dimensions: int = 2,
 ) -> go.Figure:
     """
-    Create an interactive 2D or 3D scatter plot of the embedding.
+    Create an interactive 2D or 3D scatter plot of the embedding using Plotly.
+    Supports a dropdown menu to switch coloring if `meta` contains valid options.
 
     Parameters
     ----------
     embedding : np.ndarray
         (N_samples, n_components) array.
     labels : np.ndarray, optional
-        Labels for coloring points.
+        Labels for default coloring points.
     meta : dict, optional
-        Additional metadata for tooltips.
+        Additional metadata for tooltips and optional coloring options.
     title : str
         Plot title.
     dimensions : int
@@ -49,57 +50,133 @@ def plot_embedding_interactive(
     if dimensions == 3 and embedding.shape[1] > 2:
         df_dict["z"] = embedding[:, 2]
 
+    # Collect Potential Color Columns
+    color_options = {}
+
     if labels is not None:
-        df_dict["Label"] = labels
+        df_dict["Default Label"] = labels
+        # Heuristic: numeric or few discrete classes?
         # Convert to string if we want discrete colors for few classes
         if len(np.unique(labels)) < 20 and not np.issubdtype(labels.dtype, np.number):
-            df_dict["Label"] = labels.astype(str)
+            df_dict["Default Label"] = labels.astype(str)
+        color_options["Default Label"] = df_dict["Default Label"]
 
-    # Add metadata
     if meta:
         for k, v in meta.items():
             if len(v) == n_points:
                 df_dict[k] = v
+                try:
+                    arr = np.array(v)
+                    if arr.ndim == 1:
+                        color_options[k] = v
+                except Exception:
+                    pass
 
     df = pd.DataFrame(df_dict)
-
     hover_data = list(df_dict.keys())
 
-    color_col = "Label" if labels is not None else None
+    # Helper to encode categorical
+    def _encode_color(vals):
+        if pd.api.types.is_numeric_dtype(vals):
+            # Fill NaNs?
+            return vals, True, None
+        else:
+            # Map to integers
+            codes, uniques = pd.factorize(vals)
+            return codes, False, uniques 
 
-    # Use WebGL traces (scatter_gl) for performance on 2D
-    # Smart Rendering: Use WebGL only for large datasets to improve compatibility
-    # SVG is more robust for export and standard viewing for <15k points.
+    # Decision: Use WebGL for performance if large
     render_mode = "svg"
     if df.shape[0] > 15000:
         render_mode = "webgl"
 
+    # Initial Color
+    default_color_col = "Default Label" if "Default Label" in df.columns else None
+    
+    # If no labels but we have meta options, pick the first one
+    if default_color_col is None and color_options:
+        default_color_col = list(color_options.keys())[0]
+
+    # Create Base Figure
+    fig = go.Figure()
+
+    # Base Trace
+    is_numeric = False
+    color_vals = None
+    colorscale_title = ""
+
+    if default_color_col:
+        raw_vals = df[default_color_col] 
+        color_vals, is_numeric, _ = _encode_color(raw_vals)
+        colorscale_title = default_color_col
+
+    marker_dict = dict(
+        size=3 if dimensions == 3 else 5,
+        opacity=0.7,
+        color=color_vals,
+        showscale=True,
+        colorscale='Viridis',
+        colorbar=dict(title=colorscale_title)
+    )
+
+    # Hover text construction
+    custom_data = df[hover_data].values
+    hovertemplate = "<br>".join([f"<b>{col}:</b> %{{customdata[{i}]}}" for i, col in enumerate(hover_data)])
+
     if dimensions == 3 and "z" in df.columns:
-        fig = px.scatter_3d(
-            df,
-            x="x",
-            y="y",
-            z="z",
-            color=color_col,
-            title=title,
-            hover_data=hover_data,
-            opacity=0.7,
+        trace = go.Scatter3d(
+            x=df["x"], y=df["y"], z=df["z"],
+            mode="markers",
+            marker=marker_dict,
+            customdata=custom_data,
+            hovertemplate=hovertemplate,
+            name="Embedding"
         )
-        fig.update_traces(marker=dict(size=3))
     else:
-        fig = px.scatter(
-            df,
-            x="x",
-            y="y",
-            color=color_col,
-            title=title,
-            hover_data=hover_data,
-            render_mode=render_mode,
-            opacity=0.7,
+        ScatterClass = go.Scattergl if render_mode == "webgl" else go.Scatter
+        trace = ScatterClass(
+            x=df["x"], y=df["y"],
+            mode="markers",
+            marker=marker_dict,
+            customdata=custom_data,
+            hovertemplate=hovertemplate,
+            name="Embedding"
         )
-        fig.update_traces(marker=dict(size=5))
+
+    fig.add_trace(trace)
+
+    # Add Dropdowns (Update Menus)
+    if len(color_options) > 1:
+        buttons = []
+        for col_name in color_options.keys():
+            raw_vals = df[col_name]
+            encoded_vals, is_num, _ = _encode_color(raw_vals)
+            
+            # Construct update args
+            args = [{
+                "marker.color": [encoded_vals],
+                "marker.colorbar.title": col_name
+            }]
+            
+            buttons.append(dict(label=col_name, method="restyle", args=args))
+
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    buttons=buttons,
+                    direction="down",
+                    pad={"r": 10, "t": 10},
+                    showactive=True,
+                    x=0.0,
+                    xanchor="left",
+                    y=1.15,
+                    yanchor="top"
+                ),
+            ]
+        )
 
     fig.update_layout(
+        title=title,
         margin=dict(l=0, r=0, b=0, t=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
@@ -119,6 +196,48 @@ def plot_loss_history_interactive(
         yaxis_title="Loss",
         margin=dict(l=40, r=40, b=40, t=40),
         height=300,
+    )
+    return fig
+
+
+def plot_metric_details(metrics_df: pd.DataFrame, title: str = "Metric Details") -> go.Figure:
+    """
+    Create a grouped bar chart comparing methods across detailed quality metrics.
+
+    Parameters
+    ----------
+    metrics_df : pd.DataFrame
+        Index = Method Names, Columns = Metrics (Trustworthiness, Continuity, etc.)
+
+    Returns
+    -------
+    go.Figure
+    """
+    fig = go.Figure()
+    
+    # Filter numeric
+    df = metrics_df.select_dtypes(include=[np.number])
+
+    methods = df.index.tolist()
+    metrics = df.columns.tolist()
+
+    for method in methods:
+        fig.add_trace(go.Bar(
+            name=method,
+            x=metrics,
+            y=df.loc[method],
+            text=df.loc[method].apply(lambda x: f"{x:.2f}"),
+            textposition='auto',
+        ))
+
+    fig.update_layout(
+        title=title,
+        barmode='group',
+        xaxis_title="Metric",
+        yaxis_title="Score",
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     return fig
 
