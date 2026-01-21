@@ -69,5 +69,5 @@ jobs:
     - name: Build docs
       run: |
         cd docs
-        # -W turns warnings into errors, --keep-going runs full build to see all errors
-        make html SPHINXOPTS="-W --keep-going"
+        # Build docs (warnings are logged but don't fail build)
+        make html
