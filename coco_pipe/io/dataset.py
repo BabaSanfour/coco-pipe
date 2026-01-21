@@ -3,6 +3,7 @@ coco_pipe/io/dataset.py
 -----------------------
 Specialized Dataset classes that produce standardized DataContainer objects.
 """
+
 from __future__ import annotations
 
 import logging
@@ -135,8 +136,10 @@ class TabularDataset(BaseDataset):
         non_numeric = df.select_dtypes(include=["object", "string", "category"])
         if not non_numeric.empty and self.target_col not in non_numeric.columns:
             logger.warning(
-                f"Tabular data contains non-numeric columns: {non_numeric.columns.tolist()}. "
-                "These might cause issues during processing if not intended as metadata."
+                f"Tabular data contains non-numeric columns: "
+                f"{non_numeric.columns.tolist()}. "
+                "These might cause issues during processing if not intended as "
+                "metadata."
             )
 
         if self.target_col and self.target_col in df.columns:
@@ -189,7 +192,11 @@ class TabularDataset(BaseDataset):
                     failed_cols.append(col)
 
             if failed_cols:
-                msg = f"{len(failed_cols)} columns failed reshaping pattern (sep='{self.col_sep}', expected {len(self.columns_to_dims)} parts). Examples: {failed_cols[:5]}"
+                msg = (
+                    f"{len(failed_cols)} columns failed reshaping pattern "
+                    f"(sep='{self.col_sep}', expected {len(self.columns_to_dims)} "
+                    f"parts). Examples: {failed_cols[:5]}"
+                )
                 if self.strict_reshaping:
                     logger.error(msg)
                     # raise ValueError(msg) # Optional: strict mode could raise
@@ -197,7 +204,8 @@ class TabularDataset(BaseDataset):
 
             if not parsed_cols:
                 raise ValueError(
-                    f"No columns matched the reshaping pattern with sep='{self.col_sep}'."
+                    f"No columns matched the reshaping pattern with sep="
+                    f"'{self.col_sep}'."
                 )
 
             # Create MultiIndex to sort and structure
@@ -222,7 +230,9 @@ class TabularDataset(BaseDataset):
 
             if X_sorted.shape[1] != expected_total:
                 raise ValueError(
-                    f"Reshaping failed. Found {X_sorted.shape[1]} columns, expected full product {expected_total} ({dim_sizes}). Missing combinations?"
+                    f"Reshaping failed. Found {X_sorted.shape[1]} columns, expected "
+                    f"full product {expected_total} ({dim_sizes}). Missing "
+                    f"combinations?"
                 )
 
             # Reshape: (N_obs, Dim1, Dim2, ...)
@@ -254,7 +264,8 @@ class TabularDataset(BaseDataset):
         min_abs_fraction: float = 0.0,
     ) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
         """
-        Remove invalid feature columns containing NaN, ±Inf, and optionally very small values.
+        Remove invalid feature columns containing NaN, ±Inf, and optionally very
+        small values.
         """
         if X.shape[1] == 0:
             return X.copy(), {
@@ -341,8 +352,8 @@ class EmbeddingDataset(BaseDataset):
     pattern : str, default='*.pkl'
         Glob pattern to match files (e.g., "*.npy", "sub-*_emb.pkl").
     dims : tuple of str, default=('obs', 'feature')
-        Dimension labels for the data arrays (excluding the observation dimension if implicit).
-        Typically ('feature',) or ('layer', 'feature').
+        Dimension labels for the data arrays (excluding the observation dimension if
+        implicit). Typically ('feature',) or ('layer', 'feature').
     coords : dict, optional
         Dictionary of coordinates for dimensions. E.g., {'layer': ['L1', 'L2']}.
     reader : callable, optional
@@ -358,7 +369,8 @@ class EmbeddingDataset(BaseDataset):
     processing : str, optional
         (Legacy BIDS) Processing label.
     subjects : int or list, optional
-        If int, loads first N subjects. If list, loads specific subjects (matched by `id_fn`).
+        If int, loads first N subjects. If list, loads specific subjects
+        (matched by `id_fn`).
 
     Examples
     --------
@@ -445,7 +457,8 @@ class EmbeddingDataset(BaseDataset):
                             ids_list.append(f"{sid}_{seg_k}")
                         else:
                             logger.warning(
-                                f"Shape mismatch in {fpath.name} key {seg_k}: {arr.shape} vs dims {self.dims}"
+                                f"Shape mismatch in {fpath.name} key {seg_k}: "
+                                f"{arr.shape} vs dims {self.dims}"
                             )
 
                 else:
@@ -460,7 +473,8 @@ class EmbeddingDataset(BaseDataset):
                         ids_list.append(sid)
                     else:
                         logger.warning(
-                            f"Shape mismatch in {fpath.name}: {arr.shape} vs dims {self.dims}"
+                            f"Shape mismatch in {fpath.name}: {arr.shape} vs dims "
+                            f"{self.dims}"
                         )
 
             except Exception as e:
@@ -523,9 +537,11 @@ class BIDSDataset(BaseDataset):
     window_length : float, optional
         Length of window in seconds for 'epochs' mode.
     stride : float, optional
-        Stride between windows in seconds. If None, defaults to `window_length` (no overlap).
+        Stride between windows in seconds. If None, defaults to `window_length`
+        (no overlap).
     subjects : str or List[str], optional
-        Specific subject IDs to load (without 'sub-' prefix). If None, detects all subjects.
+        Specific subject IDs to load (without 'sub-' prefix). If None, detects all
+        subjects.
 
     Examples
     --------
@@ -660,7 +676,8 @@ class BIDSDataset(BaseDataset):
                                 "This may cause concatenation failure."
                             )
                         elif not np.allclose(current_times, times, atol=1e-5):
-                            # Often simple jitter in start times, but important if rigorous
+                            # Often simple jitter in start times, but important if
+                            # rigorous
                             pass
 
                     # --- APPEND DATA ---

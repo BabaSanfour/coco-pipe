@@ -24,11 +24,12 @@ References
 .. [1] Maaten, L. van der, & Hinton, G. (2008). Visualizing data using t-SNE. JMLR.
 .. [2] McInnes, L., Healy, J., & Melville, J. (2018). UMAP: Uniform Manifold
        Approximation and Projection for Dimension Reduction. arXiv.
-.. [3] Wang, Y., et al. (2021). PaCMAP: Pairwise Controlled Manifold Approximation. JMLR.
+.. [3] Wang, Y., et al. (2021). PaCMAP: Pairwise Controlled Manifold
+       Approximation. JMLR.
 .. [4] Amid, E., & Warmuth, M. K. (2019). TriMap: Large-scale Dimensionality Reduction
        Using Triplets. arXiv.
-.. [5] Moon, K. R., et al. (2019). Visualizing structure and transitions in high-dimensional
-       biological data. Nature Biotechnology.
+.. [5] Moon, K. R., et al. (2019). Visualizing structure and transitions in
+       high-dimensional biological data. Nature Biotechnology.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
         Sina Esmaeili (sina.esmaeili@umontreal.ca)
@@ -56,13 +57,15 @@ class TSNEReducer(BaseReducer):
     """
     t-SNE dimensionality reducer.
 
-    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a technique for dimensionality
-    reduction that is particularly well suited for the visualization of high-dimensional datasets.
-    It converts similarities between data points to joint probabilities and tries to minimize
-    the Kullback-Leibler divergence between the joint probabilities of the low-dimensional
-    embedding and the high-dimensional data.
+    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a technique for
+    dimensionality reduction that is particularly well suited for the visualization
+    of high-dimensional datasets. It converts similarities between data points to
+    joint probabilities and tries to minimize the Kullback-Leibler divergence
+    between the joint probabilities of the low-dimensional embedding and the
+    high-dimensional data.
 
-    Note: t-SNE does not support out-of-sample transformation (transform() raises error).
+    Note: t-SNE does not support out-of-sample transformation (transform() raises
+    error).
 
     Parameters
     ----------
@@ -187,10 +190,11 @@ class UMAPReducer(BaseReducer):
     """
     UMAP dimensionality reducer.
 
-    Uniform Manifold Approximation and Projection (UMAP) is a dimension reduction technique
-    that can be used for visualization similarly to t-SNE, but also for general non-linear
-    dimension reduction. It constructs a high dimensional graph representation of the data
-    then optimizes a low-dimensional graph to be structurally similar.
+    Uniform Manifold Approximation and Projection (UMAP) is a dimension reduction
+    technique that can be used for visualization similarly to t-SNE, but also for
+    general non-linear dimension reduction. It constructs a high dimensional graph
+    representation of the data then optimizes a low-dimensional graph to be
+    structurally similar.
 
     Unlike t-SNE, UMAP supports out-of-sample transformation.
 

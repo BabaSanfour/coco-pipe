@@ -23,10 +23,7 @@ from coco_pipe.dim_reduction.evaluation import (
     shepard_diagram_data,
     trustworthiness,
 )
-from coco_pipe.dim_reduction.evaluation.core import (
-    MethodSelector,
-    _evaluate_single_method,
-)
+from coco_pipe.dim_reduction.evaluation.core import _evaluate_single_method
 from coco_pipe.dim_reduction.reducers.linear import PCAReducer
 from coco_pipe.dim_reduction.reducers.neighbor import UMAPReducer
 
@@ -275,8 +272,8 @@ def test_lcmc_edge_cases():
     Q[3, 0] = 1.0  # Add some overlap noise if needed, but diag is fine
 
     # k >= n-1
-    l = lcmc(Q, k=4)
-    assert l == 0.0
+    l_score = lcmc(Q, k=4)
+    assert l_score == 0.0
 
     # Normal case
     l_norm = lcmc(Q, k=2)

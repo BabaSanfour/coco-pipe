@@ -1,15 +1,13 @@
 """
 Tests for Phase 3: Dim-Red Components
 """
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
 from coco_pipe.report.core import PlotlyElement, Report
-from coco_pipe.viz.plotly_utils import (
-    plot_embedding_interactive,
-    plot_metric_details,
-)
+from coco_pipe.viz.plotly_utils import plot_embedding_interactive, plot_metric_details
 
 
 class MockReducer:

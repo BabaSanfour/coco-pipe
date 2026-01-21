@@ -68,7 +68,8 @@ class DataContainer:
     dims : Tuple[str, ...]
         Labels for each dimension of X.
         Examples: ('obs', 'feature'), ('obs', 'channel', 'time').
-        Note: The 'obs' dimension is special and typically represents independent samples.
+        Note: The 'obs' dimension is special and typically represents independent
+        samples.
     coords : Dict[str, Union[List, np.ndarray]]
         Coordinates/Labels for dimensions. Keys must be in `dims`.
         Values must match the length of the corresponding dimension in X.
@@ -170,7 +171,10 @@ class DataContainer:
 
     def __repr__(self) -> str:
         dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape)]
-        return f"<DataContainer [{' x '.join(dim_strs)}], coords={list(self.coords.keys())}>"
+        return (
+            f"<DataContainer [{' x '.join(dim_strs)}], "
+            f"coords={list(self.coords.keys())}>"
+        )
 
     def isel(self, **indexers) -> "DataContainer":
         """
@@ -310,12 +314,16 @@ class DataContainer:
             - 'y': Uses `self.y`.
             - Any other string: Looks for the variable in `self.coords`.
         strategy : {'undersample', 'oversample', 'auto'}, default='undersample'
-            - 'undersample': Downsample majority classes to match the minority class count.
-            - 'oversample': Upsample minority classes (with replacement) to match the majority class.
-            - 'auto': Heuristic choice. Uses undersampling if total size remains > 50% of original, else oversampling.
+            - 'undersample': Downsample majority classes to match the minority
+              class count.
+            - 'oversample': Upsample minority classes (with replacement) to match
+              the majority class.
+            - 'auto': Heuristic choice. Uses undersampling if total size remains >
+              50% of original, else oversampling.
         covariates : list of str, optional
             List of covariate names in `self.coords` to preserve distribution of.
-            If provided, the balancing is performed *within* strata defined by these covariates.
+            If provided, the balancing is performed *within* strata defined by these
+            covariates.
         random_state : int, default=42
             Seed for the random number generator.
             Change this value to produce different random subsets (e.g., for bagging).
@@ -323,7 +331,8 @@ class DataContainer:
             Additional arguments passed to internal logic:
             - n_bins (int): Number of bins for continuous covariates (default 5).
             - binning (str): 'quantile' (default) or 'uniform' binning.
-            - prefer_clean_rows (bool): If True, weighs sampling to prefer rows with fewer NaNs/artifacts.
+            - prefer_clean_rows (bool): If True, weighs sampling to prefer rows
+              with fewer NaNs/artifacts.
 
         Returns
         -------
@@ -338,7 +347,8 @@ class DataContainer:
         >>> # 2. Balance based on a metadata column 'condition'
         >>> balanced = container.balance(target='condition')
 
-        >>> # 3. Stratified Balancing (Balance 'y' while preserving 'sex' and 'age' ratios)
+        >>> # 3. Stratified Balancing (Balance 'y' while preserving 'sex' and 'age'
+        >>> #    ratios)
         >>> balanced = container.balance(target='y', covariates=['sex', 'age'])
 
         >>> # 4. Iterative Bootstrapping (Different seeds)
@@ -367,7 +377,8 @@ class DataContainer:
                 data_dict[c] = self.coords[c]
 
         df_meta = pd.DataFrame(data_dict)
-        # Index is implicitly RangeIndex (0..N-1), which matches DataContainer positional indices
+        # Index is implicitly RangeIndex (0..N-1), which matches DataContainer
+        # positional indices
 
         # 2. Get Indices
         if target not in df_meta.columns:
@@ -474,7 +485,8 @@ class DataContainer:
                 indices_val = pd.Index(combined.values)
 
         # 3. Apply Indexing
-        # indices is a pandas Index (Int64 or similar). Convert to values for safe numpy indexing.
+        # indices is a pandas Index (Int64 or similar). Convert to values for safe
+        # numpy indexing.
         return self.isel(obs=indices_val.values)
 
     def select(
@@ -572,7 +584,8 @@ class DataContainer:
                     target_dim = matched_dim
                 else:
                     logger.warning(
-                        f"Aux coordinate '{key}' len={len(target_arr)} matches no dimension shape {self.X.shape}. Ignoring selection."
+                        f"Aux coordinate '{key}' len={len(target_arr)} matches no "
+                        f"dimension shape {self.X.shape}. Ignoring selection."
                     )
                     continue
 
@@ -583,7 +596,8 @@ class DataContainer:
                     )
                     continue
                 logger.warning(
-                    f"Selection key '{key}' not found in logical dims, y, ids, or aux coords. Ignoring."
+                    f"Selection key '{key}' not found in logical dims, y, ids, or "
+                    f"aux coords. Ignoring."
                 )
                 continue
 
@@ -605,7 +619,8 @@ class DataContainer:
                     target_arr
                 ):
                     raise ValueError(
-                        f"Callable query for '{key}' must return boolean array of shape {target_arr.shape}."
+                        f"Callable query for '{key}' must return boolean array of "
+                        f"shape {target_arr.shape}."
                     )
                 mask = np.array(mask, dtype=bool)
 
@@ -693,7 +708,8 @@ class DataContainer:
                 common = np.intersect1d(existing_slice, indices)
                 if len(common) == 0:
                     raise ValueError(
-                        f"Conflicting selections for axis {axis} ({key}) resulted in empty set."
+                        f"Conflicting selections for axis {axis} ({key}) resulted "
+                        f"in empty set."
                     )
                 slices[axis] = common
 
@@ -878,7 +894,8 @@ class DataContainer:
 
         Examples
         --------
-        >>> # Stack time into observations: (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
+        >>> # Stack time into observations:
+        >>> # (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
         >>> stacked = container.stack(dims=('obs', 'time'), new_dim='obs')
         >>> stacked.shape
         (5000, 64)
@@ -970,8 +987,8 @@ class DataContainer:
         Remove mean along a specified dimension (Centering/Baseline Correction).
 
         This operation computes the mean along `dim` (ignoring NaNs) and subtracts it.
-        Commonly used in EEG for baseline correction (subtracting mean of pre-stimulus interval)
-        or centering features before covariance calculation.
+        Commonly used in EEG for baseline correction (subtracting mean of
+        pre-stimulus interval) or centering features before covariance calculation.
 
         Parameters
         ----------

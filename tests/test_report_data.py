@@ -68,7 +68,8 @@ def test_add_container(sample_container):
     # Check Plot generated (Class Distribution since y is present)
     if "Could not generate plot" in html:
         pytest.fail(
-            f"Plot generation failed. HTML contains error: {html[html.find('Could not generate plot'):][:100]}"
+            f"Plot generation failed. HTML contains error: "
+            f"{html[html.find('Could not generate plot'):][:100]}"
         )
 
     assert "Target label distribution." in html
@@ -84,8 +85,10 @@ def test_metrics_table_element():
         df,
         highlight_cols=["Score", "Loss"],
         higher_is_better=[
-            "Score"
-        ],  # Loss implies lower is better by exclusion? No, logic says "is_higher = col in list". So Loss is False (lower is better).
+            "Score" "Score"
+        ],  # Loss implies lower is better by exclusion? No, logic says
+        # "is_higher = col in list".
+        # So Loss is False (lower is better).
     )
 
     html = elem.render()

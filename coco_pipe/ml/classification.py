@@ -2,7 +2,8 @@
 """
 coco_pipe/ml/classification.py
 ----------------
-Wrapper for classification pipelines supporting binary, multiclass, and multioutput tasks.
+Wrapper for classification pipelines supporting binary, multiclass, and multioutput
+tasks.
 
 Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
 Date: 2025-05-18
@@ -67,7 +68,8 @@ class BinaryClassificationPipeline(BasePipeline):
     cv_kwargs : dict, optional
         Cross-validation parameters. If None, uses `DEFAULT_CV`. Default is None.
     groups : np.ndarray, optional
-        Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
+        Group labels for samples, for group-based CV. Shape (n_samples,).
+        Default is None.
     """
 
     def __init__(
@@ -248,7 +250,8 @@ class MultiOutputClassificationPipeline(BasePipeline):
     models : str or list, optional
         Models to include. Can be "all", a model name, or a list of model names.
     metrics : str or list, optional
-        Metrics to evaluate. If None, uses default metrics for multi-output classification.
+        Metrics to evaluate. If None, uses default metrics for multi-output
+        classification.
     random_state : int, optional
         Random state for reproducibility. Default is 42.
     n_jobs : int, optional
@@ -256,7 +259,8 @@ class MultiOutputClassificationPipeline(BasePipeline):
     cv_kwargs : dict, optional
         Cross-validation parameters. If None, uses `DEFAULT_CV`. Default is None.
     groups : np.ndarray, optional
-        Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
+        Group labels for samples, for group-based CV. Shape (n_samples,).
+        Default is None.
     """
 
     def __init__(
@@ -309,7 +313,8 @@ class MultiOutputClassificationPipeline(BasePipeline):
         """Ensure target is multioutput."""
         if not (hasattr(y, "ndim") and y.ndim == 2):
             raise ValueError(
-                f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}"
+                f"Target must be 2D for multi-output; got shape "
+                f"{getattr(y, 'shape', None)}"
             )
 
     def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
@@ -347,9 +352,11 @@ class ClassificationPipeline:
     X : np.ndarray
         Feature matrix, array-like of shape (n_samples, n_features).
     y : np.ndarray
-        Target vector, array-like of shape (n_samples,) or (n_samples, n_outputs) for multi-output.
+        Target vector, array-like of shape (n_samples,) or (n_samples, n_outputs)
+        for multi-output.
     analysis_type : str, optional
-        Type of analysis to perform. Can be "baseline", "feature_selection", "hp_search", or "hp_search_fs".
+        Type of analysis to perform. Can be "baseline", "feature_selection",
+        "hp_search", or "hp_search_fs".
     models : str or list, optional
         Models to include. Can be "all", a model name, or a list of model names.
     metrics : str or list, optional
@@ -365,13 +372,16 @@ class ClassificationPipeline:
     n_features : int, optional
         Number of features to select in feature selection. Default is None (select all).
     direction : str, optional
-        Direction for feature selection. Can be "forward", "backward", or "both". Default is "forward".
+        Direction for feature selection. Can be "forward", "backward", or "both".
+        Default is "forward".
     search_type : str, optional
-        Type of hyperparameter search to perform. Can be "grid" or "random". Default is "grid".
+        Type of hyperparameter search to perform. Can be "grid" or "random".
+        Default is "grid".
     n_iter : int, optional
         Number of iterations for random search. Default is 100.
     scoring : str, optional
-        Scoring metric for hyperparameter search. If None, uses default metric for the task type.
+        Scoring metric for hyperparameter search. If None, uses default metric for
+        the task type.
     n_jobs : int, optional
         Number of parallel jobs to run. Default is -1 (use all available cores).
     save_intermediate : bool, optional
@@ -388,15 +398,21 @@ class ClassificationPipeline:
     ValueError
         If `analysis_type` is not one of the supported types.
     ValueError
-        If `y` is not a valid target for classification (e.g., not binary, multiclass, or multioutput).
+        If `y` is not a valid target for classification (e.g., not binary,
+        multiclass, or multioutput).
 
     Notes
     -----
-    This class automatically detects the type of classification task (binary, multiclass, or multioutput)
-    based on the shape and content of `y`. It then instantiates the appropriate pipeline class
-    (`BinaryClassificationPipeline`, `MultiClassClassificationPipeline`, or `MultiOutputClassificationPipeline`)
-    and runs the specified analysis type (baseline evaluation, feature selection, hyperparameter search,
-    or hyperparameter search with feature selection).
+    This class automatically detects the type of classification task (binary,
+    multiclass, or multioutput)
+    parameter determines the type of analysis to perform, such as baseline
+    evaluation, feature selection, or hyperparameter search. The results are saved
+    in the specified directory, and metadata about the analysis is stored in a JSON
+    file alongside the results.
+    (`BinaryClassificationPipeline`, `MultiClassClassificationPipeline`, or
+    `MultiOutputClassificationPipeline`) and runs the specified analysis type
+    (baseline evaluation, feature selection, hyperparameter search, or
+    hyperparameter search with feature selection).
 
     Example
     -------
@@ -538,13 +554,13 @@ class ClassificationPipeline:
         """
         Run the selected analysis type on the classification pipeline.
         This method executes the specified analysis type (baseline evaluation,
-        feature selection, hyperparameter search, or hyperparameter search with feature selection)
-        and saves the results to the specified results directory.
+        feature selection, hyperparameter search, or hyperparameter search with
+        feature selection) and saves the results to the specified results directory.
         It also saves metadata about the run, including the task type, analysis type,
         models used, metrics evaluated, random state, cross-validation strategy,
-        number of splits, number of features (if applicable), direction (if applicable),
-        search type (if applicable), number of iterations (if applicable), and the shapes of
-        the input data `X` and target `y`.
+        number of splits, number of features (if applicable), direction (if
+        applicable), search type (if applicable), number of iterations (if
+        applicable), and the shapes of the input data `X` and target `y`.
         It returns a dictionary containing the results of the analysis.
 
         Parameters
@@ -557,7 +573,9 @@ class ClassificationPipeline:
 
         Raises
         ValueError
-            If the analysis type is not recognized or if there is an error during the run.
+        ValueError
+            If the analysis type is not recognized or if there is an error during
+            the run.
 
         Notes
         The results are saved in the specified results directory with a filename
@@ -593,7 +611,10 @@ class ClassificationPipeline:
         )
         >>> results = pipeline.run()
         """
-        base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
+        base_name = (
+            f"{self.results_file}_{self.task}_{self.analysis_type}_"
+            f"rs{self.random_state}"
+        )
         if self.analysis_type == "feature_selection":
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
         if self.analysis_type == "hp_search":
@@ -688,7 +709,8 @@ class ClassificationPipeline:
         ) as f:
             json.dump(metadata, f, indent=2)
         logger.info(
-            f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}"
+            f"Saved metadata to "
+            f"{os.path.join(self.results_dir, f'{base_name}_metadata.json')}"
         )
 
         return self.results

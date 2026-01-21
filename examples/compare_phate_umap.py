@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Compare PHATE and UMAP dimensionality reduction methods on MNIST and Fashion-MNIST datasets.
-
-This script creates visualizations comparing PHATE and UMAP with different parameter settings,
+Compare PHATE and UMAP dimensionality reduction methods on MNIST and
+Fashion-MNIST datasets.
+This script creates visualizations comparing PHATE and UMAP with different
+parameter settings,
 showing how they perform on the same datasets.
 """
 import logging

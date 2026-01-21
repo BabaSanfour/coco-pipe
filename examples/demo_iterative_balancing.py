@@ -4,6 +4,7 @@ Iterative Balancing Demo
 
 Demonstrates the iterative balancing process for datasets.
 """
+
 import numpy as np
 import pandas as pd
 
@@ -44,7 +45,8 @@ def run_demo():
         print(f"Balanced Counts: {counts}")
 
         # Get indices of class A in this balanced set
-        # We can find them by looking at IDs or matching logic, but here we can just inspect the subset
+        # We can find them by looking at IDs or matching logic, but here we can
+        # just inspect the subset
         # Since ids are just 0..649, let's see which of the first 600 were picked
         subset_ids = balanced.ids
         class_a_mask = balanced.y == "A"

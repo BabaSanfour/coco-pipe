@@ -18,10 +18,11 @@ SpectralEmbeddingReducer
 
 References
 ----------
-.. [1] Tenenbaum, J.B.; De Silva, V.; Langford, J.C. (2000). A global geometric framework for
-       nonlinear dimensionality reduction. Science. 290 (5500): 2319-2323.
-.. [2] Roweis, S. T., & Saul, L. K. (2000). Nonlinear dimensionality reduction by locally
-       linear embedding. Science, 290(5500), 2323-2326.
+.. [1] Tenenbaum, J.B.; De Silva, V.; Langford, J.C. (2000). A global geometric
+       framework for nonlinear dimensionality reduction. Science. 290 (5500):
+       2319-2323.
+.. [2] Roweis, S. T., & Saul, L. K. (2000). Nonlinear dimensionality reduction by
+       locally linear embedding. Science, 290(5500), 2323-2326.
 .. [3] Borg, I., & Groenen, P. J. (2005). Modern multidimensional scaling: Theory and
        applications. Springer.
 .. [4] Belkin, M., & Niyogi, P. (2003). Laplacian eigenmaps for dimensionality reduction
@@ -150,7 +151,8 @@ class LLEReducer(BaseReducer):
 
     LLE seeks a lower-dimensional projection of the data which preserves distances
     within local neighborhoods. It can be thought of as a series of local Principal
-    Component Analyses which are globally compared to find the best non-linear embedding.
+    Component Analyses which are globally compared to find the best non-linear
+    embedding.
 
     Parameters
     ----------
@@ -287,7 +289,8 @@ class MDSReducer(BaseReducer):
         Fit the MDS model.
 
         Note: MDS does not implement a separate fit/transform paradigm in the same
-        way as other estimators in scikit-learn. fit_transform remains the primary usage.
+        way as other estimators in scikit-learn. fit_transform remains the primary
+        usage.
         However, for consistency, we initialize the model here.
 
         Parameters
@@ -339,8 +342,8 @@ class MDSReducer(BaseReducer):
     @property
     def stress_(self) -> float:
         """
-        The final value of the stress (sum of squared distance of the disparities and the
-        distances for all constrained points).
+        The final value of the stress (sum of squared distance of the disparities
+        and the distances for all constrained points).
 
         Returns
         -------
@@ -355,8 +358,8 @@ class SpectralEmbeddingReducer(BaseReducer):
     """
     Spectral Embedding (Laplacian Eigenmaps) reducer.
 
-    Uses the Laplacian of the graph (formed by the data points) to perform dimensionality
-    reduction. This is a non-linear method.
+    Uses the Laplacian of the graph (formed by the data points) to perform
+    dimensionality reduction. This is a non-linear method.
 
     Parameters
     ----------
@@ -424,7 +427,8 @@ class SpectralEmbeddingReducer(BaseReducer):
             out-of-sample transformation in scikit-learn.
         """
         raise NotImplementedError(
-            "SpectralEmbedding does not support out-of-sample transformation. Use fit_transform()."
+            "SpectralEmbedding does not support out-of-sample transformation. "
+            "Use fit_transform()."
         )
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:

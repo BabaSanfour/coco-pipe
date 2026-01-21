@@ -140,8 +140,10 @@ class ImageElement(Element):
         b64_str = self._encode_image()
         html = f"""
         <figure class="my-6">
-            <img src="data:image/png;base64,{b64_str}" style="width: {self.width};" class="rounded shadow-sm mx-auto border border-gray-100">
-            {f'<figcaption class="text-center text-sm text-gray-500 mt-2">{self.caption}</figcaption>' if self.caption else ''}
+            <img src="data:image/png;base64,{b64_str}" style="width: {self.width};"
+                 class="rounded shadow-sm mx-auto border border-gray-100">
+            {f'<figcaption class="text-center text-sm text-gray-500 mt-2">'
+             f'{self.caption}</figcaption>' if self.caption else ''}
         </figure>
         """
         return html
@@ -215,7 +217,9 @@ class PlotlyElement(Element):
 
         html = f"""
         <div class="my-6">
-            <div class="lazy-plot w-full rounded shadow-sm border border-gray-100 bg-gray-50 flex items-center justify-center text-gray-400 animate-pulse"
+            <div class="lazy-plot w-full rounded shadow-sm border border-gray-100
+                        bg-gray-50 flex items-center justify-center text-gray-400
+                        animate-pulse"
                  style="height: {self.height};"
                  data-id="{self.registry_id}">
                  <span class="sr-only">Loading Plot...</span>
@@ -231,7 +235,9 @@ class PlotlyElement(Element):
 
         return f"""
         <div class="my-6">
-            <div class="lazy-plot w-full rounded shadow-sm border border-gray-100 bg-gray-50 flex items-center justify-center text-gray-400 animate-pulse"
+            <div class="lazy-plot w-full rounded shadow-sm border border-gray-100
+                        bg-gray-50 flex items-center justify-center text-gray-400
+                        animate-pulse"
                  style="height: {self.height};"
                  data-figure="{safe_json}">
                  <span class="sr-only">Loading Plot...</span>
@@ -274,24 +280,43 @@ class TableElement(Element):
         if self.title:
             html += f"""
             <div class="flex justify-between items-center mb-2">
-                <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">{self.title}</h4>
-                <button onclick="exportTableToCSV('{self.table_id}', '{self.title or "data"}')" class="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 rounded text-gray-500 transition opacity-0 group-hover:opacity-100">
+                <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300
+                    uppercase tracking-wide">
+                    {self.title}
+                </h4>
+                <button onclick="exportTableToCSV(
+                    '{self.table_id}', '{self.title or "data"}')"
+                    class="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200
+                           dark:bg-gray-800 dark:hover:bg-gray-700 rounded
+                           text-gray-500 transition opacity-0
+                           group-hover:opacity-100">
                     ⬇ CSV
                 </button>
             </div>
             """
 
         # Render Table
-        html += f'<table id="{self.table_id}" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 border dark:border-gray-700 text-sm">'
+        # Render Table
+        html += (
+            f'<table id="{self.table_id}" class="min-w-full divide-y divide-gray-200 '
+            'dark:divide-gray-700 border dark:border-gray-700 text-sm">'
+        )
 
         # Header
         html += '<thead class="bg-gray-50 dark:bg-gray-800"><tr>'
         for col in df.columns:
-            html += f'<th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{col}</th>'
+            html += (
+                f'<th class="px-4 py-3 text-left text-xs font-medium text-gray-500 '
+                f'dark:text-gray-400 uppercase tracking-wider">{col}</th>'
+            )
         html += "</tr></thead>"
 
         # Body
-        html += '<tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">'
+        # Body
+        html += (
+            '<tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 '
+            'dark:divide-gray-700">'
+        )
         for idx, row in df.iterrows():
             html += self._render_row(row, idx)
         html += "</tbody></table></div>"
@@ -302,7 +327,10 @@ class TableElement(Element):
         """Render a single row. Can be overridden."""
         html = "<tr>"
         for val in row:
-            html += f'<td class="px-4 py-3 whitespace-nowrap text-gray-700 dark:text-gray-300">{val}</td>'
+            html += (
+                f'<td class="px-4 py-3 whitespace-nowrap text-gray-700 '
+                f'dark:text-gray-300">{val}</td>'
+            )
         html += "</tr>"
         return html
 
@@ -367,7 +395,10 @@ class MetricsTableElement(TableElement):
 
             style = "text-gray-700 dark:text-gray-300"
             if is_best:
-                style = "font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20"
+                style = (
+                    "font-bold text-green-600 dark:text-green-400 bg-green-50 "
+                    "dark:bg-green-900/20"
+                )
 
             # Format numbers
             display_val = val
@@ -537,7 +568,8 @@ class Report(ContainerElement):
             # metadata from existing functionality
             raw_meta = get_environment_info()
             # raw_meta keys match ProvenanceConfig closely?
-            # get_environment_info returns: timestamp_utc, os_platform, python_version, command, git_hash, versions...
+            # get_environment_info returns: timestamp_utc, os_platform,
+            # python_version, command, git_hash, versions...
             # This matches ProvenanceConfig fields.
             from .config import ProvenanceConfig
 
@@ -549,7 +581,8 @@ class Report(ContainerElement):
         """
         Add a markdown block to the report.
 
-        Note: Requires 'markdown' package. If not present, falls back to raw text in <pre>.
+        Note: Requires 'markdown' package. If not present, falls back to raw
+        text in <pre>.
         """
         try:
             import markdown
@@ -563,7 +596,10 @@ class Report(ContainerElement):
         except ImportError:
             # Fallback
             safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-            html = f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 rounded">{safe_text}</div>'
+            html = (
+                f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 '
+                f'rounded">{safe_text}</div>'
+            )
             self.add_element(HtmlElement(html))
         return self
 
@@ -660,7 +696,8 @@ class Report(ContainerElement):
         except Exception as e:
             sec.add_element(
                 HtmlElement(
-                    f"<div class='text-red-500 text-xs'>Could not generate plot: {e}</div>"
+                    f"<div class='text-red-500 text-xs'>Could not generate plot: "
+                    f"{e}</div>"
                 )
             )
 

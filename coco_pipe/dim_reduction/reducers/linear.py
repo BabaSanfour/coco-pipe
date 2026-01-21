@@ -12,9 +12,11 @@ PCAReducer
 
 References
 ----------
-.. [1] Pearson, K. (1901). "On Lines and Planes of Closest Fit to Systems of Points in Space".
+.. [1] Pearson, K. (1901). "On Lines and Planes of Closest Fit to Systems of
+       Points in Space".
        Philosophical Magazine. 2 (11): 559-572.
-.. [2] Hotelling, H. (1933). Analysis of a complex of statistical variables into principal components.
+.. [2] Hotelling, H. (1933). Analysis of a complex of statistical variables into
+       principal components.
        Journal of Educational Psychology, 24(6), 417-441.
 .. [3] Scikit-Learn PCA Documentation:
        https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html
@@ -146,7 +148,8 @@ class PCAReducer(BaseReducer):
     @property
     def components_(self) -> np.ndarray:
         """
-        Principal axes in feature space, representing the directions of maximum variance.
+        Principal axes in feature space, representing the directions of maximum
+        variance.
 
         Returns
         -------

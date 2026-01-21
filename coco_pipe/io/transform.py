@@ -8,6 +8,7 @@ This module provides classes that adhere to the Scikit-Learn Transformer API
 but operate natively on `DataContainer` objects, preserving metadata (IDs,
 coordinates) throughout the transformation pipeline.
 """
+
 from __future__ import annotations
 
 import logging
@@ -48,7 +49,8 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
     Parameters
     ----------
     transformer : BaseEstimator
-        An instantiated scikit-learn transformer (e.g., `StandardScaler()`, `PCA(n_components=10)`).
+        An instantiated scikit-learn transformer (e.g., `StandardScaler()`,
+        `PCA(n_components=10)`).
 
     Attributes
     ----------
@@ -82,7 +84,8 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
         _check_container(container)
         if container.X.ndim != 2:
             raise ValueError(
-                f"SklearnWrapper expects 2D input (Obs, Feat). Got {container.shape} with dims {container.dims}. Use .flatten() or .stack() first."
+                f"SklearnWrapper expects 2D input (Obs, Feat). Got {container.shape} "
+                f"with dims {container.dims}. Use .flatten() or .stack() first."
             )
 
         self.estimator_ = clone(self.transformer)
@@ -133,11 +136,15 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     ----------
     method : {'pca', 'zca', 'shrinkage'}, default='pca'
         Shape of the transformation:
-        - 'pca': Principal Component Analysis. Rotates data to principal axes and scales to unit variance.
-        - 'zca': Zero-phase Component Analysis. Rotates, scales, and rotates back. Preserves spatial topography (sensors stay in place).
-        - 'shrinkage': Uses Oracle Approximating Shrinkage (OAS) for robust covariance estimation in high dimensions.
+        - 'pca': Principal Component Analysis. Rotates data to principal axes and
+          scales to unit variance.
+        - 'zca': Zero-phase Component Analysis. Rotates, scales, and rotates back.
+          Preserves spatial topography (sensors stay in place).
+        - 'shrinkage': Uses Oracle Approximating Shrinkage (OAS) for robust
+          covariance estimation in high dimensions.
     n_components : int or float, optional
-        Number of components to keep (only for 'pca'/'zca' methods). If None, all matches are kept.
+        Number of components to keep (only for 'pca'/'zca' methods). If None, all
+        matches are kept.
 
     Attributes
     ----------
@@ -151,7 +158,9 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     Examples
     --------
     >>> # Whitening EEG epochs (100 epochs, 64 channels, 500 times)
-    >>> container = DataContainer(np.random.randn(100, 64, 500), dims=('obs', 'channel', 'time'))
+    >>> container = DataContainer(
+    ...     np.random.randn(100, 64, 500), dims=('obs', 'channel', 'time')
+    ... )
 
     >>> # Use Shrinkage for robust covariance
     >>> whitener = SpatialWhitener(method='shrinkage')

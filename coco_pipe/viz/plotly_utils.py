@@ -168,8 +168,8 @@ def plot_embedding_interactive(
                     direction="down",
                     pad={"r": 10, "t": 10},
                     showactive=True,
-                    x=0.0,
-                    xanchor="left",
+                    x=1.0,
+                    xanchor="right",
                     y=1.15,
                     yanchor="top",
                 ),
@@ -411,6 +411,349 @@ def plot_raw_preview(
         margin=dict(l=40, r=40, b=40, t=40),
         height=450,
         showlegend=True,
+    )
+
+    return fig
+
+
+def plot_shepard_interactive(
+    X_orig: np.ndarray,
+    X_emb: np.ndarray,
+    sample_size: int = 1000,
+    title: str = "Shepard Diagram",
+) -> go.Figure:
+    """
+    Create an interactive Shepard Diagram using Plotly (scatter/hexbin approximation).
+    """
+    from ..dim_reduction.evaluation.metrics import shepard_diagram_data
+
+    dist_high, dist_low = shepard_diagram_data(X_orig, X_emb, sample_size=sample_size)
+
+    # Use a 2D Histogram contour for density visualization (like hexbin)
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Histogram2dContour(
+            x=dist_high,
+            y=dist_low,
+            colorscale="Blues",
+            reversescale=False,
+            xaxis="x",
+            yaxis="y",
+            name="Density",
+        )
+    )
+
+    # Ideal Line (y=x)
+    min_val = min(dist_high.min(), dist_low.min())
+    max_val = max(dist_high.max(), dist_low.max())
+
+    fig.add_trace(
+        go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode="lines",
+            line=dict(color="red", dash="dash"),
+            name="Ideal",
+        )
+    )
+
+    if len(dist_high) > 1:
+        corr = np.corrcoef(dist_high, dist_low)[0, 1]
+    else:
+        corr = np.nan
+
+    fig.update_layout(
+        title=f"{title}<br>Spearman Rho: {corr:.3f}",
+        xaxis_title="Original Distances",
+        yaxis_title="Embedded Distances",
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=400,
+        showlegend=True,
+    )
+    return fig
+
+
+def plot_comparison_interactive(
+    comparison_manager: Any,
+    metric: str = "trustworthiness",
+    title: Optional[str] = None,
+) -> go.Figure:
+    """Plot metric comparison curves using Plotly."""
+    if not comparison_manager.results_:
+        raise ValueError("No results found. Run comparison.run() first.")
+
+    if title is None:
+        title = f"Comparison: {metric.replace('_', ' ').title()}"
+
+    fig = go.Figure()
+
+    for name, df in comparison_manager.results_.items():
+        if metric in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df["k"],
+                    y=df[metric],
+                    mode="lines+markers",
+                    name=name,
+                    line=dict(width=2),
+                )
+            )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Neighborhood Size (k)",
+        yaxis_title=metric.replace("_", " ").title(),
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=400,
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.02),
+    )
+    return fig
+
+
+def plot_feature_importance_interactive(
+    scores: Dict[str, float], title: str = "Feature Importance", top_n: int = 20
+) -> go.Figure:
+    """Plot feature importance bar chart using Plotly."""
+    sorted_feats = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    names = [x[0] for x in sorted_feats]
+    values = [x[1] for x in sorted_feats]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(x=values[::-1], y=names[::-1], orientation="h", marker_color="#348ABD")
+    )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Importance Score",
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=max(400, top_n * 20),
+    )
+    return fig
+
+
+def plot_streamlines_interactive(
+    X_emb: np.ndarray,
+    V_emb: np.ndarray,
+    grid_density: int = 25,
+    title: str = "Velocity Streamlines",
+) -> go.Figure:
+    """
+    Plot velocity vector field using Plotly (line segments approximation).
+    """
+    if X_emb.shape[1] != 2:
+        raise ValueError("Streamlines currently only supported for 2D.")
+
+    # Subsample data points for clarity
+    if X_emb.shape[0] > 1000:
+        idx = np.random.choice(X_emb.shape[0], 1000, replace=False)
+        X_sub = X_emb[idx]
+        V_sub = V_emb[idx]
+    else:
+        X_sub = X_emb
+        V_sub = V_emb
+
+    # Calculate magnitude for possible coloring (not used in simple lines yet)
+    # mag = np.sqrt(V_sub[:, 0] ** 2 + V_sub[:, 1] ** 2)
+
+    fig = go.Figure()
+
+    # Background points
+    fig.add_trace(
+        go.Scattergl(
+            x=X_emb[:, 0],
+            y=X_emb[:, 1],
+            mode="markers",
+            marker=dict(color="#DDDDDD", size=3),
+            name="Points",
+            hoverinfo="skip",
+        )
+    )
+
+    # Quiver (Arrows) - Manual segments construction
+    scale = 1.0
+    span_x = X_emb[:, 0].max() - X_emb[:, 0].min()
+    max_v = np.max(np.abs(V_sub))
+    if max_v > 0:
+        scale = (span_x / 50.0) / max_v
+
+    x_lines = []
+    y_lines = []
+    for i in range(len(X_sub)):
+        x, y = X_sub[i]
+        u, v = V_sub[i]
+        x_lines.extend([x, x + u * scale, None])
+        y_lines.extend([y, y + v * scale, None])
+
+    fig.add_trace(
+        go.Scattergl(
+            x=x_lines,
+            y=y_lines,
+            mode="lines",
+            line=dict(color="orange", width=1.5),
+            name="Velocity",
+            opacity=0.8,
+        )
+    )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Dimension 1",
+        yaxis_title="Dimension 2",
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=500,
+        showlegend=True,
+    )
+    return fig
+
+
+def plot_trajectory_interactive(
+    X: np.ndarray,
+    times: Optional[np.ndarray] = None,
+    groups: Optional[np.ndarray] = None,
+    title: str = "Trajectory Plot",
+    dimensions: int = 2,
+) -> go.Figure:
+    """
+    Plot trajectories of samples over time.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Shape (n_samples, n_components). Coordinates.
+    times : np.ndarray, optional
+        Time points or indices for coloring.
+    groups : np.ndarray, optional
+        Group labels (e.g. trial IDs) to separate trajectories.
+        If None, all points are treated as one single trajectory.
+    title : str
+    dimensions : int
+        2 or 3.
+
+    Returns
+    -------
+    go.Figure
+    """
+    if dimensions not in [2, 3]:
+        raise ValueError("Dimensions must be 2 or 3.")
+
+    n_samples = X.shape[0]
+    if groups is None:
+        groups = np.zeros(n_samples, dtype=int)  # Single group
+
+    unique_groups = np.unique(groups)
+    fig = go.Figure()
+
+    # Determine colors
+    # If times provided, color by time (continuous)
+    # If no times, lines are solid color by group
+    use_time_color = times is not None
+
+    for grp in unique_groups:
+        mask = groups == grp
+        X_g = X[mask]
+
+        if use_time_color:
+            t_g = times[mask]
+            # Plotly Scatter lines don't support gradients easily solely via
+            # `line.color`
+            # But `markers` do. We can use markers+lines and color markers by time.
+            # Lines will be constant color or we separate segments.
+            # Simpler approach: Grey line + colored markers.
+
+            # Line (path)
+            if dimensions == 2:
+                fig.add_trace(
+                    go.Scatter(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        mode="lines",
+                        line=dict(color="grey", width=1),
+                        opacity=0.5,
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+                # Markers (time)
+                fig.add_trace(
+                    go.Scatter(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        mode="markers",
+                        marker=dict(
+                            size=6,
+                            color=t_g,
+                            colorscale="Viridis",
+                            showscale=True,
+                            colorbar=dict(title="Time")
+                            if grp == unique_groups[0]
+                            else None,
+                        ),
+                        text=[f"Time: {t}" for t in t_g],
+                        name=f"Group {grp}",
+                    )
+                )
+            else:
+                # 3D
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        z=X_g[:, 2],
+                        mode="lines",
+                        line=dict(color="grey", width=2),
+                        opacity=0.5,
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        z=X_g[:, 2],
+                        mode="markers",
+                        marker=dict(
+                            size=4,
+                            color=t_g,
+                            colorscale="Viridis",
+                            colorbar=dict(title="Time")
+                            if grp == unique_groups[0]
+                            else None,
+                        ),
+                        name=f"Group {grp}",
+                    )
+                )
+
+        else:
+            # Color by group
+            if dimensions == 2:
+                fig.add_trace(
+                    go.Scatter(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        mode="lines+markers",
+                        marker=dict(size=6),
+                        name=str(grp),
+                    )
+                )
+            else:
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=X_g[:, 0],
+                        y=X_g[:, 1],
+                        z=X_g[:, 2],
+                        mode="lines+markers",
+                        marker=dict(size=4),
+                        name=str(grp),
+                    )
+                )
+
+    fig.update_layout(
+        title=title,
+        margin=dict(l=40, r=40, b=40, t=40),
+        height=600 if dimensions == 3 else 500,
     )
 
     return fig

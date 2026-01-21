@@ -12,17 +12,14 @@ MethodSelector
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-logger = logging.getLogger(__name__)
-
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
+    from ..config import EvaluationConfig
     from ..core import DimReduction
 
 from .metrics import (
@@ -32,6 +29,8 @@ from .metrics import (
     lcmc,
     trustworthiness,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MethodSelector:
@@ -119,7 +118,8 @@ class MethodSelector:
         y : np.ndarray, optional
             Labels.
         k_range : list of int or EvaluationConfig, default=[5, 10, 20, 50, 100]
-            Neighborhood sizes to evaluate. Can also pass an EvaluationConfig object directly.
+            Neighborhood sizes to evaluate. Can also pass an EvaluationConfig object
+            directly.
 
         Returns
         -------
@@ -146,7 +146,8 @@ class MethodSelector:
             raise ValueError("No data provided.")
 
         logger.info(
-            f"Evaluating {len(self.reducers)} methods on {self.data.shape[0]} samples..."
+            f"Evaluating {len(self.reducers)} methods on {self.data.shape[0]} "
+            f"samples..."
         )
 
         from joblib import Parallel, delayed
@@ -175,7 +176,8 @@ class MethodSelector:
         Parameters
         ----------
         metric : str, default='trustworthiness'
-            The metric to plot. Options: 'trustworthiness', 'continuity', 'lcmc', 'mrre_total'.
+            The metric to plot. Options: 'trustworthiness', 'continuity', 'lcmc',
+            'mrre_total'.
         ax : matplotlib.axes.Axes, optional
             Existing axes to plot on.
 

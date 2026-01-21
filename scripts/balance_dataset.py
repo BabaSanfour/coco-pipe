@@ -18,7 +18,8 @@ logger = logging.getLogger("balance_dataset")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Balance imbalanced target classes with optional covariate-aware sampling."
+        description="Balance imbalanced target classes with optional "
+        "covariate-aware sampling."
     )
     parser.add_argument(
         "--input", "-i", required=True, help="Path to input CSV/TSV/Excel file"
@@ -68,13 +69,17 @@ def main():
 
     # 1. Load DataContainer
     # Note: tabular load puts target in y if known, but here we specify target in CLI.
-    # If generic load is used without target_col, target is a column in X (or feature coord).
-    # load() uses TabularDataset defaults which might not know target_col yet unless passed.
+    # If generic load is used without target_col, target is a column in X
+    # (or feature coord).
+    # load() uses TabularDataset defaults which might not know target_col yet
+    # unless passed.
     # load() signature in generic entry point needs checking.
-    # Actually, simpler to use TabularDataset directly if we need specific kwargs like target_col.
+    # Actually, simpler to use TabularDataset directly if we need specific kwargs
+    # like target_col.
     # But for a script, let's stick to generic load and assume target is in columns.
 
-    # However, TabularDataset puts everything in X/coords unless target_col is specified.
+    # However, TabularDataset puts everything in X/coords unless target_col is
+    # specified.
     # If target is in X, we balance by 'feature' name.
 
     # We'll use TabularDataset explicitly to ensure we handle target correctly
@@ -129,7 +134,8 @@ def main():
     # Add other coords (covariates) if they match obs length
     for k, v in balanced_container.coords.items():
         if k != "feature" and len(v) == len(df_out):
-            # Be careful not to overwrite target if name conflict (though target is usually separate in container)
+            # Be careful not to overwrite target if name conflict
+            # (though target is usually separate in container)
             if k != args.target:
                 df_out[k] = v
 

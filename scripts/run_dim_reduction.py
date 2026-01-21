@@ -54,15 +54,18 @@ def run_pipeline(config, benchmark=False, plot=False):
 
         data = np.load(output_path)
 
-        # Check if we have original data to compute metrics (requires refitting/loading?)
+        # Check if we have original data to compute metrics (requires
+        # refitting/loading?)
         # For benchmarking, we need both X (high-D) and X_emb (low-D).
         # The pipeline 'execute' fits and saves.
         # To verify quality, we need access to the data pipeline loaded.
-        # This is a bit inefficient (re-loading). Ideally pipeline should return data or objects.
+        # This is a bit inefficient (re-loading). Ideally pipeline should return
+        # data or objects.
 
         # But for CLI, let's reload if benchmarking is requested.
         # Or better: modify DimReductionPipeline to return more info/objects if needed?
-        # For now, let's load data using the pipeline logic if feasible, or just skip if too complex.
+        # For now, let's load data using the pipeline logic if feasible, or just
+        # skip if too complex.
 
         # Assuming we can't easily get X_orig without modifying pipeline heavily,
         # we might skip 'trustworthiness' on the full dataset if it wasn't saved.

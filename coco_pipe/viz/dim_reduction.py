@@ -32,6 +32,7 @@ import numpy as np
 import seaborn as sns
 
 from ..dim_reduction.evaluation.metrics import shepard_diagram_data
+from . import plotly_utils
 
 # --- Style Constants ---
 STYLE_CONFIG = {
@@ -64,9 +65,11 @@ def _set_style(context: str = "paper", style: str = "ticks"):
     Parameters
     ----------
     context : str, optional
-        Seaborn context (e.g. 'paper', 'notebook', 'talk', 'poster'), by default "paper".
+        Seaborn context (e.g. 'paper', 'notebook', 'talk', 'poster'),
+        by default "paper".
     style : str, optional
-        Seaborn style (e.g. 'white', 'dark', 'whitegrid', 'darkgrid', 'ticks'), by default "ticks".
+        Seaborn style (e.g. 'white', 'dark', 'whitegrid', 'darkgrid', 'ticks'),
+        by default "ticks".
     """
     # Apply matplotlib rcParams base overrides for consistency
     plt.rcParams.update(STYLE_CONFIG)
@@ -89,7 +92,8 @@ def _is_categorical(labels: np.ndarray) -> bool:
     Returns
     -------
     bool
-        True if categorical (string, bool, or few unique numeric values), False otherwise.
+        True if categorical (string, bool, or few unique numeric values),
+        False otherwise.
     """
     if labels.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
         return True
@@ -114,7 +118,8 @@ def plot_embedding(
     metrics: Optional[Dict[str, Any]] = None,
     ax: Optional[plt.Axes] = None,
     save_path: Optional[str] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot 2D or 3D embedding with publication-ready aesthetics.
 
@@ -125,15 +130,18 @@ def plot_embedding(
     labels : np.ndarray, optional
         Labels for coloring points. Automatically detected as categorical or continuous.
     dims : tuple, optional
-        Indices of dimensions to plot (e.g. (0, 1) for 2D, (0, 1, 2) for 3D), by default (0, 1).
+        Indices of dimensions to plot (e.g. (0, 1) for 2D, (0, 1, 2) for 3D),
+        by default (0, 1).
     title : str, optional
         Plot title, by default "Embedding".
     figsize : tuple, optional
         Figure size in inches, by default (10, 8).
     cmap : str, optional
-        Colormap for continuous labels (e.g. 'viridis', 'magma'), by default 'viridis'.
+        Colormap for continuous labels (e.g. 'viridis', 'magma'),
+        by default 'viridis'.
     palette : str, optional
-        Seaborn palette for categorical labels (e.g. 'deep', 'tab10', 'Set2'), by default 'deep'.
+        Seaborn palette for categorical labels (e.g. 'deep', 'tab10', 'Set2'),
+        by default 'deep'.
     s : int, optional
         Marker size, by default 40.
     alpha : float, optional
@@ -144,17 +152,31 @@ def plot_embedding(
         Existing axes to plot on. If None, a new figure is created.
     save_path : str, optional
         Path to save the figure to. If None, figure is not saved.
+    interactive : bool, optional
+        If True, returns a Plotly figure. If False, returns a Matplotlib figure.
 
     Returns
     -------
-    plt.Figure
-        The matplotlib Figure object containing the plot.
+    plt.Figure or go.Figure
+        The figure object.
 
     Raises
     ------
     ValueError
         If the number of dimensions in `dims` is not 2 or 3.
     """
+    if interactive:
+        if len(dims) == 2:
+            return plotly_utils.plot_embedding_interactive(
+                X_emb[:, list(dims)], labels=labels, title=title, dimensions=2
+            )
+        elif len(dims) == 3:
+            return plotly_utils.plot_embedding_interactive(
+                X_emb[:, list(dims)], labels=labels, title=title, dimensions=3
+            )
+        else:
+            raise ValueError("Interactive plot only supports 2D or 3D.")
+
     _set_style()
 
     # Handle DataContainer inputs
@@ -354,7 +376,8 @@ def plot_metrics(
     title: str = "Quality Metrics",
     figsize: Tuple[int, int] = (8, 6),
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot bar chart of quality metrics with publication style.
 
@@ -368,10 +391,12 @@ def plot_metrics(
         Figure size, by default (8, 6).
     ax : plt.Axes, optional
         Existing axes to plot on.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
         The figure object.
 
     Raises
@@ -379,6 +404,13 @@ def plot_metrics(
     ValueError
         If no scalar metrics are found in `scores`.
     """
+    if interactive:
+        import pandas as pd
+
+        # Convert simple dict to single-row DF for plot_metric_details
+        df = pd.DataFrame([scores], index=["Method"])
+        return plotly_utils.plot_metric_details(df, title=title)
+
     _set_style()
     metrics = {
         k: v
@@ -400,7 +432,14 @@ def plot_metrics(
         fig = ax.get_figure()
 
     sns.barplot(
-        x=names, y=values, ax=ax, palette="viridis", edgecolor="black", linewidth=0.8
+        x=names,
+        y=values,
+        hue=names,
+        legend=False,
+        ax=ax,
+        palette="viridis",
+        edgecolor="black",
+        linewidth=0.8,
     )
 
     # Value Labels
@@ -431,7 +470,8 @@ def plot_loss_history(
     title: str = "Training Loss",
     figsize: Tuple[int, int] = (8, 5),
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot training loss over epochs.
 
@@ -445,12 +485,17 @@ def plot_loss_history(
         Figure size, by default (8, 5).
     ax : plt.Axes, optional
         Existing axes to plot on.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
         The figure object.
     """
+    if interactive:
+        return plotly_utils.plot_loss_history_interactive(loss_history, title=title)
+
     _set_style()
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -485,7 +530,8 @@ def plot_eigenvalues(
     ylabel: str = "Explained Variance",
     figsize: Tuple[int, int] = (8, 5),
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot Scree plot of eigenvalues or explained variance.
 
@@ -501,12 +547,18 @@ def plot_eigenvalues(
         Figure size, by default (8, 5).
     ax : plt.Axes, optional
         Existing axes to plot on.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
         The figure object.
     """
+    if interactive:
+        # Note: plotly util expects simple 1D array, same as here
+        return plotly_utils.plot_scree_interactive(values)
+
     _set_style()
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -563,7 +615,8 @@ def plot_shepard_diagram(
     sample_size: int = 1000,
     title: str = "Shepard Diagram",
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot Shepard Diagram (Original vs Embedded Distances).
 
@@ -574,17 +627,25 @@ def plot_shepard_diagram(
     X_emb : np.ndarray
         Embedded low-dimensional data.
     sample_size : int, optional
-        Number of points to sample for distance calculation (to speed up), by default 1000.
+        Number of points to sample for distance calculation (to speed up),
+        by default 1000.
     title : str, optional
         Plot title, by default "Shepard Diagram".
     ax : plt.Axes, optional
         Existing axes to plot on.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
         The figure object.
     """
+    if interactive:
+        return plotly_utils.plot_shepard_interactive(
+            X_orig, X_emb, sample_size=sample_size, title=title
+        )
+
     _set_style()
     dist_high, dist_low = shepard_diagram_data(X_orig, X_emb, sample_size=sample_size)
 
@@ -610,7 +671,7 @@ def plot_shepard_diagram(
         np.min([ax.get_xlim(), ax.get_ylim()]),
         np.max([ax.get_xlim(), ax.get_ylim()]),
     ]
-    ax.plot(lims, lims, "r--", alpha=0.8, lw=2.5, label="Ideal", linestyle="--")
+    ax.plot(lims, lims, "r--", alpha=0.8, lw=2.5, label="Ideal")
 
     ax.set_xlabel("Original Distances", fontweight="bold")
     ax.set_ylabel("Embedded Distances", fontweight="bold")
@@ -626,7 +687,8 @@ def plot_streamlines(
     grid_density: int = 25,
     title: str = "Velocity Streamlines",
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot streamlines of a vector field on the embedding.
 
@@ -642,10 +704,12 @@ def plot_streamlines(
         Plot title, by default "Velocity Streamlines".
     ax : plt.Axes, optional
         Existing axes to plot on.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
         The figure object.
 
     Raises
@@ -653,6 +717,11 @@ def plot_streamlines(
     ValueError
         If X_emb is not 2D.
     """
+    if interactive:
+        return plotly_utils.plot_streamlines_interactive(
+            X_emb, V_emb, grid_density=grid_density, title=title
+        )
+
     _set_style()
 
     if X_emb.shape[1] != 2:
@@ -718,7 +787,8 @@ def plot_comparison(
     title: Optional[str] = None,
     figsize: Tuple[int, int] = (10, 6),
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot metric comparison curves across different reducers.
 
@@ -734,11 +804,18 @@ def plot_comparison(
         Figure size.
     ax : plt.Axes, optional
         Existing axes.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
     """
+    if interactive:
+        return plotly_utils.plot_comparison_interactive(
+            comparison_manager, metric=metric, title=title
+        )
+
     _set_style()
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
@@ -777,7 +854,8 @@ def plot_feature_importance(
     top_n: int = 20,
     figsize: Tuple[int, int] = (8, 6),
     ax: Optional[plt.Axes] = None,
-) -> plt.Figure:
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
     """
     Plot feature importance bar chart.
 
@@ -791,13 +869,17 @@ def plot_feature_importance(
         Number of top features to show.
     figsize : tuple
         Figure size.
-    ax : plt.Axes
-        Existing axes.
+    interactive : bool, optional
+        If True, returns a Plotly figure.
 
     Returns
     -------
-    plt.Figure
+    plt.Figure or go.Figure
     """
+    if interactive:
+        return plotly_utils.plot_feature_importance_interactive(
+            scores, title=title, top_n=top_n
+        )
     _set_style()
 
     # Sort scores
@@ -814,6 +896,123 @@ def plot_feature_importance(
 
     ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Importance Score", fontweight="bold")
+
+    return fig
+
+
+def plot_trajectory(
+    X: np.ndarray,
+    times: Optional[np.ndarray] = None,
+    groups: Optional[np.ndarray] = None,
+    title: str = "Trajectory Plot",
+    dimensions: int = 2,
+    figsize: Tuple[int, int] = (10, 8),
+    ax: Optional[plt.Axes] = None,
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
+    """
+    Plot trajectories of samples over time.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Shape (n_samples, n_components). Coordinates.
+    times : np.ndarray, optional
+        Time points or indices for coloring.
+    groups : np.ndarray, optional
+        Group labels (e.g. trial IDs) to separate trajectories.
+        If None, all points are treated as one single trajectory.
+    title : str
+    dimensions : int
+        2 or 3.
+    figsize: tuple
+    ax: plt.Axes, optional
+    interactive: bool
+        If True, returns a Plotly figure.
+
+    Returns
+    -------
+    plt.Figure or go.Figure
+    """
+    if interactive:
+        return plotly_utils.plot_trajectory_interactive(
+            X, times=times, groups=groups, title=title, dimensions=dimensions
+        )
+
+    _set_style()
+    if dimensions not in [2, 3]:
+        raise ValueError("Dimensions must be 2 or 3.")
+
+    n_samples = X.shape[0]
+    if groups is None:
+        groups = np.zeros(n_samples, dtype=int)
+
+    unique_groups = np.unique(groups)
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        if dimensions == 3:
+            ax = fig.add_subplot(111, projection="3d")
+        else:
+            ax = fig.add_subplot(111)
+    else:
+        fig = ax.get_figure()
+
+    # Iterate groups
+
+    # Setup colors
+    cmap = plt.get_cmap("viridis")
+
+    for grp in unique_groups:
+        mask = groups == grp
+        X_g = X[mask]
+
+        if times is not None:
+            t_g = times[mask]
+            # Use LineCollection for gradient line if 2D
+            if dimensions == 2:
+                from matplotlib.collections import LineCollection
+
+                points = X_g[:, :2].reshape(-1, 1, 2)
+                segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+                # Normalize time for color mapping
+                norm = plt.Normalize(t_g.min(), t_g.max())
+                lc = LineCollection(segments, cmap=cmap, norm=norm)
+                lc.set_array(t_g[:-1])  # color by start time of segment
+                lc.set_linewidth(2)
+                lc.set_alpha(0.8)
+                ax.add_collection(lc)
+
+                # Add markers at start/end or all?
+                # Let's add markers for all points colored by time
+                sc = ax.scatter(X_g[:, 0], X_g[:, 1], c=t_g, cmap=cmap, s=20, zorder=10)
+                if grp == unique_groups[0]:
+                    plt.colorbar(sc, ax=ax, label="Time")
+            else:
+                # 3D: simple plot + scatter
+                ax.plot(X_g[:, 0], X_g[:, 1], X_g[:, 2], color="grey", alpha=0.5)
+                sc = ax.scatter(X_g[:, 0], X_g[:, 1], X_g[:, 2], c=t_g, cmap=cmap, s=20)
+                if grp == unique_groups[0]:
+                    plt.colorbar(sc, ax=ax, label="Time", pad=0.1)
+
+        else:
+            # Color by group (Cycle colors)
+            if dimensions == 2:
+                ax.plot(X_g[:, 0], X_g[:, 1], marker="o", label=f"Group {grp}")
+            else:
+                ax.plot(
+                    X_g[:, 0], X_g[:, 1], X_g[:, 2], marker="o", label=f"Group {grp}"
+                )
+
+    ax.set_title(title, fontsize=16, fontweight="bold")
+    ax.set_xlabel("Dimension 1", fontweight="bold")
+    ax.set_ylabel("Dimension 2", fontweight="bold")
+    if dimensions == 3:
+        ax.set_zlabel("Dimension 3", fontweight="bold")
+
+    if groups is not None and len(unique_groups) > 1 and times is None:
+        ax.legend()
 
     return fig
 

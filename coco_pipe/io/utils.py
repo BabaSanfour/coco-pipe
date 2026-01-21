@@ -4,6 +4,7 @@ IO Utilities
 
 Helper functions for IO operations.
 """
+
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -59,7 +60,7 @@ def make_strata(
             else:
                 try:
                     b = pd.qcut(s, q=n_bins, duplicates="drop")
-                except:
+                except Exception:
                     b = pd.cut(s, bins=n_bins)
             labels.append(b.astype(str).fillna("NA"))
         else:

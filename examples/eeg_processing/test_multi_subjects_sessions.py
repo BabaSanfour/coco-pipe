@@ -3,12 +3,12 @@ import logging
 import numpy as np
 
 from coco_pipe.dim_reduction import DimReductionPipeline
+from coco_pipe.io.meeg import load_meeg_multi_sessions
 
 # Set up logging to see more details
 logging.basicConfig(level=logging.INFO)
 
 # First, let's manually load the data and check input shapes
-from coco_pipe.io.meeg import load_meeg_multi_sessions
 
 print("=== LOADING DATA MANUALLY FOR SHAPE INSPECTION ===")
 raw_data = load_meeg_multi_sessions(

@@ -4,6 +4,7 @@ coco_pipe/ml/config.py
 Default cross-validation parameters, metric functions, and model configurations
 for binary, multiclass, multi-output, and regression tasks.
 """
+
 from typing import Any, Callable, Dict
 
 import numpy as np
@@ -88,7 +89,8 @@ def multiclass_roc_auc_score(y_true, y_proba):
     # Ensure we have the right shape
     if y_proba.shape[0] != len(y_true):
         raise ValueError(
-            f"Shape mismatch: y_true has {len(y_true)} samples, y_proba has {y_proba.shape[0]}"
+            f"Shape mismatch: y_true has {len(y_true)} samples, "
+            f"y_proba has {y_proba.shape[0]}"
         )
 
     classes = np.unique(y_true)
@@ -201,8 +203,9 @@ BINARY_MODELS: Dict[str, Dict[str, Any]] = {
             "solver": "liblinear",
             "max_iter": 1000,
         },
-        # Restrict search grid to valid solver/penalty combos to avoid invalid configurations.
-        # Both 'liblinear' and 'saga' support L1 for binary; include L2 as well if desired.
+        # Restrict search grid to valid solver/penalty combos to avoid invalid
+        # configurations. Both 'liblinear' and 'saga' support L1 for binary;
+        # include L2 as well if desired.
         "hp_search_params": {
             "C": [0.01, 0.1, 1, 10, 100],
             "penalty": ["l1"],

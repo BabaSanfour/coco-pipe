@@ -144,7 +144,10 @@ TASK_CODES = {
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Process EEG data with moving windows and visualize with dimensionality reduction"
+        description=(
+            "Process EEG data with moving windows and visualize with "
+            "dimensionality reduction"
+        )
     )
     parser.add_argument(
         "--load-features",
@@ -172,19 +175,28 @@ def parse_arguments():
         "--subjects",
         type=str,
         default="all",
-        help="Comma-separated list of subject numbers to include or 'all' for all subjects (default: 'all')",
+        help=(
+            "Comma-separated list of subject numbers to include or 'all' "
+            "for all subjects (default: 'all')"
+        ),
     )
     parser.add_argument(
         "--tasks",
         type=str,
         default="all",  # Changed default from "4,6" to "all"
-        help="Comma-separated list of task run numbers to include or 'all' for all tasks (default: 'all')",
+        help=(
+            "Comma-separated list of task run numbers to include or 'all' "
+            "for all tasks (default: 'all')"
+        ),
     )
     parser.add_argument(
         "--dim-methods",
         type=str,
         default="PCA,TSNE,UMAP",
-        help="Comma-separated list of dimensionality reduction methods (default: 'PCA,TSNE,UMAP')",
+        help=(
+            "Comma-separated list of dimensionality reduction methods "
+            "(default: 'PCA,TSNE,UMAP')"
+        ),
     )
     parser.add_argument(
         "--n-samples",
@@ -469,7 +481,8 @@ def process_raw_eeg_with_windows(args):
             logger.info(f"Processing data for tasks: {task_names}")
     except ValueError:
         logger.error(
-            "Invalid subject or task list format. Please use comma-separated integers (e.g., '1,2,3')."
+            "Invalid subject or task list format. Please use comma-separated "
+            "integers (e.g., '1,2,3')."
         )
         return None
 
@@ -670,7 +683,7 @@ def process_raw_eeg_with_windows(args):
             # Try to convert to numeric
             try:
                 df[col] = pd.to_numeric(df[col])
-            except:
+            except Exception:
                 pass
 
     return df
@@ -813,12 +826,20 @@ def apply_dimensionality_reduction(X, labels, args, metadata=None):
             ({"n_neighbors": 15, "min_dist": 0.1, "n_jobs": -1}, "n_neighbors=15"),
             ({"n_neighbors": 30, "min_dist": 0.1, "n_jobs": -1}, "n_neighbors=30"),
         ],
-        "PACMAP": [
-            ({"n_neighbors": 10, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=10"),
-            ({"n_neighbors": 20, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=20"),
-        ]
-        if PACMAP_AVAILABLE
-        else [],
+        "PACMAP": (
+            [
+                (
+                    {"n_neighbors": 10, "MN_ratio": 0.5, "FP_ratio": 2.0},
+                    "n_neighbors=10",
+                ),
+                (
+                    {"n_neighbors": 20, "MN_ratio": 0.5, "FP_ratio": 2.0},
+                    "n_neighbors=20",
+                ),
+            ]
+            if PACMAP_AVAILABLE
+            else []
+        ),
     }
 
     # Special handling for PaCMAP which is not in DimReducer
@@ -845,7 +866,8 @@ def apply_dimensionality_reduction(X, labels, args, metadata=None):
                         "data": X_reduced,
                         "param_str": param_str,
                         "elapsed_time": elapsed_time,
-                        "explained_variance": None,  # PaCMAP doesn't provide explained variance
+                        "explained_variance": None,  # PaCMAP doesn't provide
+                        # explained variance
                     }
                 )
 
@@ -1065,7 +1087,10 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
     elif color_by == "subject":
         title = "EEG Motor Imagery - Dimensionality Reduction (Colored by Subject)"
     elif color_by == "task_label":
-        title = "EEG Motor Imagery - Dimensionality Reduction (Colored by Task-Condition Combination)"
+        title = (
+            "EEG Motor Imagery - Dimensionality Reduction (Colored by "
+            "Task-Condition Combination)"
+        )
     else:
         title = "EEG Motor Imagery - Dimensionality Reduction"
 
@@ -1083,7 +1108,8 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
 
     plt.close()
 
-    # Create a special combined visualization for each method with all task-label combinations
+    # Create a special combined visualization for each method with all
+    # task-label combinations
     if args and args.combined_plot:
         for method in methods:
             for result in results[method]:
@@ -1100,7 +1126,8 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
                         # Choose different markers for each task
                         markers = ["o", "s", "^", "D", "p", "*", "X", "P", "h", "+"]
 
-                        # Plot each task-label combination with a unique marker-color combination
+                        # Plot each task-label combination with a unique marker-color
+                        # combination
                         for t_idx, task in enumerate(unique_tasks):
                             task_mask = metadata["task_id"] == task
                             task_name = TASK_CODES.get(task, f"Task {task}")
@@ -1128,7 +1155,8 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
                                 )
 
                         plt.title(
-                            f"Combined Tasks and Conditions - {method} {result['param_str']}",
+                            f"Combined Tasks and Conditions - {method} "
+                            f"{result['param_str']}",
                             fontsize=16,
                         )
                         plt.grid(alpha=0.3)
@@ -1142,9 +1170,9 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
                             plt.legend(loc="upper right", bbox_to_anchor=(1.15, 1))
 
                         # Save this combined plot
-                        combined_path = (
-                            RESULTS_DIR
-                            / f"eeg_{method.lower()}_{result['param_str'].replace('=', '_')}_combined.png"
+                        combined_path = RESULTS_DIR / (
+                            f"eeg_{method.lower()}_"
+                            f"{result['param_str'].replace('=', '_')}_combined.png"
                         )
                         plt.savefig(combined_path, dpi=300, bbox_inches="tight")
                         plt.close()
@@ -1189,9 +1217,9 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
                 plt.title(f"{method} ({param_str}) - EEG Features", fontsize=14)
 
                 # Save figure
-                method_path = (
-                    RESULTS_DIR
-                    / f"eeg_{method.lower()}_{param_str.replace('=', '_')}_{color_by}.png"
+                method_path = RESULTS_DIR / (
+                    f"eeg_{method.lower()}_"
+                    f"{param_str.replace('=', '_')}_{color_by}.png"
                 )
                 plt.savefig(method_path, dpi=300, bbox_inches="tight")
                 plt.close()
@@ -1224,14 +1252,15 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
 
                     # Set title
                     plt.title(
-                        f"{method} - {result['param_str']}: EEG Features by Time Window",
+                        f"{method} - {result['param_str']}: "
+                        "EEG Features by Time Window",
                         fontsize=14,
                     )
 
                     # Save figure
-                    output_path = (
-                        RESULTS_DIR
-                        / f"eeg_{method.lower()}_{result['param_str'].replace('=', '_')}_time_based.png"
+                    output_path = RESULTS_DIR / (
+                        f"eeg_{method.lower()}_"
+                        f"{result['param_str'].replace('=', '_')}_time_based.png"
                     )
                     plt.savefig(output_path, dpi=300, bbox_inches="tight")
                     plt.close()
@@ -1263,15 +1292,16 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
                     cbar = plt.colorbar()
                     cbar.set_label("Time relative to event (s)")
                     plt.title(
-                        f"{method} - {result['param_str']}: Time Progression by {color_by.capitalize()}",
+                        f"{method} - {result['param_str']}: Time Progression by "
+                        f"{color_by.capitalize()}",
                         fontsize=14,
                     )
                     plt.legend(fontsize=8)
 
                     # Save combined figure
-                    combined_path = (
-                        RESULTS_DIR
-                        / f"eeg_{method.lower()}_{result['param_str'].replace('=', '_')}_time_{color_by}.png"
+                    combined_path = RESULTS_DIR / (
+                        f"eeg_{method.lower()}_"
+                        f"{result['param_str'].replace('=', '_')}_time_{color_by}.png"
                     )
                     plt.savefig(combined_path, dpi=300, bbox_inches="tight")
                     plt.close()
@@ -1319,7 +1349,8 @@ def main():
         if "subject_id" in df.columns:
             subjects = df["subject_id"].unique()
             print(
-                f"Subjects: {len(subjects)} ({subjects[:5]}{'...' if len(subjects) > 5 else ''})"
+                f"Subjects: {len(subjects)} ({subjects[:5]}"
+                f"{'...' if len(subjects) > 5 else ''})"
             )
 
         if "task_id" in df.columns:

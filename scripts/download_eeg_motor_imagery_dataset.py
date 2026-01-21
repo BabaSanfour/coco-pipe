@@ -82,13 +82,19 @@ def parse_arguments():
     parser.add_argument(
         "--subjects",
         type=str,
-        help="Comma-separated list of subject numbers to process (e.g., '1,2,3'). By default, all subjects are processed.",
+        help=(
+            "Comma-separated list of subject numbers to process (e.g., '1,2,3'). "
+            "By default, all subjects are processed."
+        ),
     )
     parser.add_argument(
         "--max-subjects",
         type=int,
         default=109,
-        help="Maximum number of subjects to download and process (default: 109, which is all available subjects)",
+        help=(
+            "Maximum number of subjects to download and process "
+            "(default: 109, which is all available subjects)"
+        ),
     )
     return parser.parse_args()
 
@@ -117,7 +123,11 @@ def download_dataset_files():
 
         # Use a browser user agent to avoid being blocked
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/91.0.4472.124 Safari/537.36"
+            )
         }
 
         # Calculate total files to download for progress bar
@@ -156,9 +166,10 @@ def download_dataset_files():
                 if not output_path.exists():
                     try:
                         req = urllib.request.Request(url, headers=headers)
-                        with urllib.request.urlopen(req) as response, open(
-                            output_path, "wb"
-                        ) as out_file:
+                        with (
+                            urllib.request.urlopen(req) as response,
+                            open(output_path, "wb") as out_file,
+                        ):
                             out_file.write(response.read())
                         downloaded += 1
                         pbar.update(1)
@@ -362,7 +373,8 @@ def preprocess_dataset(subject_ids=None):
     Preprocess the extracted dataset into BIDS format.
 
     Args:
-        subject_ids (list): List of subject IDs to process. If None, all subjects are processed.
+        subject_ids (list): List of subject IDs to process.
+                            If None, all subjects are processed.
 
     Returns:
         bool: True if preprocessing succeeded, False otherwise
@@ -427,7 +439,8 @@ def process_edf_files(edf_files, subject_ids=None):
     logger.info("Organizing files by subject...")
     for edf_file in tqdm(edf_files, desc="Organizing files"):
         try:
-            # PhysioNet naming convention: S001R01.edf where S001 is subject 1, R01 is run 1
+            # PhysioNet naming convention: S001R01.edf where
+            # S001 is subject 1, R01 is run 1
             file_name = edf_file.name
 
             # Extract subject number (e.g., "001" from "S001R01.edf")
@@ -766,7 +779,8 @@ def create_dataset_metadata():
         # Create a README file explaining the dataset
         readme_content = """# EEG Motor Movement/Imagery Dataset
 
-This dataset contains EEG recordings from 109 subjects performing motor movement and imagery tasks:
+This dataset contains EEG recordings from 109 subjects performing motor movement
+and imagery tasks:
 
 - Baseline, eyes open
 - Baseline, eyes closed
@@ -775,11 +789,14 @@ This dataset contains EEG recordings from 109 subjects performing motor movement
 - Task 3: Open and close both fists or both feet
 - Task 4: Imagine opening and closing both fists or both feet
 
-Each task consists of multiple trials where subjects were cued to perform the specified action.
+Each task consists of multiple trials where subjects were cued to perform the
+specified action.
 
 ## Reference
 
-Schalk, G., McFarland, D.J., Hinterberger, T., Birbaumer, N., Wolpaw, J.R. (2004). BCI2000: A General-Purpose Brain-Computer Interface (BCI) System. IEEE Transactions on Biomedical Engineering 51(6):1034-1043.
+Schalk, G., McFarland, D.J., Hinterberger, T., Birbaumer, N., Wolpaw, J.R. (2004).
+BCI2000: A General-Purpose Brain-Computer Interface (BCI) System.
+IEEE Transactions on Biomedical Engineering 51(6):1034-1043.
 
 ## License
 
@@ -821,7 +838,8 @@ def main():
             logger.info(f"Will process specific subjects: {subject_ids}")
         except ValueError:
             logger.error(
-                "Invalid subject list format. Please use comma-separated integers (e.g., '1,2,3')."
+                "Invalid subject list format. Please use comma-separated integers "
+                "(e.g., '1,2,3')."
             )
             return False
     else:

@@ -8,6 +8,7 @@ as outlined in the ``coco_pipe`` strategic vision. We compare generic methods
 that mimics neural signals.
 
 """
+
 import matplotlib.pyplot as plt
 import numpy as np
 

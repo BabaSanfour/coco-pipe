@@ -15,8 +15,8 @@ TRCAReducer
 
 References
 ----------
-.. [1]  Schmid, P. J. (2010). Dynamic mode decomposition of numerical and experimental data.
-        Journal of fluid mechanics, 656, 5-28.
+.. [1]  Schmid, P. J. (2010). Dynamic mode decomposition of numerical and
+        experimental data. Journal of fluid mechanics, 656, 5-28.
 .. [2]  PyDMD: Python Dynamic Mode Decomposition. https://github.com/mathLab/PyDMD
 .. [3]  Nakanishi, M., et al. (2017). "Enhancing detection of SSVEPs for a high-speed
         brain-speller using task-related component analysis". IEEE Transactions on
@@ -282,7 +282,8 @@ class TRCAReducer(BaseReducer):
             X_tmp = X_arr.transpose(2, 1, 0)  # (times, chans, trials)
 
             # Wp, Ws from filterbank
-            # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)], ...]
+            # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)]
+            # , ...]
             wp = self.model.filterbank[b][0]
             ws = self.model.filterbank[b][1]
 

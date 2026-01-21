@@ -9,9 +9,11 @@ Inputs
 
 Behavior
 --------
-- Select an analysis (by --analysis-id or first found) and a model (default 'Logistic Regression').
+- Select an analysis (by --analysis-id or first found) and a model
+  (default 'Logistic Regression').
 - Extract per-feature importances from results['feature_importances'].
-- Rank by absolute importance by default (configurable) and plot top-N as a bar chart.
+- Rank by absolute importance by default (configurable) and plot top-N as a
+  bar chart.
 - Count zeroed features (all fold importances ~ 0 within tolerance) and include in title
   along with mean accuracy.
 
@@ -130,7 +132,8 @@ def make_label_map_keep_sensor(cols: Sequence[str]) -> Dict[str, str]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot L1-LR feature importances (top-N) with zeroed count and accuracy."
+        description="Plot L1-LR feature importances (top-N) with zeroed "
+        "count and accuracy."
     )
     parser.add_argument(
         "--results",
@@ -182,7 +185,8 @@ def main():
     parser.add_argument(
         "--xlabel",
         default=None,
-        help="X-axis label (default: 'Coefficient magnitude' if --abs else 'Coefficient')",
+        help="X-axis label (default: 'Coefficient magnitude' "
+        "if --abs else 'Coefficient')",
     )
     parser.add_argument(
         "--save", default=None, help="Path to save the figure (optional)"
@@ -346,7 +350,8 @@ def main():
             if args.scatter_dir:
                 out_path = os.path.join(args.scatter_dir, f"scatter_{name}.png")
             title = (
-                f"{model_name} – {name} (top features)\n{metric_name.capitalize()}: {acc_mean:.3f}"
+                f"{model_name} – {name} (top features)\n"
+                f"{metric_name.capitalize()}: {acc_mean:.3f}"
                 if acc_mean is not None
                 else f"{model_name} – {name} (top features)"
             )

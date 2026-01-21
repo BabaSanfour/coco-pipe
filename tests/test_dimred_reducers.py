@@ -6,6 +6,7 @@ Unified test suite for all dimensionality reduction in coco_pipe.
 """
 
 import sys
+import warnings
 from unittest.mock import patch
 
 import dask.array as da
@@ -713,8 +714,9 @@ def test_topo_device_init():
         r = TopologicalAEReducer(device="auto")
         assert r.device == "cuda"
 
-    with patch("torch.cuda.is_available", return_value=False), patch(
-        "torch.backends.mps.is_available", return_value=True
+    with (
+        patch("torch.cuda.is_available", return_value=False),
+        patch("torch.backends.mps.is_available", return_value=True),
     ):
         r = TopologicalAEReducer(device="auto")
         assert r.device == "mps"

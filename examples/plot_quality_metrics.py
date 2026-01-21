@@ -62,7 +62,8 @@ for name, dr in reducers.items():
 # -------------------------
 # We plot the 2D embeddings side-by-side with their Trustworthiness scores.
 #
-# - **Trustworthiness**: High means neighbors in 2D are real neighbors in 3D (No spurious clusters).
+# - **Trustworthiness**: High means neighbors in 2D are real neighbors in 3D
+#   (No spurious clusters).
 # - **Continuity**: High means 3D neighbors are preserved in 2D (No tearing).
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -99,9 +100,11 @@ plt.show()
 ###############################################################################
 # Interpretation
 # --------------
-# - **PCA**: Should have high **Continuity** (it folds the S-curve onto itself, keeping neighbors together)
-#   but lower **Trustworthiness** (distant points overlap in the projection, creating false neighbors).
-# - **UMAP**: Should have high **Trustworthiness** and **Continuity** as it unrolls the manifold,
-#   preserving the local neighborhood structure without determining false overlaps.
+# - **PCA**: Should have high **Continuity** (it folds the S-curve onto itself,
+#   keeping neighbors together) but lower **Trustworthiness** (distant points
+#   overlap in the projection, creating false neighbors).
+# - **UMAP**: Should have high **Trustworthiness** and **Continuity** as it
+#   unrolls the manifold, preserving the local neighborhood structure without
+#   determining false overlaps.
 #
 # This quantitative assessment is superior to simply saying "UMAP looks better."

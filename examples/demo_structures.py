@@ -4,6 +4,7 @@ Data Structures Demo
 
 Demonstrates the DataContainer and other core IO structures.
 """
+
 import numpy as np
 
 from coco_pipe.io.structures import DataContainer
@@ -69,7 +70,8 @@ print(f"First 5 IDs: {container_eeg.ids[:5]}")
 # Result: (16, 3, 10) -> (Obs, Chan, Feature=Time)
 flat_spatial = container_eeg.flatten(preserve=["obs"])
 print(
-    f"Flattened (Spatial): {flat_spatial.shape} dims={flat_spatial.dims} | Coords: {list(flat_spatial.coords.keys())}"
+    f"Flattened (Spatial): {flat_spatial.shape} dims={flat_spatial.dims} | "
+    f"Coords: {list(flat_spatial.coords.keys())}"
 )
 
 # Flatten for Standard ML (2D): Keep Obs only
@@ -79,7 +81,8 @@ print(f"Flattened (Standard 2D): {flat_ml.shape} dims={flat_ml.dims}")
 print(f"Sample Composite Features: {flat_ml.coords['feature'][:5]}")
 
 # Test Aggregation (Average over Condition)
-# We want to average all "A" epochs and all "B" epochs for each subject? No, just globally by condition.
+# We want to average all "A" epochs and all "B" epochs for each subject? No,
+# just globally by condition.
 # Let's say we group by 'y' (Conditions A, B)
 print("\n--- Aggregation Test ---")
 agg_cond = container_eeg.aggregate(by=container_eeg.y, method="mean")
@@ -119,18 +122,23 @@ try:
     # 4. Complex Scenarios Requested by User
     print("\n[User Questions Verification]")
 
-    # Q1: "Select all sensors that have alpha" (assuming flattened 'channel_freq' or separate dims)
-    # Our demo has 'channel' and 'time'. Let's simulate selecting all 'z' channels (Fz, Cz, Pz)
+    # Q1: "Select all sensors that have alpha" (assuming flattened 'channel_freq'
+    # or separate dims)
+    # Our demo has 'channel' and 'time'. Let's simulate selecting all 'z'
+    # channels (Fz, Cz, Pz)
     subset_alpha = container_eeg.select(channel="*z")
     print(f"1. All '*z' channels: {subset_alpha.coords['channel']}")
 
     # Q2: "Subjects 0 to 1" (Range)
-    # Note: IDs are strings 'sub-0...', so strictly we can use string comparison or separate int coords.
+    # Note: IDs are strings 'sub-0...', so strictly we can use string comparison
+    # or separate int coords.
     # If we had integer subject_ids in coords, we could do {'>=': 0, '<=': 1}.
-    # Here illustrating with Wildcard for 'sub-0*' and 'sub-1*' which covers 1 to 6 logic if named uniformly.
+    # Here illustrating with Wildcard for 'sub-0*' and 'sub-1*' which covers
+    # 1 to 6 logic if named uniformly.
     subset_subs = container_eeg.select(ids=["sub-0*"])
     print(
-        f"2. Subject 0 Only (Wildcard): {subset_subs.ids[:2]}... (Total {subset_subs.shape[0]})"
+        f"2. Subject 0 Only (Wildcard): {subset_subs.ids[:2]}... "
+        f"(Total {subset_subs.shape[0]})"
     )
 
     # Q3: "First 2 epochs for each subject" (Stratified Selection via Callable)

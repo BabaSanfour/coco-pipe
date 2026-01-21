@@ -211,7 +211,8 @@ def test_multiclass_aggregate_and_per_class():
     ]
     # compute fold scores
     accs = [(fp["y_true"] == fp["y_pred"]).mean() for fp in fold_preds]
-    # aucs = [roc_auc_score(fp["y_true"], fp["y_proba"], multi_class='ovo') for fp in fold_preds]
+    # aucs = [roc_auc_score(fp["y_true"], fp["y_proba"], multi_class='ovo') for fp
+    # in fold_preds]
     fold_scores = {
         "accuracy": np.array(accs),
         # "roc_auc": np.array(aucs)

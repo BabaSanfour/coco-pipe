@@ -6,6 +6,7 @@ High-level data loading factory.
 Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
 Date: 2026-01-14
 """
+
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -52,7 +53,8 @@ def load_data(
 ) -> DataContainer:
     """
     Universal data loader factory.
-    Dispatches to `BIDSDataset`, `TabularDataset`, or `EmbeddingDataset` based on `mode`.
+    Dispatches to `BIDSDataset`, `TabularDataset`, or `EmbeddingDataset` based on
+    `mode`.
 
     Parameters
     ----------

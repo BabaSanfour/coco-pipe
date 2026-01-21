@@ -37,7 +37,8 @@ from coco_pipe.viz import plot_bar, plot_topomap
 
 
 def load_coords(path: str) -> pd.DataFrame:
-    """Load sensor coordinates from CSV/TSV/TXT/JSON into a DataFrame with index=name and columns ['x','y']."""
+    """Load sensor coordinates from CSV/TSV/TXT/JSON into a DataFrame with index=name
+    and columns ['x','y']."""
     lower = path.lower()
     if lower.endswith((".json", ".jsn")):
         with open(path, "r") as f:
@@ -110,20 +111,23 @@ def generate_coords_from_mne(
     Parameters
     ----------
     montage : str
-        Name of the standard montage to use (e.g., 'standard_1020', 'standard_1005', 'biosemi64').
+        Name of the standard montage to use (e.g., 'standard_1020',
+        'standard_1005', 'biosemi64').
     restrict_to : list of str, optional
         If provided, only return coordinates for these channel names.
 
     Returns
     -------
     DataFrame
-        Index = sensor names, columns ['x','y'] with 2D coordinates derived from montage.
+        Index = sensor names, columns ['x','y'] with 2D coordinates derived
+        from montage.
 
     Notes
     -----
     - This function requires the optional dependency 'mne'. If not installed,
       an ImportError is raised with guidance.
-    - We use the x,y components from the montage's 3D positions as a top-view projection.
+    - We use the x,y components from the montage's 3D positions as a top-view
+      projection.
     """
     try:
         import mne  # type: ignore
@@ -188,7 +192,8 @@ def analysis_to_sensor(analysis_id: str, known_sensors: Sequence[str]) -> Option
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot sensor accuracies topomap and best sensor feature importances."
+        description="Plot sensor accuracies topomap and best sensor feature "
+        "importances."
     )
     parser.add_argument(
         "--results",
@@ -245,8 +250,9 @@ def main():
         raise FileNotFoundError(args.results)
     all_results: Dict[str, Dict[str, dict]] = pd.read_pickle(args.results)
 
-    # Determine sensor names from results (by parsing IDs) to optionally restrict MNE coords
-    # Quick heuristic: collect all tokens from analysis ids that look like EEG names (letters+digits+optional z)
+    # Determine sensor names from results (by parsing IDs) to optionally restrict
+    # MNE coords. Quick heuristic: collect all tokens from analysis ids that
+    # look like EEG names (letters+digits+optional z)
     candidate_tokens = set()
     for aid in all_results.keys():
         toks = aid.replace("-", "_").replace(" ", "_").split("_")
@@ -298,7 +304,8 @@ def main():
 
     if not sensor_acc:
         raise RuntimeError(
-            "No sensor accuracies found. Ensure analysis IDs include sensor names and coords match."
+            "No sensor accuracies found. Ensure analysis IDs include sensor names "
+            "and coords match."
         )
 
     # Topomap

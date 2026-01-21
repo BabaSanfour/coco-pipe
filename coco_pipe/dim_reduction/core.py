@@ -11,12 +11,15 @@ Date: 2026-01-07
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 
 from .config import METHODS, METHODS_DICT
 from .reducers.base import ArrayLike, BaseReducer
+
+if TYPE_CHECKING:
+    from .config import DimReductionConfig
 
 
 class DimReduction:
@@ -160,12 +163,14 @@ class DimReduction:
         if self.method in spatiotemporal_methods:
             if X_arr.ndim != 3:
                 raise ValueError(
-                    f"Method '{self.method}' requires 3D input (Trials x Channels x Time), got shape {X_arr.shape}."
+                    f"Method '{self.method}' requires 3D input (Trials x Channels x "
+                    f"Time), got shape {X_arr.shape}."
                 )
         else:
             if X_arr.ndim != 2:
                 raise ValueError(
-                    f"Method '{self.method}' requires 2D input (Samples x Features), got shape {X_arr.shape}. "
+                    f"Method '{self.method}' requires 2D input (Samples x Features), "
+                    f"got shape {X_arr.shape}. "
                     "Consider flattening your data."
                 )
 
@@ -265,8 +270,8 @@ class DimReduction:
                     return getattr(self.reducer.model, attr)
 
         raise ValueError(
-            f"Method '{self.method}' does not appear to have linear components/patterns. "
-            f"Checked: {candidates}"
+            f"Method '{self.method}' does not appear to have linear "
+            f"components/patterns. Checked: {candidates}"
         )
 
     def score(
@@ -276,8 +281,10 @@ class DimReduction:
         Compute quality metrics for the embedding.
 
         Metrics:
-        - Trustworthiness: Preservation of local neighborhoods (penalizes false positives).
-        - Continuity: Preservation of local neighborhoods (penalizes missing neighbors).
+        - Trustworthiness: Preservation of local neighborhoods (penalizes false
+          positives).
+        - Continuity: Preservation of local neighborhoods (penalizes missing
+          neighbors).
 
         Parameters
         ----------
@@ -297,12 +304,14 @@ class DimReduction:
         if X_emb is None:
             if self.embedding_ is None:
                 raise RuntimeError(
-                    "No embedding available. Call fit_transform() first or provide X_emb."
+                    "No embedding available. Call fit_transform() first or provide "
+                    "X_emb."
                 )
             X_emb = self.embedding_
 
         if X_emb.ndim == 3 or X_arr.ndim == 3:
-            # Skip standard metrics for spatiotemporal for now, or implement specialized ones.
+            # Skip standard metrics for spatiotemporal for now, or implement
+            # specialized ones.
             return {
                 "trustworthiness": np.nan,
                 "continuity": np.nan,
@@ -360,7 +369,8 @@ class DimReduction:
                 )
 
                 if is_allowed or is_standard:
-                    # Exclude standard sklearn attributes that might be huge arrays (like labels_ or embedding_)
+                    # Exclude standard sklearn attributes that might be huge arrays
+                    # (like labels_ or embedding_)
                     if attr in [
                         "embedding_",
                         "labels_",
@@ -373,7 +383,8 @@ class DimReduction:
                         val = getattr(source, attr)
                         if isinstance(val, (int, float, np.number)):
                             scores[attr] = float(val)
-                        # Allow explicit lists/arrays if small enough or if in allow_list (careful with graph)
+                        # Allow explicit lists/arrays if small enough or if in
+                        # allow_list (careful with graph)
                         elif isinstance(val, (list, tuple, np.ndarray)):
                             if is_allowed:
                                 scores[attr] = val
@@ -400,7 +411,8 @@ class DimReduction:
 
         Parameters
         ----------
-        mode : {'embedding', 'shepard', 'streamlines', 'metrics', 'diagnostics', 'native'}
+        mode : {'embedding', 'shepard', 'streamlines', 'metrics', 'diagnostics',
+            'native'}
             Type of plot.
         dims : tuple
             Dimensions to plot (e.g., (0, 1) for 2D, (0, 1, 2) for 3D).
@@ -549,7 +561,8 @@ class DimReduction:
                 return umap.plot.points(self.reducer.model, **kwargs)
             except ImportError:
                 raise ImportError(
-                    "umap.plot requires 'umap-learn[plot]' or manually installed dependencies."
+                    "umap.plot requires 'umap-learn[plot]' or manually installed "
+                    "dependencies."
                 )
 
         # DMD (PyDMD)

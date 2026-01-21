@@ -484,9 +484,12 @@ def test_load_wrapper_reconstruction_coverage(tmp_path):
     save_path = tmp_path / "dummy.pkl"
     dummy.save(save_path)
 
-    with patch.dict(
-        "coco_pipe.dim_reduction.core.METHODS_DICT", {"DUMMY": DummyForPickle}
-    ), patch("coco_pipe.dim_reduction.core.METHODS", ["DUMMY"]):
+    with (
+        patch.dict(
+            "coco_pipe.dim_reduction.core.METHODS_DICT", {"DUMMY": DummyForPickle}
+        ),
+        patch("coco_pipe.dim_reduction.core.METHODS", ["DUMMY"]),
+    ):
         loaded = DimReduction.load(save_path, method="DUMMY")
 
     assert isinstance(loaded, DimReduction)

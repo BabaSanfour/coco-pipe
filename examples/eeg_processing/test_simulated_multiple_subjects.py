@@ -39,13 +39,15 @@ def create_sim_data():
             total_samples += n_times
 
             print(
-                f"  Subject {subject}, Session {session}: shape={data.shape} (channels × time points)"
+                f"  Subject {subject}, Session {session}: shape={data.shape} "
+                "(channels × time points)"
             )
 
     # Calculate total input shape
     n_channels = len(info["ch_names"])
     print(
-        f"\nTotal input data: {len(all_raw_data)} datasets, {n_channels} channels, {total_samples} time points"
+        f"\nTotal input data: {len(all_raw_data)} datasets, {n_channels} "
+        f"channels, {total_samples} time points"
     )
     print(f"Expected shape after stacking: ({total_samples}, {n_channels})")
 
@@ -58,7 +60,8 @@ raw_data_list, subjects, sessions = create_sim_data()
 # Mock our dimension reduction on this data
 print("\n=== SIMULATING DIMENSION REDUCTION PIPELINE ===")
 
-# Process the loaded data (similar to what happens in the DimReductionPipeline.execute method)
+# Process the loaded data (similar to what happens in the
+# DimReductionPipeline.execute method)
 X_list = []
 subjects_list = []
 
@@ -95,9 +98,11 @@ for subj in unique_subjects:
     print(f"  Subject {subj}: {np.sum(mask)} samples")
 
 print(
-    "\nThis simulation shows how the pipeline handles multiple subjects with multiple sessions."
+    "\nThis simulation shows how the pipeline handles multiple subjects with "
+    "multiple sessions."
 )
 print(
-    "The dimensionality reduction preserves the temporal structure while reducing feature dimensions."
+    "The dimensionality reduction preserves the temporal structure while "
+    "reducing feature dimensions."
 )
 print(f"Input shape: {X.shape} -> Output shape: ({X.shape[0]}, {n_components})")

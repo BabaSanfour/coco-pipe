@@ -147,8 +147,10 @@ def compute_feature_importance(
         Input data.
     method : {'perturbation', 'gradient'}, default='perturbation'
         Method to calculate importance.
-        - 'perturbation': Model-agnostic. Shuffles features and measures embedding displacement.
-        - 'gradient': Model-specific. Computes saliency maps (requires PyTorch model).
+        - 'perturbation': Model-agnostic. Shuffles features and measures embedding
+          displacement.
+        - 'gradient': Model-specific. Computes saliency maps (requires PyTorch
+          model).
     **kwargs : dict
         Additional arguments passed to the specific importance function
         (e.g., `n_repeats` for perturbation, `feature_names`).
@@ -186,7 +188,8 @@ def gradient_importance(wrapper: Any, X: np.ndarray, **kwargs) -> dict:
     Parameters
     ----------
     wrapper : Any
-        Fitted reducer wrapper containing the PyTorch model (e.g., TopologicalAEReducer).
+        Fitted reducer wrapper containing the PyTorch model (e.g.,
+        TopologicalAEReducer).
     X : np.ndarray
         Input data.
     **kwargs : dict

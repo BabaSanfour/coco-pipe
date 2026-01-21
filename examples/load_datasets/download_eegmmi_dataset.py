@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """
-Download a subset of the EEG Motor Movement/Imagery Dataset from Physionet and convert it to BIDS format.
+Download a subset of the EEG Motor Movement/Imagery Dataset from Physionet and
+convert it to BIDS format.
 Dataset source: https://physionet.org/content/eegmmidb/1.0.0/
 """
+import json
 import logging
 import os
 
@@ -58,7 +60,8 @@ for subject_id in subjects:
 
         # Prepare and save to BIDS format
         logger.info(
-            f"  Writing subject {subject_id}, session {session}, run {run} to BIDS format"
+            f"  Writing subject {subject_id}, session {session}, run {run} to BIDS "
+            "format"
         )
         bids_path = BIDSPath(
             subject=f"{subject_id:02d}",
@@ -95,7 +98,6 @@ dataset_json = {
     "EthicsApprovals": ["Some example ethics protocol"],
 }
 
-import json
 
 with open(os.path.join(bids_root, "dataset_description.json"), "w") as f:
     json.dump(dataset_json, f, indent=4)

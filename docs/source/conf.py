@@ -11,6 +11,7 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
+import shutil
 import sys
 from datetime import date
 
@@ -18,8 +19,6 @@ from datetime import date
 
 curdir = os.path.dirname(__file__)
 sys.path.append(os.path.abspath(os.path.join(curdir, "..", "coco-pipe")))
-
-import shutil
 
 
 def copy_readme():
@@ -109,7 +108,8 @@ sphinx_gallery_conf = {
     "filename_pattern": "^((?!sgskip).)*$",
     "backreferences_dir": "generated",
     "run_stale_examples": True,  # Force (or not) re running examples,
-    # "default_thumb_file": "_static/default_thumbnail.png",  # Set a global default thumbnail
+    # "default_thumb_file": "_static/default_thumbnail.png",  # Set a global default
+    # thumbnail
 }
 
 # List of patterns, relative to source directory, that match files and
@@ -135,14 +135,16 @@ html_extra_path = ["_copyover"]
 
 
 ###################################################################################################
-# Seems like this is not needed anymore ###########################################################
+# Seems like this is not needed anymore
+# #################################################################################
 # Replace gallery.css for changing the highlight of the output cells in sphinx gallery
 # See:
 # https://github.com/sphinx-gallery/sphinx-gallery/issues/399
 # https://github.com/sphinx-doc/sphinx/issues/2090
 # https://github.com/sphinx-doc/sphinx/issues/7747
 # def setup(app):
-#    app.connect('builder-inited', lambda app: app.config.html_static_path.append('_static'))
+#    app.connect('builder-inited', lambda app:
+#    app.config.html_static_path.append('_static'))
 #    app.add_css_file('gallery.css')
 ###################################################################################################
 

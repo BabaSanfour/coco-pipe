@@ -150,8 +150,10 @@ class BasePipeline(ABC):
             Whether to use a scaler (StandardScaler) in the pipeline.
             If True, a StandardScaler will be applied before the model.
         columns : sequence of str, optional
-            Names of feature matrix columns. If None, and X is a DataFrame we will use the DataFrame's columns.
-            If X is an ndarray, default names will be generated as 'feature_0', 'feature_1', etc.
+            Names of feature matrix columns. If None, and X is a DataFrame we will
+            use the DataFrame's columns.
+            If X is an ndarray, default names will be generated as 'feature_0',
+            'feature_1', etc.
         default_metrics : sequence of str, optional
             Names of metrics to compute. Must be keys in metric_funcs.
             If None, no metrics will be calculated by default.
@@ -173,8 +175,8 @@ class BasePipeline(ABC):
         Raises
         ------
         ValueError
-            If X and y have different numbers of samples, if groups length does not match X,
-            if invalid metrics or model configurations are provided.,
+            If X and y have different numbers of samples, if groups length does not
+            match X, if invalid metrics or model configurations are provided.
 
         Notes
         -----
@@ -408,7 +410,8 @@ class BasePipeline(ABC):
         This method is useful for inspecting the current configuration of models
         in the pipeline.
         It returns a dictionary with the following keys:
-        - 'estimator_type': Type of the model's estimator (e.g., 'RandomForestClassifier').
+        - 'estimator_type': Type of the model's estimator (e.g.,
+          'RandomForestClassifier').
         - 'estimator_params': Parameters of the model's estimator.
         - 'init_params': Initial parameters used to create the model.
         - 'param_grid': Hyperparameter grid used for tuning the model.
@@ -671,7 +674,8 @@ class BasePipeline(ABC):
 
             fold_estimators.append(fitted)
 
-        # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_ survive —
+        # — unwrap any Pipelines around a search‐CV so best_params_/best_estimator_
+        # survive —
         raw_ests = fold_estimators
         cv_fold_estimators = []
         for est in raw_ests:
@@ -704,12 +708,15 @@ class BasePipeline(ABC):
         model_name: str,
     ) -> Dict[str, Any]:
         """
-        Evaluate a single model via cross-validation and return evaluation metrics, predictions, and feature importances.
+        Evaluate a single model via cross-validation and return evaluation metrics,
+        predictions, and feature importances.
 
-        This method performs cross-validation on a specified model extracted from model_configs.
-        It collects the scoring metrics, per-fold predictions, and extracts feature importances from each fold,
-        aggregating the results into a comprehensive evaluation summary. Additionally, it refits the final model
-        on the complete dataset using the original parameters for potential deployment.
+        This method performs cross-validation on a specified model extracted from
+        model_configs. It collects the scoring metrics, per-fold predictions, and
+        extracts feature importances from each fold, aggregating the results into a
+        comprehensive evaluation summary. Additionally, it refits the final model
+        on the complete dataset using the original parameters for potential
+        deployment.
 
         Parameters
         ----------
@@ -721,11 +728,15 @@ class BasePipeline(ABC):
         dict
             Dictionary containing:
             - 'model_name': Name of the evaluated model.
-            - 'metric_scores': Scoring metrics aggregated across folds with keys 'mean', 'std', and 'fold_scores'.
-            - 'feature_importances': Dictionary of feature importance statistics (mean, std, weighted values) or None.
-            - 'predictions': Dictionary containing concatenated y_true, y_pred, and optionally y_proba from cross-validation.
+            - 'metric_scores': Scoring metrics aggregated across folds with keys
+              'mean', 'std', and 'fold_scores'.
+            - 'feature_importances': Dictionary of feature importance statistics
+              (mean, std, weighted values) or None.
+            - 'predictions': Dictionary containing concatenated y_true, y_pred, and
+              optionally y_proba from cross-validation.
             - 'params': The initial model parameters used during evaluation.
-            - 'folds_estimators': List of fitted estimator instances from each fold of cross-validation.
+            - 'folds_estimators': List of fitted estimator instances from each fold
+              of cross-validation.
 
         Raises
         ------
@@ -735,9 +746,12 @@ class BasePipeline(ABC):
         Notes
         -----
         This method follows a two-step process:
-          1. Perform cross-validation to assess the model's performance, score consistency, and extract feature importances.
-          2. Refit the model on the full dataset using the original parameters for final evaluation and deployment.
-        This design aligns with common scikit-learn practices for model evaluation and ensuring reproducible results.
+          1. Perform cross-validation to assess the model's performance, score
+             consistency, and extract feature importances.
+          2. Refit the model on the full dataset using the original parameters for
+             final evaluation and deployment.
+        This design aligns with common scikit-learn practices for model evaluation
+        and ensuring reproducible results.
 
         Examples
         --------
@@ -786,10 +800,13 @@ class BasePipeline(ABC):
         ----------
         model_name : str
             Name of the model in self.model_configs to use as the base estimator.
-            This model is cloned twice - once for feature selection and once for final fitting.
+            This model is cloned twice - once for feature selection and once for
+            final fitting.
         n_features : int or None
-            Number of features to select. If None, defaults to half of the available features.
-            This value is passed to SequentialFeatureSelector's n_features_to_select parameter.
+            Number of features to select. If None, defaults to half of the available
+            features.
+            This value is passed to SequentialFeatureSelector's
+            `n_features_to_select` parameter.
         direction : str
             Direction for feature selection, either 'forward' or 'backward'.
             - 'forward': Start with no features and add one at a time
@@ -802,7 +819,8 @@ class BasePipeline(ABC):
         Returns
         -------
         pipe : Pipeline
-            Scikit-learn Pipeline with sequential feature selection and base estimator steps.
+            Scikit-learn Pipeline with sequential feature selection and base
+            estimator steps.
         feat_names : ndarray
             Array of feature names from the input data (self.X).
         metric : str
@@ -810,14 +828,17 @@ class BasePipeline(ABC):
 
         Notes
         -----
-        - The base estimator is cloned twice to ensure independent instances for selection and fitting.
+        - The base estimator is cloned twice to ensure independent instances for
+          selection and fitting.
         - The inner cross-validation strategy is determined by self.cv_kwargs.
         - This method is primarily used internally by the feature_selection method.
-        - The sequential feature selector uses cross-validation internally to evaluate features.
+        - The sequential feature selector uses cross-validation internally to
+          evaluate features.
 
         See Also
         --------
-        sklearn.feature_selection.SequentialFeatureSelector : Underlying feature selector
+        sklearn.feature_selection.SequentialFeatureSelector : Underlying feature
+            selector
         sklearn.pipeline.Pipeline : Pipeline implementation used to chain operations
         """
         n_sel = n_features or (self.X.shape[1] // 2)
@@ -845,7 +866,8 @@ class BasePipeline(ABC):
         feat_names = np.array(self._get_feature_names(self.X))
         if self.verbose:
             logger.info(
-                "Built SFS pipeline for model '%s' with %d features using '%s' direction.",
+                "Built SFS pipeline for model '%s' with %d features using '%s' "
+                "direction.",
                 model_name,
                 n_sel,
                 direction,
@@ -858,31 +880,37 @@ class BasePipeline(ABC):
         feat_names: np.ndarray,
     ) -> Tuple[List[np.ndarray], Dict[str, np.ndarray]]:
         """
-        Extract selected features, and selection frequency from cross-validation results.
+        Extract selected features, and selection frequency from cross-validation
+        results.
 
-        This helper method processes cross-validation results from a Sequential Feature Selection
-        pipeline to extract:
-          - A dictionary mapping fold indices to the list of feature names selected in that fold.
-          - A frequency dictionary for each feature representing the proportion of folds in which it was selected.
+        This helper method processes cross-validation results from a Sequential
+        Feature Selection pipeline to extract:
+          - A dictionary mapping fold indices to the list of feature names selected
+            in that fold.
+          - A frequency dictionary for each feature representing the proportion of
+            folds in which it was selected.
           - A set of all features that were selected in at least one fold.
 
         Parameters
         ----------
         cv_fold_estimators : dict
-            Dictionary containing cross-validation fold estimators, where each estimator is a Pipeline
-            with a 'sfs' step that is a SequentialFeatureSelector.
+            Dictionary containing cross-validation fold estimators, where each
+            estimator is a Pipeline with a 'sfs' step that is a
+            SequentialFeatureSelector.
         feat_names : ndarray
             Array of feature names corresponding to the columns in the input data.
 
         Returns
         -------
         selected_per_fold : dict
-            Dictionary mapping fold indices to lists of feature names selected in each fold.
+            Dictionary mapping fold indices to lists of feature names selected in
+            each fold.
         selected_all : set
             Set of all features that were selected in at least one fold.
         freq : dict
-            Dictionary mapping each feature name to its selection frequency (a float between 0 and 1),
-            calculated as the number of folds in which the feature was selected divided by the total number of folds.
+            Dictionary mapping each feature name to its selection frequency (a
+            float between 0 and 1), calculated as the number of folds in which the
+            feature was selected divided by the total number of folds.
 
         Notes
         -----
@@ -920,20 +948,28 @@ class BasePipeline(ABC):
         scoring: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Perform feature selection via sequential feature selection (SFS) with cross-validation.
+        Perform feature selection via sequential feature selection (SFS) with
+        cross-validation.
 
-        This method selects and returns the most informative features along with their importance values
-        and selection frequencies using an inner cross-validation loop for feature selection and an outer
-        cross-validation loop for evaluation. The updated logic now returns the selection direction and the
-        corresponding feature names (values) along with detailed importance statistics.
+        This method selects and returns the most informative features along with
+        their importance values and selection frequencies using an inner
+        cross-validation loop for feature selection and an outer cross-validation
+        loop for evaluation. The updated logic now returns the selection direction
+        and the corresponding feature names (values) along with detailed importance
+        statistics.
 
         The process follows these steps:
-          1. Build a pipeline with SequentialFeatureSelector and a base estimator using _build_sfs_pipeline.
-          2. Perform outer cross-validation to evaluate feature selection performance.
-          3. Extract feature selection masks and selected feature names from CV estimators via _extract_sfs_selected_features.
-          4. Aggregate results to determine stable features (those selected in the majority of folds),
-             compute selection frequency, and compile detailed importance statistics.
-          5. Get weighted importances as the product of the mean importance and the selection frequency.
+          1. Build a pipeline with SequentialFeatureSelector and a base estimator
+             using _build_sfs_pipeline.
+          2. Perform outer cross-validation to evaluate feature selection
+             performance.
+          3. Extract feature selection masks and selected feature names from CV
+             estimators via _extract_sfs_selected_features.
+          4. Aggregate results to determine stable features (those selected in the
+             majority of folds), compute selection frequency, and compile detailed
+             importance statistics.
+          5. Get weighted importances as the product of the mean importance and the
+             selection frequency.
 
         Parameters
         ----------
@@ -946,7 +982,8 @@ class BasePipeline(ABC):
               - 'forward': Start with no features and add one at a time.
               - 'backward': Start with all features and remove one at a time.
         scoring : str, optional
-            Metric to use for evaluating feature selection. If None, uses the first metric in self.metrics.
+            Metric to use for evaluating feature selection. If None, uses the first
+            metric in self.metrics.
 
         Returns
         -------
@@ -962,19 +999,22 @@ class BasePipeline(ABC):
             selected_features : set
                 The combined set of features selected across all CV folds.
             feature_frequency : dict
-                Mapping of each feature name to its selection frequency (a float between 0 and 1).
+                Mapping of each feature name to its selection frequency (a float
+                between 0 and 1).
             feature_importances : dict
                 Feature importance statistics with keys:
                 - 'mean': Mean importance across folds.
                 - 'weighted_mean': Mean importance weighted by selection frequency.
                 - 'std': Standard deviation of importances.
-                - 'weighted_std': Standard deviation of importances weighted by selection frequency.
+                - 'weighted_std': Standard deviation of importances weighted by
+                  selection frequency.
                 - 'fold_importances': Importances per fold.
             predictions : dict
-                Dictionary containing concatenated y_true, y_pred, and optionally y_proba from cross-validation
-                and fold-level predictions.
+                Dictionary containing concatenated y_true, y_pred, and optionally
+                y_proba from cross-validation and fold-level predictions.
             selected_per_fold : dict
-                Dictionary mapping fold indices to lists of feature names selected in each fold.
+                Dictionary mapping fold indices to lists of feature names selected in
+                each fold.
             best_fold : dict
                 Information about the best-performing fold, including:
                 'fold': Index of the best fold.
@@ -993,18 +1033,27 @@ class BasePipeline(ABC):
         See Also
         --------
         _build_sfs_pipeline : Constructs the SFS pipeline.
-        _extract_sfs_selected_features : Extracts selected feature masks and names from CV estimators.
-        _aggregate : Aggregates predictions, scores, and importances from fold-level results.
+        _extract_sfs_selected_features : Extracts selected feature masks and names
+            from CV estimators.
+        _aggregate : Aggregates predictions, scores, and importances from
+            fold-level results.
         cross_val : Performs outer cross-validation.
 
         Examples
         --------
         >>> from sklearn.ensemble import RandomForestClassifier
         >>> model_configs = {'rf': {'estimator': RandomForestClassifier()}}
-        >>> result = pipeline.feature_selection('rf', n_features=5, direction='forward', scoring='accuracy')
+        >>> result = pipeline.feature_selection(
+        ...     'rf', n_features=5, direction='forward', scoring='accuracy'
+        ... )
         >>> print(f"Selected features: {result['selected_features']}")
         >>> print("Weighted importances:")
-        >>> for feat, imp in sorted(result['weighted_importances'].items(), key=lambda x: x[1], reverse=True)[:5]:
+        >>> sorted_imps = sorted(
+        ...     result['weighted_importances'].items(),
+        ...     key=lambda x: x[1],
+        ...     reverse=True
+        ... )
+        >>> for feat, imp in sorted_imps[:5]:
         ...     print(f"  {feat}: {imp:.4f}")
         """
         if self.verbose:
@@ -1167,14 +1216,17 @@ class BasePipeline(ABC):
         """
         Perform hyperparameter search using nested cross-validation.
 
-        This method performs hyperparameter tuning using an inner cross-validation loop for
-        parameter selection and an outer cross-validation loop for model evaluation. It
-        which collectively assess parameter stability across folds and identify the most robust parameter
-        settings via majority voting.
+        This method performs hyperparameter tuning using an inner
+        cross-validation loop for parameter selection and an outer cross-validation
+        loop for model evaluation. It which collectively assess parameter stability
+        across folds and identify the most robust parameter settings via majority
+        voting.
 
         The process follows these steps:
-        1. Build a search estimator (GridSearchCV or RandomizedSearchCV) using _build_search_estimator.
-        2. Execute outer cross-validation via cross_val to evaluate hyperparameter search performance.
+        1. Build a search estimator (GridSearchCV or RandomizedSearchCV) using
+           _build_search_estimator.
+        2. Execute outer cross-validation via cross_val to evaluate hyperparameter
+           search performance.
         3. Extract best parameters per fold and their frequencies.
         4. Aggregate predictions, metric scores, and feature importances.
         5. Identify the best-performing fold based on the defined metric.
@@ -1192,7 +1244,8 @@ class BasePipeline(ABC):
             Number of parameter settings sampled in RandomizedSearchCV.
             Ignored for GridSearchCV.
         scoring : str, optional
-            Metric to use for hyperparameter selection. If None, uses the first metric in self.metrics.
+            Metric to use for hyperparameter selection. If None, uses the first
+            metric in self.metrics.
 
         Returns
         -------
@@ -1202,44 +1255,50 @@ class BasePipeline(ABC):
             model_name : str
                 Name of the model that was tuned.
             metric_scores : dict
-                Dictionary mapping metric names to cross-validation scores; each entry contains the mean,
-                standard deviation, and per-fold scores.
+                Dictionary mapping metric names to cross-validation scores; each
+                entry contains the mean, standard deviation, and per-fold scores.
             feature_importances : dict
                 Feature importance statistics aggregated across CV folds (if available).
             best_params : dict
-                Aggregated best parameter settings determined by majority voting across folds.
+                Aggregated best parameter settings determined by majority voting
+                across folds.
             param_frequency : dict
                 Frequency mapping of each hyperparameter value across CV folds.
             predictions : dict
-                Aggregated predictions from all folds including y_true, y_pred, and optionally y_proba.
+                Aggregated predictions from all folds including y_true, y_pred, and
+                optionally y_proba.
             best_params_per_fold : dict
                 Per-fold best parameter configurations.
             best_fold : dict
-                Information for the best-performing fold including its index, best parameters,
-                metric score, and the fitted estimator.
+                Information for the best-performing fold including its index, best
+                parameters, metric score, and the fitted estimator.
             folds_estimators : list
                 List of fitted search estimator instances from each CV fold.
             hp search parameters : dict
                 Meta-information on the hyperparameter search containing:
                     - search type: The type of search performed ('grid' or 'random').
-                    - param grid: The parameter grid provided (or from model_configs if None).
+                    - param grid: The parameter grid provided (or from
+                      model_configs if None).
                     - scoring: The metric used for evaluation.
-                    - n_iter: The number of parameter settings sampled (for randomized search).
+                    - n_iter: The number of parameter settings sampled (for
+                      randomized search).
 
         Notes
         -----
-        Parameter stability is assessed by analyzing selection frequency across folds. The final parameter
-        setting is obtained by majority voting over per-fold best parameters, providing more robust
-        hyperparameter tuning than a single GridSearchCV or RandomizedSearchCV run.
+        parameter setting is obtained by majority voting over per-fold best
+        parameters, providing more robust hyperparameter tuning than a single
+        GridSearchCV or RandomizedSearchCV run.
 
-        The best fold information can be used to inspect which specific parameter combination achieved the highest
-        performance in cross-validation.
+        The best fold information can be used to inspect which specific
+        parameter combination achieved the highest performance in cross-validation.
 
         See Also
         --------
         _build_search_estimator : Builds the search estimator.
-        _extract_hp_search_params : Extracts best parameter settings from each CV fold.
-        _aggregate : Aggregates predictions, metric scores, and feature importances across folds.
+        _extract_hp_search_params : Extracts best parameter settings from each CV
+            fold.
+        _aggregate : Aggregates predictions, metric scores, and feature
+            importances across folds.
         cross_val : Performs cross-validation.
 
         Examples
@@ -1315,8 +1374,9 @@ class BasePipeline(ABC):
         """
         Build a pipeline for combined feature selection and hyperparameter search.
 
-        This helper method constructs a pipeline that performs sequential feature selection
-        followed by model fitting, then wraps it in a hyperparameter search estimator.
+        This helper method constructs a pipeline that performs sequential feature
+        selection followed by model fitting, then wraps it in a hyperparameter
+        search estimator.
 
         Parameters
         ----------
@@ -1417,16 +1477,19 @@ class BasePipeline(ABC):
         y: Optional[Union[pd.Series, np.ndarray]] = None,
     ) -> Dict[str, Any]:
         """
-        Perform combined feature selection and hyperparameter tuning with nested cross-validation.
+        Perform combined feature selection and hyperparameter tuning with nested feature
+        selection and hyperparameter tuning with nested cross-validation.
 
-        This method integrates sequential feature selection and hyperparameter optimization
-        into a single nested cross-validation framework. The inner CV loops optimize both
-        the feature subset and the hyperparameter configuration, while the outer CV loop evaluates
-        the overall performance on held-out data. Specifically, the pipeline is constructed with
-        a SequentialFeatureSelector followed by an estimator, which is then wrapped in a hyperparameter
-        search estimator (either GridSearchCV or RandomizedSearchCV). After performing outer CV,
-        the function extracts the selected features and best hyperparameters from each fold and aggregates
-        the results to identify stable features and parameters.
+        This method integrates sequential feature selection and hyperparameter
+        optimization into a single nested cross-validation framework. The inner CV
+        loops optimize both the feature subset and the hyperparameter configuration,
+        while the outer CV loop evaluates the overall performance on held-out data.
+        Specifically, the pipeline is constructed with a SequentialFeatureSelector
+        followed by an estimator, which is then wrapped in a hyperparameter search
+        estimator (either GridSearchCV or RandomizedSearchCV). After performing
+        outer CV, the function extracts the selected features and best
+        hyperparameters from each fold and aggregates the results to identify stable
+        features and parameters.
 
         Parameters
         ----------
@@ -1438,13 +1501,16 @@ class BasePipeline(ABC):
             Dictionary with parameter names as keys and lists of parameter values.
             If None, uses the 'params' from model_configs.
         n_features : int, optional
-            Number of features to select. If None, defaults to half of the available features.
+            Number of features to select. If None, defaults to half of the available
+            features.
         direction : str, default='forward'
             Direction for sequential feature selection ('forward' or 'backward').
         n_iter : int, default=50
-            Number of parameter settings sampled in RandomizedSearchCV. Ignored for GridSearchCV.
+            Number of parameter settings sampled in RandomizedSearchCV. Ignored for
+            GridSearchCV.
         scoring : str, optional
-            Metric to use for evaluation. If None, uses the first metric in self.metrics.
+            Metric to use for evaluation. If None, uses the first metric in
+            self.metrics.
         X : DataFrame or ndarray, optional
             Feature matrix. If provided, overrides self.X.
         y : Series or ndarray, optional
@@ -1460,26 +1526,31 @@ class BasePipeline(ABC):
               Aggregated scoring metrics from cross-validation with keys:
               'mean', 'std', and 'fold_scores' (list of scores per fold).
             - selected_features : set
-              The union of features selected across all outer CV folds (stable features).
+              The union of features selected across all outer CV folds (stable
+              features).
             - feature_frequency : dict
-              Mapping of each feature name to its selection frequency across folds (0.0 to 1.0).
+              Mapping of each feature name to its selection frequency across folds
+              (0.0 to 1.0).
             - feature_importances : dict
               Feature importance statistics with keys for each feature including:
                   'mean', 'std', and 'fold_importances'.
             - best_params : dict
-              Aggregated best hyperparameters selected via majority voting across folds.
+              Aggregated best hyperparameters selected via majority voting across
+              folds.
             - param_frequency : dict
               Frequency mapping of hyperparameter values across folds.
             - predictions : dict
-              Aggregated predictions from all folds, including 'y_true', 'y_pred', and optionally 'y_proba'.
+              Aggregated predictions from all folds, including 'y_true', 'y_pred',
+              and optionally 'y_proba'.
             - selected_per_fold : dict
               Mapping of each fold index to the list of features selected in that fold.
             - best_params_per_fold : dict
               Per-fold best hyperparameter configurations.
             - best_fold : dict
               Information about the best-performing fold, including:
-              'fold' (index), 'features' (features selected in that fold), 'params' (hyperparameters),
-              the metric score for that fold, and the corresponding fitted estimator.
+              'fold' (index), 'features' (features selected in that fold),
+              'params' (hyperparameters), the metric score for that fold, and the
+              corresponding fitted estimator.
             - folds_estimators : list
               List of fitted search estimator instances from each outer CV fold.
             - hp search and fs parameters : dict
@@ -1493,17 +1564,21 @@ class BasePipeline(ABC):
 
         Notes
         -----
-        This combined approach provides a comprehensive assessment of both feature subset stability
-        and hyperparameter robustness by leveraging nested cross-validation. It yields detailed
-        fold-level insights along with aggregated statistics for model performance, making it easier
-        to understand which features and parameter settings are consistently beneficial.
+        This combined approach provides a comprehensive assessment of both feature
+        subset stability and hyperparameter robustness by leveraging nested
+        cross-validation. It yields detailed fold-level insights along with
+        aggregated statistics for model performance, making it easier to understand
+        which features and parameter settings are consistently beneficial.
 
         See Also
         --------
         _build_combined_fs_hp_pipeline : Constructs the combined pipeline.
-        _extract_sfs_selected_features : Extracts the selected features from cross-validation estimators.
-        _extract_hp_search_params : Extracts best hyperparameter configurations from each fold.
-        _aggregate : Aggregates predictions, scores, and feature importances across folds.
+        _extract_sfs_selected_features : Extracts the selected features from
+            cross-validation estimators.
+        _extract_hp_search_params : Extracts best hyperparameter configurations
+            from each fold.
+        _aggregate : Aggregates predictions, scores, and feature importances across
+            folds.
         feature_selection : Performs feature selection only.
         hp_search : Performs hyperparameter tuning only.
 
@@ -1513,10 +1588,15 @@ class BasePipeline(ABC):
         >>> model_configs = {
         ...     'rf': {
         ...         'estimator': RandomForestClassifier(),
-        ...         'params': {'max_depth': [3, 5, None], 'min_samples_split': [2, 4, 6]}
+        ...         'params': {
+        ...             'max_depth': [3, 5, None],
+        ...             'min_samples_split': [2, 4, 6]
+        ...         }
         ...     }
         ... }
-        >>> result = pipeline.hp_search_fs('rf', search_type='grid', n_features=5, direction='forward')
+        >>> result = pipeline.hp_search_fs(
+        ...     'rf', search_type='grid', n_features=5, direction='forward'
+        ... )
         >>> print(f"Stable selected features: {result['selected_features']}")
         >>> print(f"Aggregated best parameters: {result['best_params']}")
         """
@@ -1560,7 +1640,8 @@ class BasePipeline(ABC):
         }
         if self.verbose:
             logger.info(
-                "Combined FS and HP search results: Selected features %s and best parameters %s",
+                "Combined FS and HP search results: Selected features %s and "
+                "best parameters %s",
                 selected_all,
                 best_params,
             )
@@ -1591,42 +1672,49 @@ class BasePipeline(ABC):
         """
         Dispatch execution to the appropriate pipeline method based on type parameter.
 
-        This method serves as a unified entry point for running different analysis methods
-        of the pipeline. It dynamically dispatches the call to one of the primary pipeline
+        This method serves as a unified entry point for running different
+        analysis methods of the pipeline. It dynamically dispatches the call to
+        one of the primary pipeline methods based on the 'type' parameter
+        provided in kwargs.
         methods based on the 'type' parameter provided in kwargs.
 
         Parameters
         ----------
         **kwargs : dict
-            Keyword arguments to pass to the target method. Must include a 'type' parameter
-            that specifies which pipeline method to execute. The remaining parameters are
-            passed directly to the selected method.
+            Keyword arguments to pass to the target method. Must include a 'type'
+            parameter that specifies which pipeline method to execute. The
+            remaining parameters are passed directly to the selected method.
 
             Special parameters:
-            - type : {'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'}, default='baseline'
+            - type : {'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'},
+              default='baseline'
                 The type of analysis to perform:
                 * 'baseline': Run baseline model evaluation
                 * 'feature_selection': Perform sequential feature selection
                 * 'hp_search': Perform hyperparameter search
-                * 'hp_search_fs': Perform combined feature selection and hyperparameter search
+                * 'hp_search_fs': Perform combined feature selection and
+                  hyperparameter search
 
         Returns
         -------
         dict
-            The results dictionary from the called method. Contents vary depending on the
+            The results dictionary from the called method. Contents vary
+            depending on the specific method called, but typically include:
             specific method called, but typically include:
 
             For baseline:
                 Model performance metrics, predictions, and feature importances
 
             For feature_selection:
-                Selected features, feature frequencies, feature importances, and fold results
+                Selected features, feature frequencies, feature importances, and
+                fold results
 
             For hp_search:
                 Best parameters, parameter frequencies, and fold results
 
             For hp_search_fs:
-                Selected features, best parameters, and combined analysis results
+                Selected features, best parameters, and combined analysis
+                results
 
         Raises
         ------
@@ -1661,7 +1749,12 @@ class BasePipeline(ABC):
         """
         # Extract execution type from kwargs
         method_name = kwargs.pop("type", "baseline")
-        valid_methods = ["baseline", "feature_selection", "hp_search", "hp_search_fs"]
+        valid_methods = [
+            "baseline",
+            "feature_selection",
+            "hp_search",
+            "hp_search_fs",
+        ]
         if method_name not in valid_methods:
             raise ValueError(
                 f"Invalid execution type '{method_name}'. "

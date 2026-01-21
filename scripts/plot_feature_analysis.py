@@ -2,7 +2,8 @@
 """
 Plot feature-level results (analysis unit = feature) from an aggregated coco_pipe run.
 
-For each computed feature (one analysis per feature using all sensors as inputs), this script:
+For each computed feature (one analysis per feature using all sensors as inputs),
+this script:
   - Plots a topomap of sensor importances (one topomap per computed feature).
   - Aggregates the per-feature accuracy (or chosen metric) into a bar plot.
 
@@ -156,7 +157,8 @@ def feature_from_columns(cols: Sequence[str], sep: str, reverse: bool) -> Option
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot per-feature topomaps of sensor importances and bar plot of per-feature metric."
+        description="Plot per-feature topomaps of sensor importances and bar "
+        "plot of per-feature metric."
     )
     parser.add_argument(
         "--results",
@@ -226,7 +228,8 @@ def main():
 
     all_results: Dict[str, Dict[str, dict]] = pd.read_pickle(args.results)
 
-    # Attempt to infer sensor names from columns later; for MNE restriction, we can pass None
+    # Attempt to infer sensor names from columns later; for MNE restriction,
+    # we can pass None
     if args.use_mne or not args.coords:
         coords_df = generate_coords_from_mne(args.montage)
     else:

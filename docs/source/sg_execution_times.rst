@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:30.735** total execution time for 10 files **from all galleries**:
+**00:35.350** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -33,32 +33,32 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_auto_examples_plot_velocity_embedding.py` (``../../examples/plot_velocity_embedding.py``)
-     - 00:17.957
-     - 0.0
-   * - :ref:`sphx_glr_auto_examples_plot_quality_metrics.py` (``../../examples/plot_quality_metrics.py``)
-     - 00:06.425
+     - 00:20.101
      - 0.0
    * - :ref:`sphx_glr_auto_examples_benchmark_dim_reduction.py` (``../../examples/benchmark_dim_reduction.py``)
-     - 00:05.324
+     - 00:07.062
+     - 0.0
+   * - :ref:`sphx_glr_auto_examples_plot_quality_metrics.py` (``../../examples/plot_quality_metrics.py``)
+     - 00:06.302
      - 0.0
    * - :ref:`sphx_glr_auto_examples_plot_scientific_dimred.py` (``../../examples/plot_scientific_dimred.py``)
-     - 00:00.833
+     - 00:01.039
      - 0.0
    * - :ref:`sphx_glr_auto_examples_demo_report.py` (``../../examples/demo_report.py``)
-     - 00:00.172
-     - 0.0
-   * - :ref:`sphx_glr_auto_examples_demo_structures.py` (``../../examples/demo_structures.py``)
-     - 00:00.007
-     - 0.0
-   * - :ref:`sphx_glr_auto_examples_demo_iterative_balancing.py` (``../../examples/demo_iterative_balancing.py``)
-     - 00:00.006
+     - 00:00.390
      - 0.0
    * - :ref:`sphx_glr_auto_examples_demo_pipeline.py` (``../../examples/demo_pipeline.py``)
-     - 00:00.006
-     - 0.0
-   * - :ref:`sphx_glr_auto_examples_compare_phate_umap.py` (``../../examples/compare_phate_umap.py``)
-     - 00:00.002
+     - 00:00.389
      - 0.0
    * - :ref:`sphx_glr_auto_examples_compare_dim_reduction.py` (``../../examples/compare_dim_reduction.py``)
-     - 00:00.002
+     - 00:00.045
+     - 0.0
+   * - :ref:`sphx_glr_auto_examples_demo_iterative_balancing.py` (``../../examples/demo_iterative_balancing.py``)
+     - 00:00.011
+     - 0.0
+   * - :ref:`sphx_glr_auto_examples_demo_structures.py` (``../../examples/demo_structures.py``)
+     - 00:00.008
+     - 0.0
+   * - :ref:`sphx_glr_auto_examples_compare_phate_umap.py` (``../../examples/compare_phate_umap.py``)
+     - 00:00.003
      - 0.0

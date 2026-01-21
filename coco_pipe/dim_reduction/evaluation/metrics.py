@@ -2,8 +2,9 @@
 Advanced Dimensionality Reduction Metrics
 =========================================
 
-This module implements rigorous quality metrics based on the Co-ranking Matrix framework.
-It includes efficient implementations of Trustworthiness, Continuity, LCMC, and MRRE.
+This module implements rigorous quality metrics based on the Co-ranking Matrix
+framework. It includes efficient implementations of Trustworthiness, Continuity,
+LCMC, and MRRE.
 
 Functions
 ---------
@@ -26,7 +27,6 @@ References
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-08
 """
-
 
 from typing import Tuple
 
@@ -263,8 +263,10 @@ def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
     Returns
     -------
     mrre_int : float
-        MRRE of Intrusions ($M_{int}$). Closer to 1 is better (0 is perfect preservation).
-        *Note*: Interpretation depends on formula variant; here we compute standard error.
+        MRRE of Intrusions ($M_{int}$). Closer to 1 is better (0 is perfect
+        preservation).
+        *Note*: Interpretation depends on formula variant; here we compute standard
+        error.
     mrre_ext : float
         MRRE of Extrusions ($M_{ext}$).
 

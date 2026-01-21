@@ -118,7 +118,8 @@ def test_select_edge_cases(sample_container):
     with pytest.raises(ValueError, match="Unknown operator"):
         sample_container.select(time={"??": 1})
 
-    # Selection on missing dimension warning (captured via logging if needed, or just ensure no crash)
+    # Selection on missing dimension warning (captured via logging if needed, or
+    # just ensure no crash)
     # logic says it warns and ignores.
     subset = sample_container.select(missing_dim=["a", "b"])
     assert subset.shape == sample_container.shape

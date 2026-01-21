@@ -3,7 +3,8 @@
 Compare different dimension reduction methods on MNIST and Fashion-MNIST datasets.
 
 This script creates grid visualizations comparing different dimension reduction methods
-(PCA, t-SNE, UMAP, and PaCMAP) with different parameter settings for MNIST and Fashion-MNIST.
+(PCA, t-SNE, UMAP, and PaCMAP) with different parameter settings for MNIST and
+Fashion-MNIST.
 """
 import logging
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+from coco_pipe.dim_reduction import DimReduction
 
 # Suppress the deprecation warning
 warnings.filterwarnings(
@@ -93,11 +96,12 @@ def apply_dim_reduction(X, method, n_components=2, **kwargs):
         tuple: (X_reduced, elapsed_time)
     """
     logger.info(
-        f"Applying {method} with params {kwargs} to reduce to {n_components} dimensions..."
+        f"Applying {method} with params {kwargs} to reduce to {n_components} "
+        "dimensions..."
     )
 
-    # Initialize DimReducer
-    reducer = DimReducer(
+    # Initialize DimReduction
+    reducer = DimReduction(
         method=method,
         n_components=n_components,
         save_path=None,  # Don't save the reducer
@@ -115,7 +119,8 @@ def apply_dim_reduction(X, method, n_components=2, **kwargs):
 
 def visualize_grid(results, y, class_names, dataset_name):
     """
-    Create a grid visualization of dimension reduction results with different parameters.
+    Create a grid visualization of dimension reduction results with different
+    parameters.
 
     Args:
         results (dict): Dictionary mapping method names to lists of
@@ -326,7 +331,8 @@ def main():
 
                 except Exception as e:
                     logger.error(
-                        f"Error applying {method} with {param_str} to {dataset_name}: {e}"
+                        f"Error applying {method} with {param_str} to {dataset_name}: "
+                        f"{e}"
                     )
 
         # Visualize results

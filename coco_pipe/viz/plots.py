@@ -288,7 +288,8 @@ def plot_bar(
         "vertical" or "horizontal".
     axis_lim : tuple(float, float), optional
         Limits for the numeric axis (y for vertical, x for horizontal). If provided,
-        applies via `ax.set_ylim(axis_lim)` (vertical) or `ax.set_xlim(axis_lim)` (horizontal).
+        applies via `ax.set_ylim(axis_lim)` (vertical) or `ax.set_xlim(axis_lim)`
+        (horizontal).
     color : str | list, optional
         Single color or list per bar. If not provided and `cmap` is set, colors
         are mapped from values.
@@ -396,8 +397,9 @@ def plot_bar(
         return math.ceil(x / s) * s
 
     # Potential broken-axis branch (applies only when explicit axis limits are not set)
-    # Conditions: axis_break_orders set, at least two values, all non-negative after optional abs,
-    # and axis_lim is None. Uses simple two-panel broken axis with diagonal marks.
+    # Conditions: axis_break_orders set, at least two values, all non-negative after
+    # optional abs, and axis_lim is None. Uses simple two-panel broken axis with
+    # diagonal marks.
     do_axis_break = False
     if (
         axis_break_orders is not None
@@ -425,7 +427,8 @@ def plot_bar(
         order = np.argsort(vals_with_err)[::-1]
         vmax1 = float(vals_with_err[order[0]])
         vmax2 = float(vals_with_err[order[1]]) if len(order) > 1 else 0.0
-        # Lower panel upper bound based on second max (or fraction of top if others are 0)
+        # Lower panel upper bound based on second max (or fraction of top
+        # if others are 0)
         lower_upper = (
             vmax2 if vmax2 > 0 else (vmax1 / (10.0 ** float(axis_break_orders)))
         )
@@ -437,9 +440,8 @@ def plot_bar(
         if orientation == "horizontal":
             # Side-by-side axes sharing y
             if created_fig and ax is not None and len(fig.axes) == 1:
-                plt.close(
-                    fig
-                )  # close single-axes fig before creating new layout to avoid duplicates
+                plt.close(fig)  # close single-axes fig before creating new layout
+                # to avoid duplicates
                 fig, (ax_left, ax_right) = plt.subplots(
                     1,
                     2,

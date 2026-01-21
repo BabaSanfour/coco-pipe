@@ -12,8 +12,8 @@ IVISReducer
 
 References
 ----------
-.. [1] Szubert, B., et al. (2019). Structure-preserving visualization of high dimensional
-       single-cell datasets. Scientific reports, 9(1), 1-10.
+.. [1] Szubert, B., et al. (2019). Structure-preserving visualization of high
+       dimensional single-cell datasets. Scientific reports, 9(1), 1-10.
 .. [2] ivis: https://github.com/beringresearch/ivis
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)

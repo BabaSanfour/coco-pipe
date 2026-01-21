@@ -137,7 +137,8 @@ def main():
         )
 
         # 1.5) Concatenate covariates if requested and separated?
-        # If covariates are in coords, we might need to add them back to X for some ML pipelines?
+        # If covariates are in coords, we might need to add them back to X for some
+        # ML pipelines?
         # Or MLPipeline handles coords? For now assume standard X, y.
 
         # 2) Run
