@@ -17,7 +17,12 @@ from sklearn.datasets import load_digits
 from sklearn.preprocessing import StandardScaler
 
 from coco_pipe.dim_reduction import DimReduction
-from coco_pipe.dim_reduction.evaluation.metrics import continuity, lcmc, trustworthiness, compute_coranking_matrix
+from coco_pipe.dim_reduction.evaluation.metrics import (
+    compute_coranking_matrix,
+    continuity,
+    lcmc,
+    trustworthiness,
+)
 from coco_pipe.viz.dim_reduction import plot_embedding, plot_shepard_diagram
 
 

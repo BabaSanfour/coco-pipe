@@ -1,7 +1,5 @@
-
 import mne
 import numpy as np
-
 
 
 # Simulated data for multiple subjects

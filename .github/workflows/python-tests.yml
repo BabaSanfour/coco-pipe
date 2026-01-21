@@ -8,7 +8,17 @@ on:
     branches: [ main ]
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - uses: pre-commit/action@v3.0.1
+
   test:
+    needs: quality
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,6 +52,7 @@ jobs:
         slug: BabaSanfour/coco-pipe
 
   docs:
+    needs: quality
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -53,7 +64,10 @@ jobs:
     - name: Install dependencies
       run: |
         pip install -e .[docs]
+        # Install pandoc for some sphinx extensions if needed
+        sudo apt-get install -y pandoc
     - name: Build docs
       run: |
         cd docs
-        make html
+        # -W turns warnings into errors, --keep-going runs full build to see all errors
+        make html SPHINXOPTS="-W --keep-going"

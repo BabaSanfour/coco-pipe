@@ -9,7 +9,6 @@ from coco_pipe.report.core import PlotlyElement, Report
 from coco_pipe.viz.plotly_utils import (
     plot_embedding_interactive,
     plot_metric_details,
-    plot_radar_comparison,
 )
 
 
@@ -21,7 +20,10 @@ class MockReducer:
         self.loss_history_ = [10, 5, 2, 1]
         self.explained_variance_ratio_ = np.array([0.5, 0.3, 0.1])
         # Add metadata for testing dropdowns
-        self.metadata_ = {"Group": ["A"] * 50 + ["B"] * 50, "Value": np.random.rand(100)}
+        self.metadata_ = {
+            "Group": ["A"] * 50 + ["B"] * 50,
+            "Value": np.random.rand(100),
+        }
 
 
 def test_plotly_element_rendering():
@@ -84,7 +86,7 @@ def test_report_add_reduction_logic():
 
 def test_report_add_comparison():
     rep = Report("Comparison Test")
-    
+
     metrics_df = pd.DataFrame(
         {
             "Method": ["PCA", "ISO"],
@@ -94,13 +96,12 @@ def test_report_add_comparison():
     ).set_index("Method")
 
     rep.add_comparison(metrics_df)
-    
+
     html = rep.render()
-    
+
     # Check for section title and icon
     assert "Method Comparison" in html
     assert "📊" in html
     # Check for plots (Radar + Bar)
     # Check for Table title
     assert "Quality Metrics" in html
-

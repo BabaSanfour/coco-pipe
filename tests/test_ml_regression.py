@@ -2,11 +2,7 @@ import numpy as np
 import pytest
 from sklearn.datasets import make_regression
 
-from coco_pipe.ml.config import (
-    DEFAULT_CV,
-    MULTIOUTPUT_REG_MODELS,
-    REGRESSION_MODELS,
-)
+from coco_pipe.ml.config import DEFAULT_CV, MULTIOUTPUT_REG_MODELS, REGRESSION_MODELS
 from coco_pipe.ml.regression import (
     MultiOutputRegressionPipeline,
     RegressionPipeline,

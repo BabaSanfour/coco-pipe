@@ -32,13 +32,13 @@ def mock_container():
 @pytest.fixture
 def mock_reducer():
     red = MagicMock()
-    # Important: Set to real arrays, otherwise Plotly validation fails when it sees a MagicMock
+    # Important: Set to real arrays,
+    # otherwise Plotly validation fails when it sees a MagicMock
     red.embedding_ = np.random.randn(10, 2)
     red.loss_history_ = [10, 5, 2]
     red.explained_variance_ratio_ = np.array([0.5, 0.3, 0.2])
-    return red
-    # red.__class__.__name__ works automatically for MagicMock if spec'd,
-    # but let's just let the API handle the mock name.
+    red.labels_ = None
+    red.metadata_ = None
     return red
 
 

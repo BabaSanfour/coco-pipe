@@ -1,4 +1,3 @@
-
 from coco_pipe.report.provenance import get_environment_info
 
 

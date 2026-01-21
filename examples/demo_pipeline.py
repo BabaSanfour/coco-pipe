@@ -42,6 +42,9 @@ def create_synthetic_csv(path: Path):
 
     df = pd.DataFrame(X, columns=[f"feat_{i}" for i in range(10)])
     df["label"] = labels
+    # Add extra metadata for interactive labeling demo
+    df["center"] = np.random.choice(["Site A", "Site B"], size=len(df))
+    df["batch"] = np.random.choice(["Batch 1", "Batch 2"], size=len(df))
 
     df.to_csv(path, index=False)
 
@@ -54,7 +57,9 @@ def main():
 
     # 1. Load Data
     logger.info("1. Loading Data...")
-    ds = TabularDataset(data_path, target_col="label", sep=",")
+    ds = TabularDataset(
+        data_path, target_col="label", sep=",", meta_columns=["center", "batch"]
+    )
     container = ds.load()
 
     # 2. Preprocessing (simulate via manual scaling)
@@ -63,7 +68,9 @@ def main():
     if isinstance(container.X, pd.DataFrame):
         container.X = container.X.select_dtypes(include=[np.number])
     elif hasattr(container.X, "dtype") and container.X.dtype == object:
-        container.X = pd.DataFrame(container.X).select_dtypes(include=[np.number]).values
+        container.X = (
+            pd.DataFrame(container.X).select_dtypes(include=[np.number]).values
+        )
 
     container.X = (container.X - container.X.mean(axis=0)) / container.X.std(axis=0)
 
@@ -73,19 +80,36 @@ def main():
     # PCA
     pca = DimReduction(method="PCA", n_components=2)
     pca.fit_transform(container.X)
+    # Manually attach metadata/labels for interactive plotting demo
+    pca.labels_ = container.ids
+    pca.metadata_ = container.coords
 
     # UMAP
     umap = DimReduction(method="UMAP", n_components=2, n_neighbors=15)
     umap.fit_transform(container.X)
+    umap.labels_ = container.ids
+    umap.metadata_ = container.coords
 
     # 4. Generate Comparative Report
     logger.info("4. Generating Report...")
+
+    # Calculate dummy metrics for demonstration
+    metrics_data = {
+        "Trustworthiness": [0.95, 0.88],
+        "Continuity": [0.90, 0.92],
+        "Shepard Goodness": [0.85, 0.91],
+    }
+    metrics_df = pd.DataFrame(metrics_data, index=["PCA", "UMAP"])
+
     report = from_reductions(
         reductions=[pca, umap],
         container=container,
         title="Pipeline Demo: PCA vs UMAP",
         config={"pipeline": "Full Demo", "scaling": "StandardScaler"},
     )
+
+    # Add comparison section
+    report.add_comparison(metrics_df, name="Method Comparison")
 
     output_path = Path("examples/outputs/demo_pipeline.html")
     report.save(output_path)

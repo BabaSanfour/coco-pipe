@@ -178,21 +178,22 @@ class PlotlyElement(Element):
         fig_dict = json.loads(json_str)
 
         fig_dict = self._force_standard_json(fig_dict)
-        
+
         registry[self.registry_id] = fig_dict
 
     def _force_standard_json(self, obj: Any) -> Any:
         """Recursively convert Plotly binary-encoded arrays to standard lists."""
         if isinstance(obj, dict):
             # Check for Plotly binary format
-            if 'dtype' in obj and 'bdata' in obj and len(obj) <= 3:
+            if "dtype" in obj and "bdata" in obj and len(obj) <= 3:
                 # Identify keys like 'shape'? Usually just dtype/bdata.
                 # Decode!
                 try:
                     import base64
-                    dtype = obj['dtype']
-                    bdata = obj['bdata']
-                    
+
+                    dtype = obj["dtype"]
+                    bdata = obj["bdata"]
+
                     # Map dtype string to numpy type
                     # common: 'f4' (float32), 'f8' (float64), 'i4' (int32), 'u4'...
                     decoded = base64.b64decode(bdata)
@@ -201,7 +202,7 @@ class PlotlyElement(Element):
                 except Exception as e:
                     print(f"[Report] Warning: Failed to decode binary data: {e}")
                     return obj
-            
+
             return {k: self._force_standard_json(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [self._force_standard_json(x) for x in obj]
@@ -690,16 +691,16 @@ class Report(ContainerElement):
                 dimensions = 3
             else:
                 dimensions = dims
-            
+
             meta = getattr(reducer, "metadata_", None)
             labels = getattr(reducer, "labels_", None)
 
             fig = plot_embedding_interactive(
-                embedding=emb, 
+                embedding=emb,
                 labels=labels,
                 meta=meta,
-                title=f"{name} Embedding", 
-                dimensions=dimensions
+                title=f"{name} Embedding",
+                dimensions=dimensions,
             )
             sec.add_element(PlotlyElement(fig))
 
@@ -765,9 +766,7 @@ class Report(ContainerElement):
         return self
 
     def add_comparison(
-        self, 
-        metrics_df: pd.DataFrame, 
-        name: str = "Method Comparison"
+        self, metrics_df: pd.DataFrame, name: str = "Method Comparison"
     ) -> "Report":
         """
         Add a comparison section for multiple reduction methods (Radar + Bar Chart).
@@ -785,7 +784,7 @@ class Report(ContainerElement):
         sec.add_element(MetricsTableElement(metrics_df, title="Quality Metrics"))
 
         # 2. Side-by-Side Visuals (Grid)
-        
+
         # Radar Chart
         fig_radar = plot_radar_comparison(metrics_df, normalize=True)
         elem_radar = PlotlyElement(fig_radar, height="400px")
@@ -815,7 +814,8 @@ class Report(ContainerElement):
         payload_b64 = base64.b64encode(compressed).decode("utf-8")
 
         # 3. Get content from children (Sections)
-        # Note: Children now render with data-id references since collect_payload was called.
+        # Note: Children now render with data-id references since collect_payload
+        # was called.
         content_html = super().render()
 
         # Build TOC Structure from Sections

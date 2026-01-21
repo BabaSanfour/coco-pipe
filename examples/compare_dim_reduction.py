@@ -18,7 +18,6 @@ warnings.filterwarnings(
     "ignore", message="'force_all_finite' was renamed to 'ensure_all_finite'"
 )
 
-from coco_pipe.dim_reduction import DimReduction
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
