@@ -2,11 +2,52 @@
 Package initializer for the coco_pipe package.
 """
 
-# from .ml import (
-#     MLPipeline,
-#     pipeline_baseline,
-#     pipeline_feature_selection,
-#     pipeline_HP_search,
-#     pipeline_feature_selection_HP_search,
-#     pipeline_unsupervised
-# )
+from .dim_reduction import (
+    METHODS,
+    METHODS_DICT,
+    BaseReducer,
+    DimReduction,
+    DMDReducer,
+    IsomapReducer,
+    IVISReducer,
+    LLEReducer,
+    MDSReducer,
+    PacmapReducer,
+    PCAReducer,
+    PHATEReducer,
+    SpectralEmbeddingReducer,
+    TopologicalAEReducer,
+    TRCAReducer,
+    TrimapReducer,
+    TSNEReducer,
+    UMAPReducer,
+    continuity,
+    lcmc,
+    shepard_diagram_data,
+    trustworthiness,
+)
+
+__all__ = [
+    "DimReduction",
+    "METHODS",
+    "METHODS_DICT",
+    "BaseReducer",
+    "PCAReducer",
+    "IsomapReducer",
+    "LLEReducer",
+    "MDSReducer",
+    "SpectralEmbeddingReducer",
+    "TSNEReducer",
+    "UMAPReducer",
+    "PacmapReducer",
+    "TrimapReducer",
+    "PHATEReducer",
+    "DMDReducer",
+    "TRCAReducer",
+    "IVISReducer",
+    "TopologicalAEReducer",
+    "trustworthiness",
+    "continuity",
+    "lcmc",
+    "shepard_diagram_data",
+]

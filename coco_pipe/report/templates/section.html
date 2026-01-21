@@ -1,0 +1,86 @@
+<section id="{{ id }}" data-tags='{{ tags }}' data-title="{{ title | lower }}"
+    class="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mb-8 transition-colors duration-200 scroll-mt-24">
+    <div class="bg-gray-50 dark:bg-gray-700/50 px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center group cursor-pointer"
+        onclick="this.parentElement.classList.toggle('collapsed')">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center">
+            {% if icon %}
+            <span class="mr-2 opacity-80 group-hover:opacity-100 transition-opacity">{{ icon | safe }}</span>
+            {% endif %}
+            {{ title }}
+
+            <!-- Code Snippet Trigger -->
+            {% if code %}
+            <button
+                onclick="event.stopPropagation(); document.getElementById('code-modal-{{ id }}').classList.remove('hidden')"
+                class="ml-3 p-1 text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition rounded"
+                title="View Source Code">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                </svg>
+            </button>
+            {% endif %}
+        </h2>
+
+        <!-- Status Indicator -->
+        {% if status != "OK" %}
+        <span
+            class="px-2 py-0.5 rounded text-xs font-bold {{ 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200' if status == 'WARN' else 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200' }}">
+            {{ status }}
+        </span>
+        {% else %}
+        <svg class="w-5 h-5 text-gray-400 transform transition-transform group-[.collapsed]:rotate-180" fill="none"
+            stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+        </svg>
+        {% endif %}
+    </div>
+
+    <div class="p-6 space-y-4 group-[.collapsed]:hidden">
+        <!-- Quality Findings -->
+        {% if findings %}
+        <div class="space-y-2 mb-4">
+            {% for finding in findings %}
+            <div
+                class="flex items-start p-3 rounded-md text-sm {{ 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200 border border-red-100 dark:border-red-800/50' if finding.status == 'FAIL' else 'bg-yellow-50 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200 border border-yellow-100 dark:border-yellow-800/50' }}">
+                <span class="mr-2 text-lg">
+                    {{ '❌' if finding.status == 'FAIL' else '⚠️' }}
+                </span>
+                <div>
+                    <span class="font-bold block">{{ finding.check_name }}</span>
+                    <span class="opacity-90">{{ finding.message }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {{ content | safe }}
+
+        <!-- Code Modal -->
+        {% if code %}
+        <div id="code-modal-{{ id }}"
+            class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+            onclick="this.classList.add('hidden')">
+            <div class="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden"
+                onclick="event.stopPropagation()">
+                <div
+                    class="p-4 border-b dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
+                    <h3 class="font-mono text-sm font-bold text-gray-700 dark:text-gray-300">Source Code: {{ title }}
+                    </h3>
+                    <button onclick="document.getElementById('code-modal-{{ id }}').classList.add('hidden')"
+                        class="text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+                <div class="p-0 overflow-auto bg-[#1e1e1e]">
+                    <pre class="p-4 text-xs font-mono text-gray-100 leading-relaxed">{{ code }}</pre>
+                </div>
+                <div class="p-2 border-t dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
+                    <button onclick="navigator.clipboard.writeText(`{{ code }}`); this.textContent='Copied!';"
+                        class="text-xs px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded hover:bg-gray-50 transition">Copy
+                        to Clipboard</button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</section>

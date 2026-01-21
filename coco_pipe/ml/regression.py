@@ -8,28 +8,24 @@ Date: 2025-05-18
 Version: 0.0.1
 License: TBD
 """
-import logging
-import pickle
-import datetime
-import json
-import os
 
 import datetime
-import logging
-import pickle
-import os
 import json
+import logging
+import os
+import pickle
 from typing import Any, Dict, Optional, Sequence, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from .base import BasePipeline
 from .config import (
-    REGRESSION_METRICS,
-    REGRESSION_MODELS,
     DEFAULT_CV,
     MULTIOUTPUT_REG_METRICS,
     MULTIOUTPUT_REG_MODELS,
+    REGRESSION_METRICS,
+    REGRESSION_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,35 +60,43 @@ class SingleOutputRegressionPipeline(BasePipeline):
     cv_kwargs : dict, optional (default=None)
         Keyword arguments for cross-validation, such as 'cv_strategy' and 'n_splits'.
     groups : np.ndarray, optional (default=None)
-        Group labels for the samples used while splitting the dataset into train/test set.
-    
+        Group labels for the samples used while splitting the dataset into
+        train/test set.
+
     Raises
     ------
     ValueError
         If the target `y` is not a 1D array.
-    
+
     Notes
-    -----   
-    This pipeline supports single-output regression tasks, allowing for model evaluation,
-    hyperparameter tuning, and feature selection. It uses predefined regression models and metrics.
-    The models and metrics can be specified or defaulted to all available options.
-    The pipeline can handle cross-validation and supports parallel
-    execution with the `n_jobs` parameter.
+    -----
+    This pipeline supports single-output regression tasks, allowing for model
+    evaluation, hyperparameter tuning, and feature selection. It uses predefined
+    regression models and metrics. The models and metrics can be specified or
+    defaulted to all available options.
+    The pipeline can handle cross-validation and supports parallel execution
+    with the `n_jobs` parameter.
     The `cv_kwargs` parameter allows customization of the cross-validation strategy.
-    The `groups` parameter can be used to specify group labels for grouped cross-validation.
-    The pipeline is designed to be flexible and extensible, allowing for easy integration
-    with other components of the coco_pipe framework.
+    The `groups` parameter can be used to specify group labels for grouped
+    cross-validation.
+    The pipeline is designed to be flexible and extensible, allowing for easy
+    integration with other components of the coco_pipe framework.
 
     Examples
     --------
     >>> from coco_pipe.ml import SingleOutputRegressionPipeline
     >>> import numpy as np
     >>> import pandas as pd
-    >>> X = pd.DataFrame(np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)])
+    >>> X = pd.DataFrame(
+    ...     np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)]
+    ... )
     >>> y = pd.Series(np.random.rand(100))
-    >>> pipeline = SingleOutputRegressionPipeline(X=X, y=y, models=["linear_regression", "random_forest"])
+    >>> pipeline = SingleOutputRegressionPipeline(
+    ...     X=X, y=y, models=["linear_regression", "random_forest"]
+    ... )
     >>> results = pipeline.execute()
     """
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -140,16 +144,17 @@ class SingleOutputRegressionPipeline(BasePipeline):
 
     def _validate_single_target(self, y):
         """Ensure target is 1D array."""
-        if not hasattr(y, 'ndim') or y.ndim != 1:
+        if not hasattr(y, "ndim") or y.ndim != 1:
             raise ValueError(
-                f"Target must be 1D array for single-output regression. Shape is {getattr(y,'shape',None)}"
+                f"Target must be 1D array for single-output regression. "
+                f"Shape is {getattr(y, 'shape', None)}"
             )
 
 
 class MultiOutputRegressionPipeline(BasePipeline):
     """
     Pipeline for multi‐output regression tasks.
-    
+
     Parameters
     ----------
 
@@ -171,7 +176,8 @@ class MultiOutputRegressionPipeline(BasePipeline):
     cv_kwargs : dict, optional (default=None)
         Keyword arguments for cross-validation, such as 'cv_strategy' and 'n_splits'.
     groups : np.ndarray, optional (default=None)
-        Group labels for the samples used while splitting the dataset into train/test set.  
+        Group labels for the samples used while splitting the dataset into
+        train/test set.
 
     Raises
     ------
@@ -181,24 +187,38 @@ class MultiOutputRegressionPipeline(BasePipeline):
     Notes
     -----
     This pipeline supports multi-output regression tasks, allowing for model evaluation,
-    hyperparameter tuning, and feature selection. It uses predefined multi-output regression
-    models and metrics. The models and metrics can be specified or defaulted to all available options.
-    The pipeline can handle cross-validation and supports parallel execution with the `n_jobs` parameter.
+    This pipeline supports multi-output regression tasks, allowing for model
+    evaluation, hyperparameter tuning, and feature selection. It uses predefined
+    multi-output regression models and metrics. The models and metrics can be
+    specified or defaulted to all available options.
+    The pipeline can handle cross-validation and supports parallel execution
+    with the `n_jobs` parameter.
     The `cv_kwargs` parameter allows customization of the cross-validation strategy.
-    The `groups` parameter can be used to specify group labels for grouped cross-validation.
-    The pipeline is designed to be flexible and extensible, allowing for easy integration
-    with other components of the coco_pipe framework.
+    The `groups` parameter can be used to specify group labels for grouped
+    cross-validation.
+    The pipeline is designed to be flexible and extensible, allowing for easy
+    integration with other components of the coco_pipe framework.
 
     Examples
     --------
     >>> from coco_pipe.ml import MultiOutputRegressionPipeline
     >>> import numpy as np
     >>> import pandas as pd
-    >>> X = pd.DataFrame(np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)])
-    >>> y = pd.DataFrame(np.random.rand(100, 3), columns=[f"target_{i}" for i in range(3)])
-    >>> pipeline = MultiOutputRegressionPipeline(X=X, y=y, models=["linear_regression", "random_forest"])
+    >>> X = pd.DataFrame(
+    ...     np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)]
+    ... )
+    >>> X = pd.DataFrame(
+    ...     np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)]
+    ... )
+    >>> y = pd.DataFrame(
+    ...     np.random.rand(100, 3), columns=[f"target_{i}" for i in range(3)]
+    ... )
+    >>> pipeline = MultiOutputRegressionPipeline(
+    ...     X=X, y=y, models=["linear_regression", "random_forest"]
+    ... )
     >>> results = pipeline.execute()
     """
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -216,7 +236,9 @@ class MultiOutputRegressionPipeline(BasePipeline):
         self._validate_multioutput_target(y)
 
         metric_funcs = MULTIOUTPUT_REG_METRICS
-        default_metrics = [metrics] if isinstance(metrics, str) else (metrics or ["mean_r2"])
+        default_metrics = (
+            [metrics] if isinstance(metrics, str) else (metrics or ["mean_r2"])
+        )
 
         base = MULTIOUTPUT_REG_MODELS.copy()
         if models == "all":
@@ -246,9 +268,10 @@ class MultiOutputRegressionPipeline(BasePipeline):
 
     def _validate_multioutput_target(self, y):
         """Ensure target is 2D array."""
-        if not hasattr(y, 'ndim') or y.ndim != 2:
+        if not hasattr(y, "ndim") or y.ndim != 2:
             raise ValueError(
-                f"Target must be 2D array for multi-output regression. Shape is {getattr(y,'shape',None)}"
+                f"Target must be 2D array for multi-output regression. "
+                f"Shape is {getattr(y, 'shape', None)}"
             )
 
 
@@ -281,9 +304,10 @@ class RegressionPipeline:
     n_splits : int, optional (default=5)
         Number of splits for cross-validation.
     n_features : int, optional (default=None)
-        Number of features to select in feature selection analysis. If None, all features are used.
+        Number of features to select in feature selection analysis. If None,
+        all features are used.
     direction : str, optional (default="forward")
-        Direction for feature selection. Options are "forward", "backward", or "both".  
+        Direction for feature selection. Options are "forward", "backward", or "both".
     search_type : str, optional (default="grid")
         Search type for hyperparameter tuning. Options are "grid" or "random".
     n_iter : int, optional (default=100)
@@ -297,9 +321,11 @@ class RegressionPipeline:
     results_dir : str, optional (default="results")
         Directory to save results. If it does not exist, it will be created.
     results_file : str, optional (default="results")
-        Base name for the results file. The full filename will include the task type and analysis type.
+        Base name for the results file. The full filename will include the task
+        type and analysis type.
     cv_kwargs : dict, optional (default=None)
-        Additional keyword arguments for cross-validation, such as 'groups' for grouped CV.
+        Additional keyword arguments for cross-validation, such as 'groups' for
+        grouped CV.
 
     Raises
     ------
@@ -309,22 +335,32 @@ class RegressionPipeline:
 
     Notes
     -----
-    This wrapper class is designed to handle both single-output and multi-output regression tasks.
-    It automatically selects the appropriate pipeline class based on the shape of the target variable `y`.
-    The `analysis_type` parameter determines the type of analysis to perform, such as baseline evaluation,
-    feature selection, or hyperparameter search. The results are saved in the specified directory,
-    and metadata about the analysis is stored in a JSON file alongside the results. 
+    This wrapper class is designed to handle both single-output and multi-output
+    regression tasks.
+    It automatically selects the appropriate pipeline class based on the shape of
+    the target variable `y`. The `analysis_type` parameter determines the type of
+    analysis to perform, such as baseline evaluation, feature selection, or
+    hyperparameter search. The results are saved in the specified directory,
+    and metadata about the analysis is stored in a JSON file alongside the results.
 
     Examples
     --------
     >>> from coco_pipe.ml import RegressionPipeline
     >>> import numpy as np
     >>> import pandas as pd
-    >>> X = pd.DataFrame(np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)])
+    >>> X = pd.DataFrame(
+    ...     np.random.rand(100, 10), columns=[f"feature_{i}" for i in range(10)]
+    ... )
     >>> y = pd.Series(np.random.rand(100))  # Single-output regression
-    >>> pipeline = RegressionPipeline(X=X, y=y, analysis_type="baseline", models=["linear_regression", "random_forest"])
+    >>> pipeline = RegressionPipeline(
+    ...     X=X,
+    ...     y=y,
+    ...     analysis_type="baseline",
+    ...     models=["linear_regression", "random_forest"]
+    ... )
     >>> results = pipeline.run()
     """
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -354,7 +390,12 @@ class RegressionPipeline:
         self.y = y
         self.verbose = verbose
         analysis_type = analysis_type.lower()
-        if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
+        if analysis_type not in [
+            "baseline",
+            "feature_selection",
+            "hp_search",
+            "hp_search_fs",
+        ]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
         self.analysis_type = analysis_type
         self.models = models
@@ -382,7 +423,7 @@ class RegressionPipeline:
             self.update_configs = True
 
         # pick pipeline class based on target dimension
-        if hasattr(self.y, 'ndim') and self.y.ndim == 2:
+        if hasattr(self.y, "ndim") and self.y.ndim == 2:
             PipelineClass = MultiOutputRegressionPipeline
             self.task = "multioutput"
         else:
@@ -394,11 +435,13 @@ class RegressionPipeline:
         cvk = dict(DEFAULT_CV)
         if cv_kwargs:
             cvk.update(cv_kwargs)
-        cvk.update({
-            "cv_strategy": cv_strategy,
-            "n_splits": n_splits,
-            "random_state": random_state,
-        })
+        cvk.update(
+            {
+                "cv_strategy": cv_strategy,
+                "n_splits": n_splits,
+                "random_state": random_state,
+            }
+        )
 
         self.pipeline = PipelineClass(
             X=self.X,
@@ -420,8 +463,11 @@ class RegressionPipeline:
 
     def run(self) -> Dict[str, Any]:
         results: Dict[str, Any] = {}
-        
-        base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
+
+        base_name = (
+            f"{self.results_file}_{self.task}_{self.analysis_type}_"
+            f"rs{self.random_state}"
+        )
         if self.analysis_type == "feature_selection":
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
         if self.analysis_type == "hp_search":
@@ -446,14 +492,14 @@ class RegressionPipeline:
             "search_type": self.search_type,
             "n_iter": self.n_iter,
             "n_jobs": self.n_jobs,
-            "X_shape": getattr(self.X, 'shape', None),
-            "y_shape": getattr(self.y, 'shape', (len(self.y),)),
+            "X_shape": getattr(self.X, "shape", None),
+            "y_shape": getattr(self.y, "shape", (len(self.y),)),
             "start_time": datetime.datetime.now().isoformat(),
             "completed_models": [],
             "failed_models": [],
             "status": "running",
         }
-                # update model configs using
+        # update model configs using
         if self.update_configs:
             logger.info("Updating model configurations with provided configs.")
             for model_name, (default_config, params) in self.new_model_configs.items():
@@ -464,7 +510,9 @@ class RegressionPipeline:
                 )
 
         if self.verbose:
-            logger.info("Starting regression analysis with the following configuration:")
+            logger.info(
+                "Starting regression analysis with the following configuration:"
+            )
             logger.info(metadata)
 
         for name in self.pipeline.model_configs:

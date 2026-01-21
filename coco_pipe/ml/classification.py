@@ -2,7 +2,8 @@
 """
 coco_pipe/ml/classification.py
 ----------------
-Wrapper for classification pipelines supporting binary, multiclass, and multioutput tasks.
+Wrapper for classification pipelines supporting binary, multiclass, and multioutput
+tasks.
 
 Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
 Date: 2025-05-18
@@ -11,24 +12,27 @@ License: TBD
 """
 
 import datetime
-import logging
-import pickle
-import os
 import json
-import pandas as pd
+import logging
+import os
+import pickle
 from typing import Any, Dict, Optional, Sequence, Union
+
 import numpy as np
+import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.utils.multiclass import type_of_target
 
 from .base import BasePipeline
 from .config import (
-    BINARY_METRICS, BINARY_MODELS, 
-    MULTICLASS_METRICS, MULTICLASS_MODELS,
-    MULTIOUTPUT_CLASS_METRICS, MULTIOUTPUT_CLASS_MODELS, 
-    DEFAULT_CV
+    BINARY_METRICS,
+    BINARY_MODELS,
+    DEFAULT_CV,
+    MULTICLASS_METRICS,
+    MULTICLASS_MODELS,
+    MULTIOUTPUT_CLASS_METRICS,
+    MULTIOUTPUT_CLASS_MODELS,
 )
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -37,10 +41,11 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
 class BinaryClassificationPipeline(BasePipeline):
     """
     Binary classification pipeline.
-        
+
     Parameters
     ----------
     X : np.ndarray
@@ -63,9 +68,10 @@ class BinaryClassificationPipeline(BasePipeline):
     cv_kwargs : dict, optional
         Cross-validation parameters. If None, uses `DEFAULT_CV`. Default is None.
     groups : np.ndarray, optional
-        Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
+        Group labels for samples, for group-based CV. Shape (n_samples,).
+        Default is None.
     """
-    
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -81,8 +87,10 @@ class BinaryClassificationPipeline(BasePipeline):
     ):
         self._validate_target(y)
 
-        metric_funcs =  BINARY_METRICS
-        default_metrics = [metrics] if isinstance(metrics, str) else (metrics or ["accuracy"])
+        metric_funcs = BINARY_METRICS
+        default_metrics = (
+            [metrics] if isinstance(metrics, str) else (metrics or ["accuracy"])
+        )
 
         base = BINARY_MODELS
         if models == "all":
@@ -114,13 +122,15 @@ class BinaryClassificationPipeline(BasePipeline):
     def _validate_target(self, y):
         unique = np.unique(y)
         if unique.size != 2:
-            raise ValueError(f"Target must be binary. Found {unique.size} classes: {unique}")
+            raise ValueError(
+                f"Target must be binary. Found {unique.size} classes: {unique}"
+            )
 
 
 class MultiClassClassificationPipeline(BasePipeline):
     """
     Multiclass classification pipeline.
-        
+
     Parameters
     ----------
     X : np.ndarray
@@ -145,7 +155,7 @@ class MultiClassClassificationPipeline(BasePipeline):
     groups : np.ndarray, optional
         Group labels for samples. Default is None.
     """
-    
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -162,9 +172,9 @@ class MultiClassClassificationPipeline(BasePipeline):
     ):
         metric_funcs = MULTICLASS_METRICS
         if isinstance(metrics, str):
-            default_metrics = [metrics]
+            pass
         else:
-            default_metrics = metrics or list(MULTICLASS_METRICS.keys())
+            metrics or list(MULTICLASS_METRICS.keys())
 
         base = MULTICLASS_MODELS.copy()
         if models == "all":
@@ -198,22 +208,16 @@ class MultiClassClassificationPipeline(BasePipeline):
         if classes.size <= 2:
             raise ValueError(f"Multiclass target requires >2 classes, got: {classes}")
 
-    def _aggregate(
-        self,
-        fold_preds,
-        fold_scores,
-        fold_importances,
-        freq=None
-    ):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        if 'roc_auc' in self.metrics and "y_proba" in predictions:
+        if "roc_auc" in self.metrics and "y_proba" in predictions:
             from .config import multiclass_roc_auc_score
+
             proba = predictions["y_proba"]
             score = multiclass_roc_auc_score(
-                y_true=predictions["y_true"],
-                y_proba=proba
+                y_true=predictions["y_true"], y_proba=proba
             )
             metrics["roc_auc"] = {"mean": score, "std": 0.0, "fold_scores": [score]}
         if self.per_class:
@@ -224,7 +228,11 @@ class MultiClassClassificationPipeline(BasePipeline):
             )
             pcm = {}
             for cls, p, r, f in zip(np.unique(yt), prec, rec, f1):
-                pcm[int(cls)] = {"precision": float(p), "recall": float(r), "f1": float(f)}
+                pcm[int(cls)] = {
+                    "precision": float(p),
+                    "recall": float(r),
+                    "f1": float(f),
+                }
             metrics["per_class_metrics"] = pcm
         return predictions, metrics, feature_importances
 
@@ -242,7 +250,8 @@ class MultiOutputClassificationPipeline(BasePipeline):
     models : str or list, optional
         Models to include. Can be "all", a model name, or a list of model names.
     metrics : str or list, optional
-        Metrics to evaluate. If None, uses default metrics for multi-output classification.
+        Metrics to evaluate. If None, uses default metrics for multi-output
+        classification.
     random_state : int, optional
         Random state for reproducibility. Default is 42.
     n_jobs : int, optional
@@ -250,8 +259,10 @@ class MultiOutputClassificationPipeline(BasePipeline):
     cv_kwargs : dict, optional
         Cross-validation parameters. If None, uses `DEFAULT_CV`. Default is None.
     groups : np.ndarray, optional
-        Group labels for samples, for group-based CV. Shape (n_samples,). Default is None.
+        Group labels for samples, for group-based CV. Shape (n_samples,).
+        Default is None.
     """
+
     def __init__(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -265,7 +276,6 @@ class MultiOutputClassificationPipeline(BasePipeline):
         groups: Optional[Union[pd.Series, np.ndarray]] = None,
         verbose: bool = False,
     ):
-
         metric_funcs = MULTIOUTPUT_CLASS_METRICS
         if isinstance(metrics, str):
             default_metrics = [metrics]
@@ -302,26 +312,26 @@ class MultiOutputClassificationPipeline(BasePipeline):
     def _validate_target(self, y):
         """Ensure target is multioutput."""
         if not (hasattr(y, "ndim") and y.ndim == 2):
-            raise ValueError(f"Target must be 2D for multi-output; got shape {getattr(y, 'shape', None)}")
+            raise ValueError(
+                f"Target must be 2D for multi-output; got shape "
+                f"{getattr(y, 'shape', None)}"
+            )
 
-    def _aggregate(
-        self,
-        fold_preds,
-        fold_scores,
-        fold_importances,
-        freq=None
-    ):
+    def _aggregate(self, fold_preds, fold_scores, fold_importances, freq=None):
         predictions, metrics, feature_importances = super()._aggregate(
             fold_preds, fold_scores, fold_importances, freq
         )
-        from sklearn.metrics import precision_score, recall_score, f1_score
+        from sklearn.metrics import f1_score, precision_score, recall_score
+
         yt = predictions["y_true"]
         yp = predictions["y_pred"]
         pom = {}
         for i in range(yt.shape[1]):
             out = {}
             if "precision_samples" in self.metrics:
-                out["precision"] = float(precision_score(yt[:, i], yp[:, i], zero_division=0))
+                out["precision"] = float(
+                    precision_score(yt[:, i], yp[:, i], zero_division=0)
+                )
             if "recall_samples" in self.metrics:
                 out["recall"] = float(recall_score(yt[:, i], yp[:, i], zero_division=0))
             if "f1_samples" in self.metrics:
@@ -332,6 +342,7 @@ class MultiOutputClassificationPipeline(BasePipeline):
             metrics["per_output_metrics"] = pom
         return predictions, metrics, feature_importances
 
+
 class ClassificationPipeline:
     """
     Wrapper that selects and runs the appropriate classification pipeline.
@@ -341,9 +352,11 @@ class ClassificationPipeline:
     X : np.ndarray
         Feature matrix, array-like of shape (n_samples, n_features).
     y : np.ndarray
-        Target vector, array-like of shape (n_samples,) or (n_samples, n_outputs) for multi-output.
+        Target vector, array-like of shape (n_samples,) or (n_samples, n_outputs)
+        for multi-output.
     analysis_type : str, optional
-        Type of analysis to perform. Can be "baseline", "feature_selection", "hp_search", or "hp_search_fs".
+        Type of analysis to perform. Can be "baseline", "feature_selection",
+        "hp_search", or "hp_search_fs".
     models : str or list, optional
         Models to include. Can be "all", a model name, or a list of model names.
     metrics : str or list, optional
@@ -359,13 +372,16 @@ class ClassificationPipeline:
     n_features : int, optional
         Number of features to select in feature selection. Default is None (select all).
     direction : str, optional
-        Direction for feature selection. Can be "forward", "backward", or "both". Default is "forward".
+        Direction for feature selection. Can be "forward", "backward", or "both".
+        Default is "forward".
     search_type : str, optional
-        Type of hyperparameter search to perform. Can be "grid" or "random". Default is "grid".
+        Type of hyperparameter search to perform. Can be "grid" or "random".
+        Default is "grid".
     n_iter : int, optional
         Number of iterations for random search. Default is 100.
     scoring : str, optional
-        Scoring metric for hyperparameter search. If None, uses default metric for the task type.
+        Scoring metric for hyperparameter search. If None, uses default metric for
+        the task type.
     n_jobs : int, optional
         Number of parallel jobs to run. Default is -1 (use all available cores).
     save_intermediate : bool, optional
@@ -382,15 +398,21 @@ class ClassificationPipeline:
     ValueError
         If `analysis_type` is not one of the supported types.
     ValueError
-        If `y` is not a valid target for classification (e.g., not binary, multiclass, or multioutput).
+        If `y` is not a valid target for classification (e.g., not binary,
+        multiclass, or multioutput).
 
     Notes
     -----
-    This class automatically detects the type of classification task (binary, multiclass, or multioutput)
-    based on the shape and content of `y`. It then instantiates the appropriate pipeline class
-    (`BinaryClassificationPipeline`, `MultiClassClassificationPipeline`, or `MultiOutputClassificationPipeline`)
-    and runs the specified analysis type (baseline evaluation, feature selection, hyperparameter search,
-    or hyperparameter search with feature selection).
+    This class automatically detects the type of classification task (binary,
+    multiclass, or multioutput)
+    parameter determines the type of analysis to perform, such as baseline
+    evaluation, feature selection, or hyperparameter search. The results are saved
+    in the specified directory, and metadata about the analysis is stored in a JSON
+    file alongside the results.
+    (`BinaryClassificationPipeline`, `MultiClassClassificationPipeline`, or
+    `MultiOutputClassificationPipeline`) and runs the specified analysis type
+    (baseline evaluation, feature selection, hyperparameter search, or
+    hyperparameter search with feature selection).
 
     Example
     -------
@@ -430,7 +452,12 @@ class ClassificationPipeline:
         self.X = X
         self.y = y
         analysis_type = analysis_type.lower()
-        if analysis_type not in ["baseline", "feature_selection", "hp_search", "hp_search_fs"]:
+        if analysis_type not in [
+            "baseline",
+            "feature_selection",
+            "hp_search",
+            "hp_search_fs",
+        ]:
             raise ValueError(f"Invalid analysis type: {analysis_type}")
         self.analysis_type = analysis_type
         self.models = models
@@ -475,16 +502,22 @@ class ClassificationPipeline:
         cvk = dict(DEFAULT_CV)
         if cv_kwargs:
             cvk.update(cv_kwargs)
-        cvk.update({
-            "cv_strategy": self.cv_strategy,
-            "n_splits": self.n_splits,
-            "random_state": self.random_state
-        })
+        cvk.update(
+            {
+                "cv_strategy": self.cv_strategy,
+                "n_splits": self.n_splits,
+                "random_state": self.random_state,
+            }
+        )
 
         self.pipeline = PipelineClass(
-            X=self.X, y=self.y, groups=self.groups,
-            models=self.models, metrics=self.metrics,
-            random_state=self.random_state, n_jobs=self.n_jobs,
+            X=self.X,
+            y=self.y,
+            groups=self.groups,
+            models=self.models,
+            metrics=self.metrics,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
             cv_kwargs=cvk,
             verbose=self.verbose,
         )
@@ -521,13 +554,13 @@ class ClassificationPipeline:
         """
         Run the selected analysis type on the classification pipeline.
         This method executes the specified analysis type (baseline evaluation,
-        feature selection, hyperparameter search, or hyperparameter search with feature selection)
-        and saves the results to the specified results directory.
+        feature selection, hyperparameter search, or hyperparameter search with
+        feature selection) and saves the results to the specified results directory.
         It also saves metadata about the run, including the task type, analysis type,
         models used, metrics evaluated, random state, cross-validation strategy,
-        number of splits, number of features (if applicable), direction (if applicable),
-        search type (if applicable), number of iterations (if applicable), and the shapes of
-        the input data `X` and target `y`.
+        number of splits, number of features (if applicable), direction (if
+        applicable), search type (if applicable), number of iterations (if
+        applicable), and the shapes of the input data `X` and target `y`.
         It returns a dictionary containing the results of the analysis.
 
         Parameters
@@ -540,8 +573,10 @@ class ClassificationPipeline:
 
         Raises
         ValueError
-            If the analysis type is not recognized or if there is an error during the run.
-        
+        ValueError
+            If the analysis type is not recognized or if there is an error during
+            the run.
+
         Notes
         The results are saved in the specified results directory with a filename
         formatted as `<results_file>_<task>_<analysis_type>_rs<random_state>.pkl`.
@@ -576,7 +611,10 @@ class ClassificationPipeline:
         )
         >>> results = pipeline.run()
         """
-        base_name = f"{self.results_file}_{self.task}_{self.analysis_type}_rs{self.random_state}"
+        base_name = (
+            f"{self.results_file}_{self.task}_{self.analysis_type}_"
+            f"rs{self.random_state}"
+        )
         if self.analysis_type == "feature_selection":
             base_name += f"_nfeat{self.n_features}_dir{self.direction}"
         if self.analysis_type == "hp_search":
@@ -602,7 +640,7 @@ class ClassificationPipeline:
             "n_iter": self.n_iter,
             "n_jobs": self.n_jobs,
             "X_shape": self.X.shape,
-            "y_shape": getattr(self.y, 'shape', (len(self.y),)),
+            "y_shape": getattr(self.y, "shape", (len(self.y),)),
             "start_time": datetime.datetime.now().isoformat(),
             "completed_models": [],
             "failed_models": [],
@@ -666,8 +704,13 @@ class ClassificationPipeline:
         metadata["failed_models_count"] = len(metadata["failed_models"])
 
         self.save(base_name, self.results)
-        with open(os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w") as f:
+        with open(
+            os.path.join(self.results_dir, f"{base_name}_metadata.json"), "w"
+        ) as f:
             json.dump(metadata, f, indent=2)
-        logger.info(f"Saved metadata to {os.path.join(self.results_dir, f'{base_name}_metadata.json')}" )
+        logger.info(
+            f"Saved metadata to "
+            f"{os.path.join(self.results_dir, f'{base_name}_metadata.json')}"
+        )
 
         return self.results

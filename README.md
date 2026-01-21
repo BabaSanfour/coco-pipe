@@ -32,17 +32,15 @@ Whether you're conducting clinical research, developing ML models for brain-comp
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Install Dependencies:**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Install the Package in Editable Mode:**
+3. **Install the Package:**
 
    ```bash
    pip install -e .
    ```
+
+   *Note: This will install all runtime dependencies. for development dependencies, use `pip install -e .[dev]`.*
+
+For detailed development instructions, please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Using the ML Module
 
@@ -135,11 +133,11 @@ analyses:
       - "Logistic Regression"
       - "Random Forest"
     metrics:
-      - "accuracy" 
+      - "accuracy"
       - "roc_auc"
 
   - id: "regression_hp_search"
-    task: "regression" 
+    task: "regression"
     analysis_type: "hp_search"
     target_columns: ["target_reg"]
     feature_names: ["feat1"]
@@ -170,12 +168,35 @@ The pipeline will:
 
 ## Documentation
 
-Full documentation for CoCo Pipe is available at:  
+Full documentation for CoCo Pipe is available at:
 https://cocopipe.readthedocs.io/en/latest/index.html
 
 ## Contributing
 
 Contributions are welcome! If you have suggestions or find any bugs, please open issues or submit pull requests.
+
+### TODO
+
+#### IO Module
+- Implement CSV loading and M/EEG data loading functionalities.
+- Develop comprehensive unit tests.
+
+#### ML Module
+- Restructure to mirror the design of the dim_reduction module.
+- Consolidate scripts within the main pipeline.
+- Add regression support and enhance cross-validation methods.
+- Update and expand unit tests.
+
+#### DL Module
+- Define and implement deep learning functionalities.
+- Create corresponding unit tests.
+
+#### Visualization Module
+- Plan and implement enhancements for visualization features.
+- Integrate new visual components and testing.
+
+#### Dim reduction:
+- Add parallelism
 
 ## License
 

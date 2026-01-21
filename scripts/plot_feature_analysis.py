@@ -2,7 +2,8 @@
 """
 Plot feature-level results (analysis unit = feature) from an aggregated coco_pipe run.
 
-For each computed feature (one analysis per feature using all sensors as inputs), this script:
+For each computed feature (one analysis per feature using all sensors as inputs),
+this script:
   - Plots a topomap of sensor importances (one topomap per computed feature).
   - Aggregates the per-feature accuracy (or chosen metric) into a bar plot.
 
@@ -32,13 +33,12 @@ import argparse
 import json
 import os
 import re
-from typing import Dict, Tuple, Optional, Sequence, Mapping
+from typing import Dict, Mapping, Optional, Sequence
 
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
+import pandas as pd
 
-from coco_pipe.viz import plot_topomap, plot_bar
+from coco_pipe.viz import plot_bar, plot_topomap
 
 
 def load_coords(path: str) -> pd.DataFrame:
@@ -59,7 +59,9 @@ def load_coords(path: str) -> pd.DataFrame:
 
     df = pd.read_csv(path, sep=None, engine="python")
     cols = {c.lower(): c for c in df.columns}
-    name_col = next((cols[c] for c in ("name", "sensor", "channel", "id") if c in cols), None)
+    name_col = next(
+        (cols[c] for c in ("name", "sensor", "channel", "id") if c in cols), None
+    )
     if name_col is None:
         name_col = df.columns[0]
     x_col = next((cols[c] for c in ("x", "xs", "xpos", "x_coord") if c in cols), None)
@@ -78,15 +80,18 @@ def load_coords(path: str) -> pd.DataFrame:
     return cdf.dropna()
 
 
-def generate_coords_from_mne(montage: str = "standard_1020",
-                             restrict_to: Optional[Sequence[str]] = None) -> pd.DataFrame:
+def generate_coords_from_mne(
+    montage: str = "standard_1020", restrict_to: Optional[Sequence[str]] = None
+) -> pd.DataFrame:
     try:
         import mne  # type: ignore
     except Exception as e:
-        raise ImportError("This feature requires 'mne'. Install it via 'pip install mne'.") from e
+        raise ImportError(
+            "This feature requires 'mne'. Install it via 'pip install mne'."
+        ) from e
     std_montage = mne.channels.make_standard_montage(montage)
     pos = std_montage.get_positions()
-    ch_pos = pos.get('ch_pos', {})
+    ch_pos = pos.get("ch_pos", {})
     rows = []
     names = list(restrict_to) if restrict_to else list(ch_pos.keys())
     for name in names:
@@ -105,7 +110,9 @@ def generate_coords_from_mne(montage: str = "standard_1020",
     return pd.DataFrame(rows, columns=["name", "x", "y"]).set_index("name")
 
 
-def pick_model(results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None) -> str:
+def pick_model(
+    results_per_model: Dict[str, dict], preferred: Optional[Sequence[str]] = None
+) -> str:
     preferred = preferred or ("Logistic Regression",)
     for m in preferred:
         if m in results_per_model:
@@ -113,7 +120,9 @@ def pick_model(results_per_model: Dict[str, dict], preferred: Optional[Sequence[
     return next(iter(results_per_model))
 
 
-def sensor_from_column(col: str, sensors: Sequence[str], sep: str, reverse: bool) -> Optional[str]:
+def sensor_from_column(
+    col: str, sensors: Sequence[str], sep: str, reverse: bool
+) -> Optional[str]:
     sensors_set = set(sensors)
     if sep in col:
         left, right = col.split(sep, 1)
@@ -147,23 +156,69 @@ def feature_from_columns(cols: Sequence[str], sep: str, reverse: bool) -> Option
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot per-feature topomaps of sensor importances and bar plot of per-feature metric.")
-    parser.add_argument("--results", required=True, help="Path to aggregated results pickle (from run_ml.py)")
-    parser.add_argument("--coords", required=False, help="Path to sensor coordinates (CSV/TSV/JSON)")
-    parser.add_argument("--use-mne", action="store_true", help="Generate sensor coordinates from MNE standard montage")
-    parser.add_argument("--montage", default="standard_1020", help="MNE montage name (default: standard_1020)")
-    parser.add_argument("--model", default=None, help="Model name to use (default: try 'Logistic Regression' else first)")
-    parser.add_argument("--metric", default="accuracy", help="Metric to plot per feature (default: accuracy)")
-    parser.add_argument("--sep", default="_", help="Separator between unit and feature in column names (default: _)")
-    parser.add_argument("--reverse", action="store_true", help="If set, interpret columns as <feature><sep><unit>")
-    parser.add_argument("--out-dir", default="results/feature_analysis_plots", help="Directory to save plots")
-    parser.add_argument("--label-map", default=None, help="Optional JSON mapping from feature name to display label")
-    parser.add_argument("--no-show", action="store_true", help="Do not open interactive windows; save only")
+    parser = argparse.ArgumentParser(
+        description="Plot per-feature topomaps of sensor importances and bar "
+        "plot of per-feature metric."
+    )
+    parser.add_argument(
+        "--results",
+        required=True,
+        help="Path to aggregated results pickle (from run_ml.py)",
+    )
+    parser.add_argument(
+        "--coords", required=False, help="Path to sensor coordinates (CSV/TSV/JSON)"
+    )
+    parser.add_argument(
+        "--use-mne",
+        action="store_true",
+        help="Generate sensor coordinates from MNE standard montage",
+    )
+    parser.add_argument(
+        "--montage",
+        default="standard_1020",
+        help="MNE montage name (default: standard_1020)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name to use (default: try 'Logistic Regression' else first)",
+    )
+    parser.add_argument(
+        "--metric",
+        default="accuracy",
+        help="Metric to plot per feature (default: accuracy)",
+    )
+    parser.add_argument(
+        "--sep",
+        default="_",
+        help="Separator between unit and feature in column names (default: _)",
+    )
+    parser.add_argument(
+        "--reverse",
+        action="store_true",
+        help="If set, interpret columns as <feature><sep><unit>",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="results/feature_analysis_plots",
+        help="Directory to save plots",
+    )
+    parser.add_argument(
+        "--label-map",
+        default=None,
+        help="Optional JSON mapping from feature name to display label",
+    )
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="Do not open interactive windows; save only",
+    )
 
     args = parser.parse_args()
 
     if args.no_show:
         import matplotlib
+
         matplotlib.use("Agg")
 
     if not os.path.exists(args.results):
@@ -173,7 +228,8 @@ def main():
 
     all_results: Dict[str, Dict[str, dict]] = pd.read_pickle(args.results)
 
-    # Attempt to infer sensor names from columns later; for MNE restriction, we can pass None
+    # Attempt to infer sensor names from columns later; for MNE restriction,
+    # we can pass None
     if args.use_mne or not args.coords:
         coords_df = generate_coords_from_mne(args.montage)
     else:
@@ -193,12 +249,18 @@ def main():
     feature_metric: Dict[str, float] = {}
 
     for analysis_id, results_per_model in all_results.items():
-        model_name = pick_model(results_per_model, preferred=(args.model,) if args.model else None)
+        model_name = pick_model(
+            results_per_model, preferred=(args.model,) if args.model else None
+        )
         res = results_per_model[model_name]
 
         # metric
         metrics = res.get("metric_scores", {})
-        metric_name = args.metric if args.metric in metrics else (next(iter(metrics)) if metrics else None)
+        metric_name = (
+            args.metric
+            if args.metric in metrics
+            else (next(iter(metrics)) if metrics else None)
+        )
         if metric_name is None:
             continue
 
@@ -209,7 +271,9 @@ def main():
 
         col_names = list(fi.keys())
         # Derive computed feature name from columns
-        feat_name = feature_from_columns(col_names, sep=args.sep, reverse=args.reverse) or str(analysis_id)
+        feat_name = feature_from_columns(
+            col_names, sep=args.sep, reverse=args.reverse
+        ) or str(analysis_id)
 
         # sensor importances: prefer weighted_mean, else mean
         sensor_imp: Dict[str, float] = {}
@@ -237,16 +301,24 @@ def main():
             sensors="markers",
             cmap="magma",
         )
-        out_path = os.path.join(args.out_dir, f"topomap_{re.sub(r'[^A-Za-z0-9_.-]+','_', disp_name)}.png")
+        out_path = os.path.join(
+            args.out_dir, f"topomap_{re.sub(r'[^A-Za-z0-9_.-]+','_', disp_name)}.png"
+        )
         fig.savefig(out_path, dpi=150)
         plt.close(fig)
 
         # Store metric
-        mean_val = float(metrics[metric_name]["mean"]) if isinstance(metrics[metric_name], dict) else float(metrics[metric_name])
+        mean_val = (
+            float(metrics[metric_name]["mean"])
+            if isinstance(metrics[metric_name], dict)
+            else float(metrics[metric_name])
+        )
         feature_metric[disp_name] = mean_val
 
     if not feature_metric:
-        raise RuntimeError("No per-feature metrics collected; check results structure and options.")
+        raise RuntimeError(
+            "No per-feature metrics collected; check results structure and options."
+        )
 
     # Bar plot of per-feature metric
     # Sort descending for visibility
@@ -266,4 +338,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

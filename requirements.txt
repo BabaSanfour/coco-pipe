@@ -1,6 +1,28 @@
 pyyaml
+pydantic
+hydra-core
 numpy
 pandas
 scikit-learn
 matplotlib
+umap-learn[plot]
+annoy @ git+https://github.com/BabaSanfour/annoy.git
+pacmap @ git+https://github.com/BabaSanfour/PaCMAP.git
+trimap
+phate
+mne>=1.9.0
+mne-bids>=0.10.0
+requests
 openpyxl
+ivis @ git+https://github.com/beringresearch/ivis.git
+meegkit
+pydmd
+gudhi
+tensorflow
+keras
+torch
+skorch
+dask[array]
+dask-ml
+joblib
+scipy

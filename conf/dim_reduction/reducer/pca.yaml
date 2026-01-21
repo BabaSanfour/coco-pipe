@@ -1,0 +1,5 @@
+# @package _global_
+config:
+  method: PCA
+  n_components: 2
+  whiten: false

@@ -2,14 +2,15 @@
 """
 create_toy_dataset.py
 
-This script creates a toy dataset for testing cocopipe. It generates a CSV file with randomized data.
-The dataset includes columns for two sensors:
+This script creates a toy dataset for testing cocopipe. It generates a CSV file
+with randomized data. The dataset includes columns for two sensors:
   - Sensor1: feat1, feat2, feat3
   - Sensor2: feat4, feat5
 and a binary target column called "label".
 """
 
 import os
+
 import numpy as np
 import pandas as pd
 

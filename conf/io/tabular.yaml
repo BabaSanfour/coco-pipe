@@ -1,0 +1,11 @@
+# @package _global_
+dataset:
+  mode: tabular
+  path: "/path/to/data.csv"
+  target_col: null
+  index_col: null
+  sep: "\t"
+  header: 0
+  columns_to_dims: null
+  meta_columns: []
+  clean: false
