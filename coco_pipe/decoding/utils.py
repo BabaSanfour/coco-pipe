@@ -26,6 +26,19 @@ from sklearn.model_selection import (
     StratifiedKFold,
     train_test_split,
 )
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    explained_variance_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    r2_score,
+    recall_score,
+    roc_auc_score,
+)
+from typing import Callable
 
 from .configs import CVConfig
 
@@ -202,3 +215,46 @@ def get_cv_splitter(config: CVConfig, groups: Optional[Sequence] = None) -> Base
         splitter = _CVWithGroups(splitter, groups)
 
     return splitter
+
+
+def get_scorer(name: str) -> Callable:
+    """
+    Retrieve or construct a Scikit-Learn compliant scorer by name.
+
+    Parameters
+    ----------
+    name : str
+        The name of the metric (e.g., 'accuracy', 'f1_macro', 'neg_mean_squared_error').
+
+    Returns
+    -------
+    Callable
+        A scoring function with signature `(y_true, y_pred) -> float`.
+
+    Raises
+    ------
+    ValueError
+        If the metric name is unknown.
+    """
+    metrics = {
+        # Classification
+        "accuracy": accuracy_score,
+        "balanced_accuracy": balanced_accuracy_score,
+        "roc_auc": roc_auc_score,
+        "f1": lambda y, p: f1_score(y, p, average="weighted"),
+        "f1_macro": lambda y, p: f1_score(y, p, average="macro"),
+        "f1_micro": lambda y, p: f1_score(y, p, average="micro"),
+        "precision": lambda y, p: precision_score(y, p, average="weighted", zero_division=0),
+        "recall": lambda y, p: recall_score(y, p, average="weighted", zero_division=0),
+        # Regression
+        "r2": r2_score,
+        "neg_mean_squared_error": lambda y, p: -mean_squared_error(y, p),
+        "neg_mean_absolute_error": lambda y, p: -mean_absolute_error(y, p),
+        "explained_variance": explained_variance_score,
+    }
+
+    if name not in metrics:
+        raise ValueError(
+            f"Unknown metric '{name}'. Available: {sorted(list(metrics.keys()))}"
+        )
+    return metrics[name]

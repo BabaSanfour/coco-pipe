@@ -17,6 +17,9 @@ Usage
 """
 
 import importlib
+from importlib.metadata import entry_points
+
+import pkgutil
 import warnings
 from typing import Callable, Dict, Type
 
@@ -25,15 +28,62 @@ from typing import Callable, Dict, Type
 _ESTIMATOR_REGISTRY: Dict[str, Type] = {}
 
 
-# Lazy Loading Map
-# specific_class_name -> module_path
 _LAZY_MODULES = {
-    "SkorchWrapper": "coco_pipe.decoding.deep",
-    "FoundationEstimator": "coco_pipe.decoding.deep",
-    "LPFTClassifier": "coco_pipe.decoding.fm.adapters",
+    # MNE
     "SlidingEstimator": "mne.decoding",
     "GeneralizingEstimator": "mne.decoding",
+    # Classifiers
+    "LogisticRegression": "sklearn.linear_model",
+    "RandomForestClassifier": "sklearn.ensemble",
+    "SVC": "sklearn.svm",
+    "KNeighborsClassifier": "sklearn.neighbors",
+    "GradientBoostingClassifier": "sklearn.ensemble",
+    "SGDClassifier": "sklearn.linear_model",
+    "MLPClassifier": "sklearn.neural_network",
+    "GaussianNB": "sklearn.naive_bayes",
+    "LDA": "sklearn.discriminant_analysis",
+    "AdaBoostClassifier": "sklearn.ensemble",
+    "DummyClassifier": "sklearn.dummy",
+    # Regressors
+    "LinearRegression": "sklearn.linear_model",
+    "Ridge": "sklearn.linear_model",
+    "Lasso": "sklearn.linear_model",
+    "ElasticNet": "sklearn.linear_model",
+    "RandomForestRegressor": "sklearn.ensemble",
+    "SVR": "sklearn.svm",
+    "ARDRegression": "sklearn.linear_model",
 }
+
+def _discover_entry_points():
+    """
+    Populate _LAZY_MODULES from 'coco_pipe.estimators' entry points.
+    This allows plugins to register estimators without modifying code.
+    """
+    eps = entry_points(group="coco_pipe.estimators")
+    for ep in eps:
+        if ep.name not in _LAZY_MODULES:
+            _LAZY_MODULES[ep.name] = ep.value
+
+
+def _discover_internal_modules():
+    """
+    Walk through the 'coco_pipe.decoding' subpackage and import all modules.
+    This triggers the @register_estimator decorators.
+    """
+    package = importlib.import_module("coco_pipe.decoding")
+    if not hasattr(package, "__path__"):
+        return
+
+    for _, name, ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            # warn but continue - we don't want to crash if deep learning libs are missing
+            pass
+
+
+# 1. Load Entry Points on startup (lazy map update only)
+_discover_entry_points()
 
 
 def register_estimator(name: str) -> Callable[[Type], Type]:
@@ -78,23 +128,35 @@ def get_estimator_cls(name: str) -> Type:
     if name in _ESTIMATOR_REGISTRY:
         return _ESTIMATOR_REGISTRY[name]
 
-    # 2. Try Lazy Loading
+    # 2. Try Lazy Loading Map
     if name in _LAZY_MODULES:
         try:
-            importlib.import_module(_LAZY_MODULES[name])
+            mod_path = _LAZY_MODULES[name]
+            if ":" in mod_path:
+                 mod_path = mod_path.split(":")[0]
+            
+            module = importlib.import_module(mod_path)
         except ImportError as e:
-            # If the module is missing dependencies (e.g. torch), re-raise with clear context
             raise ImportError(
                 f"Could not load estimator '{name}' from '{_LAZY_MODULES[name]}'. "
                 f"Ensure optional dependencies are installed."
             ) from e
+        
+        if hasattr(module, name):
+             cls = getattr(module, name)
+             _ESTIMATOR_REGISTRY[name] = cls
+             return cls
 
-    # 3. Last Ditch: Ensure core is loaded
-    if "RandomForestClassifier" not in _ESTIMATOR_REGISTRY:
-        try:
-            importlib.import_module("coco_pipe.decoding.core")
-        except ImportError:
-            pass
+        # Check if the import triggered a decorator registration
+        if name in _ESTIMATOR_REGISTRY:
+             return _ESTIMATOR_REGISTRY[name]
+
+    # 3. Last Ditch: Internal Discovery
+    if not getattr(get_estimator_cls, "_internal_scanned", False):
+         _discover_internal_modules()
+         setattr(get_estimator_cls, "_internal_scanned", True)
+         if name in _ESTIMATOR_REGISTRY:
+             return _ESTIMATOR_REGISTRY[name]
 
     if name not in _ESTIMATOR_REGISTRY:
         # Generate helpful error
@@ -102,7 +164,7 @@ def get_estimator_cls(name: str) -> Type:
         raise ValueError(
             f"Estimator '{name}' not found in registry.\n"
             f"Available estimators: {available}\n"
-            f"Tip: Ensure the containing module is imported."
+            f"Tip: Ensure the containing module is imported or registered via entry points."
         )
 
     return _ESTIMATOR_REGISTRY[name]
@@ -110,4 +172,8 @@ def get_estimator_cls(name: str) -> Type:
 
 def list_estimators() -> Dict[str, Type]:
     """Return a copy of the current registry."""
+    # Ensure everything is discovered before listing
+    if not getattr(get_estimator_cls, "_internal_scanned", False):
+         _discover_internal_modules()
+         setattr(get_estimator_cls, "_internal_scanned", True)
     return dict(_ESTIMATOR_REGISTRY)

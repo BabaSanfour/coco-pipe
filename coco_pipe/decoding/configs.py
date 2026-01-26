@@ -10,6 +10,7 @@ Key Components:
 """
 
 from typing import Any, Callable, Dict, List, Literal, Optional, Union, Annotated
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -553,7 +554,16 @@ class TemporalConfig(BaseModel):
 class CVConfig(BaseModel):
     """Cross-validation settings."""
 
-    strategy: Literal["stratified", "kfold", "group", "timeseries"] = "stratified"
+    strategy: Literal[
+        "stratified", 
+        "kfold", 
+        "group_kfold",
+        "stratified_group_kfold",
+        "leave_p_out",
+        "leave_one_out",
+        "timeseries", 
+        "split"
+    ] = "stratified"
     n_splits: int = Field(5, ge=2)
     shuffle: bool = True
     random_state: int = 42
@@ -590,6 +600,8 @@ class ExperimentConfig(BaseModel):
     """
 
     task: Literal["classification", "regression"] = "classification"
+    output_dir: Optional[Path] = None
+    tag: str = "experiment"
 
     # Map of Friendly Name -> Polymorphic Config Object
     models: Dict[str, EstimatorConfigType]
