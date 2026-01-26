@@ -9,7 +9,7 @@ Key Components:
 - ExperimentConfig: Top-level configuration for the entire analysis workflow.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,33 +25,25 @@ class BaseEstimatorConfig(BaseModel):
     )
 
 
-# --- Classifiers ---
+# --- Mixins ---
 
-
-class LogisticRegressionConfig(BaseEstimatorConfig):
-    method: Literal["LogisticRegression"] = "LogisticRegression"
-    penalty: Literal["l1", "l2", "elasticnet", "none", None] = Field(
-        "l2", description="Norm of the penalty."
-    )
-    dual: bool = False
-    tol: float = 1e-4
-    C: float = Field(1.0, gt=0.0, description="Inverse of regularization strength.")
+class LinearMixin(BaseModel):
+    """Common parameters for linear models."""
     fit_intercept: bool = True
-    intercept_scaling: float = 1.0
-    class_weight: Optional[Union[Dict, str]] = None
-    solver: Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"] = "lbfgs"
-    max_iter: int = Field(100, ge=1)
-    multi_class: Literal["auto", "ovr", "multinomial"] = "auto"
-    verbose: int = 0
-    warm_start: bool = False
+    copy_X: bool = True
     n_jobs: Optional[int] = None
-    l1_ratio: Optional[float] = None
 
+class RegularizedLinearMixin(LinearMixin):
+    """Parameters for regularized linear models."""
+    tol: float = 1e-3
+    max_iter: Optional[int] = None
+    solver: str = "auto"
+    warm_start: bool = False
+    positive: bool = False
 
-class RandomForestClassifierConfig(BaseEstimatorConfig):
-    method: Literal["RandomForestClassifier"] = "RandomForestClassifier"
-    n_estimators: int = Field(100, ge=1, description="Number of trees.")
-    criterion: Literal["gini", "entropy", "log_loss"] = "gini"
+class TreeMixin(BaseModel):
+    """Common parameters for Tree-based models."""
+    n_estimators: int = Field(100, ge=1)
     max_depth: Optional[int] = None
     min_samples_split: Union[int, float] = 2
     min_samples_leaf: Union[int, float] = 1
@@ -59,30 +51,80 @@ class RandomForestClassifierConfig(BaseEstimatorConfig):
     max_features: Union[str, int, float, None] = "sqrt"
     max_leaf_nodes: Optional[int] = None
     min_impurity_decrease: float = 0.0
-    bootstrap: bool = True
-    oob_score: bool = False
+    ccp_alpha: float = 0.0
     n_jobs: Optional[int] = None
     verbose: int = 0
     warm_start: bool = False
-    class_weight: Optional[Union[str, Dict, List]] = None
-    ccp_alpha: float = 0.0
-    max_samples: Optional[Union[int, float]] = None
 
-
-class SVCConfig(BaseEstimatorConfig):
-    method: Literal["SVC"] = "SVC"
-    C: float = Field(1.0, gt=0.0, description="Regularization parameter.")
+class SupportVectorMixin(BaseModel):
+    """Common parameters for Support Vector Machines."""
+    C: float = Field(1.0, gt=0.0)
     kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "rbf"
     degree: int = 3
     gamma: Union[str, float] = "scale"
     coef0: float = 0.0
-    shrinking: bool = True
-    probability: bool = True  # Default to True for metrics requiring proba
     tol: float = 1e-3
-    cache_size: float = 200
-    class_weight: Optional[Union[Dict, str]] = None
     verbose: bool = False
     max_iter: int = -1
+    shrinking: bool = True
+    cache_size: float = 200
+
+class SGDMixin(BaseModel):
+    loss: str = "hinge" 
+    penalty: Literal["l2", "l1", "elasticnet", "null"] = "l2"
+    alpha: float = 0.0001
+    l1_ratio: float = 0.15
+    fit_intercept: bool = True
+    max_iter: int = 1000
+    tol: float = 1e-3
+    shuffle: bool = True
+    verbose: int = 0
+    epsilon: float = 0.1
+    n_jobs: Optional[int] = None
+    learning_rate: str = "optimal"
+    eta0: float = 0.0
+    power_t: float = 0.5
+    early_stopping: bool = False
+    validation_fraction: float = 0.1
+    n_iter_no_change: int = 5
+    warm_start: bool = False
+    average: bool = False
+
+
+# --- Classifiers ---
+
+
+class LogisticRegressionConfig(BaseEstimatorConfig):
+    method: Literal["LogisticRegression"] = "LogisticRegression"
+    penalty: Literal["l1", "l2", "elasticnet", "none", None] = "l2"
+    dual: bool = False
+    tol: float = 1e-4
+    C: float = Field(1.0, gt=0.0)
+    fit_intercept: bool = True
+    intercept_scaling: float = 1.0
+    class_weight: Optional[Union[Dict, str]] = None
+    solver: Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"] = "lbfgs"
+    max_iter: int = 100
+    multiclass: Literal["auto", "ovr", "multinomial"] = "auto"
+    verbose: int = 0
+    warm_start: bool = False
+    n_jobs: Optional[int] = None
+    l1_ratio: Optional[float] = None
+
+
+class RandomForestClassifierConfig(BaseEstimatorConfig, TreeMixin):
+    method: Literal["RandomForestClassifier"] = "RandomForestClassifier"
+    criterion: Literal["gini", "entropy", "log_loss"] = "gini"
+    bootstrap: bool = True
+    oob_score: bool = False
+    class_weight: Optional[Union[str, Dict, List]] = None
+    max_samples: Optional[Union[int, float]] = None
+
+
+class SVCConfig(BaseEstimatorConfig, SupportVectorMixin):
+    method: Literal["SVC"] = "SVC"
+    probability: bool = True  # Default to True for metrics requiring proba
+    class_weight: Optional[Union[Dict, str]] = None
     decision_function_shape: Literal["ovo", "ovr"] = "ovr"
     break_ties: bool = False
 
@@ -102,7 +144,7 @@ class KNeighborsClassifierConfig(BaseEstimatorConfig):
 class GradientBoostingClassifierConfig(BaseEstimatorConfig):
     method: Literal["GradientBoostingClassifier"] = "GradientBoostingClassifier"
     loss: Literal["log_loss", "exponential"] = "log_loss"
-    learning_rate: float = Field(0.1, gt=0.0)
+    learning_rate: float = 0.1
     n_estimators: int = 100
     subsample: float = 1.0
     criterion: Literal["friedman_mse", "squared_error"] = "friedman_mse"
@@ -122,28 +164,9 @@ class GradientBoostingClassifierConfig(BaseEstimatorConfig):
     ccp_alpha: float = 0.0
 
 
-class SGDClassifierConfig(BaseEstimatorConfig):
+class SGDClassifierConfig(BaseEstimatorConfig, SGDMixin):
     method: Literal["SGDClassifier"] = "SGDClassifier"
-    loss: str = "hinge"
-    penalty: Literal["l2", "l1", "elasticnet", "null"] = "l2"
-    alpha: float = 0.0001
-    l1_ratio: float = 0.15
-    fit_intercept: bool = True
-    max_iter: int = 1000
-    tol: float = 1e-3
-    shuffle: bool = True
-    verbose: int = 0
-    epsilon: float = 0.1
-    n_jobs: Optional[int] = None
-    learning_rate: str = "optimal"
-    eta0: float = 0.0
-    power_t: float = 0.5
-    early_stopping: bool = False
-    validation_fraction: float = 0.1
-    n_iter_no_change: int = 5
     class_weight: Optional[Union[Dict, str]] = None
-    warm_start: bool = False
-    average: bool = False
 
 
 class MLPClassifierConfig(BaseEstimatorConfig):
@@ -211,9 +234,7 @@ class LPFTConfig(BaseEstimatorConfig):
     """
 
     method: Literal["LPFTClassifier"] = "LPFTClassifier"
-    backbone_name: str = Field(
-        "gpt2", description="HuggingFace model name or path."
-    )
+    backbone_name: str = "gpt2"
     # LP Step
     lp_lr: float = 1e-3
     lp_epochs: int = 10
@@ -237,88 +258,83 @@ class SkorchClassifierConfig(BaseEstimatorConfig):
     device: str = "cpu"
 
 
+# --- Temporal Meta-Estimators (MNE) ---
+
+
+class SlidingEstimatorConfig(BaseEstimatorConfig):
+    """
+    Configuration for MNE's SlidingEstimator.
+    Fits a separate estimator for each time point.
+    """
+
+    method: Literal["SlidingEstimator"] = "SlidingEstimator"    
+    base_estimator: "EstimatorConfigType"
+    scoring: Optional[Union[str, Callable]] = None
+    n_jobs: Optional[int] = 1
+    position: Optional[float] = 0
+    allow_2d: bool = False
+    verbose: Optional[Union[bool, str, int]] = None
+
+
+class GeneralizingEstimatorConfig(BaseEstimatorConfig):
+    """
+    Configuration for MNE's GeneralizingEstimator.
+    Fits an estimator on each time point and tests on all other time points.
+    """
+
+    method: Literal["GeneralizingEstimator"] = "GeneralizingEstimator"
+    base_estimator: "EstimatorConfigType"
+    scoring: Optional[Union[str, Callable]] = None
+    n_jobs: Optional[int] = 1
+    position: Optional[float] = 0
+    allow_2d: bool = False
+    verbose: Optional[Union[bool, str, int]] = None
+
+
 # --- Regressors ---
 
 
-class LinearRegressionConfig(BaseEstimatorConfig):
+class LinearRegressionConfig(BaseEstimatorConfig, LinearMixin):
     method: Literal["LinearRegression"] = "LinearRegression"
-    fit_intercept: bool = True
-    copy_X: bool = True
-    n_jobs: Optional[int] = None
     positive: bool = False
 
 
-class RidgeConfig(BaseEstimatorConfig):
+class RidgeConfig(BaseEstimatorConfig, RegularizedLinearMixin):
     method: Literal["Ridge"] = "Ridge"
-    alpha: float = Field(1.0, ge=0.0)
+    alpha: float = 1.0
     fit_intercept: bool = True
     copy_X: bool = True
-    max_iter: Optional[int] = None
-    tol: float = 1e-3
-    solver: str = "auto"
-    positive: bool = False
 
-
-class LassoConfig(BaseEstimatorConfig):
+class LassoConfig(BaseEstimatorConfig, RegularizedLinearMixin):
     method: Literal["Lasso"] = "Lasso"
-    alpha: float = Field(1.0, ge=0.0)
-    fit_intercept: bool = True
+    alpha: float = 1.0
     precompute: Union[bool, List] = False
+    fit_intercept: bool = True
     copy_X: bool = True
-    max_iter: int = 1000
-    tol: float = 1e-4
-    warm_start: bool = False
-    positive: bool = False
     selection: Literal["cyclic", "random"] = "cyclic"
 
 
-class ElasticNetConfig(BaseEstimatorConfig):
+class ElasticNetConfig(BaseEstimatorConfig, RegularizedLinearMixin):
     method: Literal["ElasticNet"] = "ElasticNet"
     alpha: float = 1.0
     l1_ratio: float = 0.5
-    fit_intercept: bool = True
     precompute: Union[bool, List] = False
-    max_iter: int = 1000
+    fit_intercept: bool = True
     copy_X: bool = True
-    tol: float = 1e-4
-    warm_start: bool = False
-    positive: bool = False
     selection: Literal["cyclic", "random"] = "cyclic"
 
 
-class RandomForestRegressorConfig(BaseEstimatorConfig):
+class RandomForestRegressorConfig(BaseEstimatorConfig, TreeMixin):
     method: Literal["RandomForestRegressor"] = "RandomForestRegressor"
-    n_estimators: int = 100
     criterion: Literal["squared_error", "absolute_error", "friedman_mse", "poisson"] = "squared_error"
-    max_depth: Optional[int] = None
-    min_samples_split: Union[int, float] = 2
-    min_samples_leaf: Union[int, float] = 1
-    min_weight_fraction_leaf: float = 0.0
-    max_features: Union[str, int, float, None] = 1.0
-    max_leaf_nodes: Optional[int] = None
-    min_impurity_decrease: float = 0.0
     bootstrap: bool = True
     oob_score: bool = False
-    n_jobs: Optional[int] = None
-    verbose: int = 0
-    warm_start: bool = False
-    ccp_alpha: float = 0.0
     max_samples: Optional[Union[int, float]] = None
 
 
-class SVRConfig(BaseEstimatorConfig):
+class SVRConfig(BaseEstimatorConfig, SupportVectorMixin):
     method: Literal["SVR"] = "SVR"
-    kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "rbf"
-    degree: int = 3
-    gamma: Union[str, float] = "scale"
-    coef0: float = 0.0
-    tol: float = 1e-3
-    C: float = 1.0
     epsilon: float = 0.1
-    shrinking: bool = True
-    cache_size: float = 200
-    verbose: bool = False
-    max_iter: int = -1
 
 
 class GradientBoostingRegressorConfig(BaseEstimatorConfig):
@@ -345,33 +361,15 @@ class GradientBoostingRegressorConfig(BaseEstimatorConfig):
     ccp_alpha: float = 0.0
 
 
-class SGDRegressorConfig(BaseEstimatorConfig):
+class SGDRegressorConfig(BaseEstimatorConfig, SGDMixin):
     method: Literal["SGDRegressor"] = "SGDRegressor"
     loss: str = "squared_error"
-    penalty: Literal["l2", "l1", "elasticnet", "null"] = "l2"
-    alpha: float = 0.0001
-    l1_ratio: float = 0.15
-    fit_intercept: bool = True
-    max_iter: int = 1000
-    tol: float = 1e-3
-    shuffle: bool = True
-    verbose: int = 0
-    epsilon: float = 0.1
-    learning_rate: str = "invscaling"
-    eta0: float = 0.01
-    power_t: float = 0.25
-    early_stopping: bool = False
-    validation_fraction: float = 0.1
-    n_iter_no_change: int = 5
-    warm_start: bool = False
-    average: bool = False
 
 
 class MLPRegressorConfig(BaseEstimatorConfig):
     method: Literal["MLPRegressor"] = "MLPRegressor"
     hidden_layer_sizes: tuple = (100,)
     activation: Literal["identity", "logistic", "tanh", "relu"] = "relu"
-    solver: Literal["lbfgs", "sgd", "adam"] = "adam"
     alpha: float = 0.0001
     batch_size: Union[int, str] = "auto"
     learning_rate: Literal["constant", "invscaling", "adaptive"] = "constant"
@@ -400,8 +398,6 @@ class DummyRegressorConfig(BaseEstimatorConfig):
     quantile: Optional[float] = None
 
 
-# --- Unions ---
-
 class DecisionTreeRegressorConfig(BaseEstimatorConfig):
     method: Literal["DecisionTreeRegressor"] = "DecisionTreeRegressor"
     criterion: Literal["squared_error", "friedman_mse", "absolute_error", "poisson"] = "squared_error"
@@ -429,23 +425,10 @@ class KNeighborsRegressorConfig(BaseEstimatorConfig):
     n_jobs: Optional[int] = None
 
 
-class ExtraTreesRegressorConfig(BaseEstimatorConfig):
+class ExtraTreesRegressorConfig(BaseEstimatorConfig, TreeMixin):
     method: Literal["ExtraTreesRegressor"] = "ExtraTreesRegressor"
-    n_estimators: int = 100
-    criterion: Literal["squared_error", "absolute_error", "friedman_mse", "poisson"] = "squared_error"
-    max_depth: Optional[int] = None
-    min_samples_split: Union[int, float] = 2
-    min_samples_leaf: Union[int, float] = 1
-    min_weight_fraction_leaf: float = 0.0
-    max_features: Union[str, int, float, None] = 1.0
-    max_leaf_nodes: Optional[int] = None
-    min_impurity_decrease: float = 0.0
     bootstrap: bool = False
     oob_score: bool = False
-    n_jobs: Optional[int] = None
-    verbose: int = 0
-    warm_start: bool = False
-    ccp_alpha: float = 0.0
     max_samples: Optional[Union[int, float]] = None
 
 
@@ -510,9 +493,11 @@ class ARDRegressionConfig(BaseEstimatorConfig):
     verbose: bool = False
 
 
-# --- Unions ---
+# --- Recursive Unions Implementation ---
 
-ClassifierConfigType = Union[
+
+# 1. Define Atomic Unions (Terminal nodes)
+AtomicEstimator = Union[
     LogisticRegressionConfig,
     RandomForestClassifierConfig,
     SVCConfig,
@@ -526,9 +511,7 @@ ClassifierConfigType = Union[
     DummyClassifierConfig,
     LPFTConfig,
     SkorchClassifierConfig,
-]
-
-RegressorConfigType = Union[
+    # Regressors
     LinearRegressionConfig,
     RidgeConfig,
     LassoConfig,
@@ -545,9 +528,16 @@ RegressorConfigType = Union[
     HistGradientBoostingRegressorConfig,
     AdaBoostRegressorConfig,
     BayesianRidgeConfig,
-    ARDRegressionConfig,
-    # SkorchRegressorConfig would go here
+    ARDRegressionConfig
 ]
+
+# 2. Define the Recursive Union using Annotated Discriminator
+# This allows Pydantic to choose the correct class based on 'method' field
+EstimatorConfigType = Annotated[Union[
+    AtomicEstimator,
+    SlidingEstimatorConfig,
+    GeneralizingEstimatorConfig
+], Field(discriminator="method")]
 
 
 # --- Experiment Config ---
@@ -583,6 +573,17 @@ class TuningConfig(BaseModel):
     n_jobs: int = -1
 
 
+class FeatureSelectionConfig(BaseModel):
+    """Configuration for Sequential Feature Selection."""
+
+    enabled: bool = False
+    method: Literal["k_best", "sfs"] = "sfs"
+    n_features: Optional[int] = Field(None, description="Number of features to select.")
+    direction: Literal["forward", "backward"] = "forward"
+    cv: Optional[int] = Field(None, description="Inner CV splits. Required for SFS.")
+    scoring: Optional[str] = None
+
+
 class ExperimentConfig(BaseModel):
     """
     Master configuration for a Decoding Experiment.
@@ -590,14 +591,17 @@ class ExperimentConfig(BaseModel):
 
     task: Literal["classification", "regression"] = "classification"
 
-    # Map of Friendly Name -> Config Object (Fixed Parameters)
-    models: Dict[str, Union[ClassifierConfigType, RegressorConfigType]]
+    # Map of Friendly Name -> Polymorphic Config Object
+    models: Dict[str, EstimatorConfigType]
 
     # Map of Friendly Name -> Parameter Grid (Search Space)
     grids: Optional[Dict[str, Dict[str, List[Any]]]] = None
 
     cv: CVConfig = Field(default_factory=CVConfig)
     tuning: TuningConfig = Field(default_factory=TuningConfig)
+    feature_selection: FeatureSelectionConfig = Field(
+        default_factory=FeatureSelectionConfig
+    )
 
     metrics: List[str] = Field(
         default_factory=lambda: ["accuracy", "roc_auc"],
