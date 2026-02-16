@@ -2,7 +2,7 @@
 Configuration Schemas for Report
 ================================
 
-Pydantic models for validting report configuration and metadata.
+Pydantic models for validating report configuration and metadata.
 
 Classes
 -------

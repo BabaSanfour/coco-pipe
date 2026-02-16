@@ -376,7 +376,6 @@ class DimReduction:
             "lcmc": metrics.lcmc(Q, k=n_neighbors),
         }
 
-        from scipy.stats import spearmanr
         # Shepard Correlation (Global Distance Preservation)
         # We sample 1000 points max to keep it efficient
         d_orig, d_emb = metrics.shepard_diagram_data(
@@ -429,7 +428,8 @@ class DimReduction:
 
         Returns
         -------
-        fig : matplotlib.figure.Figure
+        fig : matplotlib.figure.Figure or plotly.graph_objects.Figure
+            The generated figure object.
         """
         from ..viz import dim_reduction as viz
 

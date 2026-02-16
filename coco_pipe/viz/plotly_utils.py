@@ -418,8 +418,6 @@ def plot_radar_comparison(
     # Work on a copy
     df = metrics_df.copy()
 
-    # Select numeric columns only
-    cols = df.select_dtypes(include=[np.number]).columns
     cols = df.select_dtypes(include=[np.number]).columns
     # Radar charts ideally need 3+ variables, but 2 works (line).
 

@@ -641,14 +641,6 @@ class Report(ContainerElement):
         # Create Section
         sec = Section(title=name, icon="💾")
 
-        # 1. Metadata Table
-        # Extract general info
-        {
-            "Dimension": list(container.dims),
-            "Size": list(container.shape),
-        }
-
-        # Add shape info to meta_info for table
         # We'll pivot this for cleaner display: Dim Name -> Size
         dims_data = [
             {"Dimension": d, "Size": s} for d, s in zip(container.dims, container.shape)

@@ -144,9 +144,10 @@ def plot_embedding(
     cmap : str, optional
         Colormap for continuous labels (e.g. 'viridis', 'magma'),
         by default 'viridis'.
-    palette : str, optional
-        Seaborn palette for categorical labels (e.g. 'deep', 'tab10', 'Set2'),
-        by default 'deep'.
+    palette : str or list, optional
+        Qualitative colormap/palette for categorical labels (e.g. 'deep', 'tab10', 'Plotly').
+        If interactive=True, lists of colors are also supported.
+        By default 'deep'.
     s : int, optional
         Marker size, by default 40.
     alpha : float, optional
@@ -422,8 +423,18 @@ def plot_metrics(
     if interactive:
         import pandas as pd
 
+        # Filter metrics for consistency with Matplotlib version
+        filtered_scores = {
+            k: v
+            for k, v in scores.items()
+            if isinstance(v, (float, int)) and not isinstance(v, bool)
+            and k not in {"n_iter_", "n_components"}
+        }
+        if not filtered_scores:
+            raise ValueError("No scalar metrics found to plot.")
+
         # Convert simple dict to single-row DF for plot_metric_details
-        df = pd.DataFrame([scores], index=["Method"])
+        df = pd.DataFrame([filtered_scores], index=["Method"])
         return plotly_utils.plot_metric_details(df, title=title)
 
     _set_style()
