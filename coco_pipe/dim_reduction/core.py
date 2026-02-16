@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 
-from .config import METHODS, get_reducer_class
+from .config import METHODS, get_reducer_class, normalize_method_name
 from .reducers.base import ArrayLike, BaseReducer
 
 if TYPE_CHECKING:
@@ -100,7 +100,7 @@ class DimReduction:
             # access the inner discriminated union
             inner_conf = self.config.config
 
-            self.method = inner_conf.method.upper()
+            self.method = normalize_method_name(inner_conf.method)
             self.n_components = inner_conf.n_components
 
             # Convert to dict and remove init-arguments (Pydantic V2)
@@ -114,7 +114,7 @@ class DimReduction:
 
         else:
             # Legacy/String initialization
-            self.method = method.upper()
+            self.method = normalize_method_name(method)
             if self.method not in METHODS:
                 valid = ", ".join(METHODS)
                 raise ValueError(

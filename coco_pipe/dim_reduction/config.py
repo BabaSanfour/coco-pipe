@@ -58,8 +58,76 @@ OPTIONAL_METHODS = {
     "TOPOLOGICALAE": ("coco_pipe.dim_reduction.reducers.topology", "TopologicalAEReducer"),
 }
 
+# User-friendly aliases
+METHOD_ALIASES = {
+    # Variations
+    "t-SNE": "TSNE",
+    "tsne": "TSNE",
+    "PaCMAP": "PACMAP",
+    "pacmap": "PACMAP",
+    "TopoAE": "TOPOLOGICALAE",
+    "topoae": "TOPOLOGICALAE",
+    "IncrPCA": "INCREMENTALPCA",
+    "incrementalpca": "INCREMENTALPCA",
+    "Spectral": "SPECTRALEMBEDDING",
+    "spectral": "SPECTRALEMBEDDING",
+    "Isomap": "ISOMAP",
+    "isomap": "ISOMAP",
+    "LLE": "LLE",
+    "lle": "LLE",
+    "MDS": "MDS",
+    "mds": "MDS",
+    "PCA": "PCA",
+    "pca": "PCA",
+    "UMAP": "UMAP",
+    "umap": "UMAP",
+    "DMD": "DMD",
+    "dmd": "DMD",
+    "TRCA": "TRCA",
+    "trca": "TRCA",
+    "PHATE": "PHATE",
+    "phate": "PHATE",
+    "IVIS": "IVIS",
+    "ivis": "IVIS",
+    "TriMap": "TRIMAP",
+    "trimap": "TRIMAP",
+    "ParametricUMAP": "PARAMETRICUMAP",
+    # Hyphenated
+    "t-sne": "TSNE",
+    "Dask-PCA": "DASKPCA",
+    "DaskPCA": "DASKPCA",
+}
+
 # For validation
 METHODS = list(CORE_METHODS.keys()) + list(OPTIONAL_METHODS.keys())
+
+
+def normalize_method_name(method: str) -> str:
+    """
+    Normalize method name to canonical ID using aliases.
+
+    Parameters
+    ----------
+    method : str
+        Input method name (e.g. 't-SNE', 'PaCMAP').
+
+    Returns
+    -------
+    str
+        Canonical method ID (e.g. 'TSNE', 'PACMAP').
+    """
+    # 1. Exact Alias Match
+    if method in METHOD_ALIASES:
+        return METHOD_ALIASES[method]
+    
+    # 2. Upper Case Fallback
+    upper_method = method.upper()
+    if upper_method in METHOD_ALIASES:
+        return METHOD_ALIASES[upper_method]
+        
+    # 3. Default to Upper (Core/Optional keys are upper)
+    return upper_method
+
 
 
 def get_reducer_class(method: str):
@@ -84,8 +152,9 @@ def get_reducer_class(method: str):
     ImportError
         If the module cannot be imported.
     """
-    method = method.upper()
     
+    method = normalize_method_name(method)
+
     # Check Core
     if method in CORE_METHODS:
         mod_path, cls_name = CORE_METHODS[method]
