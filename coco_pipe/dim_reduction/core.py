@@ -259,13 +259,21 @@ class DimReduction:
         ValueError
             If the underlying model does not expose linear components.
         """
-        # 1. Check the wrapper first (e.g. TRCAReducer might expose patterns_)
-        candidates = ["components_", "patterns_", "filters_"]
+        # 1. Prefer explicit API if implemented on the reducer
+        if hasattr(self.reducer, "get_components"):
+            return self.reducer.get_components()
+
+        # 2. Fallback to candidate attribute scraping
+        candidates = ["components_", "patterns_", "filters_", "modes_", "coef_"]
 
         # Check wrapper
         for attr in candidates:
             if hasattr(self.reducer, attr):
-                return getattr(self.reducer, attr)
+                val = getattr(self.reducer, attr)
+                # Ensure (n_components, n_features) shape
+                if attr == "modes_" and val.shape[0] > val.shape[1]:
+                     return val.T
+                return val
 
         # Check internal model (e.g. sklearn PCA inside Wrapper)
         if hasattr(self.reducer, "model"):

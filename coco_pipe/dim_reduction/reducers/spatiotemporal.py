@@ -117,7 +117,7 @@ class DMDReducer(BaseReducer):
             )
 
         # Initialize DMD
-        self.model = DMD(**self.params)
+        self.model = DMD(**self._filter_params(DMD, self.params))
 
         # Fit expects (n_features, n_snapshots)
         # Handle shape adaptation if requested
@@ -184,6 +184,12 @@ class DMDReducer(BaseReducer):
             raise RuntimeError("Model is not fitted yet.")
         return self.model.modes
 
+    def get_components(self) -> np.ndarray:
+        """
+        Return the spatial modes (transposed to match n_components x n_features).
+        """
+        return self.modes_.T
+
 
 class TRCAReducer(BaseReducer):
     """
@@ -219,8 +225,16 @@ class TRCAReducer(BaseReducer):
     (10, 1, 100)
     """
 
-    def __init__(self, n_components: int = 1, **kwargs):
+    def __init__(
+        self,
+        n_components: int = 1,
+        sfreq: float = 250.0,
+        filterbank: Optional[list] = None,
+        **kwargs
+    ):
         super().__init__(n_components=n_components, **kwargs)
+        self.sfreq = sfreq
+        self.filterbank = filterbank or [[(8, 30), (7, 35)]]  # Default: one band
         self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TRCAReducer":
@@ -254,7 +268,14 @@ class TRCAReducer(BaseReducer):
             raise ValueError("TRCA requires 3D input: (n_trials, n_channels, n_times)")
 
         # Initialize TRCA
-        self.model = TRCA(**self.params)
+        trca_params = self._filter_params(TRCA, self.params)
+        # Ensure mandatory args are present if not filtered from params
+        if "sfreq" not in trca_params:
+            trca_params["sfreq"] = self.sfreq
+        if "filterbank" not in trca_params:
+            trca_params["filterbank"] = self.filterbank
+
+        self.model = TRCA(**trca_params)
 
         # Input X from MNE is (n_trials, n_channels, n_times).
         # We transform (trials, chans, times) -> (times, chans, trials)
@@ -347,3 +368,9 @@ class TRCAReducer(BaseReducer):
         if self.model is None:
             raise RuntimeError("Model is not fitted yet.")
         return self.model.coef_
+
+    def get_components(self) -> np.ndarray:
+        """
+        Return the spatial filters (coefficients).
+        """
+        return self.coef_

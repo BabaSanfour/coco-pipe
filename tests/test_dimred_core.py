@@ -362,31 +362,23 @@ def test_get_components():
     X = np.random.rand(20, 5)
     dr = DimReduction("PCA", n_components=2)
     dr.fit(X)
-
     comps = dr.get_components()
     assert comps.shape == (2, 5)
 
-    # 2. Mock model with patterns_ (e.g. TRCA-like)
-    class MockPatternReducer(BaseReducer):
-        def __init__(self):
-            super().__init__(n_components=2)
-            self.patterns_ = np.ones((2, 5))
+    # 2. DMD (spatiotemporal)
+    X_ts = np.random.rand(5, 50)  # features x snapshots
+    dr_dmd = DimReduction("DMD", n_components=2)
+    dr_dmd.fit(X_ts)
+    assert dr_dmd.get_components().shape == (2, 5)
 
-        def fit(self, X, y=None):
-            return self
+    # 3. TRCA (spatiotemporal)
+    X_3d = np.random.rand(10, 5, 100)  # trials x channels x times
+    y = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
+    dr_trca = DimReduction("TRCA", n_components=1)
+    dr_trca.fit(X_3d, y=y)
+    assert dr_trca.get_components().shape == (1, 2, 5)
 
-        def transform(self, X):
-            return X
-
-    dr_mock = DimReduction(
-        "PCA"
-    )  # method name doesn't matter for custom reducer injection
-    dr_mock.reducer = MockPatternReducer()
-
-    pats = dr_mock.get_components()
-    assert np.all(pats == 1)
-
-    # 3. Fail case (Neural/Non-linear)
+    # 4. Fail case (Neural/Non-linear)
     dr_umap = DimReduction("UMAP")
     dr_umap.fit(X)
     with pytest.raises(ValueError, match="does not appear to have linear components"):
@@ -495,3 +487,17 @@ def test_load_wrapper_reconstruction_coverage(tmp_path):
     assert isinstance(loaded, DimReduction)
     assert loaded.method == "DUMMY"
     assert loaded.n_components == 3
+
+
+def test_diagnostics_api():
+    """Verify the get_diagnostics()."""
+    X = np.random.rand(50, 10)
+    dr = DimReduction(method="TSNE", n_components=2, perplexity=5, random_state=42)
+    dr.fit_transform(X)
+
+    scores = dr.score(X)
+    # Check for direct attribute extraction via the new API
+    assert "kl_divergence_" in scores
+    assert "n_iter_" in scores
+    # Ensure it doesn't contain broad dir() noise
+    assert "__init__" not in scores

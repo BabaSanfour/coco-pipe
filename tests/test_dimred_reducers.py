@@ -719,3 +719,30 @@ def test_topo_device_init():
     ):
         r = TopologicalAEReducer(device="auto")
         assert r.device == "mps"
+
+
+def test_reproducibility_stochastic_reducers(data):
+    """Verify that random_state ensures reproducibility."""
+    # Test UMAP as a representative stochastic reducer
+    reducer1 = UMAPReducer(n_components=2, n_neighbors=10, random_state=42)
+    reducer2 = UMAPReducer(n_components=2, n_neighbors=10, random_state=42)
+    
+    emb1 = reducer1.fit_transform(data)
+    emb2 = reducer2.fit_transform(data)
+    assert np.allclose(emb1, emb2)
+
+def test_param_filtering_safety(data_ts):
+    """Verify that unsupported params are filtered out to avoid TypeErrors"""
+    # DMD does NOT support random_state
+    data_dmd = data_ts.T
+    reducer = DMDReducer(n_components=2, random_state=42)
+    # This should not raise TypeError because of _filter_params
+    reducer.fit(data_dmd)
+
+def test_capabilities_api(data):
+    """Verify the reducer capabilities metadata."""
+    reducer = PCAReducer(n_components=2)
+    reducer.fit(data)
+    caps = reducer.capabilities
+    assert caps["has_transform"] is True
+    assert caps["is_linear"] is True

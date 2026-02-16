@@ -52,13 +52,16 @@ from .reducers.topology import TopologicalAEReducer
 # --- Base Config ---
 class BaseReducerConfig(BaseModel):
     n_components: int = Field(2, gt=0, description="Target dimensionality")
+
+
+class StochasticReducerConfig(BaseModel):
     random_state: Optional[int] = Field(42, description="Seed for reproducibility")
 
 
 # --- Specific Reducer Configs ---
 
 
-class PCAConfig(BaseReducerConfig):
+class PCAConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for PCA."""
 
     method: Literal["PCA"] = "PCA"
@@ -77,21 +80,21 @@ class IncrementalPCAConfig(BaseReducerConfig):
     whiten: bool = Field(False, description="Whiten.")
 
 
-class DaskPCAConfig(BaseReducerConfig):
+class DaskPCAConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for Dask PCA."""
 
     method: Literal["DaskPCA"] = "DaskPCA"
     svd_solver: str = Field("auto", description="Solver: auto, full, tsqr, randomized.")
 
 
-class DaskTruncatedSVDConfig(BaseReducerConfig):
+class DaskTruncatedSVDConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for Dask TruncatedSVD."""
 
     method: Literal["DaskTruncatedSVD"] = "DaskTruncatedSVD"
     algorithm: str = Field("tsqr", description="SVD Algorithm.")
 
 
-class UMAPConfig(BaseReducerConfig):
+class UMAPConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for UMAP."""
 
     method: Literal["UMAP"] = "UMAP"
@@ -107,7 +110,7 @@ class UMAPConfig(BaseReducerConfig):
     )
 
 
-class TSNEConfig(BaseReducerConfig):
+class TSNEConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for t-SNE."""
 
     method: Literal["TSNE"] = "TSNE"
@@ -125,7 +128,7 @@ class TSNEConfig(BaseReducerConfig):
     init: str = Field("pca", description="Initialization of embedding: random or pca.")
 
 
-class PacmapConfig(BaseReducerConfig):
+class PacmapConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for PaCMAP."""
 
     method: Literal["PaCMAP"] = "PaCMAP"
@@ -135,7 +138,7 @@ class PacmapConfig(BaseReducerConfig):
     init: str = Field("pca", description="Initialization method.")
 
 
-class TrimapConfig(BaseReducerConfig):
+class TrimapConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for TriMap."""
 
     method: Literal["TriMap"] = "TriMap"
@@ -144,7 +147,7 @@ class TrimapConfig(BaseReducerConfig):
     n_random: int = Field(5, description="Number of random triplets.")
 
 
-class PHATEConfig(BaseReducerConfig):
+class PHATEConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for PHATE."""
 
     method: Literal["PHATE"] = "PHATE"
@@ -162,7 +165,7 @@ class IsomapConfig(BaseReducerConfig):
     p: int = Field(2, description="Power for Minkowski.")
 
 
-class LLEConfig(BaseReducerConfig):
+class LLEConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for LLE."""
 
     method: Literal["LLE"] = "LLE"
@@ -174,7 +177,7 @@ class LLEConfig(BaseReducerConfig):
     )
 
 
-class MDSConfig(BaseReducerConfig):
+class MDSConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for MDS."""
 
     method: Literal["MDS"] = "MDS"
@@ -184,7 +187,7 @@ class MDSConfig(BaseReducerConfig):
     dissimilarity: str = Field("euclidean", description="Dissimilarity measure.")
 
 
-class SpectralEmbeddingConfig(BaseReducerConfig):
+class SpectralEmbeddingConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for Spectral Embedding."""
 
     method: Literal["SpectralEmbedding"] = "SpectralEmbedding"
@@ -213,7 +216,7 @@ class TRCAConfig(BaseReducerConfig):
     # Adding any future specific args here if needed.
 
 
-class TopologicalAEConfig(BaseReducerConfig):
+class TopologicalAEConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for Topological Autoencoder."""
 
     method: Literal["TopologicalAE"] = "TopologicalAE"
@@ -227,7 +230,7 @@ class TopologicalAEConfig(BaseReducerConfig):
     device: str = Field("cpu", description="Device to use (cpu, cuda, mps, auto).")
 
 
-class IVISConfig(BaseReducerConfig):
+class IVISConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for IVIS."""
 
     method: Literal["IVIS"] = "IVIS"
@@ -239,7 +242,7 @@ class IVISConfig(BaseReducerConfig):
     )
 
 
-class ParametricUMAPConfig(BaseReducerConfig):
+class ParametricUMAPConfig(BaseReducerConfig, StochasticReducerConfig):
     """Configuration for Parametric UMAP."""
 
     method: Literal["ParametricUMAP"] = "ParametricUMAP"

@@ -98,7 +98,10 @@ class IsomapReducer(BaseReducer):
         self : IsomapReducer
             Returns the instance itself.
         """
-        self.model = Isomap(n_components=self.n_components, **self.params)
+        self.model = Isomap(
+            n_components=self.n_components,
+            **self._filter_params(Isomap, self.params)
+        )
         self.model.fit(X)
         return self
 

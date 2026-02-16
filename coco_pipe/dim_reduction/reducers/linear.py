@@ -163,6 +163,12 @@ class PCAReducer(BaseReducer):
             raise RuntimeError("Model is not fitted yet.")
         return self.model.components_
 
+    def get_components(self) -> np.ndarray:
+        """
+        Return the principal components (eigenvectors).
+        """
+        return self.components_
+
 
 class IncrementalPCAReducer(BaseReducer):
     """
@@ -199,7 +205,9 @@ class IncrementalPCAReducer(BaseReducer):
     ) -> "IncrementalPCAReducer":
         """Fit model."""
         self.model = IncrementalPCA(
-            n_components=self.n_components, batch_size=self.batch_size, **self.params
+            n_components=self.n_components,
+            batch_size=self.batch_size,
+            **self._filter_params(IncrementalPCA, self.params),
         )
         self.model.fit(X)
         return self
@@ -224,6 +232,14 @@ class IncrementalPCAReducer(BaseReducer):
                 "IncrementalPCAReducer must be fitted before calling transform()."
             )
         return self.model.transform(X)
+
+    def get_components(self) -> np.ndarray:
+        """
+        Return the principal components.
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted yet.")
+        return self.model.components_
 
 
 class DaskPCAReducer(BaseReducer):
@@ -261,6 +277,14 @@ class DaskPCAReducer(BaseReducer):
         if self.model is None:
             raise RuntimeError("DaskPCAReducer must be fitted.")
         return self.model.transform(X)
+
+    def get_components(self) -> np.ndarray:
+        """
+        Return the principal components (eigenvectors).
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted.")
+        return self.model.components_
 
 
 class DaskTruncatedSVDReducer(BaseReducer):
@@ -305,3 +329,11 @@ class DaskTruncatedSVDReducer(BaseReducer):
         if self.model is None:
             raise RuntimeError("DaskTruncatedSVDReducer must be fitted.")
         return self.model.transform(X)
+
+    def get_components(self) -> np.ndarray:
+        """
+        Return the principal components.
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted.")
+        return self.model.components_

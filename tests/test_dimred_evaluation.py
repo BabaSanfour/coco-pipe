@@ -357,3 +357,17 @@ def test_method_selector_update_data():
 
     assert selector.data.shape == (30, 5)
     assert selector.embeddings_["PCA"].shape == (30, 2)
+
+def test_coranking_bias():
+    """Verify that co-ranking matrix excludes self-neighbors"""
+    # Create 5 orthogonal points (distance matrix will have diag 0, others sqrt(2))
+    X = np.eye(5)
+    X_emb = np.eye(5)[:, :2]
+
+    # compute_coranking_matrix is imported above
+    Q = compute_coranking_matrix(X, X_emb)
+
+    # n=5, so Q should be (n-1) x (n-1) = 4x4
+    assert Q.shape == (4, 4)
+    # The total count in Q should be n * (n-1) = 5 * 4 = 20
+    assert np.sum(Q) == 20

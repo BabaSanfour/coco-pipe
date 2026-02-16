@@ -15,7 +15,7 @@ BaseReducer
 
 import os
 from abc import ABC, abstractmethod
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import joblib
 import numpy as np
@@ -53,6 +53,44 @@ class BaseReducer(ABC):
         self.n_components = n_components
         self.params = kwargs
         self.model = None
+
+    def _filter_params(self, fn_or_class: Any, params: dict) -> dict:
+        """
+        Filter parameters to match the signature of a function or class.
+
+        Parameters
+        ----------
+        fn_or_class : Any
+            The function or class to inspect.
+        params : dict
+            The parameters to filter.
+
+        Returns
+        -------
+        filtered_params : dict
+            Parameters present in the signature.
+        """
+        import inspect
+
+        try:
+            if inspect.isclass(fn_or_class):
+                target = fn_or_class.__init__
+            else:
+                target = fn_or_class
+
+            sig = inspect.signature(target)
+            allowed_params = sig.parameters.keys()
+
+            # If the target accepts **kwargs, don't filter
+            if any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            ):
+                return params
+
+            return {k: v for k, v in params.items() if k in allowed_params}
+        except (ValueError, TypeError):
+            # Fallback if signature extraction fails (e.g. C extensions)
+            return params
 
     @abstractmethod
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "BaseReducer":
@@ -159,6 +197,10 @@ class BaseReducer(ABC):
             "reconstruction_error_",
             "n_iter_",
             "loss_history_",
+            "explained_variance_ratio_",
+            "singular_values_",
+            "eigs",
+            "diff_potential",
         ]
 
         results = {}
