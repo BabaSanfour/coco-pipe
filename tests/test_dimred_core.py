@@ -501,3 +501,26 @@ def test_diagnostics_api():
     assert "n_iter_" in scores
     # Ensure it doesn't contain broad dir() noise
     assert "__init__" not in scores
+
+def test_plot_diagnostics_safe_access():
+    """Verify that plot(mode='diagnostics') safely handles property errors."""
+    dr = DimReduction(method="PCA", n_components=2)
+    dr.fit(np.random.rand(10, 5))
+
+    # Mock a property that raises an error
+    class BrokenReducer:
+        @property
+        def explained_variance_ratio_(self):
+            raise RuntimeError("Broken property")
+
+        @property
+        def model(self):
+            return None
+
+    dr.reducer = BrokenReducer()
+
+    # (Shepard fallback requires X)
+    try:
+        dr.plot(mode="diagnostics", X=np.random.rand(10, 5))
+    except (ValueError, RuntimeError) as e:
+        assert "Broken property" not in str(e)

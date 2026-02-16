@@ -140,6 +140,36 @@ class DimReduction:
         """Return the random seed from parameters if any."""
         return self.reducer_kwargs.get("random_state")
 
+    def _get_safe_reducer_attr(self, attr: str) -> Any:
+        """
+        Safely retrieve an attribute from the reducer or its model.
+
+        Parameters
+        ----------
+        attr : str
+            Attribute name to retrieve.
+
+        Returns
+        -------
+        value : Any or None
+            The attribute value, or None if not found or if access raises an Error.
+        """
+        # 1. Check top-level reducer
+        try:
+            if hasattr(self.reducer, attr):
+                return getattr(self.reducer, attr)
+        except Exception:
+            pass
+
+        # 2. Check internal model
+        try:
+            if hasattr(self.reducer, "model") and hasattr(self.reducer.model, attr):
+                return getattr(self.reducer.model, attr)
+        except Exception:
+            pass
+
+        return None
+
     def _validate_input(self, X: Any) -> np.ndarray:
         """
         Validate input data shape and type.
@@ -438,25 +468,28 @@ class DimReduction:
             return viz.plot_metrics(scores, **kwargs)
 
         elif mode == "diagnostics":
-            # Check for loss history (Neural)
-            if hasattr(self.reducer, "loss_history_") and self.reducer.loss_history_:
+            # 1. Check for loss history (Neural)
+            loss_hist = self._get_safe_reducer_attr("loss_history_")
+            if loss_hist:
                 return viz.plot_loss_history(
-                    self.reducer.loss_history_,
+                    loss_hist,
                     title=f"Loss History ({self.method})",
                     **kwargs,
                 )
 
-            # Check for eigenvalues/explained variance (Linear)
-            if hasattr(self.reducer, "explained_variance_ratio_"):
+            # 2. Check for eigenvalues/explained variance (Linear)
+            var_ratio = self._get_safe_reducer_attr("explained_variance_ratio_")
+            if var_ratio is not None:
                 return viz.plot_eigenvalues(
-                    self.reducer.explained_variance_ratio_,
+                    var_ratio,
                     title=f"Explained Variance ({self.method})",
                     **kwargs,
                 )
 
-            if hasattr(self.reducer, "eigs_"):
+            eigs_attr = self._get_safe_reducer_attr("eigs_")
+            if eigs_attr is not None:
                 # eigs_ can be complex for DMD, take magnitude
-                eigs = np.abs(self.reducer.eigs_)
+                eigs = np.abs(eigs_attr)
                 # Sort descending
                 eigs = -np.sort(-eigs)  # numpy sort is ascending
                 return viz.plot_eigenvalues(
@@ -466,10 +499,11 @@ class DimReduction:
                     **kwargs,
                 )
 
-            # Check for singular values
-            if hasattr(self.reducer, "singular_values_"):
+            # 3. Check for singular values
+            sing_vals = self._get_safe_reducer_attr("singular_values_")
+            if sing_vals is not None:
                 return viz.plot_eigenvalues(
-                    self.reducer.singular_values_,
+                    sing_vals,
                     title=f"Singular Values ({self.method})",
                     ylabel="Value",
                     **kwargs,
