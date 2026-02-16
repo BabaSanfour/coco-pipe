@@ -122,7 +122,9 @@ class BaseReducer(ABC):
             Path to the output file.
         """
         filepath = str(filepath)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        out_dir = os.path.dirname(filepath)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         joblib.dump(self, filepath)
 
     @classmethod

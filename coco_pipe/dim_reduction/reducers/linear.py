@@ -28,8 +28,7 @@ Date: 2026-01-06
 from typing import Any, Optional
 
 import numpy as np
-from dask_ml.decomposition import PCA as DaskPCA
-from dask_ml.decomposition import TruncatedSVD as DaskTruncatedSVD
+import numpy as np
 from sklearn.decomposition import PCA, IncrementalPCA
 
 from .base import ArrayLike, BaseReducer
@@ -250,6 +249,8 @@ class DaskPCAReducer(BaseReducer):
         self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":
+        from dask_ml.decomposition import PCA as DaskPCA
+
         self.model = DaskPCA(
             n_components=self.n_components, svd_solver=self.svd_solver, **self.params
         )
@@ -287,8 +288,13 @@ class DaskTruncatedSVDReducer(BaseReducer):
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None
     ) -> "DaskTruncatedSVDReducer":
-        if DaskTruncatedSVD is None:
-            raise ImportError("dask-ml is required.")
+        try:
+            from dask_ml.decomposition import TruncatedSVD as DaskTruncatedSVD
+        except ImportError:
+            raise ImportError(
+                "dask-ml is required for DaskTruncatedSVDReducer. "
+                "Install it with 'pip install dask-ml'."
+            )
 
         self.model = DaskTruncatedSVD(
             n_components=self.n_components, algorithm=self.algorithm, **self.params

@@ -464,7 +464,7 @@ def plot_shepard_interactive(
         corr = np.nan
 
     fig.update_layout(
-        title=f"{title}<br>Spearman Rho: {corr:.3f}",
+        title=f"{title}<br>Pearson Corr: {corr:.3f}",
         xaxis_title="Original Distances",
         yaxis_title="Embedded Distances",
         margin=dict(l=40, r=40, b=40, t=40),

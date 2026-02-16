@@ -158,7 +158,7 @@ class DimReduction:
         X_arr = np.array(X)
 
         # Define 3D-required methods
-        spatiotemporal_methods = {"TRCA", "DMD"}
+        spatiotemporal_methods = {"TRCA"}
 
         if self.method in spatiotemporal_methods:
             if X_arr.ndim != 3:

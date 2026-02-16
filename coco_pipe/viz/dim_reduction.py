@@ -675,7 +675,7 @@ def plot_shepard_diagram(
 
     ax.set_xlabel("Original Distances", fontweight="bold")
     ax.set_ylabel("Embedded Distances", fontweight="bold")
-    ax.set_title(f"{title}\nSpearman Rho: {corr:.3f}", fontsize=14, fontweight="bold")
+    ax.set_title(f"{title}\nPearson Corr: {corr:.3f}", fontsize=14, fontweight="bold")
     ax.legend(frameon=True, facecolor="white", framealpha=0.9)
 
     return fig

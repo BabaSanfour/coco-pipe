@@ -30,9 +30,7 @@ Date: 2026-01-06
 from typing import Optional
 
 import numpy as np
-from meegkit.trca import TRCA
-from meegkit.utils.trca import bandpass
-from pydmd import DMD
+import numpy as np
 
 from .base import ArrayLike, BaseReducer
 
@@ -110,6 +108,14 @@ class DMDReducer(BaseReducer):
         self : DMDReducer
             Returns the instance itself.
         """
+        try:
+            from pydmd import DMD
+        except ImportError:
+            raise ImportError(
+                "pydmd is required for DMDReducer. "
+                "Install it with 'pip install pydmd'."
+            )
+
         # Initialize DMD
         self.model = DMD(**self.params)
 
@@ -227,6 +233,14 @@ class TRCAReducer(BaseReducer):
         self : TRCAReducer
             Returns the instance itself.
         """
+        try:
+            from meegkit.trca import TRCA
+        except ImportError:
+            raise ImportError(
+                "meegkit is required for TRCAReducer. "
+                "Install it with 'pip install meegkit'."
+            )
+
         X_arr = np.array(X)
         if X_arr.ndim != 3:
             raise ValueError("TRCA requires 3D input: (n_trials, n_channels, n_times)")
@@ -284,6 +298,7 @@ class TRCAReducer(BaseReducer):
             # Wp, Ws from filterbank
             # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)]
             # , ...]
+            from meegkit.utils.trca import bandpass
             wp = self.model.filterbank[b][0]
             ws = self.model.filterbank[b][1]
 

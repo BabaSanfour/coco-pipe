@@ -24,13 +24,29 @@ Date: 2026-01-08
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
-import gudhi as gd
 import numpy as np
-import torch
-import torch.nn as nn
-from skorch import NeuralNetRegressor
+
+try:
+    import torch
+    import torch.nn as nn
+
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
+    # Define dummy for inheritance to avoid IndentationError and import failures
+    class MockModule:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, *args, **kwargs):
+            raise ImportError("torch is required to use this model.")
+
+    class nn:
+        Module = MockModule
+        MSELoss = MockModule
 
 from .base import ArrayLike, BaseReducer
 
@@ -54,6 +70,8 @@ class TopologicalAE(nn.Module):
         latent_dim: int = 2,
         hidden_dims: List[int] = [128, 64],
     ):
+        if not HAS_TORCH:
+            raise ImportError("torch and nn are required for TopologicalAE.")
         super().__init__()
 
         # Encoder
@@ -89,13 +107,23 @@ class TopologicalSignatureDistance(nn.Module):
     """
 
     def __init__(self, match_edges: str = "symmetric", p: int = 2):
+        if not HAS_TORCH:
+            raise ImportError("torch is required for TopologicalSignatureDistance.")
         super().__init__()
         self.match_edges = match_edges
         self.p = p
 
     def _get_active_pairs(
-        self, dist_matrix: torch.Tensor, dim: int = 1
+        self, dist_matrix: Any, dim: int = 1
     ) -> List[Tuple[int, int]]:
+        try:
+            import gudhi as gd
+        except ImportError:
+            raise ImportError(
+                "gudhi is required for topological loss. "
+                "Install it with 'pip install gudhi'."
+            )
+
         # Same Gudhi logic as before
         d_mat_np = dist_matrix.detach().cpu().numpy()
         rips = gd.RipsComplex(distance_matrix=d_mat_np)
@@ -112,10 +140,10 @@ class TopologicalSignatureDistance(nn.Module):
                 critical_edges.append(tuple(sorted(birth_simplex)))
         return critical_edges
 
-    def _compute_distance_matrix(self, x: torch.Tensor, p: int = 2) -> torch.Tensor:
+    def _compute_distance_matrix(self, x: Any, p: int = 2) -> Any:
         return torch.cdist(x, x, p=p)
 
-    def forward(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Any, z: Any) -> Any:
         # Distance matrices (normalized)
         dx = self._compute_distance_matrix(x)
         dz = self._compute_distance_matrix(z)
@@ -152,6 +180,8 @@ class TopologicalLossCriterion(nn.Module):
     """
 
     def __init__(self, lam: float = 0.0):
+        if not HAS_TORCH:
+            raise ImportError("torch is required for TopologicalLossCriterion.")
         super().__init__()
         self.lam = lam
         self.mse = nn.MSELoss()
@@ -219,6 +249,14 @@ class TopologicalAEReducer(BaseReducer):
         self.batch_size = batch_size
         self.epochs = epochs
 
+        try:
+            import torch
+        except ImportError:
+            raise ImportError(
+                "torch is required for TopologicalAEReducer. "
+                "Install it with 'pip install torch'."
+            )
+
         if device == "auto":
             if torch.cuda.is_available():
                 self.device = "cuda"
@@ -237,6 +275,15 @@ class TopologicalAEReducer(BaseReducer):
         """
         Fit the model using Skorch.
         """
+        try:
+            import torch
+            from skorch import NeuralNetRegressor
+        except ImportError:
+            raise ImportError(
+                "torch and skorch are required for TopologicalAEReducer. "
+                "Install them with 'pip install torch skorch'."
+            )
+
         input_dim = X.shape[1]
 
         # Initialize Skorch Net

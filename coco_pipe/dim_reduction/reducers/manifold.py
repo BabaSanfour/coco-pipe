@@ -203,8 +203,15 @@ class LLEReducer(BaseReducer):
         self : LLEReducer
             Returns the instance itself.
         """
+        # Map 'method_variant' or 'variant' from config to 'method' for sklearn
+        params = self.params.copy()
+        if "method_variant" in params:
+            params["method"] = params.pop("method_variant")
+        if "variant" in params:
+            params["method"] = params.pop("variant")
+
         self.model = LocallyLinearEmbedding(
-            n_components=self.n_components, **self.params
+            n_components=self.n_components, **params
         )
         self.model.fit(X)
         return self

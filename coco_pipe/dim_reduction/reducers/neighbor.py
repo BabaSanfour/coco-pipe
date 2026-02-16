@@ -39,10 +39,6 @@ Date: 2026-01-06
 from typing import Any, Optional
 
 import numpy as np
-import pacmap
-import phate
-import trimap
-import umap
 from sklearn.manifold import TSNE
 
 try:
@@ -251,6 +247,14 @@ class UMAPReducer(BaseReducer):
         self : UMAPReducer
             Returns the instance itself.
         """
+        try:
+            import umap
+        except ImportError:
+            raise ImportError(
+                "umap-learn is required for UMAPReducer. "
+                "Install it with 'pip install umap-learn'."
+            )
+
         self.model = umap.UMAP(n_components=self.n_components, **self.params)
         self.model.fit(X, y=y)
         # Store expected input dimension for validation
@@ -365,6 +369,14 @@ class PacmapReducer(BaseReducer):
         self : PacmapReducer
             Returns the instance itself.
         """
+        try:
+            import pacmap
+        except ImportError:
+            raise ImportError(
+                "pacmap is required for PacmapReducer. "
+                "Install it with 'pip install pacmap'."
+            )
+
         self.model = pacmap.PaCMAP(
             n_components=self.n_components, **self.specific_args, **self.params
         )
@@ -478,6 +490,14 @@ class TrimapReducer(BaseReducer):
         self : TrimapReducer
             Returns the instance itself.
         """
+        try:
+            import trimap
+        except ImportError:
+            raise ImportError(
+                "trimap is required for TrimapReducer. "
+                "Install it with 'pip install trimap'."
+            )
+
         self.model = trimap.TRIMAP(
             n_dims=self.n_components, **self.specific_args, **self.params
         )
@@ -573,6 +593,14 @@ class PHATEReducer(BaseReducer):
         self : PHATEReducer
             Returns the instance itself.
         """
+        try:
+            import phate
+        except ImportError:
+            raise ImportError(
+                "phate is required for PHATEReducer. "
+                "Install it with 'pip install phate'."
+            )
+
         self.model = phate.PHATE(n_components=self.n_components, **self.params)
         self.model.fit(X)
         return self

@@ -23,7 +23,6 @@ Date: 2026-01-06
 from typing import Optional
 
 import numpy as np
-from ivis import Ivis
 
 from .base import ArrayLike, BaseReducer
 
@@ -87,6 +86,14 @@ class IVISReducer(BaseReducer):
         self : IVISReducer
             Returns the instance itself.
         """
+        try:
+            from ivis import Ivis
+        except ImportError:
+            raise ImportError(
+                "ivis is required for IVISReducer. "
+                "Install it with 'pip install ivis[cpu]' or 'pip install ivis[gpu]'."
+            )
+
         self.model = Ivis(**self.params)
         self.model.fit(X, Y=y)
         return self
