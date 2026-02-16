@@ -23,31 +23,90 @@ from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-# Import Reducers for Registry
-from .reducers.linear import (
-    DaskPCAReducer,
-    DaskTruncatedSVDReducer,
-    IncrementalPCAReducer,
-    PCAReducer,
-)
-from .reducers.manifold import (
-    IsomapReducer,
-    LLEReducer,
-    MDSReducer,
-    SpectralEmbeddingReducer,
-)
-from .reducers.neighbor import (
-    PacmapReducer,
-    ParametricUMAPReducer,
-    PHATEReducer,
-    TrimapReducer,
-    TSNEReducer,
-    UMAPReducer,
-)
-from .reducers.neural import IVISReducer
-from .reducers.spatiotemporal import DMDReducer, TRCAReducer
-from .reducers.topology import TopologicalAEReducer
+# --- Registry & Lazy Loading ---
 
+# 1. Core Reducers (Sklearn/Scipy based - always available)
+CORE_METHODS = {
+    # Linear
+    "PCA": ("coco_pipe.dim_reduction.reducers.linear", "PCAReducer"),
+    "INCREMENTALPCA": ("coco_pipe.dim_reduction.reducers.linear", "IncrementalPCAReducer"),
+    # Manifold
+    "ISOMAP": ("coco_pipe.dim_reduction.reducers.manifold", "IsomapReducer"),
+    "LLE": ("coco_pipe.dim_reduction.reducers.manifold", "LLEReducer"),
+    "MDS": ("coco_pipe.dim_reduction.reducers.manifold", "MDSReducer"),
+    "SPECTRALEMBEDDING": ("coco_pipe.dim_reduction.reducers.manifold", "SpectralEmbeddingReducer"),
+    # Neighbor (t-SNE is core sklearn)
+    "TSNE": ("coco_pipe.dim_reduction.reducers.neighbor", "TSNEReducer"),
+}
+
+# 2. Optional Reducers (Requires extra deps or heavy imports)
+OPTIONAL_METHODS = {
+    # Linear
+    "DASKPCA": ("coco_pipe.dim_reduction.reducers.linear", "DaskPCAReducer"),
+    "DASKTRUNCATEDSVD": ("coco_pipe.dim_reduction.reducers.linear", "DaskTruncatedSVDReducer"),
+    # Neighbor
+    "UMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "UMAPReducer"),
+    "PARAMETRICUMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "ParametricUMAPReducer"),
+    "PACMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "PacmapReducer"),
+    "TRIMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "TrimapReducer"),
+    "PHATE": ("coco_pipe.dim_reduction.reducers.neighbor", "PHATEReducer"),
+    # Spatiotemporal
+    "DMD": ("coco_pipe.dim_reduction.reducers.spatiotemporal", "DMDReducer"),
+    "TRCA": ("coco_pipe.dim_reduction.reducers.spatiotemporal", "TRCAReducer"),
+    # Neural / Topology
+    "IVIS": ("coco_pipe.dim_reduction.reducers.neural", "IVISReducer"),
+    "TOPOLOGICALAE": ("coco_pipe.dim_reduction.reducers.topology", "TopologicalAEReducer"),
+}
+
+# For validation
+METHODS = list(CORE_METHODS.keys()) + list(OPTIONAL_METHODS.keys())
+
+
+def get_reducer_class(method: str):
+    """
+    Factory to retrieve the reducer class for a given method name.
+    Lazily imports the module to avoid overhead for unused methods.
+
+    Parameters
+    ----------
+    method : str
+        Name of the reduction method (case-insensitive).
+
+    Returns
+    -------
+    class
+        The reducer class (subclass of BaseReducer).
+
+    Raises
+    ------
+    ValueError
+        If method is unknown.
+    ImportError
+        If the module cannot be imported.
+    """
+    method = method.upper()
+    
+    # Check Core
+    if method in CORE_METHODS:
+        mod_path, cls_name = CORE_METHODS[method]
+    elif method in OPTIONAL_METHODS:
+        mod_path, cls_name = OPTIONAL_METHODS[method]
+    else:
+        valid = ", ".join(METHODS)
+        raise ValueError(f"Unknown method '{method}'. Valid options are: {valid}")
+
+    try:
+        import importlib
+        module = importlib.import_module(mod_path)
+        return getattr(module, cls_name)
+    except ImportError as e:
+        # Provide helpful error for optional dependencies
+        if method in OPTIONAL_METHODS:
+            raise ImportError(
+                f"Could not import reducer '{method}'. "
+                f"Ensure required dependencies are installed. Error: {e}"
+            )
+        raise e
 
 # --- Base Config ---
 class BaseReducerConfig(BaseModel):
@@ -305,34 +364,3 @@ class EvaluationConfig(BaseModel):
     )
 
 
-# --- Registry ---
-# Maps string names to their implementation classes
-# Used by DimReduction core to instantiate methods.
-
-METHODS_DICT = {
-    # Linear
-    "PCA": PCAReducer,
-    "INCREMENTALPCA": IncrementalPCAReducer,
-    "DASKPCA": DaskPCAReducer,
-    "DASKTRUNCATEDSVD": DaskTruncatedSVDReducer,
-    # Manifold
-    "ISOMAP": IsomapReducer,
-    "LLE": LLEReducer,
-    "MDS": MDSReducer,
-    "SPECTRALEMBEDDING": SpectralEmbeddingReducer,
-    # Neighbor
-    "TSNE": TSNEReducer,
-    "UMAP": UMAPReducer,
-    "PACMAP": PacmapReducer,
-    "TRIMAP": TrimapReducer,
-    "PHATE": PHATEReducer,
-    # Spatiotemporal
-    "DMD": DMDReducer,
-    "TRCA": TRCAReducer,
-    # Neural / Topological
-    "IVIS": IVISReducer,
-    "TOPOLOGICALAE": TopologicalAEReducer,
-    "PARAMETRICUMAP": ParametricUMAPReducer,
-}
-
-METHODS = list(METHODS_DICT.keys())

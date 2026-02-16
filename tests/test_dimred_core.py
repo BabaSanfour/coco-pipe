@@ -477,8 +477,9 @@ def test_load_wrapper_reconstruction_coverage(tmp_path):
     dummy.save(save_path)
 
     with (
-        patch.dict(
-            "coco_pipe.dim_reduction.core.METHODS_DICT", {"DUMMY": DummyForPickle}
+        patch(
+            "coco_pipe.dim_reduction.core.get_reducer_class",
+            side_effect=lambda m: DummyForPickle if m == "DUMMY" else None,
         ),
         patch("coco_pipe.dim_reduction.core.METHODS", ["DUMMY"]),
     ):

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 
-from .config import METHODS, METHODS_DICT
+from .config import METHODS, get_reducer_class
 from .reducers.base import ArrayLike, BaseReducer
 
 if TYPE_CHECKING:
@@ -128,7 +128,7 @@ class DimReduction:
 
         self.name = name or self.method
 
-        ReducerCls = METHODS_DICT[self.method]
+        ReducerCls = get_reducer_class(self.method)
         self.reducer: BaseReducer = ReducerCls(
             n_components=self.n_components, **self.reducer_kwargs
         )
