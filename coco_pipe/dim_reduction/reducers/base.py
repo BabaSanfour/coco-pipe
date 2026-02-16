@@ -15,7 +15,7 @@ BaseReducer
 
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import joblib
 import numpy as np
@@ -214,44 +214,38 @@ class BaseReducer(ABC):
         
         return supported
 
-    def get_diagnostics(self) -> dict:
+    def get_diagnostics(self) -> Dict[str, Any]:
         """
-        Extract model-specific diagnostic attributes (e.g., kl_divergence, stress).
+        Return diagnostic arrays/structures (e.g., loss_history, explained_variance).
 
         Returns
         -------
         diagnostics : dict
-            Dictionary of diagnostic names and values.
+            Dictionary of diagnostic attributes.
+            Keys are attribute names (e.g., 'explained_variance_ratio_').
         """
-        if self.model is None:
-            return {}
+        diag = {}
+        if "supported_diagnostics" in self.capabilities:
+            for k in self.capabilities["supported_diagnostics"]:
+                if hasattr(self.model, k):
+                    diag[k] = getattr(self.model, k)
+                elif hasattr(self, k):
+                    # Some reducers might store diag on self
+                    diag[k] = getattr(self, k)
+        return diag
 
-        # Common diagnostic attributes in sklearn/neighbor methods
-        diag_attrs = [
-            "kl_divergence_",
-            "stress_",
-            "reconstruction_error_",
-            "n_iter_",
-            "loss_history_",
-            "explained_variance_ratio_",
-            "singular_values_",
-            "eigs",
-            "diff_potential",
-        ]
+    def get_quality_metadata(self) -> Dict[str, Any]:
+        """
+        Return scalar metadata about the reduction quality or process (e.g., n_iter, stress).
 
-        results = {}
-        for attr in diag_attrs:
-            # Check top-level wrapper first (some might be @property)
-            if hasattr(self, attr):
-                try:
-                    results[attr] = getattr(self, attr)
-                except Exception:
-                    pass
-            # Check internal model directly
-            elif hasattr(self.model, attr):
-                results[attr] = getattr(self.model, attr)
+        Returns
+        -------
+        metadata : dict
+            Dictionary of scalar metadata.
+            Keys should be descriptive (e.g., 'stress_', 'n_iter_', 'kl_divergence_').
+        """
+        return {}
 
-        return results
 
     @classmethod
     def load(cls, filepath: Union[str, os.PathLike]) -> "BaseReducer":

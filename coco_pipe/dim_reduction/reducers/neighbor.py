@@ -96,6 +96,16 @@ class TSNEReducer(BaseReducer):
         self.embedding_ = None
         self.model = None
 
+    def get_quality_metadata(self) -> dict:
+        """Return t-SNE metadata."""
+        if self.model is None:
+            return {}
+        return {
+            "kl_divergence_": getattr(self.model, "kl_divergence_", None),
+            "n_iter_": getattr(self.model, "n_iter_", None),
+            "learning_rate_": getattr(self.model, "learning_rate_", None),
+        }
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TSNEReducer":
         """
         Fit t-SNE with X.
@@ -236,6 +246,11 @@ class UMAPReducer(BaseReducer):
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
+
+    def get_diagnostics(self) -> dict:
+        if self.model and hasattr(self.model, "graph_"):
+             return {"graph_": self.model.graph_}
+        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "UMAPReducer":
         """
@@ -594,6 +609,12 @@ class PHATEReducer(BaseReducer):
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return PHATE diagnostics."""
+        if self.model and hasattr(self.model, "diff_potential"):
+             return {"diff_potential": self.model.diff_potential}
+        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PHATEReducer":
         """

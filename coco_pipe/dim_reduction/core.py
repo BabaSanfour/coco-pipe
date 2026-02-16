@@ -378,6 +378,7 @@ class DimReduction:
         else:
             scores["shepard_correlation"] = np.nan
 
+        scores.update(self.reducer.get_quality_metadata())
         scores.update(self.reducer.get_diagnostics())
 
         return scores

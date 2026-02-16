@@ -267,10 +267,11 @@ def test_score_specific_reducers():
 
 
 def test_score_allowlist():
-    """Test scraping of non-underscore allowed attributes."""
+    """Test standard diagnostics contract."""
 
     class MockModel:
         def __init__(self):
+            # These attributes exist on model
             self.graph = np.zeros((5, 5))
             self.diff_potential = np.random.rand(5)
             self.eigs = np.array([1.0, 0.5])
@@ -280,6 +281,13 @@ def test_score_allowlist():
         def __init__(self):
             super().__init__(n_components=2)
             self.model = MockModel()
+
+        # Explicit contract
+        def get_diagnostics(self):
+            return {
+                "diff_potential": self.model.diff_potential,
+                "eigs": self.model.eigs
+            }
 
         def fit(self, X, y=None):
             return self
@@ -292,16 +300,17 @@ def test_score_allowlist():
 
     dr = DimReduction("PCA", n_components=2)  # Dummy init
     dr.reducer = MockReducer()
-    dr.embedding_ = np.zeros((20, 2))  # Dummy embedding (20 samples)
+    dr.embedding_ = np.zeros((20, 2))
 
     X = np.zeros((20, 5))
     scores = dr.score(X)
 
-    # 'graph' should be filtered out (not in allow_list and possibly large)
+    # 'graph' and 'ignored_attr' should be absent because get_diagnostics doesn't return them
     assert "graph" not in scores
+    assert "ignored_attr" not in scores
+    # these should be present
     assert "diff_potential" in scores
     assert "eigs" in scores
-    assert "ignored_attr" not in scores
 
 
 def test_plot_native(monkeypatch):

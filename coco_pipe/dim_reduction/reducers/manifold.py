@@ -82,6 +82,12 @@ class IsomapReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
+    def get_diagnostics(self) -> dict:
+        """Return Isomap diagnostics."""
+        if hasattr(self.model, "reconstruction_error_"):
+             return {"reconstruction_error_": self.model.reconstruction_error_}
+        return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IsomapReducer":
         """
         Fit the Isomap model.
@@ -190,6 +196,12 @@ class LLEReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
+    def get_diagnostics(self) -> dict:
+         """Return LLE diagnostics."""
+         if hasattr(self.model, "reconstruction_error_"):
+             return {"reconstruction_error_": self.model.reconstruction_error_}
+         return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "LLEReducer":
         """
         Fit the LLE model.
@@ -293,6 +305,15 @@ class MDSReducer(BaseReducer):
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
+
+    def get_quality_metadata(self) -> dict:
+        """Return MDS stress and iterations."""
+        if self.model and hasattr(self.model, "stress_"):
+            return {
+                "stress_": self.model.stress_,
+                "n_iter_": getattr(self.model, "n_iter_", None)
+            }
+        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "MDSReducer":
         """

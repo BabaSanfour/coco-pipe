@@ -79,6 +79,14 @@ class IVISReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
 
+        self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return IVIS loss history."""
+        if self.model and hasattr(self.model, "loss_history_"):
+             return {"loss_history_": self.model.loss_history_}
+        return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IVISReducer":
         """
         Fit the IVIS model.

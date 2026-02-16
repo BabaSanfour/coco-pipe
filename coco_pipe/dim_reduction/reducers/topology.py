@@ -278,6 +278,12 @@ class TopologicalAEReducer(BaseReducer):
 
         self.model = None
 
+    def get_diagnostics(self) -> dict:
+        """Return training loss history."""
+        if self.model and hasattr(self.model, "history_"):
+             return {"loss_history_": self.model.history_[:, "train_loss"]}
+        return {}
+
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None
     ) -> "TopologicalAEReducer":

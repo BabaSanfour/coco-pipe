@@ -100,6 +100,18 @@ class DMDReducer(BaseReducer):
         self.force_transpose = force_transpose
         self.model = None
 
+        self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return DMD diagnostics."""
+        if self.model:
+            return {
+                "eigs_": self.model.eigs,
+                "modes_": self.model.modes,
+                "reconstructed_data_": getattr(self.model, "reconstructed_data", None)
+            }
+        return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DMDReducer":
         """
         Fit the DMD model.
@@ -259,6 +271,12 @@ class TRCAReducer(BaseReducer):
         self.sfreq = sfreq
         self.filterbank = filterbank or [[(8, 30), (7, 35)]]  # Default: one band
         self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return TRCA spatial filters."""
+        if self.model and hasattr(self.model, "coef_"):
+             return {"coef_": self.model.coef_}
+        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TRCAReducer":
         """

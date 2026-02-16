@@ -81,6 +81,21 @@ class PCAReducer(BaseReducer):
         })
         return caps
 
+    def get_diagnostics(self) -> dict:
+        """Return PCA-specific diagnostics."""
+        if self.model is None:
+            return {}
+        return {
+            "explained_variance_ratio_": self.model.explained_variance_ratio_,
+            "singular_values_": self.model.singular_values_,
+        }
+    
+    def get_quality_metadata(self) -> dict:
+        return {
+            "n_components_": self.model.n_components_ if self.model else None,
+            "noise_variance_": getattr(self.model, "noise_variance_", None)
+        }
+
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
@@ -212,6 +227,20 @@ class IncrementalPCAReducer(BaseReducer):
             "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
         })
         return caps
+
+    def get_diagnostics(self) -> dict:
+        if self.model is None:
+            return {}
+        return {
+            "explained_variance_ratio_": self.model.explained_variance_ratio_,
+            "singular_values_": self.model.singular_values_,
+        }
+    
+    def get_quality_metadata(self) -> dict:
+        return {
+            "n_samples_seen_": getattr(self.model, "n_samples_seen_", None),
+            "noise_variance_": getattr(self.model, "noise_variance_", None)
+        }
 
     def __init__(
         self, n_components: int = 2, batch_size: Optional[int] = None, **kwargs
