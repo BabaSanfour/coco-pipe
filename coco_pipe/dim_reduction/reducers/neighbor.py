@@ -41,10 +41,6 @@ from typing import Any, Optional
 import numpy as np
 from sklearn.manifold import TSNE
 
-try:
-    from umap.parametric_umap import ParametricUMAP
-except ImportError:
-    ParametricUMAP = None
 
 from .base import ArrayLike, BaseReducer
 
@@ -717,16 +713,16 @@ class ParametricUMAPReducer(BaseReducer):
         self.verbose = verbose
         self.model = None
 
-    def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
-    ) -> "ParametricUMAPReducer":
+    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "ParametricUMAPReducer":
         """
-        Fit the Parametric UMAP model.
+        Fit parametric UMAP.
         """
-        if ParametricUMAP is None:
+        try:
+            from umap.parametric_umap import ParametricUMAP
+        except ImportError:
             raise ImportError(
-                "ParametricUMAP requires 'umap-learn' and 'tensorflow'. "
-                "Install with `pip install umap-learn[plot] tensorflow`."
+                "umap-learn and tensorflow are required for ParametricUMAP. "
+                "Install it with 'pip install umap-learn[parametric]'."
             )
 
         self.model = ParametricUMAP(

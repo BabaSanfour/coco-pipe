@@ -30,7 +30,6 @@ Date: 2026-01-06
 from typing import Optional
 
 import numpy as np
-import numpy as np
 
 from .base import ArrayLike, BaseReducer
 

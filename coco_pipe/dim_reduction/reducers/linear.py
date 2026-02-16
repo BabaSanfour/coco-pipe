@@ -28,7 +28,6 @@ Date: 2026-01-06
 from typing import Any, Optional
 
 import numpy as np
-import numpy as np
 from sklearn.decomposition import PCA, IncrementalPCA
 
 from .base import ArrayLike, BaseReducer

@@ -331,3 +331,13 @@ class TopologicalAEReducer(BaseReducer):
         if self.model is None or not hasattr(self.model, "history_"):
             return []
         return self.model.history_[:, "train_loss"]
+
+    def get_pytorch_module(self) -> Optional[Any]:
+        """
+        Return the underlying PyTorch module for analysis.
+
+        Exposes the module_ attribute from the Skorch wrapper if fitted.
+        """
+        if self.model is not None and hasattr(self.model, "module_"):
+            return self.model.module_
+        return None

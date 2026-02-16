@@ -256,7 +256,7 @@ def test_trca_reducer(data_trca):
 
 
 def test_ivis_reducer(data_ts):
-    with patch("coco_pipe.dim_reduction.reducers.neural.Ivis") as MockIvis:
+    with patch("ivis.Ivis", create=True) as MockIvis:
         mock_instance = MockIvis.return_value
         # Setup mock behavior
         mock_instance.transform.return_value = np.zeros((200, 2))
@@ -349,7 +349,7 @@ def test_parametric_umap_mock():
     """
     Test ParametricUMAPReducer with mocking to avoid TF/M1 issues.
     """
-    with patch("coco_pipe.dim_reduction.reducers.neighbor.ParametricUMAP") as MockPUMAP:
+    with patch("umap.parametric_umap.ParametricUMAP", create=True) as MockPUMAP:
         mock_instance = MockPUMAP.return_value
         mock_instance.transform.return_value = np.zeros((20, 2))
 
@@ -502,7 +502,7 @@ def test_incremental_pca_unfitted_error():
 
 def test_dask_pca_mocked():
     """Test DaskPCAReducer logic without running Dask."""
-    with patch("coco_pipe.dim_reduction.reducers.linear.DaskPCA") as MockDaskPCA:
+    with patch("dask_ml.decomposition.PCA", create=True) as MockDaskPCA:
         mock_instance = MockDaskPCA.return_value
 
         reducer = DaskPCAReducer(n_components=2)
@@ -526,7 +526,7 @@ def test_dask_pca_unfitted():
 
 def test_dask_svd_mocked():
     """Test DaskTruncatedSVDReducer logic."""
-    with patch("coco_pipe.dim_reduction.reducers.linear.DaskTruncatedSVD") as MockSVD:
+    with patch("dask_ml.decomposition.TruncatedSVD", create=True) as MockSVD:
         mock_instance = MockSVD.return_value
         reducer = DaskTruncatedSVDReducer(n_components=2, algorithm="randomized")
 
@@ -627,15 +627,14 @@ def test_phate_unfitted_error():
 def test_parametric_umap_errors():
     # Test missing dependency
     with patch.dict(sys.modules, {"umap.parametric_umap": None}):
-        with patch("coco_pipe.dim_reduction.reducers.neighbor.ParametricUMAP", None):
-            reducer = ParametricUMAPReducer(n_components=2)
-            with pytest.raises(
-                ImportError, match="requires 'umap-learn' and 'tensorflow'"
-            ):
-                reducer.fit(np.zeros((5, 5)))
+        reducer = ParametricUMAPReducer(n_components=2)
+        with pytest.raises(
+            ImportError, match="umap-learn and tensorflow are required"
+        ):
+            reducer.fit(np.zeros((5, 5)))
 
     # Test unfitted transform/save
-    with patch("coco_pipe.dim_reduction.reducers.neighbor.ParametricUMAP"):
+    with patch("umap.parametric_umap.ParametricUMAP", create=True):
         reducer = ParametricUMAPReducer(n_components=2)
         reducer.fit(np.zeros((5, 5)))
         reducer_unfitted = ParametricUMAPReducer(n_components=2)

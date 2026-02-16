@@ -167,11 +167,13 @@ def compute_feature_importance(
     if method == "perturbation":
         return perturbation_importance(model, X, **kwargs)
     elif method == "gradient":
-        if hasattr(model, "model") and hasattr(model.model, "encoder"):
-            # Assume TopoAE or similar PyTorch structure
+        if hasattr(model, "get_pytorch_module") or (
+            hasattr(model, "model") and hasattr(model.model, "encoder")
+        ):
+            # Supported neural reducers (TopoAE via skorch or others via direct attr)
             return gradient_importance(model, X, **kwargs)
         raise NotImplementedError(
-            "Gradient method requires a supported PyTorch model (TopologicalAEReducer)."
+            "Gradient method requires a supported PyTorch model (e.g., TopologicalAEReducer)."
         )
     else:
         raise ValueError(f"Unknown method {method}")
@@ -202,7 +204,15 @@ def gradient_importance(wrapper: Any, X: np.ndarray, **kwargs) -> dict:
     """
     import torch
 
-    model = wrapper.model
+    # Extract PyTorch module from wrapper
+    if hasattr(wrapper, "get_pytorch_module"):
+        model = wrapper.get_pytorch_module()
+    else:
+        model = wrapper.model
+
+    if model is None:
+        raise RuntimeError("Model is not fitted or does not support gradients.")
+
     device = next(model.parameters()).device
 
     # Check dimensions
