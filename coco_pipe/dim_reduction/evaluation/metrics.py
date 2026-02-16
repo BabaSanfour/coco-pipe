@@ -28,7 +28,7 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 Date: 2026-01-08
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from scipy.spatial.distance import pdist
@@ -323,7 +323,10 @@ def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
 
 
 def shepard_diagram_data(
-    X: np.ndarray, X_embedded: np.ndarray, sample_size: int = 1000
+    X: np.ndarray,
+    X_embedded: np.ndarray,
+    sample_size: int = 1000,
+    random_state: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute pairwise distances for Shepard Diagram.
@@ -337,6 +340,8 @@ def shepard_diagram_data(
     sample_size : int, default=1000
         Number of points to sample if N is large (to avoid N^2 complexity).
         If N <= sample_size, uses all points.
+    random_state : int, optional
+        Seed for reproducibility when subsampling.
 
     Returns
     -------
@@ -345,10 +350,13 @@ def shepard_diagram_data(
     dist_emb : np.ndarray
         Pairwise distances in low-dimensional space.
     """
+    from sklearn.utils import check_random_state
+
     n_samples = X.shape[0]
 
     if n_samples > sample_size:
-        indices = np.random.choice(n_samples, sample_size, replace=False)
+        rng = check_random_state(random_state)
+        indices = rng.choice(n_samples, sample_size, replace=False)
         X_sub = X[indices]
         Emb_sub = X_embedded[indices]
     else:

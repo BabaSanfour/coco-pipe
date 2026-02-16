@@ -371,3 +371,19 @@ def test_coranking_bias():
     assert Q.shape == (4, 4)
     # The total count in Q should be n * (n-1) = 5 * 4 = 20
     assert np.sum(Q) == 20
+
+
+def test_reproducibility_shepard_sampling():
+    """Verify that shepard_diagram_data is reproducible with random_state."""
+    X = np.random.rand(50, 10)
+    X_emb = np.random.rand(50, 2)
+
+    # Subsample to a small number
+    size = 10
+    d1_orig, d1_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
+    d2_orig, d2_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
+    d3_orig, d3_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=43)
+
+    assert np.allclose(d1_orig, d2_orig)
+    assert np.allclose(d1_emb, d2_emb)
+    assert not np.allclose(d1_orig, d3_orig)

@@ -19,6 +19,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 from scipy.stats import spearmanr
+from sklearn.utils import check_random_state
 
 
 def correlate_features(
@@ -77,6 +78,7 @@ def perturbation_importance(
     X: np.ndarray,
     feature_names: Optional[List[str]] = None,
     n_repeats: int = 5,
+    random_state: Optional[int] = None,
 ) -> dict:
     """
     Compute feature importance by shuffling features.
@@ -106,6 +108,7 @@ def perturbation_importance(
     if not hasattr(model, "transform"):
         raise ValueError("Model must have a transform method.")
 
+    rng = check_random_state(random_state)
     original_emb = model.transform(X)
     n_features = X.shape[1]
 
@@ -115,7 +118,8 @@ def perturbation_importance(
         feature_score = 0
         for r in range(n_repeats):
             X_permuted = X.copy()
-            np.random.shuffle(X_permuted[:, f])
+            # Use local RNG for shuffling
+            rng.shuffle(X_permuted[:, f])
 
             emb_permuted = model.transform(X_permuted)
 

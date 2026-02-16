@@ -135,6 +135,11 @@ class DimReduction:
 
         self.embedding_ = None
 
+    @property
+    def random_state(self) -> Optional[int]:
+        """Return the random seed from parameters if any."""
+        return self.reducer_kwargs.get("random_state")
+
     def _validate_input(self, X: Any) -> np.ndarray:
         """
         Validate input data shape and type.
@@ -344,7 +349,9 @@ class DimReduction:
         from scipy.stats import spearmanr
         # Shepard Correlation (Global Distance Preservation)
         # We sample 1000 points max to keep it efficient
-        d_orig, d_emb = metrics.shepard_diagram_data(X_arr, X_emb, sample_size=1000)
+        d_orig, d_emb = metrics.shepard_diagram_data(
+            X_arr, X_emb, sample_size=1000, random_state=self.random_state
+        )
         if len(d_orig) > 1:
             # We use Pearson correlation (matching the labels in viz layer)
             corr = np.corrcoef(d_orig, d_emb)[0, 1]
