@@ -139,7 +139,8 @@ class DimReduction:
         """
         Validate input data shape and type.
 
-        TRCA/DMD require 3D input: (n_trials, n_channels, n_times).
+        TRCA requires 3D input: (n_trials, n_channels, n_times).
+        DMD requires 2D input: (n_features, n_snapshots).
         Others (PCA, UMAP, etc.) require 2D: (n_samples, n_features).
 
         Parameters
@@ -157,14 +158,17 @@ class DimReduction:
 
         X_arr = np.array(X)
 
-        # Define 3D-required methods
-        spatiotemporal_methods = {"TRCA"}
-
-        if self.method in spatiotemporal_methods:
+        if self.method == "TRCA":
             if X_arr.ndim != 3:
                 raise ValueError(
-                    f"Method '{self.method}' requires 3D input (Trials x Channels x "
+                    f"Method 'TRCA' requires 3D input (Trials x Channels x "
                     f"Time), got shape {X_arr.shape}."
+                )
+        elif self.method == "DMD":
+            if X_arr.ndim != 2:
+                raise ValueError(
+                    f"Method 'DMD' requires 2D input (Features x Snapshots), "
+                    f"got shape {X_arr.shape}."
                 )
         else:
             if X_arr.ndim != 2:

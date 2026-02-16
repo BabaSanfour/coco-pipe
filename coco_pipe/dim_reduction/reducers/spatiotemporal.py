@@ -81,10 +81,11 @@ class DMDReducer(BaseReducer):
     (2,)
     """
 
-    def __init__(self, n_components: int = 0, **kwargs):
+    def __init__(self, n_components: int = 0, force_transpose: bool = False, **kwargs):
         # pydmd uses 'svd_rank' for n_components
         kwargs["svd_rank"] = n_components
         super().__init__(n_components=n_components, **kwargs)
+        self.force_transpose = force_transpose
         self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DMDReducer":
@@ -119,6 +120,10 @@ class DMDReducer(BaseReducer):
         self.model = DMD(**self.params)
 
         # Fit expects (n_features, n_snapshots)
+        # Handle shape adaptation if requested
+        if self.force_transpose:
+            X = np.array(X).T
+
         self.model.fit(X)
         return self
 
@@ -130,6 +135,7 @@ class DMDReducer(BaseReducer):
         ----------
         X : ArrayLike of shape (n_features, n_snapshots)
             New data. Must match the feature dimension of training data.
+            If force_transpose was True during init, expects (n_snapshots, n_features).
 
         Returns
         -------
@@ -143,6 +149,9 @@ class DMDReducer(BaseReducer):
         """
         if self.model is None:
             raise RuntimeError("DMDReducer must be fitted before calling transform().")
+
+        if self.force_transpose:
+            X = np.array(X).T
 
         modes = self.model.modes
 
