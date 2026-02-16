@@ -56,37 +56,38 @@ def compute_coranking_matrix(X: np.ndarray, X_emb: np.ndarray) -> np.ndarray:
     """
     n = X.shape[0]
 
-    # Use 'auto' for efficiency, but we need exact neighbors for valid Q
-    nbrs_high = NearestNeighbors(n_neighbors=n - 1, algorithm="auto", n_jobs=-1).fit(X)
+    # Use n_neighbors=n to include the point itself as the 1st neighbor, then remove it.
+    # This avoids the bias where including self in ranks shift all other neighbors.
+    nbrs_high = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=-1).fit(X)
     _, indices_high = nbrs_high.kneighbors(X)
+    # Remove self-indices (the first neighbor of a point is itself)
+    indices_high = indices_high[:, 1:]
 
-    nbrs_low = NearestNeighbors(n_neighbors=n - 1, algorithm="auto", n_jobs=-1).fit(
-        X_emb
-    )
+    nbrs_low = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=-1).fit(X_emb)
     _, indices_low = nbrs_low.kneighbors(X_emb)
+    # Remove self-indices
+    indices_low = indices_low[:, 1:]
 
     # Calculate ranks in Low-D
-    # rank_low[i, j] = rank of j w.r.t i in Low-D
+    # rank_low[i, j] = rank of node j w.r.t node i in Low-D space
+    # we need a rank matrix of size (n, n) to store pairwise ranks
     rank_low = np.zeros((n, n), dtype=int)
     rows = np.arange(n)[:, None]
+    
+    # Each row in indices_low corresponds to ranks 0, 1, ..., n-2
     rank_low[rows, indices_low] = np.arange(n - 1)
 
     # For each point i, take its high-D neighbors j = indices_high[i, :]
     # Their High-D rank is simply the column index (0, 1, ..., n-2)
-    # Their Low-D rank is looked up in rank_low
-
-    # High-D ranks for all pairs (i, j) where j is a neighbor of i
-    # This is just tile(0..n-2) effectively, but we use histogram to aggregate
+    # Their Low-D rank is looked up in rank_low[i, indices_high[i, :]]
 
     # Get the Low-D ranks for the High-D neighbors
-    # This is the "l" coordinate for each pair
     l_indices = rank_low[rows, indices_high].flatten()
 
-    # The "k" coordinate (High-D rank) is just repeating 0..n-2 for each row
+    # The "k" coordinate (High-D rank) is repeating 0..n-2 for each row
     k_indices = np.tile(np.arange(n - 1), n)
 
     # Compute 2D histogram
-    # bins are 0, 1, ..., n-1 (edges) -> centers are 0..n-2
     Q, _, _ = np.histogram2d(
         k_indices, l_indices, bins=n - 1, range=[[0, n - 1], [0, n - 1]]
     )

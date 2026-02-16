@@ -334,68 +334,17 @@ class DimReduction:
         }
 
         from scipy.stats import spearmanr
-
         # Shepard Correlation (Global Distance Preservation)
         # We sample 1000 points max to keep it efficient
         d_orig, d_emb = metrics.shepard_diagram_data(X_arr, X_emb, sample_size=1000)
         if len(d_orig) > 1:
-            # Spearman correlation deals with non-linear monotonic relationships
-            corr, _ = spearmanr(d_orig, d_emb)
+            # We use Pearson correlation (matching the labels in viz layer)
+            corr = np.corrcoef(d_orig, d_emb)[0, 1]
             scores["shepard_correlation"] = float(corr)
         else:
             scores["shepard_correlation"] = np.nan
 
-        # Scrape reducer-specific metrics (attributes ending in _ or in allow-list)
-        # Check both the wrapper (BaseReducer subclass) and the internal model
-        sources = [self.reducer]
-        if hasattr(self.reducer, "model"):
-            sources.append(self.reducer.model)
-
-        # Attributes that don't follow the underscore convention but are valuable
-        allow_list = {
-            "eigs",
-            "modes",
-            "dynamics",
-            "diff_potential",
-            "reconstruction_error",
-            "n_features_in",
-            "coef",
-            "loss_history",
-        }
-
-        for source in sources:
-            for attr in dir(source):
-                is_allowed = attr in allow_list
-                is_standard = (
-                    attr.endswith("_")
-                    and not attr.startswith("_")
-                    and not attr.endswith("__")
-                )
-
-                if is_allowed or is_standard:
-                    # Exclude standard sklearn attributes that might be huge arrays
-                    # (like labels_ or embedding_)
-                    if attr in [
-                        "embedding_",
-                        "labels_",
-                        "components_",
-                        "fit_transform",
-                    ]:
-                        continue
-
-                    try:
-                        val = getattr(source, attr)
-                        if isinstance(val, (int, float, np.number)):
-                            scores[attr] = float(val)
-                        # Allow explicit lists/arrays if small enough or if in
-                        # allow_list (careful with graph)
-                        elif isinstance(val, (list, tuple, np.ndarray)):
-                            if is_allowed:
-                                scores[attr] = val
-                            elif np.size(val) < 50:  # Increased limit slightly
-                                scores[attr] = val
-                    except Exception:
-                        pass
+        scores.update(self.reducer.get_diagnostics())
 
         return scores
 

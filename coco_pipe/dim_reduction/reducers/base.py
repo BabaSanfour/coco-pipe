@@ -127,6 +127,54 @@ class BaseReducer(ABC):
             os.makedirs(out_dir, exist_ok=True)
         joblib.dump(self, filepath)
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Returns a dictionary of capabilities for this reducer.
+        """
+        return {
+            "has_transform": True,  # Most support it; overridden if not
+            "has_inverse_transform": hasattr(self.model, "inverse_transform")
+            if self.model
+            else False,
+            "is_linear": hasattr(self.model, "components_") if self.model else False,
+        }
+
+    def get_diagnostics(self) -> dict:
+        """
+        Extract model-specific diagnostic attributes (e.g., kl_divergence, stress).
+
+        Returns
+        -------
+        diagnostics : dict
+            Dictionary of diagnostic names and values.
+        """
+        if self.model is None:
+            return {}
+
+        # Common diagnostic attributes in sklearn/neighbor methods
+        diag_attrs = [
+            "kl_divergence_",
+            "stress_",
+            "reconstruction_error_",
+            "n_iter_",
+            "loss_history_",
+        ]
+
+        results = {}
+        for attr in diag_attrs:
+            # Check top-level wrapper first (some might be @property)
+            if hasattr(self, attr):
+                try:
+                    results[attr] = getattr(self, attr)
+                except Exception:
+                    pass
+            # Check internal model directly
+            elif hasattr(self.model, attr):
+                results[attr] = getattr(self.model, attr)
+
+        return results
+
     @classmethod
     def load(cls, filepath: Union[str, os.PathLike]) -> "BaseReducer":
         """
