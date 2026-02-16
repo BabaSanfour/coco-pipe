@@ -33,6 +33,7 @@ import seaborn as sns
 
 from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 from . import plotly_utils
+from .utils import filter_metrics, is_categorical
 
 # --- Style Constants ---
 STYLE_CONFIG = {
@@ -78,36 +79,6 @@ def _set_style(context: str = "paper", style: str = "ticks"):
     sns.set_context(context, font_scale=1.2)
     sns.set_style(style, rc=STYLE_CONFIG)
     sns.despine(trim=True, offset=10)
-
-
-def _is_categorical(labels: np.ndarray) -> bool:
-    """
-    Heuristic to check if labels are categorical or continuous.
-
-    Parameters
-    ----------
-    labels : np.ndarray
-        Array of labels.
-
-    Returns
-    -------
-    bool
-        True if categorical (string, bool, or few unique numeric values),
-        False otherwise.
-    """
-    arr = np.array(labels)
-    if arr.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
-        return True
-
-    # If numeric, check unique count
-    try:
-        # Avoid issues with NaNs in unique count
-        n_unique = len(np.unique(arr[~pd.isna(arr)]))
-        if n_unique < 20:
-            return True
-    except Exception:
-        pass
-    return False
 
 
 def plot_embedding(
@@ -220,7 +191,7 @@ def plot_embedding(
 
     # Label handling
     if labels is not None:
-        is_cat = _is_categorical(labels)
+        is_cat = is_categorical(labels)
 
         if is_cat:
             # Categorical: Use Seaborn for best legend handling
@@ -341,11 +312,7 @@ def plot_embedding(
 
     # Metrics Overlay
     if metrics:
-        clean_metrics = {
-            k: v
-            for k, v in metrics.items()
-            if isinstance(v, (float, int, str)) and k not in ["n_iter_", "n_components"]
-        }
+        clean_metrics = filter_metrics(metrics)
         text_str = "\n".join(
             [
                 f"{k}: {v:.3f}" if isinstance(v, float) else f"{k}: {v}"
@@ -424,12 +391,7 @@ def plot_metrics(
         import pandas as pd
 
         # Filter metrics for consistency with Matplotlib version
-        filtered_scores = {
-            k: v
-            for k, v in scores.items()
-            if isinstance(v, (float, int)) and not isinstance(v, bool)
-            and k not in {"n_iter_", "n_components"}
-        }
+        filtered_scores = filter_metrics(scores)
         if not filtered_scores:
             raise ValueError("No scalar metrics found to plot.")
 
@@ -438,13 +400,7 @@ def plot_metrics(
         return plotly_utils.plot_metric_details(df, title=title)
 
     _set_style()
-    metrics = {
-        k: v
-        for k, v in scores.items()
-        if isinstance(v, (float, int)) and not isinstance(v, bool)
-    }
-    exclude_keys = {"n_iter_", "n_components"}
-    metrics = {k: v for k, v in metrics.items() if k not in exclude_keys}
+    metrics = filter_metrics(scores)
 
     if not metrics:
         raise ValueError("No scalar metrics found to plot.")

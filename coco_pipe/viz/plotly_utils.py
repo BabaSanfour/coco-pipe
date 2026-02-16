@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from .utils import is_categorical, prepare_dataframe
+
 
 def plot_embedding_interactive(
     embedding: np.ndarray,
@@ -50,50 +52,26 @@ def plot_embedding_interactive(
     """
     n_points = embedding.shape[0]
 
-    # Prepare DataFrame for Plotly Express (easier for hover/color)
-    df_dict = {"x": embedding[:, 0], "y": embedding[:, 1]}
-
-    if dimensions == 3 and embedding.shape[1] > 2:
-        df_dict["z"] = embedding[:, 2]
-
-    # Collect Potential Color Columns
+    # Use shared prepare_dataframe for logic centralization
+    df = prepare_dataframe(embedding, labels=labels, meta=meta, dimensions=dimensions)
+    
+    # Hover data includes all columns except x, y, z
+    hover_cols = [c for c in df.columns if c not in ["x", "y", "z"]]
+    hover_data = hover_cols
+    
+    # Identify color options
     color_options = {}
-
-    def _is_categorical(vals):
-        """Heuristic to check if labels are categorical."""
-        arr = np.array(vals)
-        if arr.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
-            return True
-        # If numeric, check unique count
-        try:
-            n_unique = len(np.unique(arr[~pd.isna(arr)]))
-            if n_unique < 20:
-                return True
-        except Exception:
-            pass
-        return False
-
-    if labels is not None:
-        # Robust categorical detection: convert to string for discrete coloring
-        if _is_categorical(labels):
-            df_dict["Default Label"] = np.array(labels).astype(str)
-        else:
-            df_dict["Default Label"] = labels
-        color_options["Default Label"] = df_dict["Default Label"]
-
+    
+    # Re-identify color options from DataFrame columns (since prepare_dataframe simplifies this)
+    # Default Label is usually the first choice
+    if "Default Label" in df.columns:
+        color_options["Default Label"] = df["Default Label"]
+        
+    # Add meta columns
     if meta:
-        for k, v in meta.items():
-            if len(v) == n_points:
-                df_dict[k] = v
-                try:
-                    arr = np.array(v)
-                    if arr.ndim == 1:
-                        color_options[k] = v
-                except Exception:
-                    pass
-
-    df = pd.DataFrame(df_dict)
-    hover_data = list(df_dict.keys())
+        for k in meta.keys():
+            if k in df.columns:
+                color_options[k] = df[k]
 
 
     # Decision: Use WebGL for performance if large
@@ -114,7 +92,7 @@ def plot_embedding_interactive(
     # Determine if default is categorical
     is_cat = False
     if default_color_col:
-        is_cat = _is_categorical(df[default_color_col])
+        is_cat = is_categorical(df[default_color_col])
 
     # Default Palette
     import plotly.express as px
@@ -225,9 +203,9 @@ def plot_embedding_interactive(
     if len(color_options) > 1:
         def _get_marker_update(col_name):
             raw_v = df[col_name]
-            is_categorical = _is_categorical(raw_v)
+            is_cat_col = is_categorical(raw_v)
             
-            if is_categorical:
+            if is_cat_col:
                 unique_cats = sorted(raw_v.unique())
                 cat_map = {cat: i for i, cat in enumerate(unique_cats)}
                 n_cols = len(unique_cats)
