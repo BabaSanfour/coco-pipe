@@ -39,6 +39,18 @@ from .quality import (
 )
 
 
+def _get_safe_attr(obj: Any, attr: str) -> Any:
+    """
+    Safely retrieve an attribute from an object, guarding against property errors.
+    """
+    try:
+        if hasattr(obj, attr):
+            return getattr(obj, attr)
+    except Exception:
+        pass
+    return None
+
+
 class Element(ABC):
     """
     Abstract base class for all report elements.
@@ -721,16 +733,16 @@ class Report(ContainerElement):
         sec = Section(title=name, icon="📉")
 
         # 1. Main Interactive Embedding Plot
-        if hasattr(reducer, "embedding_"):
-            emb = reducer.embedding_
+        emb = _get_safe_attr(reducer, "embedding_")
+        if emb is not None:
             dims = emb.shape[1]
             if dims > 3:
                 dimensions = 3
             else:
                 dimensions = dims
 
-            meta = getattr(reducer, "metadata_", None)
-            labels = getattr(reducer, "labels_", None)
+            meta = _get_safe_attr(reducer, "metadata_")
+            labels = _get_safe_attr(reducer, "labels_")
 
             fig = plot_embedding_interactive(
                 embedding=emb,
@@ -745,13 +757,15 @@ class Report(ContainerElement):
 
         # 3. Diagnostics
         # Loss Curve
-        if hasattr(reducer, "loss_history_") and reducer.loss_history_ is not None:
-            fig_loss = plot_loss_history_interactive(reducer.loss_history_)
+        loss_hist = _get_safe_attr(reducer, "loss_history_")
+        if loss_hist is not None:
+            fig_loss = plot_loss_history_interactive(loss_hist)
             sec.add_element(PlotlyElement(fig_loss, height="350px"))
 
         # Scree Plot (PCA)
-        if hasattr(reducer, "explained_variance_ratio_"):
-            fig_scree = plot_scree_interactive(reducer.explained_variance_ratio_)
+        var_ratio = _get_safe_attr(reducer, "explained_variance_ratio_")
+        if var_ratio is not None:
+            fig_scree = plot_scree_interactive(var_ratio)
             sec.add_element(PlotlyElement(fig_scree, height="350px"))
 
         self.add_section(sec)

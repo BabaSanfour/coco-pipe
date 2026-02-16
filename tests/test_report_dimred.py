@@ -103,3 +103,27 @@ def test_report_add_comparison():
     # Check for plots (Radar + Bar)
     # Check for Table title
     assert "Quality Metrics" in html
+
+def test_report_add_reduction_safe_access():
+    """Verify that Report.add_reduction safely handles property errors."""
+    rep = Report("Safe Access Test")
+
+    class BrokenReducer:
+        def __init__(self):
+            self.embedding_ = np.random.randn(10, 2)
+
+        @property
+        def loss_history_(self):
+            raise RuntimeError("Broken loss history")
+
+    reducer = BrokenReducer()
+
+    # This should not raise RuntimeError
+    try:
+        rep.add_reduction(reducer, name="BrokenMethod")
+        html = rep.render()
+        assert "BrokenMethod" in html
+        # Should NOT contain the error message anywhere (it was swallowed)
+        assert "Broken loss history" not in html
+    except RuntimeError as e:
+        pytest.fail(f"Report.add_reduction raised RuntimeError: {e}")
