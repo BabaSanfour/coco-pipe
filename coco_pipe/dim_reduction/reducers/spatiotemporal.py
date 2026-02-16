@@ -81,6 +81,18 @@ class DMDReducer(BaseReducer):
     (2,)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of DMDReducer."""
+        caps = super().capabilities
+        caps.update({
+            "input_layout": "features_snapshots",
+            "has_components": True,
+            "has_native_plot": True,
+            "supported_diagnostics": ["eigs_", "modes_"],
+        })
+        return caps
+
     def __init__(self, n_components: int = 0, force_transpose: bool = False, **kwargs):
         # pydmd uses 'svd_rank' for n_components
         kwargs["svd_rank"] = n_components
@@ -224,6 +236,17 @@ class TRCAReducer(BaseReducer):
     >>> print(X_tr.shape)
     (10, 1, 100)
     """
+
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of TRCAReducer."""
+        caps = super().capabilities
+        caps.update({
+            "input_ndim": 3,
+            "input_layout": "trials_channels_times",
+            "has_components": True,
+        })
+        return caps
 
     def __init__(
         self,

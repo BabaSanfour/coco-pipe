@@ -170,13 +170,49 @@ class BaseReducer(ABC):
         """
         Returns a dictionary of capabilities for this reducer.
         """
+        # Default capabilities for most sklearn-like 2D reducers
         return {
-            "has_transform": True,  # Most support it; overridden if not
+            "input_ndim": 2,
+            "input_layout": "standard",  # (samples, features)
+            "has_transform": True,
             "has_inverse_transform": hasattr(self.model, "inverse_transform")
             if self.model
             else False,
-            "is_linear": hasattr(self.model, "components_") if self.model else False,
+            "has_components": hasattr(self.model, "components_")
+            if self.model
+            else False,
+            "supported_diagnostics": self._get_supported_diagnostics(),
+            "has_native_plot": False,
         }
+
+    def _get_supported_diagnostics(self) -> list:
+        """
+        Safely determine supported diagnostics without triggering property errors.
+        """
+        candidates = [
+            "explained_variance_ratio_",
+            "singular_values_",
+            "loss_history_",
+            "eigs_",
+        ]
+        supported = []
+        for k in candidates:
+            # 1. Check if it is a property on the class (static capability)
+            cls_attr = getattr(type(self), k, None)
+            if isinstance(cls_attr, property):
+                supported.append(k)
+                continue
+            
+            # 2. Check if instance attribute (safely)
+            if k in self.__dict__:
+                supported.append(k)
+                continue
+            
+            # 3. Check model (only if fitted)
+            if self.model is not None and hasattr(self.model, k):
+                supported.append(k)
+        
+        return supported
 
     def get_diagnostics(self) -> dict:
         """

@@ -231,6 +231,15 @@ class TopologicalAEReducer(BaseReducer):
         The fitted Skorch estimator.
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of TopologicalAEReducer."""
+        caps = super().capabilities
+        caps.update({
+            "supported_diagnostics": ["loss_history_"],
+        })
+        return caps
+
     def __init__(
         self,
         n_components: int = 2,

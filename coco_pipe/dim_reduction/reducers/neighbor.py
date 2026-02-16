@@ -222,6 +222,17 @@ class UMAPReducer(BaseReducer):
     (10, 2)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of UMAPReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_native_plot": True,
+            # UMAP specific diagnostics/graphs
+            "supported_diagnostics": ["graph_", "embedding_"],
+        })
+        return caps
+
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
@@ -570,6 +581,16 @@ class PHATEReducer(BaseReducer):
     (100, 2)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of PHATEReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_native_plot": True,
+            "supported_diagnostics": ["diff_potential"],
+        })
+        return caps
+
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
@@ -692,6 +713,16 @@ class ParametricUMAPReducer(BaseReducer):
     model : umap.parametric_umap.ParametricUMAP
         The fitted estimator.
     """
+
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of ParametricUMAPReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_native_plot": False,  # Not supported by umap.plot usually
+            "supported_diagnostics": ["loss_history_", "embedding_"],
+        })
+        return caps
 
     def __init__(
         self,

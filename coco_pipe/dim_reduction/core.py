@@ -193,25 +193,15 @@ class DimReduction:
 
         X_arr = np.array(X)
 
-        if self.method == "TRCA":
-            if X_arr.ndim != 3:
-                raise ValueError(
-                    f"Method 'TRCA' requires 3D input (Trials x Channels x "
-                    f"Time), got shape {X_arr.shape}."
-                )
-        elif self.method == "DMD":
-            if X_arr.ndim != 2:
-                raise ValueError(
-                    f"Method 'DMD' requires 2D input (Features x Snapshots), "
-                    f"got shape {X_arr.shape}."
-                )
-        else:
-            if X_arr.ndim != 2:
-                raise ValueError(
-                    f"Method '{self.method}' requires 2D input (Samples x Features), "
-                    f"got shape {X_arr.shape}. "
-                    "Consider flattening your data."
-                )
+        caps = self.reducer.capabilities
+        expected_ndim = caps.get("input_ndim", 2)
+        layout = caps.get("input_layout", "standard")
+
+        if X_arr.ndim != expected_ndim:
+            raise ValueError(
+                f"Method '{self.method}' requires {expected_ndim}D input "
+                f"({layout}), got shape {X_arr.shape}."
+            )
 
         return X_arr
 
@@ -468,46 +458,58 @@ class DimReduction:
             return viz.plot_metrics(scores, **kwargs)
 
         elif mode == "diagnostics":
-            # 1. Check for loss history (Neural)
-            loss_hist = self._get_safe_reducer_attr("loss_history_")
-            if loss_hist:
-                return viz.plot_loss_history(
-                    loss_hist,
-                    title=f"Loss History ({self.method})",
-                    **kwargs,
-                )
+            caps = self.reducer.capabilities
+            supported = caps.get("supported_diagnostics", [])
 
-            # 2. Check for eigenvalues/explained variance (Linear)
-            var_ratio = self._get_safe_reducer_attr("explained_variance_ratio_")
-            if var_ratio is not None:
-                return viz.plot_eigenvalues(
-                    var_ratio,
-                    title=f"Explained Variance ({self.method})",
-                    **kwargs,
-                )
+            # 1. Loss History (Neural)
+            if "loss_history_" in supported:
+                loss_hist = self._get_safe_reducer_attr("loss_history_")
+                if loss_hist:
+                    return viz.plot_loss_history(
+                        loss_hist,
+                        title=f"Loss History ({self.method})",
+                        **kwargs,
+                    )
 
-            eigs_attr = self._get_safe_reducer_attr("eigs_")
-            if eigs_attr is not None:
-                # eigs_ can be complex for DMD, take magnitude
-                eigs = np.abs(eigs_attr)
-                # Sort descending
-                eigs = -np.sort(-eigs)  # numpy sort is ascending
-                return viz.plot_eigenvalues(
-                    eigs,
-                    title=f"Eigenvalues ({self.method})",
-                    ylabel="Magnitude",
-                    **kwargs,
-                )
+            # 2. Eigenvalues / Explained Variance (Linear/DMD)
+            if "explained_variance_ratio_" in supported:
+                var_ratio = self._get_safe_reducer_attr("explained_variance_ratio_")
+                if var_ratio is not None:
+                    return viz.plot_eigenvalues(
+                        var_ratio,
+                        title=f"Explained Variance ({self.method})",
+                        **kwargs,
+                    )
 
-            # 3. Check for singular values
-            sing_vals = self._get_safe_reducer_attr("singular_values_")
-            if sing_vals is not None:
-                return viz.plot_eigenvalues(
-                    sing_vals,
-                    title=f"Singular Values ({self.method})",
-                    ylabel="Value",
-                    **kwargs,
-                )
+            if "eigs_" in supported:
+                eigs_attr = self._get_safe_reducer_attr("eigs_")
+                if eigs_attr is not None:
+                    # eigs_ can be complex for DMD, take magnitude
+                    eigs = np.abs(eigs_attr)
+                    # Sort descending
+                    eigs = -np.sort(-eigs)
+                    return viz.plot_eigenvalues(
+                        eigs,
+                        title=f"Eigenvalues ({self.method})",
+                        ylabel="Magnitude",
+                        **kwargs,
+                    )
+
+            # 3. Singular Values
+            if "singular_values_" in supported:
+                sing_vals = self._get_safe_reducer_attr("singular_values_")
+                if sing_vals is not None:
+                    return viz.plot_eigenvalues(
+                        sing_vals,
+                        title=f"Singular Values ({self.method})",
+                        ylabel="Value",
+                        **kwargs,
+                    )
+
+            # 4. Diffusion Potential (PHATE)
+            if "diff_potential" in supported:
+                # Fallback to Shepard if no explicit viz for potential yet
+                pass
 
             # Fallback: Shepard Diagram (Manifold)
             if X is None:
@@ -549,6 +551,12 @@ class DimReduction:
         result : Any
              The result of the native plot call (usually axis or figure).
         """
+        caps = self.reducer.capabilities
+        if not caps.get("has_native_plot", False):
+            raise NotImplementedError(
+                f"Native plotting not supported or implemented for {self.method}."
+            )
+
         # PHATE
         if self.method == "PHATE":
             import phate
@@ -575,7 +583,7 @@ class DimReduction:
                 return self.reducer.model.plot_eigs(**kwargs)
 
         raise NotImplementedError(
-            f"Native plotting not supported or implemented for {self.method}."
+            f"Native plotting implementation missing for supported method {self.method}."
         )
 
     def save(self, path: Union[str, Path]):

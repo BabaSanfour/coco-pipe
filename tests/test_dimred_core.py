@@ -510,6 +510,10 @@ def test_plot_diagnostics_safe_access():
     # Mock a property that raises an error
     class BrokenReducer:
         @property
+        def capabilities(self):
+             return {"supported_diagnostics": ["explained_variance_ratio_"]}
+
+        @property
         def explained_variance_ratio_(self):
             raise RuntimeError("Broken property")
 

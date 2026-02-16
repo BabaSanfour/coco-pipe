@@ -71,6 +71,16 @@ class PCAReducer(BaseReducer):
     (2, 10)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of PCAReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_components": True,
+            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
+        })
+        return caps
+
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.model = None
@@ -193,6 +203,16 @@ class IncrementalPCAReducer(BaseReducer):
         The underlying fitted estimator.
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of IncrementalPCAReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_components": True,
+            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
+        })
+        return caps
+
     def __init__(
         self, n_components: int = 2, batch_size: Optional[int] = None, **kwargs
     ):
@@ -257,6 +277,16 @@ class DaskPCAReducer(BaseReducer):
     **kwargs : dict
         Additional arguments.
     """
+
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of DaskPCAReducer."""
+        caps = super().capabilities
+        caps.update({
+            "has_components": True,
+            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
+        })
+        return caps
 
     def __init__(self, n_components: int = 2, svd_solver: str = "auto", **kwargs):
         super().__init__(n_components=n_components, **kwargs)

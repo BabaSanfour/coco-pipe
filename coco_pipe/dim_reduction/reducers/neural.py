@@ -64,6 +64,15 @@ class IVISReducer(BaseReducer):
     (100, 2)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of IVISReducer."""
+        caps = super().capabilities
+        caps.update({
+            "supported_diagnostics": ["loss_history_"],
+        })
+        return caps
+
     def __init__(self, n_components: int = 2, **kwargs):
         # IVIS uses 'embedding_dims' instead of n_components
         kwargs["embedding_dims"] = n_components
