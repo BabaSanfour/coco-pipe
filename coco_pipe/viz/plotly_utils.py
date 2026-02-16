@@ -5,7 +5,7 @@ Plotly Visualization Utilities
 Functions to generate interactive Plotly figures for dimensionality reduction analysis.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,8 @@ def plot_embedding_interactive(
     meta: Optional[Dict[str, Any]] = None,
     title: str = "Embedding",
     dimensions: int = 2,
+    cmap: str = "Viridis",
+    palette: Optional[Union[str, List[str]]] = None,
 ) -> go.Figure:
     """
     Create an interactive 2D or 3D scatter plot of the embedding using Plotly.
@@ -35,6 +37,11 @@ def plot_embedding_interactive(
         Plot title.
     dimensions : int
         Number of dimensions to plot (2 or 3).
+    cmap : str, default="Viridis"
+        Colormap for continuous variables.
+    palette : str or list, optional
+        Qualitative colormap/palette for categorical variables.
+        If None, uses Plotly default qualitative palette.
 
     Returns
     -------
@@ -52,12 +59,26 @@ def plot_embedding_interactive(
     # Collect Potential Color Columns
     color_options = {}
 
+    def _is_categorical(vals):
+        """Heuristic to check if labels are categorical."""
+        arr = np.array(vals)
+        if arr.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
+            return True
+        # If numeric, check unique count
+        try:
+            n_unique = len(np.unique(arr[~pd.isna(arr)]))
+            if n_unique < 20:
+                return True
+        except Exception:
+            pass
+        return False
+
     if labels is not None:
-        df_dict["Default Label"] = labels
-        # Heuristic: numeric or few discrete classes?
-        # Convert to string if we want discrete colors for few classes
-        if len(np.unique(labels)) < 20 and not np.issubdtype(labels.dtype, np.number):
-            df_dict["Default Label"] = labels.astype(str)
+        # Robust categorical detection: convert to string for discrete coloring
+        if _is_categorical(labels):
+            df_dict["Default Label"] = np.array(labels).astype(str)
+        else:
+            df_dict["Default Label"] = labels
         color_options["Default Label"] = df_dict["Default Label"]
 
     if meta:
@@ -74,15 +95,6 @@ def plot_embedding_interactive(
     df = pd.DataFrame(df_dict)
     hover_data = list(df_dict.keys())
 
-    # Helper to encode categorical
-    def _encode_color(vals):
-        if pd.api.types.is_numeric_dtype(vals):
-            # Fill NaNs?
-            return vals, True, None
-        else:
-            # Map to integers
-            codes, uniques = pd.factorize(vals)
-            return codes, False, uniques
 
     # Decision: Use WebGL for performance if large
     render_mode = "svg"
@@ -99,23 +111,83 @@ def plot_embedding_interactive(
     # Create Base Figure
     fig = go.Figure()
 
+    # Determine if default is categorical
+    is_cat = False
+    if default_color_col:
+        is_cat = _is_categorical(df[default_color_col])
+
+    # Default Palette
+    import plotly.express as px
+    if palette is None:
+        palette = px.colors.qualitative.Plotly
+
     # Base Trace
-    is_numeric = False
     color_vals = None
     colorscale_title = ""
+    marker_color = None
+    plotly_scale = None
+    colorbar_dict = None
+    cmin, cmax = None, None
 
     if default_color_col:
         raw_vals = df[default_color_col]
-        color_vals, is_numeric, _ = _encode_color(raw_vals)
-        colorscale_title = default_color_col
+        if is_cat:
+            # Map categories to colors manually for go.Scatter performance
+            unique_cats = sorted(df[default_color_col].unique())
+            cat_map = {cat: i for i, cat in enumerate(unique_cats)}
+            color_vals = [cat_map[v] for v in raw_vals]
+            colorscale_title = default_color_col
+            
+            # Create a discrete-looking scale
+            n_colors = len(unique_cats)
+            # Fetch qualitative colors
+            pal = palette if isinstance(palette, list) else getattr(px.colors.qualitative, palette, px.colors.qualitative.Plotly)
+            
+            # Repeat palette if too many categories
+            actual_colors = [pal[i % len(pal)] for i in range(n_colors)]
+            
+            # Plotly colorscale format: [[0, c1], [1/N, c1], [1/N, c2], [2/N, c2]...]
+            # to create discrete steps on a continuous bar (best for restyle compat)
+            discrete_scale = []
+            for i, c in enumerate(actual_colors):
+                discrete_scale.append([i / n_colors, c])
+                discrete_scale.append([(i + 1) / n_colors, c])
+            
+            # Colorbar with ticktext for categories
+            colorbar_dict = dict(
+                title=colorscale_title,
+                tickmode='array',
+                tickvals=list(range(n_colors)),
+                ticktext=[str(c) for c in unique_cats]
+            )
+            
+            # Convert actual_colors to Plotly scale
+            step = 1.0 / n_colors
+            plotly_scale = []
+            for i, col in enumerate(actual_colors):
+                plotly_scale.append([i * step, col])
+                plotly_scale.append([(i + 1) * step, col])
+
+            marker_color = color_vals
+            cmin, cmax = 0, max(1, n_colors - 1)
+                
+        else:
+            color_vals = raw_vals
+            marker_color = color_vals
+            colorscale_title = default_color_col
+            plotly_scale = cmap
+            colorbar_dict = dict(title=colorscale_title)
+            cmin, cmax = None, None
 
     marker_dict = dict(
         size=3 if dimensions == 3 else 5,
         opacity=0.7,
-        color=color_vals,
-        showscale=True,
-        colorscale="Viridis",
-        colorbar=dict(title=colorscale_title),
+        color=marker_color if default_color_col else None,
+        showscale=True if default_color_col else False,
+        colorscale=plotly_scale if default_color_col else None,
+        colorbar=colorbar_dict if default_color_col else None,
+        cmin=cmin,
+        cmax=cmax,
     )
 
     # Hover text construction
@@ -151,15 +223,52 @@ def plot_embedding_interactive(
 
     # Add Dropdowns (Update Menus)
     if len(color_options) > 1:
+        def _get_marker_update(col_name):
+            raw_v = df[col_name]
+            is_categorical = _is_categorical(raw_v)
+            
+            if is_categorical:
+                unique_cats = sorted(raw_v.unique())
+                cat_map = {cat: i for i, cat in enumerate(unique_cats)}
+                n_cols = len(unique_cats)
+                
+                # Fetch qualitative colors
+                pal = palette if isinstance(palette, list) else getattr(px.colors.qualitative, str(palette), px.colors.qualitative.Plotly)
+                actual_cols = [pal[i % len(pal)] for i in range(n_cols)]
+                
+                # Convert actual_colors to Plotly scale
+                step_size = 1.0 / n_cols
+                p_scale = []
+                for i, col in enumerate(actual_cols):
+                    p_scale.append([i * step_size, col])
+                    p_scale.append([(i + 1) * step_size, col])
+                
+                return {
+                    "marker.color": [[cat_map[v] for v in raw_v]],
+                    "marker.colorscale": [p_scale],
+                    "marker.colorbar.title": col_name,
+                    "marker.colorbar.tickmode": "array",
+                    "marker.colorbar.tickvals": [list(range(n_cols))],
+                    "marker.colorbar.ticktext": [[str(c) for c in unique_cats]],
+                    "marker.cmin": 0,
+                    "marker.cmax": max(1, n_cols - 1)
+                }
+            else:
+                return {
+                    "marker.color": [raw_v],
+                    "marker.colorscale": [cmap],
+                    "marker.colorbar.title": col_name,
+                    "marker.colorbar.tickmode": "auto",
+                    "marker.colorbar.tickvals": None,
+                    "marker.colorbar.ticktext": None,
+                    "marker.cmin": None,
+                    "marker.cmax": None
+                }
+
         buttons = []
         for col_name in color_options.keys():
-            raw_vals = df[col_name]
-            encoded_vals, is_num, _ = _encode_color(raw_vals)
-
-            # Construct update args
-            args = [{"marker.color": [encoded_vals], "marker.colorbar.title": col_name}]
-
-            buttons.append(dict(label=col_name, method="restyle", args=args))
+            update_dict = _get_marker_update(col_name)
+            buttons.append(dict(label=col_name, method="restyle", args=[update_dict]))
 
         fig.update_layout(
             updatemenus=[

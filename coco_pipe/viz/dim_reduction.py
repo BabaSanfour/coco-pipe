@@ -95,13 +95,18 @@ def _is_categorical(labels: np.ndarray) -> bool:
         True if categorical (string, bool, or few unique numeric values),
         False otherwise.
     """
-    if labels.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
+    arr = np.array(labels)
+    if arr.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
         return True
 
     # If numeric, check unique count
-    n_unique = len(np.unique(labels))
-    if n_unique < 20:
-        return True
+    try:
+        # Avoid issues with NaNs in unique count
+        n_unique = len(np.unique(arr[~pd.isna(arr)]))
+        if n_unique < 20:
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -168,11 +173,21 @@ def plot_embedding(
     if interactive:
         if len(dims) == 2:
             return plotly_utils.plot_embedding_interactive(
-                X_emb[:, list(dims)], labels=labels, title=title, dimensions=2
+                embedding=X_emb[:, list(dims)],
+                labels=labels,
+                title=title,
+                dimensions=2,
+                cmap=cmap,
+                palette=palette,
             )
         elif len(dims) == 3:
             return plotly_utils.plot_embedding_interactive(
-                X_emb[:, list(dims)], labels=labels, title=title, dimensions=3
+                embedding=X_emb[:, list(dims)],
+                labels=labels,
+                title=title,
+                dimensions=3,
+                cmap=cmap,
+                palette=palette,
             )
         else:
             raise ValueError("Interactive plot only supports 2D or 3D.")
