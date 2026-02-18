@@ -44,13 +44,14 @@ class MethodSelector:
 
     Parameters
     ----------
-    reducers : List[DimReduction] or Dict[str, DimReduction]
-        List or dictionary of configured DimReduction instances.
-        If list, names are inferred from the `name` attribute.
-    data : np.ndarray, optional
-        Data to fit/transform. Can be passed later in `run`.
-    target : np.ndarray, optional
-        Labels for plotting.
+    reducers : dict or list
+        Dictionary mapping names to `DimReduction` instances, or a list of
+        `DimReduction` instances.
+    n_jobs : int, default=1
+        Number of parallel jobs for evaluation. Use -1 for all cores.
+    backend : str, optional
+        Joblib backend to use (e.g., 'threading', 'multiprocessing', 'loky').
+        Defaults to None (loky if n_jobs != 1).
 
     Attributes
     ----------
@@ -73,27 +74,26 @@ class MethodSelector:
 
     def __init__(
         self,
-        reducers: Union[List["DimReduction"], Dict[str, "DimReduction"]],
-        data: Optional[np.ndarray] = None,
-        target: Optional[np.ndarray] = None,
+        reducers: Union[Dict[str, "DimReduction"], List["DimReduction"]],
+        n_jobs: int = 1,
+        backend: Optional[str] = None,
     ):
         if isinstance(reducers, list):
-            self.reducers = {}
-            for r in reducers:
-                name = getattr(r, "name", r.__class__.__name__)
-                self.reducers[name] = r
+            self.reducers = {r.name or r.method: r for r in reducers}
         else:
             self.reducers = reducers
 
-        self.data = data
-        self.target = target
+        self.n_jobs = n_jobs
+        self.backend = backend
+        self.data = None
+        self.target = None
         self.embeddings_ = {}
         self.results_ = {}
         self.Qs_ = {}
 
     def run(
         self,
-        X: Optional[np.ndarray] = None,
+        X: np.ndarray,
         y: Optional[np.ndarray] = None,
         k_range: Union[List[int], np.ndarray, "EvaluationConfig"] = [
             5,
@@ -137,13 +137,8 @@ class MethodSelector:
         else:
             k_vals = k_range
 
-        if X is not None:
-            self.data = X
-        if y is not None:
-            self.target = y
-
-        if self.data is None:
-            raise ValueError("No data provided.")
+        self.data = X
+        self.target = y
 
         logger.info(
             f"Evaluating {len(self.reducers)} methods on {self.data.shape[0]} "
@@ -154,7 +149,7 @@ class MethodSelector:
 
         # Helper function for parallel execution
         # Must be picklable, so we use a static method or standalone function
-        results_list = Parallel(n_jobs=-1)(
+        results_list = Parallel(n_jobs=self.n_jobs, backend=self.backend)(
             delayed(_evaluate_single_method)(
                 name, reducer, self.data, self.target, k_vals
             )

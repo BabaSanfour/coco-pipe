@@ -68,11 +68,14 @@ class TopologicalAE(nn.Module):
         self,
         input_dim: int = 10,
         latent_dim: int = 2,
-        hidden_dims: List[int] = [128, 64],
+        hidden_dims: Optional[List[int]] = None,
     ):
         if not HAS_TORCH:
             raise ImportError("torch and nn are required for TopologicalAE.")
         super().__init__()
+        
+        if hidden_dims is None:
+            hidden_dims = [128, 64]
 
         # Encoder
         encoder_layers = []
@@ -243,7 +246,7 @@ class TopologicalAEReducer(BaseReducer):
     def __init__(
         self,
         n_components: int = 2,
-        hidden_dims: List[int] = [128, 64],
+        hidden_dims: Optional[List[int]] = None,
         lam: float = 0.0,
         lr: float = 1e-3,
         batch_size: int = 64,
@@ -252,7 +255,7 @@ class TopologicalAEReducer(BaseReducer):
         **kwargs,
     ):
         super().__init__(n_components=n_components, **kwargs)
-        self.hidden_dims = hidden_dims
+        self.hidden_dims = hidden_dims if hidden_dims is not None else [128, 64]
         self.lam = lam
         self.lr = lr
         self.batch_size = batch_size

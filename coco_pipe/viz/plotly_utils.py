@@ -623,6 +623,7 @@ def plot_streamlines_interactive(
     V_emb: np.ndarray,
     grid_density: int = 25,
     title: str = "Velocity Streamlines",
+    random_state: Optional[int] = None,
 ) -> go.Figure:
     """
     Plot velocity vector field using Plotly (line segments approximation).
@@ -632,7 +633,8 @@ def plot_streamlines_interactive(
 
     # Subsample data points for clarity
     if X_emb.shape[0] > 1000:
-        idx = np.random.choice(X_emb.shape[0], 1000, replace=False)
+        rng = np.random.default_rng(random_state)
+        idx = rng.choice(X_emb.shape[0], 1000, replace=False)
         X_sub = X_emb[idx]
         V_sub = V_emb[idx]
     else:

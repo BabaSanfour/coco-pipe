@@ -3,15 +3,16 @@ High-level API for generating Reports from various sources.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
-from coco_pipe.io.structures import DataContainer
+if TYPE_CHECKING:
+    from coco_pipe.io.structures import DataContainer
+
 from coco_pipe.report.core import Report
 
 
 def from_container(
-    container: DataContainer,
+    container: "DataContainer",
     title: str = "Analysis Report",
     config: Optional[Dict] = None,
     raw_preview: bool = True,
@@ -74,6 +75,8 @@ def from_bids(root: Union[str, Path], task: Optional[str] = None, **kwargs) -> R
     >>> report = from_bids("/path/to/bids")
     >>> report.save("report.html")
     """
+    from coco_pipe.io.dataset import BIDSDataset
+
     ds = BIDSDataset(root=root, task=task, **kwargs)
     container = ds.load()
     title = f"BIDS Report: {task}" if task else "BIDS Dataset Report"
@@ -104,6 +107,8 @@ def from_tabular(path: Union[str, Path], **kwargs) -> Report:
     -------
     Report
     """
+    from coco_pipe.io.dataset import TabularDataset
+
     ds = TabularDataset(path=path, **kwargs)
     container = ds.load()
 
@@ -138,6 +143,8 @@ def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
     >>> report = from_embeddings("/path/to/embeddings")
     >>> report.save("report.html")
     """
+    from coco_pipe.io.dataset import EmbeddingDataset
+
     ds = EmbeddingDataset(path=path, **kwargs)
     container = ds.load()
 
@@ -154,7 +161,7 @@ def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
 
 def from_reductions(
     reductions: List[Any],
-    container: Optional[DataContainer] = None,
+    container: Optional["DataContainer"] = None,
     title: str = "DimReduction Comparison",
     config: Optional[Dict] = None,
 ) -> Report:

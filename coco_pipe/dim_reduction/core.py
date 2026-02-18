@@ -337,6 +337,11 @@ class DimReduction:
         scores : dict
         """
         X_arr = self._validate_input(X)
+        
+        # Handle layout for evaluation metrics (which expect standard samples-first)
+        layout = self.reducer.capabilities.get("input_layout", "standard")
+        if layout == "features_snapshots":
+            X_arr = X_arr.T
 
         if X_emb is None:
             if self.embedding_ is None:
@@ -524,6 +529,12 @@ class DimReduction:
                 raise ValueError("mode='shepard' requires original data 'X'")
             # Handle MNE object
             X_arr = np.array(X) if not hasattr(X, "get_data") else X.get_data()
+            
+            # Handle layout
+            layout = self.reducer.capabilities.get("input_layout", "standard")
+            if layout == "features_snapshots":
+                X_arr = X_arr.T
+
             if X_arr.ndim > 2:
                 # Shepard needs 2D inputs usually (scipy pdist)
                 X_arr = X_arr.reshape(len(X_arr), -1)
@@ -586,6 +597,26 @@ class DimReduction:
         raise NotImplementedError(
             f"Native plotting implementation missing for supported method {self.method}."
         )
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        Get diagnostic data from the underlying reducer.
+        
+        Returns
+        -------
+        diagnostics : dict
+        """
+        return self.reducer.get_diagnostics()
+
+    def get_quality_metadata(self) -> Dict[str, Any]:
+        """
+        Get quality metadata from the underlying reducer.
+        
+        Returns
+        -------
+        metadata : dict
+        """
+        return self.reducer.get_quality_metadata()
 
     def save(self, path: Union[str, Path]):
         """Save the reducer to disk."""

@@ -323,7 +323,13 @@ class DaskPCAReducer(BaseReducer):
         self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":
-        from dask_ml.decomposition import PCA as DaskPCA
+        try:
+            from dask_ml.decomposition import PCA as DaskPCA
+        except ImportError:
+            raise ImportError(
+                "dask-ml is required for DaskPCAReducer. "
+                "Install it with 'pip install dask-ml'."
+            )
 
         self.model = DaskPCA(
             n_components=self.n_components, svd_solver=self.svd_solver, **self.params

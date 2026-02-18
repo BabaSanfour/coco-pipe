@@ -100,8 +100,6 @@ class DMDReducer(BaseReducer):
         self.force_transpose = force_transpose
         self.model = None
 
-        self.model = None
-
     def get_diagnostics(self) -> dict:
         """Return DMD diagnostics."""
         if self.model:
@@ -226,7 +224,9 @@ class TRCAReducer(BaseReducer):
     Parameters
     ----------
     n_components : int, default=1
-        Number of components to keep.
+        Number of components to keep. Note: TRCA internally generates 
+        n_bands * n_classes components; if n_components is less than this, 
+        the first n_components are returned.
     **kwargs : dict
         Additional arguments passed to TRCA.
 
@@ -337,7 +337,8 @@ class TRCAReducer(BaseReducer):
         Returns
         -------
         X_new : np.ndarray of shape (n_trials, n_components, n_times)
-             Transformed data.
+             Transformed data. If self.n_components is provided, only the 
+             first n_components are returned.
 
         Raises
         ------
@@ -359,6 +360,7 @@ class TRCAReducer(BaseReducer):
         # We will produce one component per (band, class) combination
         # Total components = n_bands * n_classes
         # Output shape: (n_trials, n_total_components, n_times)
+        from meegkit.utils.trca import bandpass
         X_out = []
 
         for b in range(n_bands):
@@ -368,7 +370,6 @@ class TRCAReducer(BaseReducer):
             # Wp, Ws from filterbank
             # filterbank structure: [[(pass_low, pass_high), (stop_low, stop_high)]
             # , ...]
-            from meegkit.utils.trca import bandpass
             wp = self.model.filterbank[b][0]
             ws = self.model.filterbank[b][1]
 
@@ -394,8 +395,14 @@ class TRCAReducer(BaseReducer):
 
         # Stack predictions
         # X_out is list of (trials, times)
-        # We want (trials, n_components, n_times)
-        return np.stack(X_out, axis=1)
+        # Result shape: (n_trials, n_total_components, n_times)
+        res = np.stack(X_out, axis=1)
+
+        # Enforce n_components contract
+        if self.n_components and self.n_components < res.shape[1]:
+            res = res[:, :self.n_components, :]
+
+        return res
 
     @property
     def coef_(self) -> np.ndarray:

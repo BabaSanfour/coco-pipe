@@ -874,7 +874,7 @@ def plot_feature_importance(
     else:
         fig = ax.get_figure()
 
-    sns.barplot(x=values, y=names, ax=ax, palette="magma", orient="h")
+    sns.barplot(x=values, y=names, ax=ax, palette="magma", orient="h", hue=names, legend=False)
 
     ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Importance Score", fontweight="bold")

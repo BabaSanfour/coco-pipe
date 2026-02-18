@@ -748,14 +748,25 @@ class Report(ContainerElement):
         # 2. Metrics Table (TODO: Add if metrics attribute exists)
 
         # 3. Diagnostics
+        # Try contract first
+        diagnostics = {}
+        if hasattr(reducer, "get_diagnostics"):
+            diagnostics = reducer.get_diagnostics()
+
         # Loss Curve
-        loss_hist = _get_safe_attr(reducer, "loss_history_")
+        loss_hist = diagnostics.get("loss_history_")
+        if loss_hist is None:
+            loss_hist = _get_safe_attr(reducer, "loss_history_")
+
         if loss_hist is not None:
             fig_loss = plot_loss_history_interactive(loss_hist)
             sec.add_element(PlotlyElement(fig_loss, height="350px"))
 
         # Scree Plot (PCA)
-        var_ratio = _get_safe_attr(reducer, "explained_variance_ratio_")
+        var_ratio = diagnostics.get("explained_variance_ratio_")
+        if var_ratio is None:
+            var_ratio = _get_safe_attr(reducer, "explained_variance_ratio_")
+
         if var_ratio is not None:
             fig_scree = plot_scree_interactive(var_ratio)
             sec.add_element(PlotlyElement(fig_scree, height="350px"))
