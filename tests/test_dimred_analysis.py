@@ -171,7 +171,7 @@ def test_gradient_importance_mocked():
         wrapper = MagicMock()
         # Ensure it doesn't appear to have get_pytorch_module to hit the .model path
         del wrapper.get_pytorch_module
-        
+
         wrapper.model.encoder = MagicMock()
         mock_z = MagicMock()
         wrapper.model.encoder.return_value = mock_z
@@ -209,9 +209,11 @@ def test_gradient_importance_complex_shape():
         assert "importance_matrix" in res
         assert res["importance_matrix"].shape == (5, 10)
 
+
 def test_reproducibility_perturbation():
     """Verify that random_state ensures reproducible perturbation importance."""
     from sklearn.decomposition import PCA
+
     X = np.random.randn(20, 10)
     model = PCA(n_components=2).fit(X)
 

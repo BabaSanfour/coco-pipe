@@ -4,6 +4,7 @@ Run dimensionality reduction on multiple subjects and sessions from the EEG
 Motor Movement/Imagery Dataset.
 This demonstrates processing a BIDS dataset with multiple subjects and sessions.
 """
+
 import logging
 
 import numpy as np

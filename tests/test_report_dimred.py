@@ -1,10 +1,11 @@
 """
-Tests for Phase 3: Dim-Red Components
+Tests for Dim-Red Components
 """
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
 
 from coco_pipe.report.core import PlotlyElement, Report
 from coco_pipe.viz.plotly_utils import plot_embedding_interactive, plot_metric_details
@@ -103,6 +104,7 @@ def test_report_add_comparison():
     # Check for plots (Radar + Bar)
     # Check for Table title
     assert "Quality Metrics" in html
+
 
 def test_report_add_reduction_safe_access():
     """Verify that Report.add_reduction safely handles property errors."""

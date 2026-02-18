@@ -9,18 +9,17 @@ avoiding circular imports and simplifying the config layer.
 Usage
 -----
 >>> from coco_pipe.decoding.registry import register_estimator, get_estimator_cls
->>> 
+>>>
 >>> @register_estimator("MyModel")
 >>> class MyModel: ...
->>> 
+>>>
 >>> cls = get_estimator_cls("MyModel")
 """
 
 import importlib
-from importlib.metadata import entry_points
-
 import pkgutil
 import warnings
+from importlib.metadata import entry_points
 from typing import Callable, Dict, Type
 
 # Registry Storage
@@ -54,6 +53,7 @@ _LAZY_MODULES = {
     "ARDRegression": "sklearn.linear_model",
 }
 
+
 def _discover_entry_points():
     """
     Populate _LAZY_MODULES from 'coco_pipe.estimators' entry points.
@@ -74,11 +74,14 @@ def _discover_internal_modules():
     if not hasattr(package, "__path__"):
         return
 
-    for _, name, ispkg in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+    for _, name, ispkg in pkgutil.walk_packages(
+        package.__path__, package.__name__ + "."
+    ):
         try:
             importlib.import_module(name)
         except ImportError:
-            # warn but continue - we don't want to crash if deep learning libs are missing
+            # warn but continue - we don't want to crash if deep learning libs are
+            # missing
             pass
 
 
@@ -133,30 +136,30 @@ def get_estimator_cls(name: str) -> Type:
         try:
             mod_path = _LAZY_MODULES[name]
             if ":" in mod_path:
-                 mod_path = mod_path.split(":")[0]
-            
+                mod_path = mod_path.split(":")[0]
+
             module = importlib.import_module(mod_path)
         except ImportError as e:
             raise ImportError(
                 f"Could not load estimator '{name}' from '{_LAZY_MODULES[name]}'. "
                 f"Ensure optional dependencies are installed."
             ) from e
-        
+
         if hasattr(module, name):
-             cls = getattr(module, name)
-             _ESTIMATOR_REGISTRY[name] = cls
-             return cls
+            cls = getattr(module, name)
+            _ESTIMATOR_REGISTRY[name] = cls
+            return cls
 
         # Check if the import triggered a decorator registration
         if name in _ESTIMATOR_REGISTRY:
-             return _ESTIMATOR_REGISTRY[name]
+            return _ESTIMATOR_REGISTRY[name]
 
     # 3. Last Ditch: Internal Discovery
     if not getattr(get_estimator_cls, "_internal_scanned", False):
-         _discover_internal_modules()
-         setattr(get_estimator_cls, "_internal_scanned", True)
-         if name in _ESTIMATOR_REGISTRY:
-             return _ESTIMATOR_REGISTRY[name]
+        _discover_internal_modules()
+        setattr(get_estimator_cls, "_internal_scanned", True)
+        if name in _ESTIMATOR_REGISTRY:
+            return _ESTIMATOR_REGISTRY[name]
 
     if name not in _ESTIMATOR_REGISTRY:
         # Generate helpful error
@@ -164,7 +167,8 @@ def get_estimator_cls(name: str) -> Type:
         raise ValueError(
             f"Estimator '{name}' not found in registry.\n"
             f"Available estimators: {available}\n"
-            f"Tip: Ensure the containing module is imported or registered via entry points."
+            f"Tip: Ensure the containing module is imported or registered via "
+            f"entry points."
         )
 
     return _ESTIMATOR_REGISTRY[name]
@@ -174,6 +178,6 @@ def list_estimators() -> Dict[str, Type]:
     """Return a copy of the current registry."""
     # Ensure everything is discovered before listing
     if not getattr(get_estimator_cls, "_internal_scanned", False):
-         _discover_internal_modules()
-         setattr(get_estimator_cls, "_internal_scanned", True)
+        _discover_internal_modules()
+        setattr(get_estimator_cls, "_internal_scanned", True)
     return dict(_ESTIMATOR_REGISTRY)

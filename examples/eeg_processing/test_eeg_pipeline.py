@@ -7,6 +7,7 @@ This script:
 2. Loads it using coco_pipe's BIDS EEG loading functionality
 3. Optionally runs dimensionality reduction or ML pipeline
 """
+
 from pathlib import Path
 
 import matplotlib.pyplot as plt

@@ -2,30 +2,21 @@
 Decoding Utilities
 ==================
 
-Helper functions and classes for the decoding module, primarily focused on 
+Helper functions and classes for the decoding module, primarily focused on
 Cross-Validation (CV) strategy management.
 
 This module provides:
-- `get_cv_splitter`: A factory function to instantiate Scikit-Learn cross-validators 
+- `get_cv_splitter`: A factory function to instantiate Scikit-Learn cross-validators
   from a Pydantic `CVConfig`.
 - `SimpleSplit`: A custom validator for a single train/test split.
-- `_CVWithGroups`: A wrapper to ensure group constraints are respected even when 
+- `_CVWithGroups`: A wrapper to ensure group constraints are respected even when
   Scikit-Learn's `cross_val_score` internals might obscure them.
 """
-from typing import Any, Optional, Sequence, Union
+
+from typing import Any, Callable, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import (
-    BaseCrossValidator,
-    GroupKFold,
-    KFold,
-    LeaveOneGroupOut,
-    LeavePGroupsOut,
-    StratifiedGroupKFold,
-    StratifiedKFold,
-    train_test_split,
-)
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -38,7 +29,16 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from typing import Callable
+from sklearn.model_selection import (
+    BaseCrossValidator,
+    GroupKFold,
+    KFold,
+    LeaveOneGroupOut,
+    LeavePGroupsOut,
+    StratifiedGroupKFold,
+    StratifiedKFold,
+    train_test_split,
+)
 
 from .configs import CVConfig
 
@@ -47,8 +47,8 @@ class _CVWithGroups(BaseCrossValidator):
     """
     Internal wrapper to bind specific groups to a CV splitter.
 
-    This ensures that `.split(X, y)` always uses the strict `groups` provided 
-    at initialization, ignoring any groups passed at runtime. This is critical 
+    This ensures that `.split(X, y)` always uses the strict `groups` provided
+    at initialization, ignoring any groups passed at runtime. This is critical
     for preventing data leakage when complex grouping logic is defined upstream.
 
     Parameters
@@ -75,8 +75,8 @@ class SimpleSplit(BaseCrossValidator):
     """
     A unified 1-fold CV strategy wrapping `train_test_split`.
 
-    This allows "hold-out" validation to be treated as a Cross-Validation 
-    strategy with `n_splits=1`, integrating seamlessly into loops that 
+    This allows "hold-out" validation to be treated as a Cross-Validation
+    strategy with `n_splits=1`, integrating seamlessly into loops that
     expect a generator of indices.
 
     Parameters
@@ -88,7 +88,7 @@ class SimpleSplit(BaseCrossValidator):
     random_state : int, optional
         Controls the shuffling applied to the data before applying the split.
     stratify : array-like, optional
-        If not None, data is split in a stratified fashion, using this array 
+        If not None, data is split in a stratified fashion, using this array
         as the class labels.
     """
 
@@ -136,7 +136,9 @@ class SimpleSplit(BaseCrossValidator):
         return 1
 
 
-def get_cv_splitter(config: CVConfig, groups: Optional[Sequence] = None) -> BaseCrossValidator:
+def get_cv_splitter(
+    config: CVConfig, groups: Optional[Sequence] = None
+) -> BaseCrossValidator:
     """
     Factory function to create a Scikit-Learn compliant cross-validator.
 
@@ -153,9 +155,9 @@ def get_cv_splitter(config: CVConfig, groups: Optional[Sequence] = None) -> Base
         - shuffle: Whether to shuffle data (where applicable).
         - random_state: Seed for reproducibility.
     groups : sequence, optional
-        Group labels for the samples. Required for 'group_kfold', 'leave_p_out', 
+        Group labels for the samples. Required for 'group_kfold', 'leave_p_out',
         and 'stratified_group_kfold'.
-        If provided, the returned validator will ignore any groups passed to its 
+        If provided, the returned validator will ignore any groups passed to its
         `.split()` method and use these instead.
 
     Returns
@@ -166,16 +168,16 @@ def get_cv_splitter(config: CVConfig, groups: Optional[Sequence] = None) -> Base
     Raises
     ------
     ValueError
-        If an unknown CV strategy is specified or if required parameters (like 
+        If an unknown CV strategy is specified or if required parameters (like
         n_groups for leave_p_out) are missing from the configuration.
     """
     strat = config.strategy.lower()
-    
+
     # Common arguments
     common_kwargs = {}
     if strat not in ["leave_one_out", "leave_p_out", "split"]:
         common_kwargs["n_splits"] = config.n_splits
-    
+
     if strat in ["stratified", "kfold", "stratified_group_kfold", "split"]:
         common_kwargs["shuffle"] = config.shuffle
         common_kwargs["random_state"] = config.random_state if config.shuffle else None
@@ -244,7 +246,9 @@ def get_scorer(name: str) -> Callable:
         "f1": lambda y, p: f1_score(y, p, average="weighted"),
         "f1_macro": lambda y, p: f1_score(y, p, average="macro"),
         "f1_micro": lambda y, p: f1_score(y, p, average="micro"),
-        "precision": lambda y, p: precision_score(y, p, average="weighted", zero_division=0),
+        "precision": lambda y, p: precision_score(
+            y, p, average="weighted", zero_division=0
+        ),
         "recall": lambda y, p: recall_score(y, p, average="weighted", zero_division=0),
         # Regression
         "r2": r2_score,

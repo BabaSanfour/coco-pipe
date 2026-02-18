@@ -40,6 +40,14 @@ def mock_reducer():
     red.explained_variance_ratio_ = np.array([0.5, 0.3, 0.2])
     red.labels_ = None
     red.metadata_ = None
+    red.get_diagnostics.return_value = {
+        "explained_variance_ratio_": np.array([0.5, 0.5])
+    }
+    red.get_quality_metadata.return_value = {"n_iter": 100}
+    red.capabilities = {
+        "has_native_plot": False,
+        "supported_diagnostics": ["explained_variance_ratio_"],
+    }
     return red
 
 
@@ -58,7 +66,7 @@ def test_from_container(mock_container):
     assert "🔍" in html
 
 
-@patch("coco_pipe.report.api.BIDSDataset")
+@patch("coco_pipe.io.dataset.BIDSDataset")
 def test_from_bids(MockBIDSDataset, mock_container, tmp_path):
     # Setup Mock
     instance = MockBIDSDataset.return_value
@@ -97,7 +105,7 @@ def test_from_tabular(tmp_path):
     assert "Data Overview" in html
 
 
-@patch("coco_pipe.report.api.EmbeddingDataset")
+@patch("coco_pipe.io.dataset.EmbeddingDataset")
 def test_from_embeddings(MockEmbDataset, mock_container, tmp_path):
     instance = MockEmbDataset.return_value
     instance.load.return_value = mock_container

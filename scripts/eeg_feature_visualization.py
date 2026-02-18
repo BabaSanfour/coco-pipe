@@ -517,7 +517,7 @@ def process_raw_eeg_with_windows(args):
             )
         logger.info(
             f"Found {len(subject_ids)} subjects: {subject_ids[:5]}..."
-            + (f" and {len(subject_ids)-5} more" if len(subject_ids) > 5 else "")
+            + (f" and {len(subject_ids) - 5} more" if len(subject_ids) > 5 else "")
         )
 
     edf_files = list(edf_dir.glob("**/*.edf"))
@@ -894,7 +894,9 @@ def apply_dimensionality_reduction(X, labels, args, metadata=None):
 
                 # Initialize reducer
                 reducer = DimReducer(
-                    method=method, n_components=2, **params  # 2D for visualization
+                    method=method,
+                    n_components=2,
+                    **params,  # 2D for visualization
                 )
 
                 # Apply reduction
@@ -1218,8 +1220,7 @@ def visualize_results(results, labels, label_names, metadata=None, args=None):
 
                 # Save figure
                 method_path = RESULTS_DIR / (
-                    f"eeg_{method.lower()}_"
-                    f"{param_str.replace('=', '_')}_{color_by}.png"
+                    f"eeg_{method.lower()}_{param_str.replace('=', '_')}_{color_by}.png"
                 )
                 plt.savefig(method_path, dpi=300, bbox_inches="tight")
                 plt.close()

@@ -49,9 +49,13 @@ __all__ = [
     "ParametricUMAPReducer",
 ]
 
+
 def __getattr__(name):
     # Lazily fetch optional members from dim_reduction
     if name in __all__:
         import importlib
-        return getattr(importlib.import_module(".dim_reduction", package=__name__), name)
+
+        return getattr(
+            importlib.import_module(".dim_reduction", package=__name__), name
+        )
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

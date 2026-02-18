@@ -18,15 +18,6 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from coco_pipe.viz.plotly_utils import (
-    plot_embedding_interactive,
-    plot_loss_history_interactive,
-    plot_metric_details,
-    plot_radar_comparison,
-    plot_raw_preview,
-    plot_scree_interactive,
-)
-
 from .config import ReportConfig
 from .engine import render_template
 from .provenance import get_environment_info
@@ -154,8 +145,12 @@ class ImageElement(Element):
         <figure class="my-6">
             <img src="data:image/png;base64,{b64_str}" style="width: {self.width};"
                  class="rounded shadow-sm mx-auto border border-gray-100">
-            {f'<figcaption class="text-center text-sm text-gray-500 mt-2">'
-             f'{self.caption}</figcaption>' if self.caption else ''}
+            {
+            f'<figcaption class="text-center text-sm text-gray-500 mt-2">'
+            f"{self.caption}</figcaption>"
+            if self.caption
+            else ""
+        }
         </figure>
         """
         return html
@@ -284,6 +279,16 @@ class TableElement(Element):
         # Convert to DataFrame
         if isinstance(self.data, pd.DataFrame):
             df = self.data
+        elif isinstance(self.data, dict):
+            # Check if all values are scalars
+            # (to avoid "If using all scalar values, you must pass an index")
+            if all(
+                isinstance(v, (int, float, str, np.number)) or v is None
+                for v in self.data.values()
+            ):
+                df = pd.DataFrame([self.data])
+            else:
+                df = pd.DataFrame(self.data)
         else:
             df = pd.DataFrame(self.data)
 
@@ -736,6 +741,8 @@ class Report(ContainerElement):
             meta = _get_safe_attr(reducer, "metadata_")
             labels = _get_safe_attr(reducer, "labels_")
 
+            from coco_pipe.viz.plotly_utils import plot_embedding_interactive
+
             fig = plot_embedding_interactive(
                 embedding=emb,
                 labels=labels,
@@ -745,10 +752,40 @@ class Report(ContainerElement):
             )
             sec.add_element(PlotlyElement(fig))
 
-        # 2. Metrics Table (TODO: Add if metrics attribute exists)
+        # 2. Metrics & Quality Metadata
+        # Try to extract metrics and metadata via contracts
+        quality_metadata = {}
+        if hasattr(reducer, "get_quality_metadata"):
+            quality_metadata = reducer.get_quality_metadata()
+
+        # If it's a DimReduction object, it might have been passed after scoring?
+        # Actually DimReduction.score() now returns a structured payload.
+        # Let's check for a 'metrics_' attribute or similar if we want to support
+        # pre-computed metrics.
+        metrics = _get_safe_attr(reducer, "metrics_")
+        if metrics is None and hasattr(reducer, "get_metrics"):
+            metrics = reducer.get_metrics()
+
+        # Combine metrics and quality metadata into a single table if present
+        table_data = {}
+        if metrics:
+            table_data.update(metrics)
+        if quality_metadata:
+            table_data.update(quality_metadata)
+
+        if table_data:
+            from .core import TableElement
+
+            # Filter out non-scalar values for the table
+            scalar_data = {
+                k: v
+                for k, v in table_data.items()
+                if isinstance(v, (int, float, np.number)) and not isinstance(v, bool)
+            }
+            if scalar_data:
+                sec.add_element(TableElement(scalar_data, title="Quality Metrics"))
 
         # 3. Diagnostics
-        # Try contract first
         diagnostics = {}
         if hasattr(reducer, "get_diagnostics"):
             diagnostics = reducer.get_diagnostics()
@@ -756,9 +793,12 @@ class Report(ContainerElement):
         # Loss Curve
         loss_hist = diagnostics.get("loss_history_")
         if loss_hist is None:
+            # Fallback to safe attribute probing for un-refactored reducers
             loss_hist = _get_safe_attr(reducer, "loss_history_")
 
         if loss_hist is not None:
+            from coco_pipe.viz.plotly_utils import plot_loss_history_interactive
+
             fig_loss = plot_loss_history_interactive(loss_hist)
             sec.add_element(PlotlyElement(fig_loss, height="350px"))
 
@@ -768,6 +808,8 @@ class Report(ContainerElement):
             var_ratio = _get_safe_attr(reducer, "explained_variance_ratio_")
 
         if var_ratio is not None:
+            from coco_pipe.viz.plotly_utils import plot_scree_interactive
+
             fig_scree = plot_scree_interactive(var_ratio)
             sec.add_element(PlotlyElement(fig_scree, height="350px"))
 
@@ -813,6 +855,8 @@ class Report(ContainerElement):
             # Concatenating for flattened view
             X = X.reshape(X.shape[0] * X.shape[1], -1)
 
+        from coco_pipe.viz.plotly_utils import plot_raw_preview
+
         fig = plot_raw_preview(X, names=names, title=name)
         sec.add_element(PlotlyElement(fig, height="450px"))
 
@@ -840,6 +884,11 @@ class Report(ContainerElement):
         # 2. Side-by-Side Visuals (Grid)
 
         # Radar Chart
+        from coco_pipe.viz.plotly_utils import (
+            plot_metric_details,
+            plot_radar_comparison,
+        )
+
         fig_radar = plot_radar_comparison(metrics_df, normalize=True)
         elem_radar = PlotlyElement(fig_radar, height="400px")
 

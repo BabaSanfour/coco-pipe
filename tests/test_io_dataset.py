@@ -315,7 +315,9 @@ def test_tabular_reshaping_errors(tmp_path):
     df2.to_csv(p2, index=False, sep="\t")
 
     ds2 = dataset_mod.TabularDataset(
-        p2, columns_to_dims=["L1", "L2"], col_sep="_"  # L1={A,B}, L2={1,2}
+        p2,
+        columns_to_dims=["L1", "L2"],
+        col_sep="_",  # L1={A,B}, L2={1,2}
     )
     with pytest.raises(ValueError, match="Reshaping failed"):
         ds2.load()

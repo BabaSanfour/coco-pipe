@@ -68,7 +68,7 @@ def correlate_features(
         sorted_res = dict(
             sorted(comp_res.items(), key=lambda item: abs(item[1]), reverse=True)
         )
-        results[f"Component {j+1}"] = sorted_res
+        results[f"Component {j + 1}"] = sorted_res
 
     return results
 
@@ -177,7 +177,8 @@ def compute_feature_importance(
             # Supported neural reducers (TopoAE via skorch or others via direct attr)
             return gradient_importance(model, X, **kwargs)
         raise NotImplementedError(
-            "Gradient method requires a supported PyTorch model (e.g., TopologicalAEReducer)."
+            "Gradient method requires a supported PyTorch model (e.g., "
+            "TopologicalAEReducer)."
         )
     else:
         raise ValueError(f"Unknown method {method}")
@@ -247,9 +248,10 @@ def gradient_importance(wrapper: Any, X: np.ndarray, **kwargs) -> dict:
     feature_names = kwargs.get("feature_names")
     if feature_names is None:
         if scores.ndim == 1:
-            return {f"Feature {i}": s for i, s in enumerate(scores)}
-        else:
-            # Return raw array for complex shapes if no names
-            return {"importance_matrix": scores}
+            scores = scores.reshape(-1, 1)  # Ensure 2D for permutation
+        if hasattr(scores, "todense"):
+            scores = scores.todense()  # Simplify logic for sparse input
+        # Return raw array for complex shapes if no names
+        return {"importance_matrix": scores}
 
     return {n: s for n, s in zip(feature_names, scores.flatten())}

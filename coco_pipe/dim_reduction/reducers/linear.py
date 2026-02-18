@@ -75,10 +75,17 @@ class PCAReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of PCAReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_components": True,
-            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
-        })
+        caps.update(
+            {
+                "has_components": True,
+                "supported_diagnostics": [
+                    "explained_variance_ratio_",
+                    "singular_values_",
+                ]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def get_diagnostics(self) -> dict:
@@ -89,16 +96,18 @@ class PCAReducer(BaseReducer):
             "explained_variance_ratio_": self.model.explained_variance_ratio_,
             "singular_values_": self.model.singular_values_,
         }
-    
+
     def get_quality_metadata(self) -> dict:
+        """Return PCA-specific qualitative metadata."""
+        if self.model is None:
+            return {}
         return {
-            "n_components_": self.model.n_components_ if self.model else None,
-            "noise_variance_": getattr(self.model, "noise_variance_", None)
+            "n_components_": getattr(self.model, "n_components_", None),
+            "noise_variance_": getattr(self.model, "noise_variance_", None),
         }
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PCAReducer":
         """
@@ -222,24 +231,35 @@ class IncrementalPCAReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of IncrementalPCAReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_components": True,
-            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
-        })
+        caps.update(
+            {
+                "has_components": True,
+                "supported_diagnostics": [
+                    "explained_variance_ratio_",
+                    "singular_values_",
+                ]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def get_diagnostics(self) -> dict:
+        """Return IncrementalPCA-specific diagnostics."""
         if self.model is None:
             return {}
         return {
             "explained_variance_ratio_": self.model.explained_variance_ratio_,
             "singular_values_": self.model.singular_values_,
         }
-    
+
     def get_quality_metadata(self) -> dict:
+        """Return IncrementalPCA-specific qualitative metadata."""
+        if self.model is None:
+            return {}
         return {
             "n_samples_seen_": getattr(self.model, "n_samples_seen_", None),
-            "noise_variance_": getattr(self.model, "noise_variance_", None)
+            "noise_variance_": getattr(self.model, "noise_variance_", None),
         }
 
     def __init__(
@@ -247,7 +267,6 @@ class IncrementalPCAReducer(BaseReducer):
     ):
         super().__init__(n_components=n_components, **kwargs)
         self.batch_size = batch_size
-        self.model = None
 
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None
@@ -311,16 +330,39 @@ class DaskPCAReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of DaskPCAReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_components": True,
-            "supported_diagnostics": ["explained_variance_ratio_", "singular_values_"],
-        })
+        caps.update(
+            {
+                "has_components": True,
+                "supported_diagnostics": [
+                    "explained_variance_ratio_",
+                    "singular_values_",
+                ]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
+
+    def get_diagnostics(self) -> dict:
+        """Return Dask PCA-specific diagnostics."""
+        if self.model is None:
+            return {}
+        return {
+            "explained_variance_ratio_": getattr(
+                self.model, "explained_variance_ratio_", None
+            ),
+            "singular_values_": getattr(self.model, "singular_values_", None),
+        }
+
+    def get_quality_metadata(self) -> dict:
+        """Return Dask PCA-specific qualitative metadata."""
+        if self.model is None:
+            return {}
+        return {"noise_variance_": getattr(self.model, "noise_variance_", None)}
 
     def __init__(self, n_components: int = 2, svd_solver: str = "auto", **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.svd_solver = svd_solver
-        self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":
         try:
@@ -368,10 +410,41 @@ class DaskTruncatedSVDReducer(BaseReducer):
         Additional arguments.
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """Capabilities of DaskTruncatedSVDReducer."""
+        caps = super().capabilities
+        caps.update(
+            {
+                "has_components": True,
+                "supported_diagnostics": [
+                    "explained_variance_ratio_",
+                    "singular_values_",
+                ]
+                if self.model is not None
+                else [],
+            }
+        )
+        return caps
+
+    def get_diagnostics(self) -> dict:
+        """Return Dask SVD-specific diagnostics."""
+        if self.model is None:
+            return {}
+        return {
+            "explained_variance_ratio_": getattr(
+                self.model, "explained_variance_ratio_", None
+            ),
+            "singular_values_": getattr(self.model, "singular_values_", None),
+        }
+
+    def get_quality_metadata(self) -> dict:
+        """Return Dask SVD-specific qualitative metadata."""
+        return {}
+
     def __init__(self, n_components: int = 2, algorithm: str = "tsqr", **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.algorithm = algorithm
-        self.model = None
 
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None

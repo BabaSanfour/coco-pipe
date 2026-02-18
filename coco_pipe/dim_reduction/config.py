@@ -29,12 +29,18 @@ from pydantic import BaseModel, Field
 CORE_METHODS = {
     # Linear
     "PCA": ("coco_pipe.dim_reduction.reducers.linear", "PCAReducer"),
-    "INCREMENTALPCA": ("coco_pipe.dim_reduction.reducers.linear", "IncrementalPCAReducer"),
+    "INCREMENTALPCA": (
+        "coco_pipe.dim_reduction.reducers.linear",
+        "IncrementalPCAReducer",
+    ),
     # Manifold
     "ISOMAP": ("coco_pipe.dim_reduction.reducers.manifold", "IsomapReducer"),
     "LLE": ("coco_pipe.dim_reduction.reducers.manifold", "LLEReducer"),
     "MDS": ("coco_pipe.dim_reduction.reducers.manifold", "MDSReducer"),
-    "SPECTRALEMBEDDING": ("coco_pipe.dim_reduction.reducers.manifold", "SpectralEmbeddingReducer"),
+    "SPECTRALEMBEDDING": (
+        "coco_pipe.dim_reduction.reducers.manifold",
+        "SpectralEmbeddingReducer",
+    ),
     # Neighbor (t-SNE is core sklearn)
     "TSNE": ("coco_pipe.dim_reduction.reducers.neighbor", "TSNEReducer"),
 }
@@ -43,10 +49,16 @@ CORE_METHODS = {
 OPTIONAL_METHODS = {
     # Linear
     "DASKPCA": ("coco_pipe.dim_reduction.reducers.linear", "DaskPCAReducer"),
-    "DASKTRUNCATEDSVD": ("coco_pipe.dim_reduction.reducers.linear", "DaskTruncatedSVDReducer"),
+    "DASKTRUNCATEDSVD": (
+        "coco_pipe.dim_reduction.reducers.linear",
+        "DaskTruncatedSVDReducer",
+    ),
     # Neighbor
     "UMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "UMAPReducer"),
-    "PARAMETRICUMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "ParametricUMAPReducer"),
+    "PARAMETRICUMAP": (
+        "coco_pipe.dim_reduction.reducers.neighbor",
+        "ParametricUMAPReducer",
+    ),
     "PACMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "PacmapReducer"),
     "TRIMAP": ("coco_pipe.dim_reduction.reducers.neighbor", "TrimapReducer"),
     "PHATE": ("coco_pipe.dim_reduction.reducers.neighbor", "PHATEReducer"),
@@ -55,7 +67,10 @@ OPTIONAL_METHODS = {
     "TRCA": ("coco_pipe.dim_reduction.reducers.spatiotemporal", "TRCAReducer"),
     # Neural / Topology
     "IVIS": ("coco_pipe.dim_reduction.reducers.neural", "IVISReducer"),
-    "TOPOLOGICALAE": ("coco_pipe.dim_reduction.reducers.topology", "TopologicalAEReducer"),
+    "TOPOLOGICALAE": (
+        "coco_pipe.dim_reduction.reducers.topology",
+        "TopologicalAEReducer",
+    ),
 }
 
 # User-friendly aliases
@@ -119,15 +134,14 @@ def normalize_method_name(method: str) -> str:
     # 1. Exact Alias Match
     if method in METHOD_ALIASES:
         return METHOD_ALIASES[method]
-    
+
     # 2. Upper Case Fallback
     upper_method = method.upper()
     if upper_method in METHOD_ALIASES:
         return METHOD_ALIASES[upper_method]
-        
+
     # 3. Default to Upper (Core/Optional keys are upper)
     return upper_method
-
 
 
 def get_reducer_class(method: str):
@@ -152,7 +166,7 @@ def get_reducer_class(method: str):
     ImportError
         If the module cannot be imported.
     """
-    
+
     method = normalize_method_name(method)
 
     # Check Core
@@ -166,6 +180,7 @@ def get_reducer_class(method: str):
 
     try:
         import importlib
+
         module = importlib.import_module(mod_path)
         return getattr(module, cls_name)
     except ImportError as e:
@@ -176,6 +191,7 @@ def get_reducer_class(method: str):
                 f"Ensure required dependencies are installed. Error: {e}"
             )
         raise e
+
 
 # --- Base Config ---
 class BaseReducerConfig(BaseModel):
@@ -431,5 +447,3 @@ class EvaluationConfig(BaseModel):
     viz_metric: str = Field(
         "trustworthiness", description="Primary metric for plotting comparison curves."
     )
-
-

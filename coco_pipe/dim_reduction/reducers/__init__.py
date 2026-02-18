@@ -1,8 +1,5 @@
 from .base import BaseReducer
-from .linear import (
-    IncrementalPCAReducer,
-    PCAReducer,
-)
+from .linear import IncrementalPCAReducer, PCAReducer
 from .manifold import IsomapReducer, LLEReducer, MDSReducer, SpectralEmbeddingReducer
 from .neighbor import TSNEReducer
 
@@ -45,9 +42,11 @@ _OPTIONAL_REDUCERS = {
     "TopologicalAEReducer": ".topology",
 }
 
+
 def __getattr__(name):
     if name in _OPTIONAL_REDUCERS:
         import importlib
+
         module_path = _OPTIONAL_REDUCERS[name]
         module = importlib.import_module(module_path, package=__package__)
         return getattr(module, name)

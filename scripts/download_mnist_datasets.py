@@ -4,6 +4,7 @@ Download MNIST and Fashion-MNIST datasets and save them in the
 test_data/dim_reduction folder.
 These datasets will be used for comparing different dimension reduction methods.
 """
+
 import logging
 from pathlib import Path
 

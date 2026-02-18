@@ -73,7 +73,7 @@ def compute_coranking_matrix(X: np.ndarray, X_emb: np.ndarray) -> np.ndarray:
     # we need a rank matrix of size (n, n) to store pairwise ranks
     rank_low = np.zeros((n, n), dtype=int)
     rows = np.arange(n)[:, None]
-    
+
     # Each row in indices_low corresponds to ranks 0, 1, ..., n-2
     rank_low[rows, indices_low] = np.arange(n - 1)
 
@@ -121,8 +121,12 @@ def trustworthiness(Q: np.ndarray, k: int) -> float:
     >>> t = trustworthiness(Q, k=10)
     """
     n = Q.shape[0] + 1
+    if k <= 0:
+        raise ValueError("Neighborhood size k must be > 0.")
     if k >= n - 1:
-        return 1.0  # Trivial case
+        raise ValueError(
+            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
+        )
 
     # Intrusions: High-D rank (r) > k, Low-D rank (c) <= k
     # We sum Q[r, c] * (r + 1 - k)
@@ -181,8 +185,12 @@ def continuity(Q: np.ndarray, k: int) -> float:
     >>> c = continuity(Q, k=10)
     """
     n = Q.shape[0] + 1
+    if k <= 0:
+        raise ValueError("Neighborhood size k must be > 0.")
     if k >= n - 1:
-        return 1.0
+        raise ValueError(
+            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
+        )
 
     # Extrusions: High-D rank (r) <= k, Low-D rank (c) > k
     # Slice: r from 0 to k-1, c from k to n-2
@@ -235,8 +243,12 @@ def lcmc(Q: np.ndarray, k: int) -> float:
     >>> score = lcmc(Q, k=10)
     """
     n = Q.shape[0] + 1
+    if k <= 0:
+        raise ValueError("Neighborhood size k must be > 0.")
     if k >= n - 1:
-        return 0.0  # LCMC typically -> 0 as k->N? Actually overlap is max.
+        raise ValueError(
+            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
+        )
 
     overlap = np.sum(Q[:k, :k])
 
@@ -276,6 +288,12 @@ def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
     >>> m_int, m_ext = compute_mrre(Q, k=20)
     """
     n = Q.shape[0] + 1
+    if k <= 0:
+        raise ValueError("Neighborhood size k must be > 0.")
+    if k >= n - 1:
+        raise ValueError(
+            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
+        )
 
     # Normalizer
     # H_k = sum_{i=1}^k |n - 2i + 1| / i

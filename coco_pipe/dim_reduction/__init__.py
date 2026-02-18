@@ -42,9 +42,11 @@ __all__ = [
     "ParametricUMAPReducer",
 ]
 
+
 def __getattr__(name):
     # Lazily import optional reducers from .reducers package
     if name in __all__:
         import importlib
+
         return getattr(importlib.import_module(".reducers", package=__name__), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

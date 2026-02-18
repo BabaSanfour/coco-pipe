@@ -47,7 +47,7 @@ def run_analysis(X, y, analysis_cfg):
 
     logger.info(
         f"Launching {pipeline_config['task']} pipeline "
-        f"({pipeline_config.get('mode','multivariate')}) – "
+        f"({pipeline_config.get('mode', 'multivariate')}) – "
         f"{pipeline_config['analysis_type']} on "
         f"{X_arr.shape[0]}×{X_arr.shape[1]} data"
     )

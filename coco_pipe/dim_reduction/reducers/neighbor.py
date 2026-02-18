@@ -41,7 +41,6 @@ from typing import Any, Optional
 import numpy as np
 from sklearn.manifold import TSNE
 
-
 from .base import ArrayLike, BaseReducer
 
 
@@ -94,7 +93,10 @@ class TSNEReducer(BaseReducer):
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
-        self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return t-SNE diagnostics."""
+        return {}
 
     def get_quality_metadata(self) -> dict:
         """Return t-SNE metadata."""
@@ -236,20 +238,31 @@ class UMAPReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of UMAPReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_native_plot": True,
-            # UMAP specific diagnostics/graphs
-            "supported_diagnostics": ["graph_", "embedding_"],
-        })
+        caps.update(
+            {
+                "has_native_plot": True,
+                # UMAP specific diagnostics/graphs
+                "supported_diagnostics": ["graph_", "embedding_"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def get_diagnostics(self) -> dict:
-        if self.model and hasattr(self.model, "graph_"):
-             return {"graph_": self.model.graph_}
+        """Return UMAP diagnostics."""
+        if self.model is None:
+            return {}
+        diag = {}
+        if hasattr(self.model, "graph_"):
+            diag["graph_"] = self.model.graph_
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return UMAP qualitative metadata."""
         return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "UMAPReducer":
@@ -374,6 +387,14 @@ class PacmapReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
+    def get_diagnostics(self) -> dict:
+        """Return PaCMAP diagnostics."""
+        return {}
+
+    def get_quality_metadata(self) -> dict:
+        """Return PaCMAP qualitative metadata."""
+        return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PacmapReducer":
         """
         Fit PaCMAP using X.
@@ -495,6 +516,14 @@ class TrimapReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
+    def get_diagnostics(self) -> dict:
+        """Return TriMap diagnostics."""
+        return {}
+
+    def get_quality_metadata(self) -> dict:
+        """Return TriMap qualitative metadata."""
+        return {}
+
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TrimapReducer":
         """
         Fit TriMap using X.
@@ -600,20 +629,30 @@ class PHATEReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of PHATEReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_native_plot": True,
-            "supported_diagnostics": ["diff_potential"],
-        })
+        caps.update(
+            {
+                "has_native_plot": True,
+                "supported_diagnostics": ["diff_potential"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def get_diagnostics(self) -> dict:
         """Return PHATE diagnostics."""
-        if self.model and hasattr(self.model, "diff_potential"):
-             return {"diff_potential": self.model.diff_potential}
+        if self.model is None:
+            return {}
+        diag = {}
+        if hasattr(self.model, "diff_potential"):
+            diag["diff_potential"] = self.model.diff_potential
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return PHATE qualitative metadata."""
         return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PHATEReducer":
@@ -739,11 +778,32 @@ class ParametricUMAPReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of ParametricUMAPReducer."""
         caps = super().capabilities
-        caps.update({
-            "has_native_plot": False,  # Not supported by umap.plot usually
-            "supported_diagnostics": ["loss_history_", "embedding_"],
-        })
+        caps.update(
+            {
+                "has_native_plot": False,  # Not supported by umap.plot usually
+                "supported_diagnostics": ["loss_history_"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
+
+    def get_diagnostics(self) -> dict:
+        """Return ParametricUMAP diagnostics."""
+        if self.model is None:
+            return {}
+        diag = {}
+        # ParametricUMAP stores loss history in history attribute or similar
+        # depending on version, but we standardized on loss_history_ property
+        try:
+            diag["loss_history_"] = self.loss_history_
+        except RuntimeError:
+            pass
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return ParametricUMAP qualitative metadata."""
+        return {}
 
     def __init__(
         self,
@@ -763,9 +823,10 @@ class ParametricUMAPReducer(BaseReducer):
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.verbose = verbose
-        self.model = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "ParametricUMAPReducer":
+    def fit(
+        self, X: ArrayLike, y: Optional[ArrayLike] = None
+    ) -> "ParametricUMAPReducer":
         """
         Fit parametric UMAP.
         """
@@ -773,8 +834,8 @@ class ParametricUMAPReducer(BaseReducer):
             from umap.parametric_umap import ParametricUMAP
         except ImportError:
             raise ImportError(
-                "umap-learn and tensorflow are required for ParametricUMAP. "
-                "Install it with 'pip install umap-learn[parametric]'."
+                "umap-learn is required for ParametricUMAPReducer. "
+                "Install it with 'pip install umap-learn'."
             )
 
         self.model = ParametricUMAP(

@@ -21,7 +21,7 @@ raw_data = load_meeg_multi_sessions(
 print(f"Number of datasets loaded: {len(raw_data)}")
 for i, raw in enumerate(raw_data):
     data = raw.get_data()
-    print(f"Dataset {i+1} shape: {data.shape} (channels × time points)")
+    print(f"Dataset {i + 1} shape: {data.shape} (channels × time points)")
     # Extract session from filename safely
     raw_fname = str(raw.filenames[0])
     if "ses-" in raw_fname:
@@ -29,7 +29,8 @@ for i, raw in enumerate(raw_data):
     else:
         session = "unknown"
     print(
-        f"Dataset {i+1} info: Subject={raw.info.get('subject_info')}, Session={session}"
+        f"Dataset {i + 1} info: Subject={raw.info.get('subject_info')}, "
+        f"Session={session}"
     )
 
 # Now run the pipeline

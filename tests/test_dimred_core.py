@@ -62,9 +62,12 @@ def test_score():
     dr.fit_transform(X)
 
     scores = dr.score(X)
-    assert "trustworthiness" in scores
-    assert "continuity" in scores
-    assert 0 <= scores["trustworthiness"] <= 1.0
+    assert "metrics" in scores
+    assert "metadata" in scores
+    assert "diagnostics" in scores
+    assert "trustworthiness" in scores["metrics"]
+    assert "continuity" in scores["metrics"]
+    assert 0 <= scores["metrics"]["trustworthiness"] <= 1.0
 
 
 def test_plot():
@@ -115,9 +118,9 @@ def test_score_attributes():
     dr.fit_transform(X)
 
     scores = dr.score(X)
-    # PCA should have 'explained_variance_ratio_'
-    assert "explained_variance_ratio_" in scores
-    assert len(scores["explained_variance_ratio_"]) == 2
+    # PCA should have 'explained_variance_ratio_' in diagnostics
+    assert "explained_variance_ratio_" in scores["diagnostics"]
+    assert len(scores["diagnostics"]["explained_variance_ratio_"]) == 2
 
 
 class MockMNEObject:
@@ -245,25 +248,23 @@ def test_score_specific_reducers():
     dr_mds = DimReduction("MDS", n_components=2)
     dr_mds.fit_transform(X)
     scores_mds = dr_mds.score(X)
-    assert "stress_" in scores_mds
-    assert isinstance(scores_mds["stress_"], float)
+    assert "stress_" in scores_mds["metadata"]
+    assert isinstance(scores_mds["metadata"]["stress_"], float)
 
     # 2. t-SNE -> kl_divergence_
     # Note: perplexity must be < n_samples (20).
     dr_tsne = DimReduction("TSNE", n_components=2, perplexity=5)
     dr_tsne.fit_transform(X)
     scores_tsne = dr_tsne.score(X)
-    assert "kl_divergence_" in scores_tsne
-    assert isinstance(scores_tsne["kl_divergence_"], float)
-
-    assert isinstance(scores_tsne["kl_divergence_"], float)
+    assert "kl_divergence_" in scores_tsne["metadata"]
+    assert isinstance(scores_tsne["metadata"]["kl_divergence_"], float)
 
     # Repopulate PCA check
     dr_pca = DimReduction("PCA", n_components=2)
     dr_pca.fit_transform(X)
     scores_pca = dr_pca.score(X)
-    assert "singular_values_" in scores_pca
-    assert len(scores_pca["singular_values_"]) == 2
+    assert "singular_values_" in scores_pca["diagnostics"]
+    assert len(scores_pca["diagnostics"]["singular_values_"]) == 2
 
 
 def test_score_allowlist():
@@ -286,7 +287,7 @@ def test_score_allowlist():
         def get_diagnostics(self):
             return {
                 "diff_potential": self.model.diff_potential,
-                "eigs": self.model.eigs
+                "eigs": self.model.eigs,
             }
 
         def fit(self, X, y=None):
@@ -305,12 +306,13 @@ def test_score_allowlist():
     X = np.zeros((20, 5))
     scores = dr.score(X)
 
-    # 'graph' and 'ignored_attr' should be absent because get_diagnostics doesn't return them
-    assert "graph" not in scores
-    assert "ignored_attr" not in scores
+    # 'graph' and 'ignored_attr' should be absent because
+    # get_diagnostics doesn't return them
+    assert "graph" not in scores["diagnostics"]
+    assert "ignored_attr" not in scores["diagnostics"]
     # these should be present
-    assert "diff_potential" in scores
-    assert "eigs" in scores
+    assert "diff_potential" in scores["diagnostics"]
+    assert "eigs" in scores["diagnostics"]
 
 
 def test_plot_native(monkeypatch):
@@ -437,8 +439,8 @@ def test_score_errors_and_edge_cases():
     dr_trca = DimReduction("TRCA", n_components=2)
     dr_trca.embedding_ = np.zeros((10, 2, 5))  # Fake 3D embedding
     scores = dr_trca.score(np.zeros((10, 5, 5)), X_emb=dr_trca.embedding_)
-    assert np.isnan(scores["trustworthiness"])
-    assert "undefined for 3D" in scores.get("note", "")
+    assert np.isnan(scores["metrics"]["trustworthiness"])
+    assert "undefined for 3D" in scores["metrics"].get("note", "")
 
 
 def test_plot_errors_coverage():
@@ -507,10 +509,11 @@ def test_diagnostics_api():
 
     scores = dr.score(X)
     # Check for direct attribute extraction via the new API
-    assert "kl_divergence_" in scores
-    assert "n_iter_" in scores
+    assert "kl_divergence_" in scores["metadata"]
+    assert "n_iter_" in scores["metadata"]
     # Ensure it doesn't contain broad dir() noise
-    assert "__init__" not in scores
+    assert "__init__" not in scores["metadata"]
+
 
 def test_plot_diagnostics_safe_access():
     """Verify that plot(mode='diagnostics') safely handles property errors."""
@@ -521,7 +524,7 @@ def test_plot_diagnostics_safe_access():
     class BrokenReducer:
         @property
         def capabilities(self):
-             return {"supported_diagnostics": ["explained_variance_ratio_"]}
+            return {"supported_diagnostics": ["explained_variance_ratio_"]}
 
         @property
         def explained_variance_ratio_(self):

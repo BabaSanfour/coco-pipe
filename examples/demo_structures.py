@@ -11,7 +11,7 @@ from coco_pipe.io.structures import DataContainer
 
 
 def section(title):
-    print(f"\n{'='*20} {title} {'='*20}")
+    print(f"\n{'=' * 20} {title} {'=' * 20}")
 
 
 # 1. Tabular (2D)

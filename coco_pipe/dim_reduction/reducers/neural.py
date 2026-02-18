@@ -68,21 +68,33 @@ class IVISReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of IVISReducer."""
         caps = super().capabilities
-        caps.update({
-            "supported_diagnostics": ["loss_history_"],
-        })
+        caps.update(
+            {
+                "supported_diagnostics": ["loss_history_"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def __init__(self, n_components: int = 2, **kwargs):
         # IVIS uses 'embedding_dims' instead of n_components
         kwargs["embedding_dims"] = n_components
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def get_diagnostics(self) -> dict:
         """Return IVIS loss history."""
-        if self.model and hasattr(self.model, "loss_history_"):
-             return {"loss_history_": self.model.loss_history_}
+        if self.model is None:
+            return {}
+        diag = {}
+        try:
+            diag["loss_history_"] = self.loss_history_
+        except RuntimeError:
+            pass
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return IVIS qualitative metadata."""
         return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IVISReducer":
@@ -105,8 +117,7 @@ class IVISReducer(BaseReducer):
             from ivis import Ivis
         except ImportError:
             raise ImportError(
-                "ivis is required for IVISReducer. "
-                "Install it with 'pip install ivis[cpu]' or 'pip install ivis[gpu]'."
+                "ivis is required for IVISReducer. Install it with 'pip install ivis'."
             )
 
         self.model = Ivis(**self.params)

@@ -72,10 +72,11 @@ for i, (name, res) in enumerate(نتائج := results.items()):
     X_emb = res["embedding"]
     scores = res["scores"]
 
-    # Extract metrics (defaulting to 0.0 if not computed by that specific wrapper)
-    trust = scores.get("trustworthiness", 0.0)
-    cont = scores.get("continuity", 0.0)
-    lcmc = scores.get("lcmc", 0.0)
+    # Extract metrics from the structured payload
+    m = scores.get("metrics", {})
+    trust = m.get("trustworthiness", 0.0)
+    cont = m.get("continuity", 0.0)
+    lcmc = m.get("lcmc", 0.0)
 
     ax = axes[i]
     scatter = ax.scatter(

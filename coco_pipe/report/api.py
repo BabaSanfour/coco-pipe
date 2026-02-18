@@ -2,13 +2,15 @@
 High-level API for generating Reports from various sources.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 if TYPE_CHECKING:
     from coco_pipe.io.structures import DataContainer
 
-from coco_pipe.report.core import Report
+    from .core import Report
 
 
 def from_container(
@@ -43,6 +45,8 @@ def from_container(
     >>> report = from_container(container)
     >>> report.save("report.html")
     """
+    from .core import Report
+
     report = Report(title=title, config=config)
     report.add_container(container)
 
@@ -187,6 +191,8 @@ def from_reductions(
     >>> report = from_reductions([pca, tsne])
     >>> report.save("report.html")
     """
+    from .core import Report
+
     report = Report(title=title, config=config)
 
     if container:

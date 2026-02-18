@@ -9,8 +9,8 @@ Key Components:
 - ExperimentConfig: Top-level configuration for the entire analysis workflow.
 """
 
-from typing import Any, Callable, Dict, List, Literal, Optional, Union, Annotated
 from pathlib import Path
+from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,22 +28,28 @@ class BaseEstimatorConfig(BaseModel):
 
 # --- Mixins ---
 
+
 class LinearMixin(BaseModel):
     """Common parameters for linear models."""
+
     fit_intercept: bool = True
     copy_X: bool = True
     n_jobs: Optional[int] = None
 
+
 class RegularizedLinearMixin(LinearMixin):
     """Parameters for regularized linear models."""
+
     tol: float = 1e-3
     max_iter: Optional[int] = None
     solver: str = "auto"
     warm_start: bool = False
     positive: bool = False
 
+
 class TreeMixin(BaseModel):
     """Common parameters for Tree-based models."""
+
     n_estimators: int = Field(100, ge=1)
     max_depth: Optional[int] = None
     min_samples_split: Union[int, float] = 2
@@ -57,8 +63,10 @@ class TreeMixin(BaseModel):
     verbose: int = 0
     warm_start: bool = False
 
+
 class SupportVectorMixin(BaseModel):
     """Common parameters for Support Vector Machines."""
+
     C: float = Field(1.0, gt=0.0)
     kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "rbf"
     degree: int = 3
@@ -70,8 +78,9 @@ class SupportVectorMixin(BaseModel):
     shrinking: bool = True
     cache_size: float = 200
 
+
 class SGDMixin(BaseModel):
-    loss: str = "hinge" 
+    loss: str = "hinge"
     penalty: Literal["l2", "l1", "elasticnet", "null"] = "l2"
     alpha: float = 0.0001
     l1_ratio: float = 0.15
@@ -268,7 +277,7 @@ class SlidingEstimatorConfig(BaseEstimatorConfig):
     Fits a separate estimator for each time point.
     """
 
-    method: Literal["SlidingEstimator"] = "SlidingEstimator"    
+    method: Literal["SlidingEstimator"] = "SlidingEstimator"
     base_estimator: "EstimatorConfigType"
     scoring: Optional[Union[str, Callable]] = None
     n_jobs: Optional[int] = 1
@@ -306,6 +315,7 @@ class RidgeConfig(BaseEstimatorConfig, RegularizedLinearMixin):
     fit_intercept: bool = True
     copy_X: bool = True
 
+
 class LassoConfig(BaseEstimatorConfig, RegularizedLinearMixin):
     method: Literal["Lasso"] = "Lasso"
     alpha: float = 1.0
@@ -327,7 +337,9 @@ class ElasticNetConfig(BaseEstimatorConfig, RegularizedLinearMixin):
 
 class RandomForestRegressorConfig(BaseEstimatorConfig, TreeMixin):
     method: Literal["RandomForestRegressor"] = "RandomForestRegressor"
-    criterion: Literal["squared_error", "absolute_error", "friedman_mse", "poisson"] = "squared_error"
+    criterion: Literal["squared_error", "absolute_error", "friedman_mse", "poisson"] = (
+        "squared_error"
+    )
     bootstrap: bool = True
     oob_score: bool = False
     max_samples: Optional[Union[int, float]] = None
@@ -340,7 +352,9 @@ class SVRConfig(BaseEstimatorConfig, SupportVectorMixin):
 
 class GradientBoostingRegressorConfig(BaseEstimatorConfig):
     method: Literal["GradientBoostingRegressor"] = "GradientBoostingRegressor"
-    loss: Literal["squared_error", "absolute_error", "huber", "quantile"] = "squared_error"
+    loss: Literal["squared_error", "absolute_error", "huber", "quantile"] = (
+        "squared_error"
+    )
     learning_rate: float = 0.1
     n_estimators: int = 100
     subsample: float = 1.0
@@ -401,7 +415,9 @@ class DummyRegressorConfig(BaseEstimatorConfig):
 
 class DecisionTreeRegressorConfig(BaseEstimatorConfig):
     method: Literal["DecisionTreeRegressor"] = "DecisionTreeRegressor"
-    criterion: Literal["squared_error", "friedman_mse", "absolute_error", "poisson"] = "squared_error"
+    criterion: Literal["squared_error", "friedman_mse", "absolute_error", "poisson"] = (
+        "squared_error"
+    )
     splitter: Literal["best", "random"] = "best"
     max_depth: Optional[int] = None
     min_samples_split: Union[int, float] = 2
@@ -435,7 +451,9 @@ class ExtraTreesRegressorConfig(BaseEstimatorConfig, TreeMixin):
 
 class HistGradientBoostingRegressorConfig(BaseEstimatorConfig):
     method: Literal["HistGradientBoostingRegressor"] = "HistGradientBoostingRegressor"
-    loss: Literal["squared_error", "absolute_error", "poisson", "quantile"] = "squared_error"
+    loss: Literal["squared_error", "absolute_error", "poisson", "quantile"] = (
+        "squared_error"
+    )
     learning_rate: float = 0.1
     max_iter: int = 100
     max_leaf_nodes: int = 31
@@ -529,16 +547,15 @@ AtomicEstimator = Union[
     HistGradientBoostingRegressorConfig,
     AdaBoostRegressorConfig,
     BayesianRidgeConfig,
-    ARDRegressionConfig
+    ARDRegressionConfig,
 ]
 
 # 2. Define the Recursive Union using Annotated Discriminator
 # This allows Pydantic to choose the correct class based on 'method' field
-EstimatorConfigType = Annotated[Union[
-    AtomicEstimator,
-    SlidingEstimatorConfig,
-    GeneralizingEstimatorConfig
-], Field(discriminator="method")]
+EstimatorConfigType = Annotated[
+    Union[AtomicEstimator, SlidingEstimatorConfig, GeneralizingEstimatorConfig],
+    Field(discriminator="method"),
+]
 
 
 # --- Experiment Config ---
@@ -555,14 +572,14 @@ class CVConfig(BaseModel):
     """Cross-validation settings."""
 
     strategy: Literal[
-        "stratified", 
-        "kfold", 
+        "stratified",
+        "kfold",
         "group_kfold",
         "stratified_group_kfold",
         "leave_p_out",
         "leave_one_out",
-        "timeseries", 
-        "split"
+        "timeseries",
+        "split",
     ] = "stratified"
     n_splits: int = Field(5, ge=2)
     shuffle: bool = True

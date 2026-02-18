@@ -134,6 +134,7 @@ class DimReduction:
         )
 
         self.embedding_ = None
+        self.metrics_ = None
 
     @property
     def random_state(self) -> Optional[int]:
@@ -297,7 +298,7 @@ class DimReduction:
                 val = getattr(self.reducer, attr)
                 # Ensure (n_components, n_features) shape
                 if attr == "modes_" and val.shape[0] > val.shape[1]:
-                     return val.T
+                    return val.T
                 return val
 
         # Check internal model (e.g. sklearn PCA inside Wrapper)
@@ -313,7 +314,7 @@ class DimReduction:
 
     def score(
         self, X: Any, X_emb: Optional[np.ndarray] = None, n_neighbors: int = 5
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Dict[str, Any]]:
         """
         Compute quality metrics for the embedding.
 
@@ -335,9 +336,13 @@ class DimReduction:
         Returns
         -------
         scores : dict
+            A structured dictionary:
+            - "metrics": Preservation metrics (trustworthiness, continuity, etc.)
+            - "metadata": Algorithm-specific quality scalars (stress, n_iter)
+            - "diagnostics": Algorithm-specific diagnostic arrays (loss, var_ratio)
         """
         X_arr = self._validate_input(X)
-        
+
         # Handle layout for evaluation metrics (which expect standard samples-first)
         layout = self.reducer.capabilities.get("input_layout", "standard")
         if layout == "features_snapshots":
@@ -355,9 +360,13 @@ class DimReduction:
             # Skip standard metrics for spatiotemporal for now, or implement
             # specialized ones.
             return {
-                "trustworthiness": np.nan,
-                "continuity": np.nan,
-                "note": "Metrics undefined for 3D spatiotemporal data",
+                "metrics": {
+                    "trustworthiness": np.nan,
+                    "continuity": np.nan,
+                    "note": "Metrics undefined for 3D spatiotemporal data",
+                },
+                "metadata": {},
+                "diagnostics": {},
             }
 
         from .evaluation import metrics
@@ -365,7 +374,7 @@ class DimReduction:
         # Compute Co-ranking Matrix Q once
         Q = metrics.compute_coranking_matrix(X_arr, X_emb)
 
-        scores = {
+        metrics_payload = {
             "trustworthiness": metrics.trustworthiness(Q, k=n_neighbors),
             "continuity": metrics.continuity(Q, k=n_neighbors),
             "lcmc": metrics.lcmc(Q, k=n_neighbors),
@@ -379,14 +388,17 @@ class DimReduction:
         if len(d_orig) > 1:
             # We use Pearson correlation (matching the labels in viz layer)
             corr = np.corrcoef(d_orig, d_emb)[0, 1]
-            scores["shepard_correlation"] = float(corr)
+            metrics_payload["shepard_correlation"] = float(corr)
         else:
-            scores["shepard_correlation"] = np.nan
+            metrics_payload["shepard_correlation"] = np.nan
 
-        scores.update(self.reducer.get_quality_metadata())
-        scores.update(self.reducer.get_diagnostics())
+        self.metrics_ = metrics_payload
 
-        return scores
+        return {
+            "metrics": metrics_payload,
+            "metadata": self.reducer.get_quality_metadata(),
+            "diagnostics": self.reducer.get_diagnostics(),
+        }
 
     def plot(
         self,
@@ -450,7 +462,9 @@ class DimReduction:
         if show_metrics:
             if X is None:
                 raise ValueError("show_metrics=True requires 'X' to compute scores.")
-            metrics_dict = self.score(X)
+            # We flatten for the viz layer which expects (metric_name -> value)
+            score_payload = self.score(X)
+            metrics_dict = {**score_payload["metrics"], **score_payload["metadata"]}
 
         if mode == "embedding":
             return viz.plot_embedding(
@@ -460,7 +474,9 @@ class DimReduction:
         elif mode == "metrics":
             if X is None:
                 raise ValueError("mode='metrics' requires 'X' to compute scores.")
-            scores = self.score(X)
+            score_payload = self.score(X)
+            # Flatten metrics and metadata for the bar chart
+            scores = {**score_payload["metrics"], **score_payload["metadata"]}
             return viz.plot_metrics(scores, **kwargs)
 
         elif mode == "diagnostics":
@@ -529,7 +545,7 @@ class DimReduction:
                 raise ValueError("mode='shepard' requires original data 'X'")
             # Handle MNE object
             X_arr = np.array(X) if not hasattr(X, "get_data") else X.get_data()
-            
+
             # Handle layout
             layout = self.reducer.capabilities.get("input_layout", "standard")
             if layout == "features_snapshots":
@@ -595,13 +611,14 @@ class DimReduction:
                 return self.reducer.model.plot_eigs(**kwargs)
 
         raise NotImplementedError(
-            f"Native plotting implementation missing for supported method {self.method}."
+            f"Native plotting implementation missing for supported method "
+            f"{self.method}."
         )
 
     def get_diagnostics(self) -> Dict[str, Any]:
         """
         Get diagnostic data from the underlying reducer.
-        
+
         Returns
         -------
         diagnostics : dict
@@ -611,7 +628,7 @@ class DimReduction:
     def get_quality_metadata(self) -> Dict[str, Any]:
         """
         Get quality metadata from the underlying reducer.
-        
+
         Returns
         -------
         metadata : dict

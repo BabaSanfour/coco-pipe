@@ -148,17 +148,20 @@ def test_viz_hybrid_support():
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 
+
 def test_plot_embedding_interactive_categorical(mock_embedding):
     """Test interactive embedding plot with integer categorical labels."""
     # Integer labels < 20 should be detected as categorical
     labels = np.array([0] * 50 + [1] * 50)
-    
+
     # We need to import Plotly go.Figure to check types
     import plotly.graph_objects as go
-    
-    fig = plot_embedding(mock_embedding, labels=labels, interactive=True, title="Interactive Cat")
+
+    fig = plot_embedding(
+        mock_embedding, labels=labels, interactive=True, title="Interactive Cat"
+    )
     assert isinstance(fig, go.Figure)
-    
+
     # Check if colorbar text exists and contains "0" and "1"
     # Note: In our implementation, we use ticktext for categorical
     trace = fig.data[0]
@@ -168,29 +171,28 @@ def test_plot_embedding_interactive_categorical(mock_embedding):
 
 def test_plot_embedding_interactive_colormaps(mock_embedding):
     """Test interactive embedding plot with custom colormaps."""
-    import plotly.graph_objects as go
-    
+
     # Continuous
     labels_cont = np.linspace(0, 1, 100)
     fig_cont = plot_embedding(
-        mock_embedding, 
-        labels=labels_cont, 
-        interactive=True, 
-        cmap="Magma", 
-        title="Interactive Cont"
+        mock_embedding,
+        labels=labels_cont,
+        interactive=True,
+        cmap="Magma",
+        title="Interactive Cont",
     )
     # Plotly converts "Magma" to an explicit tuple scale
     assert fig_cont.data[0].marker.colorscale is not None
     assert isinstance(fig_cont.data[0].marker.colorscale, (tuple, list, str))
-    
+
     # Categorical Palette
     labels_cat = np.array(["A", "B", "C"] * 33 + ["A"])
     fig_cat = plot_embedding(
-        mock_embedding, 
-        labels=labels_cat, 
-        interactive=True, 
-        palette="Set1", 
-        title="Interactive Palette"
+        mock_embedding,
+        labels=labels_cat,
+        interactive=True,
+        palette="Set1",
+        title="Interactive Palette",
     )
     # Our implementation converts palette to a discrete scale
     # Check if a scale was created

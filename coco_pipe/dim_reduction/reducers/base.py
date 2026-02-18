@@ -183,17 +183,23 @@ class BaseReducer(ABC):
             else False,
             "supported_diagnostics": self._get_supported_diagnostics(),
             "has_native_plot": False,
+            "is_linear": False,
+            "is_stochastic": False,
         }
 
     def _get_supported_diagnostics(self) -> list:
         """
         Safely determine supported diagnostics without triggering property errors.
         """
+        if self.model is None:
+            return []
+
         candidates = [
             "explained_variance_ratio_",
             "singular_values_",
             "loss_history_",
             "eigs_",
+            "modes_",
         ]
         supported = []
         for k in candidates:
@@ -202,16 +208,16 @@ class BaseReducer(ABC):
             if isinstance(cls_attr, property):
                 supported.append(k)
                 continue
-            
+
             # 2. Check if instance attribute (safely)
             if k in self.__dict__:
                 supported.append(k)
                 continue
-            
+
             # 3. Check model (only if fitted)
-            if self.model is not None and hasattr(self.model, k):
+            if hasattr(self.model, k):
                 supported.append(k)
-        
+
         return supported
 
     def get_diagnostics(self) -> Dict[str, Any]:
@@ -222,30 +228,33 @@ class BaseReducer(ABC):
         -------
         diagnostics : dict
             Dictionary of diagnostic attributes.
-            Keys are attribute names (e.g., 'explained_variance_ratio_').
+            Returns {} if unfitted or no diagnostics available.
         """
+        if self.model is None:
+            return {}
+
         diag = {}
-        if "supported_diagnostics" in self.capabilities:
-            for k in self.capabilities["supported_diagnostics"]:
+        for k in self.capabilities.get("supported_diagnostics", []):
+            try:
                 if hasattr(self.model, k):
                     diag[k] = getattr(self.model, k)
                 elif hasattr(self, k):
-                    # Some reducers might store diag on self
                     diag[k] = getattr(self, k)
+            except (AttributeError, RuntimeError):
+                continue
         return diag
 
     def get_quality_metadata(self) -> Dict[str, Any]:
         """
-        Return scalar metadata about the reduction quality or process (e.g., n_iter, stress).
+        Return scalar metadata about the reduction quality or process (n_iter, stress).
 
         Returns
         -------
         metadata : dict
             Dictionary of scalar metadata.
-            Keys should be descriptive (e.g., 'stress_', 'n_iter_', 'kl_divergence_').
+            Returns {} if unfitted or no metadata available.
         """
         return {}
-
 
     @classmethod
     def load(cls, filepath: Union[str, os.PathLike]) -> "BaseReducer":

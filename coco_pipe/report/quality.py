@@ -169,7 +169,7 @@ def check_constant_columns(df: Union[pd.DataFrame, np.ndarray]) -> List[CheckRes
             msg = (
                 f"Found {len(constant_cols)} constant columns: "
                 f"{', '.join(constant_cols[:3])}"
-                f"{'...' if len(constant_cols)>3 else ''}."
+                f"{'...' if len(constant_cols) > 3 else ''}."
             )
             results.append(CheckResult("Constant Features", "WARN", msg, 3))
 

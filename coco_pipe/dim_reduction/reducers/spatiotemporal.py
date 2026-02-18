@@ -85,12 +85,16 @@ class DMDReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of DMDReducer."""
         caps = super().capabilities
-        caps.update({
-            "input_layout": "features_snapshots",
-            "has_components": True,
-            "has_native_plot": True,
-            "supported_diagnostics": ["eigs_", "modes_"],
-        })
+        caps.update(
+            {
+                "input_layout": "features_snapshots",
+                "has_components": True,
+                "has_native_plot": True,
+                "supported_diagnostics": ["eigs_", "modes_"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def __init__(self, n_components: int = 0, force_transpose: bool = False, **kwargs):
@@ -98,17 +102,29 @@ class DMDReducer(BaseReducer):
         kwargs["svd_rank"] = n_components
         super().__init__(n_components=n_components, **kwargs)
         self.force_transpose = force_transpose
-        self.model = None
 
     def get_diagnostics(self) -> dict:
         """Return DMD diagnostics."""
-        if self.model:
-            return {
-                "eigs_": self.model.eigs,
-                "modes_": self.model.modes,
-                "reconstructed_data_": getattr(self.model, "reconstructed_data", None)
-            }
-        return {}
+        if self.model is None:
+            return {}
+        diag = {}
+        if hasattr(self.model, "eigs"):
+            diag["eigs_"] = self.model.eigs
+        if hasattr(self.model, "modes"):
+            diag["modes_"] = self.model.modes
+        if hasattr(self.model, "reconstructed_data"):
+            diag["reconstructed_data_"] = self.model.reconstructed_data
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return DMD qualitative metadata."""
+        if self.model is None:
+            return {}
+        return {
+            "method": "DMD",
+            "tlsq_rank": self.params.get("tlsq_rank", 0),
+            "opt": self.params.get("opt", False),
+        }
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DMDReducer":
         """
@@ -134,8 +150,7 @@ class DMDReducer(BaseReducer):
             from pydmd import DMD
         except ImportError:
             raise ImportError(
-                "pydmd is required for DMDReducer. "
-                "Install it with 'pip install pydmd'."
+                "pydmd is required for DMDReducer. Install it with 'pip install pydmd'."
             )
 
         # Initialize DMD
@@ -224,8 +239,8 @@ class TRCAReducer(BaseReducer):
     Parameters
     ----------
     n_components : int, default=1
-        Number of components to keep. Note: TRCA internally generates 
-        n_bands * n_classes components; if n_components is less than this, 
+        Number of components to keep. Note: TRCA internally generates
+        n_bands * n_classes components; if n_components is less than this,
         the first n_components are returned.
     **kwargs : dict
         Additional arguments passed to TRCA.
@@ -253,11 +268,13 @@ class TRCAReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of TRCAReducer."""
         caps = super().capabilities
-        caps.update({
-            "input_ndim": 3,
-            "input_layout": "trials_channels_times",
-            "has_components": True,
-        })
+        caps.update(
+            {
+                "input_ndim": 3,
+                "input_layout": "trials_channels_times",
+                "has_components": True,
+            }
+        )
         return caps
 
     def __init__(
@@ -265,18 +282,30 @@ class TRCAReducer(BaseReducer):
         n_components: int = 1,
         sfreq: float = 250.0,
         filterbank: Optional[list] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(n_components=n_components, **kwargs)
         self.sfreq = sfreq
         self.filterbank = filterbank or [[(8, 30), (7, 35)]]  # Default: one band
-        self.model = None
 
     def get_diagnostics(self) -> dict:
-        """Return TRCA spatial filters."""
-        if self.model and hasattr(self.model, "coef_"):
-             return {"coef_": self.model.coef_}
-        return {}
+        """Return TRCA diagnostics."""
+        if self.model is None:
+            return {}
+        diag = {}
+        if hasattr(self.model, "coef_"):
+            diag["coef_"] = self.model.coef_
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return TRCA qualitative metadata."""
+        if self.model is None:
+            return {}
+        return {
+            "method": "TRCA",
+            "n_components": self.n_components,
+            "sfreq": self.params.get("sfreq"),
+        }
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TRCAReducer":
         """
@@ -337,7 +366,7 @@ class TRCAReducer(BaseReducer):
         Returns
         -------
         X_new : np.ndarray of shape (n_trials, n_components, n_times)
-             Transformed data. If self.n_components is provided, only the 
+             Transformed data. If self.n_components is provided, only the
              first n_components are returned.
 
         Raises
@@ -361,6 +390,7 @@ class TRCAReducer(BaseReducer):
         # Total components = n_bands * n_classes
         # Output shape: (n_trials, n_total_components, n_times)
         from meegkit.utils.trca import bandpass
+
         X_out = []
 
         for b in range(n_bands):
@@ -400,7 +430,7 @@ class TRCAReducer(BaseReducer):
 
         # Enforce n_components contract
         if self.n_components and self.n_components < res.shape[1]:
-            res = res[:, :self.n_components, :]
+            res = res[:, : self.n_components, :]
 
         return res
 

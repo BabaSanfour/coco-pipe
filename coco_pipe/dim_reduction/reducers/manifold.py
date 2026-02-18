@@ -80,13 +80,21 @@ class IsomapReducer(BaseReducer):
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def get_diagnostics(self) -> dict:
         """Return Isomap diagnostics."""
+        if self.model is None:
+            return {}
+        diag = {}
         if hasattr(self.model, "reconstruction_error_"):
-             return {"reconstruction_error_": self.model.reconstruction_error_}
-        return {}
+            diag["reconstruction_error_"] = self.model.reconstruction_error_
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return Isomap qualitative metadata."""
+        if self.model is None:
+            return {}
+        return {"n_features_in_": getattr(self.model, "n_features_in_", None)}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IsomapReducer":
         """
@@ -105,8 +113,7 @@ class IsomapReducer(BaseReducer):
             Returns the instance itself.
         """
         self.model = Isomap(
-            n_components=self.n_components,
-            **self._filter_params(Isomap, self.params)
+            n_components=self.n_components, **self._filter_params(Isomap, self.params)
         )
         self.model.fit(X)
         return self
@@ -194,13 +201,19 @@ class LLEReducer(BaseReducer):
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def get_diagnostics(self) -> dict:
-         """Return LLE diagnostics."""
-         if hasattr(self.model, "reconstruction_error_"):
-             return {"reconstruction_error_": self.model.reconstruction_error_}
-         return {}
+        """Return LLE diagnostics."""
+        if self.model is None:
+            return {}
+        diag = {}
+        if hasattr(self.model, "reconstruction_error_"):
+            diag["reconstruction_error_"] = self.model.reconstruction_error_
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return LLE qualitative metadata."""
+        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "LLEReducer":
         """
@@ -225,9 +238,7 @@ class LLEReducer(BaseReducer):
         if "variant" in params:
             params["method"] = params.pop("variant")
 
-        self.model = LocallyLinearEmbedding(
-            n_components=self.n_components, **params
-        )
+        self.model = LocallyLinearEmbedding(n_components=self.n_components, **params)
         self.model.fit(X)
         return self
 
@@ -304,16 +315,19 @@ class MDSReducer(BaseReducer):
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return MDS diagnostics."""
+        return {}
 
     def get_quality_metadata(self) -> dict:
         """Return MDS stress and iterations."""
-        if self.model and hasattr(self.model, "stress_"):
-            return {
-                "stress_": self.model.stress_,
-                "n_iter_": getattr(self.model, "n_iter_", None)
-            }
-        return {}
+        if self.model is None:
+            return {}
+        return {
+            "stress_": getattr(self.model, "stress_", None),
+            "n_iter_": getattr(self.model, "n_iter_", None),
+        }
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "MDSReducer":
         """
@@ -423,7 +437,14 @@ class SpectralEmbeddingReducer(BaseReducer):
 
     def __init__(self, n_components: int = 2, **kwargs):
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
+
+    def get_diagnostics(self) -> dict:
+        """Return Spectral Embedding diagnostics."""
+        return {}
+
+    def get_quality_metadata(self) -> dict:
+        """Return Spectral Embedding qualitative metadata."""
+        return {}
 
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None

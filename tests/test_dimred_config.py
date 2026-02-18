@@ -73,8 +73,8 @@ def test_evaluation_config():
     # Mock data
     X = np.random.rand(50, 10)
 
-    selector = MethodSelector(reducers, data=X)
-    selector.run(k_range=eval_conf)
+    selector = MethodSelector(reducers)
+    selector.run(X, k_range=eval_conf)
 
     # Check results (should have computed for k=10 and k=20)
     res = selector.results_["PCA"]

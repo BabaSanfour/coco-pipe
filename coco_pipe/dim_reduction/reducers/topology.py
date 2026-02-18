@@ -48,6 +48,7 @@ except ImportError:
         Module = MockModule
         MSELoss = MockModule
 
+
 from .base import ArrayLike, BaseReducer
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class TopologicalAE(nn.Module):
         if not HAS_TORCH:
             raise ImportError("torch and nn are required for TopologicalAE.")
         super().__init__()
-        
+
         if hidden_dims is None:
             hidden_dims = [128, 64]
 
@@ -238,9 +239,13 @@ class TopologicalAEReducer(BaseReducer):
     def capabilities(self) -> dict:
         """Capabilities of TopologicalAEReducer."""
         caps = super().capabilities
-        caps.update({
-            "supported_diagnostics": ["loss_history_"],
-        })
+        caps.update(
+            {
+                "supported_diagnostics": ["loss_history_"]
+                if self.model is not None
+                else [],
+            }
+        )
         return caps
 
     def __init__(
@@ -279,12 +284,19 @@ class TopologicalAEReducer(BaseReducer):
         else:
             self.device = device
 
-        self.model = None
-
     def get_diagnostics(self) -> dict:
         """Return training loss history."""
-        if self.model and hasattr(self.model, "history_"):
-             return {"loss_history_": self.model.history_[:, "train_loss"]}
+        if self.model is None:
+            return {}
+        diag = {}
+        try:
+            diag["loss_history_"] = self.loss_history_
+        except (AttributeError, RuntimeError):
+            pass
+        return diag
+
+    def get_quality_metadata(self) -> dict:
+        """Return TopologicalAE qualitative metadata."""
         return {}
 
     def fit(

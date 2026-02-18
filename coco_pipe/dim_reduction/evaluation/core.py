@@ -67,8 +67,8 @@ class MethodSelector:
     >>> import numpy as np
     >>> X = np.random.rand(100, 50)
     >>> reducers = [DimReduction("PCA"), DimReduction("UMAP")]
-    >>> selector = MethodSelector(reducers, data=X)
-    >>> selector.run()
+    >>> selector = MethodSelector(reducers)
+    >>> selector.run(X)
     >>> selector.plot(metric='trustworthiness')
     """
 
@@ -79,7 +79,12 @@ class MethodSelector:
         backend: Optional[str] = None,
     ):
         if isinstance(reducers, list):
-            self.reducers = {r.name or r.method: r for r in reducers}
+            self.reducers = {}
+            for r in reducers:
+                name = getattr(r, "name", None) or getattr(
+                    r, "method", r.__class__.__name__
+                )
+                self.reducers[name] = r
         else:
             self.reducers = reducers
 
@@ -147,14 +152,24 @@ class MethodSelector:
 
         from joblib import Parallel, delayed
 
-        # Helper function for parallel execution
-        # Must be picklable, so we use a static method or standalone function
-        results_list = Parallel(n_jobs=self.n_jobs, backend=self.backend)(
-            delayed(_evaluate_single_method)(
-                name, reducer, self.data, self.target, k_vals
+        try:
+            results_list = Parallel(n_jobs=self.n_jobs, backend=self.backend)(
+                delayed(_evaluate_single_method)(
+                    name, reducer, self.data, self.target, k_vals
+                )
+                for name, reducer in tqdm(self.reducers.items(), desc="Methods")
             )
-            for name, reducer in tqdm(self.reducers.items(), desc="Methods")
-        )
+        except (PermissionError, OSError, RuntimeError) as e:
+            logger.warning(
+                f"Parallel execution failed with error: {e}. "
+                "Falling back to sequential evaluation."
+            )
+            results_list = [
+                _evaluate_single_method(name, reducer, self.data, self.target, k_vals)
+                for name, reducer in tqdm(
+                    self.reducers.items(), desc="Methods (Sequential)"
+                )
+            ]
 
         # Aggregate results
         for name, emb, Q, df_metrics in results_list:

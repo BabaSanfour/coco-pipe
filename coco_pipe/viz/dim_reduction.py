@@ -95,6 +95,7 @@ def plot_embedding(
     ax: Optional[plt.Axes] = None,
     save_path: Optional[str] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
 ) -> Union[plt.Figure, Any]:
     """
     Plot 2D or 3D embedding with publication-ready aesthetics.
@@ -116,7 +117,8 @@ def plot_embedding(
         Colormap for continuous labels (e.g. 'viridis', 'magma'),
         by default 'viridis'.
     palette : str or list, optional
-        Qualitative colormap/palette for categorical labels (e.g. 'deep', 'tab10', 'Plotly').
+        Qualitative colormap/palette for categorical labels (e.g. 'deep', 'tab10',
+        'Plotly').
         If interactive=True, lists of colors are also supported.
         By default 'deep'.
     s : int, optional
@@ -160,6 +162,7 @@ def plot_embedding(
                 dimensions=3,
                 cmap=cmap,
                 palette=palette,
+                random_state=random_state,
             )
         else:
             raise ValueError("Interactive plot only supports 2D or 3D.")
@@ -300,10 +303,10 @@ def plot_embedding(
             )
 
     # Axis Formatting
-    ax.set_xlabel(f"Dimension {dims[0]+1}", fontweight="bold")
-    ax.set_ylabel(f"Dimension {dims[1]+1}", fontweight="bold")
+    ax.set_xlabel(f"Dimension {dims[0] + 1}", fontweight="bold")
+    ax.set_ylabel(f"Dimension {dims[1] + 1}", fontweight="bold")
     if n_plot_dim == 3:
-        ax.set_zlabel(f"Dimension {dims[2]+1}", fontweight="bold")
+        ax.set_zlabel(f"Dimension {dims[2] + 1}", fontweight="bold")
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
     ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
@@ -598,6 +601,7 @@ def plot_shepard_diagram(
     title: str = "Shepard Diagram",
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
 ) -> Union[plt.Figure, Any]:
     """
     Plot Shepard Diagram (Original vs Embedded Distances).
@@ -625,11 +629,17 @@ def plot_shepard_diagram(
     """
     if interactive:
         return plotly_utils.plot_shepard_interactive(
-            X_orig, X_emb, sample_size=sample_size, title=title
+            X_orig,
+            X_emb,
+            sample_size=sample_size,
+            title=title,
+            random_state=random_state,
         )
 
     _set_style()
-    dist_high, dist_low = shepard_diagram_data(X_orig, X_emb, sample_size=sample_size)
+    dist_high, dist_low = shepard_diagram_data(
+        X_orig, X_emb, sample_size=sample_size, random_state=random_state
+    )
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -670,6 +680,7 @@ def plot_streamlines(
     title: str = "Velocity Streamlines",
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
 ) -> Union[plt.Figure, Any]:
     """
     Plot streamlines of a vector field on the embedding.
@@ -701,7 +712,11 @@ def plot_streamlines(
     """
     if interactive:
         return plotly_utils.plot_streamlines_interactive(
-            X_emb, V_emb, grid_density=grid_density, title=title
+            X_emb,
+            V_emb,
+            grid_density=grid_density,
+            title=title,
+            random_state=random_state,
         )
 
     _set_style()
@@ -874,7 +889,9 @@ def plot_feature_importance(
     else:
         fig = ax.get_figure()
 
-    sns.barplot(x=values, y=names, ax=ax, palette="magma", orient="h", hue=names, legend=False)
+    sns.barplot(
+        x=values, y=names, ax=ax, palette="magma", orient="h", hue=names, legend=False
+    )
 
     ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Importance Score", fontweight="bold")

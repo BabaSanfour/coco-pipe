@@ -6,6 +6,7 @@ This script creates grid visualizations comparing different dimension reduction 
 (PCA, t-SNE, UMAP, and PaCMAP) with different parameter settings for MNIST and
 Fashion-MNIST.
 """
+
 import logging
 import time
 import warnings

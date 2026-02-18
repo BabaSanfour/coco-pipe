@@ -56,12 +56,21 @@ def compute_velocity_fields(
     n_samples = X.shape[0]
 
     # Guardrails
+    if n_samples < 2:
+        raise ValueError("n_samples must be at least 2 for velocity computation.")
     if n_neighbors <= 0:
         raise ValueError("n_neighbors must be > 0.")
     if n_neighbors > n_samples:
-        raise ValueError(f"n_neighbors ({n_neighbors}) cannot be greater than n_samples ({n_samples}).")
+        raise ValueError(
+            f"n_neighbors ({n_neighbors}) cannot be greater than n_samples "
+            f"({n_samples})."
+        )
     if delta_t <= 0:
         raise ValueError("delta_t must be > 0.")
+    if delta_t >= n_samples:
+        raise ValueError(
+            f"delta_t ({delta_t}) must be less than n_samples ({n_samples})."
+        )
     if sigma <= 0:
         raise ValueError("sigma must be > 0.")
 

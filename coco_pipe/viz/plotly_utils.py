@@ -50,29 +50,27 @@ def plot_embedding_interactive(
     go.Figure
         Plotly Figure object.
     """
-    n_points = embedding.shape[0]
-
     # Use shared prepare_dataframe for logic centralization
     df = prepare_dataframe(embedding, labels=labels, meta=meta, dimensions=dimensions)
-    
+
     # Hover data includes all columns except x, y, z
     hover_cols = [c for c in df.columns if c not in ["x", "y", "z"]]
     hover_data = hover_cols
-    
+
     # Identify color options
     color_options = {}
-    
-    # Re-identify color options from DataFrame columns (since prepare_dataframe simplifies this)
+
+    # Re-identify color options from DataFrame columns
+    # (since prepare_dataframe simplifies this)
     # Default Label is usually the first choice
     if "Default Label" in df.columns:
         color_options["Default Label"] = df["Default Label"]
-        
+
     # Add meta columns
     if meta:
         for k in meta.keys():
             if k in df.columns:
                 color_options[k] = df[k]
-
 
     # Decision: Use WebGL for performance if large
     render_mode = "svg"
@@ -96,6 +94,7 @@ def plot_embedding_interactive(
 
     # Default Palette
     import plotly.express as px
+
     if palette is None:
         palette = px.colors.qualitative.Plotly
 
@@ -111,34 +110,44 @@ def plot_embedding_interactive(
         raw_vals = df[default_color_col]
         if is_cat:
             # Map categories to colors manually for go.Scatter performance
-            unique_cats = sorted(df[default_color_col].unique())
+            if hasattr(df[default_color_col], "cat"):
+                unique_cats = df[default_color_col].cat.categories.tolist()
+            else:
+                unique_cats = sorted(df[default_color_col].unique())
+
             cat_map = {cat: i for i, cat in enumerate(unique_cats)}
             color_vals = [cat_map[v] for v in raw_vals]
             colorscale_title = default_color_col
-            
+
             # Create a discrete-looking scale
             n_colors = len(unique_cats)
             # Fetch qualitative colors
-            pal = palette if isinstance(palette, list) else getattr(px.colors.qualitative, palette, px.colors.qualitative.Plotly)
-            
+            pal = (
+                palette
+                if isinstance(palette, list)
+                else getattr(
+                    px.colors.qualitative, palette, px.colors.qualitative.Plotly
+                )
+            )
+
             # Repeat palette if too many categories
             actual_colors = [pal[i % len(pal)] for i in range(n_colors)]
-            
+
             # Plotly colorscale format: [[0, c1], [1/N, c1], [1/N, c2], [2/N, c2]...]
             # to create discrete steps on a continuous bar (best for restyle compat)
             discrete_scale = []
             for i, c in enumerate(actual_colors):
                 discrete_scale.append([i / n_colors, c])
                 discrete_scale.append([(i + 1) / n_colors, c])
-            
+
             # Colorbar with ticktext for categories
             colorbar_dict = dict(
                 title=colorscale_title,
-                tickmode='array',
+                tickmode="array",
                 tickvals=list(range(n_colors)),
-                ticktext=[str(c) for c in unique_cats]
+                ticktext=[str(c) for c in unique_cats],
             )
-            
+
             # Convert actual_colors to Plotly scale
             step = 1.0 / n_colors
             plotly_scale = []
@@ -148,7 +157,7 @@ def plot_embedding_interactive(
 
             marker_color = color_vals
             cmin, cmax = 0, max(1, n_colors - 1)
-                
+
         else:
             color_vals = raw_vals
             marker_color = color_vals
@@ -201,26 +210,38 @@ def plot_embedding_interactive(
 
     # Add Dropdowns (Update Menus)
     if len(color_options) > 1:
+
         def _get_marker_update(col_name):
             raw_v = df[col_name]
             is_cat_col = is_categorical(raw_v)
-            
+
             if is_cat_col:
-                unique_cats = sorted(raw_v.unique())
+                if hasattr(raw_v, "cat"):
+                    unique_cats = raw_v.cat.categories.tolist()
+                else:
+                    unique_cats = sorted(raw_v.unique())
                 cat_map = {cat: i for i, cat in enumerate(unique_cats)}
                 n_cols = len(unique_cats)
-                
+
                 # Fetch qualitative colors
-                pal = palette if isinstance(palette, list) else getattr(px.colors.qualitative, str(palette), px.colors.qualitative.Plotly)
+                pal = (
+                    palette
+                    if isinstance(palette, list)
+                    else getattr(
+                        px.colors.qualitative,
+                        str(palette),
+                        px.colors.qualitative.Plotly,
+                    )
+                )
                 actual_cols = [pal[i % len(pal)] for i in range(n_cols)]
-                
+
                 # Convert actual_colors to Plotly scale
                 step_size = 1.0 / n_cols
                 p_scale = []
                 for i, col in enumerate(actual_cols):
                     p_scale.append([i * step_size, col])
                     p_scale.append([(i + 1) * step_size, col])
-                
+
                 return {
                     "marker.color": [[cat_map[v] for v in raw_v]],
                     "marker.colorscale": [p_scale],
@@ -229,7 +250,7 @@ def plot_embedding_interactive(
                     "marker.colorbar.tickvals": [list(range(n_cols))],
                     "marker.colorbar.ticktext": [[str(c) for c in unique_cats]],
                     "marker.cmin": 0,
-                    "marker.cmax": max(1, n_cols - 1)
+                    "marker.cmax": max(1, n_cols - 1),
                 }
             else:
                 return {
@@ -240,7 +261,7 @@ def plot_embedding_interactive(
                     "marker.colorbar.tickvals": None,
                     "marker.colorbar.ticktext": None,
                     "marker.cmin": None,
-                    "marker.cmax": None
+                    "marker.cmax": None,
                 }
 
         buttons = []
@@ -506,13 +527,16 @@ def plot_shepard_interactive(
     X_emb: np.ndarray,
     sample_size: int = 1000,
     title: str = "Shepard Diagram",
+    random_state: Optional[int] = None,
 ) -> go.Figure:
     """
     Create an interactive Shepard Diagram using Plotly (scatter/hexbin approximation).
     """
     from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 
-    dist_high, dist_low = shepard_diagram_data(X_orig, X_emb, sample_size=sample_size)
+    dist_high, dist_low = shepard_diagram_data(
+        X_orig, X_emb, sample_size=sample_size, random_state=random_state
+    )
 
     # Use a 2D Histogram contour for density visualization (like hexbin)
     fig = go.Figure()
