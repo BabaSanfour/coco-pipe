@@ -31,6 +31,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 import seaborn as sns
 
+from ..dim_reduction.evaluation.geometry import moving_average
 from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 from . import plotly_utils
 from .utils import filter_metrics, is_categorical
@@ -902,12 +903,15 @@ def plot_feature_importance(
 def plot_trajectory(
     X: np.ndarray,
     times: Optional[np.ndarray] = None,
+    values: Optional[np.ndarray] = None,
     groups: Optional[np.ndarray] = None,
+    smooth_window: int = 1,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     figsize: Tuple[int, int] = (10, 8),
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    cmap: str = "viridis",
 ) -> Union[plt.Figure, Any]:
     """
     Plot trajectories of samples over time.
@@ -917,10 +921,15 @@ def plot_trajectory(
     X : np.ndarray
         Shape (n_samples, n_components). Coordinates.
     times : np.ndarray, optional
-        Time points or indices for coloring.
+        Time points or indices for coloring (if values is None).
+    values : np.ndarray, optional
+        Scalar values (e.g. speed, curvature) for coloring the trajectory line.
+        Overrides `times` for coloring if provided.
     groups : np.ndarray, optional
         Group labels (e.g. trial IDs) to separate trajectories.
         If None, all points are treated as one single trajectory.
+    smooth_window : int, default=1
+        Size of moving average window for smoothing coordinates and values.
     title : str
     dimensions : int
         2 or 3.
@@ -928,14 +937,23 @@ def plot_trajectory(
     ax: plt.Axes, optional
     interactive: bool
         If True, returns a Plotly figure.
+    cmap : str, default='viridis'
+        Colormap for values/times.
 
     Returns
     -------
     plt.Figure or go.Figure
     """
     if interactive:
+        # Pass new arguments to interactive backend
         return plotly_utils.plot_trajectory_interactive(
-            X, times=times, groups=groups, title=title, dimensions=dimensions
+            X,
+            times=times,
+            groups=groups,
+            values=values,
+            title=title,
+            dimensions=dimensions,
+            smooth_window=smooth_window,
         )
 
     _set_style()
@@ -959,44 +977,71 @@ def plot_trajectory(
 
     # Iterate groups
 
-    # Setup colors
-    cmap = plt.get_cmap("viridis")
-
-    for grp in unique_groups:
+    for i, grp in enumerate(unique_groups):
         mask = groups == grp
         X_g = X[mask]
 
-        if times is not None:
-            t_g = times[mask]
+        # Prepare coloring variable
+        c_g = None
+        c_label = ""
+
+        if values is not None:
+            c_g = values[mask]
+            c_label = "Value"
+        elif times is not None:
+            c_g = times[mask]
+            c_label = "Time"
+
+        # Apply Smoothing
+        if smooth_window > 1 and len(X_g) > smooth_window:
+            # Smooth coordinates dim-wise
+            X_g_smoothed = []
+            for d in range(X_g.shape[1]):
+                X_g_smoothed.append(moving_average(X_g[:, d], smooth_window))
+            X_g = np.stack(X_g_smoothed, axis=1)
+
+            # Smooth color variable if present
+            if c_g is not None:
+                c_g = moving_average(c_g, smooth_window)
+
+        # Plotting Logic
+        if c_g is not None:
             # Use LineCollection for gradient line if 2D
             if dimensions == 2:
                 from matplotlib.collections import LineCollection
 
                 points = X_g[:, :2].reshape(-1, 1, 2)
+                if len(points) < 2:
+                    continue
+
                 segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
-                # Normalize time for color mapping
-                norm = plt.Normalize(t_g.min(), t_g.max())
+                # Normalize for color mapping
+                norm = plt.Normalize(c_g.min(), c_g.max())
                 lc = LineCollection(segments, cmap=cmap, norm=norm)
-                lc.set_array(t_g[:-1])  # color by start time of segment
+
+                # c_g is per point. We need per segment. Use starts.
+                # Actually, make_colored_linecollection logic uses values[:-1]
+                lc.set_array(c_g[:-1])
                 lc.set_linewidth(2)
                 lc.set_alpha(0.8)
                 ax.add_collection(lc)
 
-                # Add markers at start/end or all?
-                # Let's add markers for all points colored by time
-                sc = ax.scatter(X_g[:, 0], X_g[:, 1], c=t_g, cmap=cmap, s=20, zorder=10)
-                if grp == unique_groups[0]:
-                    plt.colorbar(sc, ax=ax, label="Time")
+                # Add scatter markers
+                sc = ax.scatter(X_g[:, 0], X_g[:, 1], c=c_g, cmap=cmap, s=20, zorder=10)
+
+                # Add colorbar only once
+                if i == 0:
+                    plt.colorbar(sc, ax=ax, label=c_label)
             else:
                 # 3D: simple plot + scatter
                 ax.plot(X_g[:, 0], X_g[:, 1], X_g[:, 2], color="grey", alpha=0.5)
-                sc = ax.scatter(X_g[:, 0], X_g[:, 1], X_g[:, 2], c=t_g, cmap=cmap, s=20)
-                if grp == unique_groups[0]:
-                    plt.colorbar(sc, ax=ax, label="Time", pad=0.1)
+                sc = ax.scatter(X_g[:, 0], X_g[:, 1], X_g[:, 2], c=c_g, cmap=cmap, s=20)
+                if i == 0:
+                    plt.colorbar(sc, ax=ax, label=c_label, pad=0.1)
 
         else:
-            # Color by group (Cycle colors)
+            # Color by group (Cycle comparison)
             if dimensions == 2:
                 ax.plot(X_g[:, 0], X_g[:, 1], marker="o", label=f"Group {grp}")
             else:
@@ -1010,8 +1055,15 @@ def plot_trajectory(
     if dimensions == 3:
         ax.set_zlabel("Dimension 3", fontweight="bold")
 
-    if groups is not None and len(unique_groups) > 1 and times is None:
+    # Legend only if multiple groups and NOT coloring by value/time
+    # (which uses colorbar)
+    should_show_legend = len(unique_groups) > 1 and values is None and times is None
+    if should_show_legend:
         ax.legend()
+
+    # Auto-scale view for LineCollection
+    if values is not None or times is not None:
+        ax.autoscale_view()
 
     return fig
 

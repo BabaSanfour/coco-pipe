@@ -214,7 +214,7 @@ def from_reductions(
 
         # Fallback
         if name is None or not isinstance(name, str):
-            name = f"Method {i+1}"
+            name = f"Method {i + 1}"
 
         report.add_reduction(red, name=name)
 

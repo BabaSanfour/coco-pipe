@@ -9,6 +9,7 @@ from coco_pipe.viz.dim_reduction import (
     plot_metrics,
     plot_shepard_diagram,
     plot_streamlines,
+    plot_trajectory,
 )
 
 
@@ -198,3 +199,96 @@ def test_plot_embedding_interactive_colormaps(mock_embedding):
     # Check if a scale was created
     assert isinstance(fig_cat.data[0].marker.colorscale, (list, tuple))
     assert len(fig_cat.data[0].marker.colorscale) > 0
+
+
+@pytest.fixture
+def mock_trajectory_data():
+    # 2 trials, 100 timepoints, 2 dims
+    n_times = 100
+    n_trials = 2
+    n_samples = n_times * n_trials
+
+    t = np.linspace(0, 10, n_times)
+    # Trial 1: Circle
+    x1 = np.cos(t)
+    y1 = np.sin(t)
+    # Trial 2: Line
+    x2 = t
+    y2 = t
+
+    X = np.zeros((n_samples, 2))
+    X[:n_times, 0] = x1
+    X[:n_times, 1] = y1
+    X[n_times:, 0] = x2
+    X[n_times:, 1] = y2
+
+    groups = np.concatenate([np.zeros(n_times), np.ones(n_times)])
+    times = np.tile(t, n_trials)
+
+    return X, groups, times
+
+
+def test_plot_trajectory_basic(mock_trajectory_data):
+    X, groups, times = mock_trajectory_data
+    # Basic plot by group
+    fig = plot_trajectory(X, groups=groups, title="Basic Trajectory")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_trajectory_times(mock_trajectory_data):
+    X, groups, times = mock_trajectory_data
+    # Color by time
+    fig = plot_trajectory(X, times=times, groups=groups, title="Time Colored")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_trajectory_values(mock_trajectory_data):
+    X, groups, times = mock_trajectory_data
+    # Mock speed values
+    values = np.random.rand(len(X))
+
+    fig = plot_trajectory(X, values=values, groups=groups, title="Value Colored")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_trajectory_smoothing(mock_trajectory_data):
+    X, groups, times = mock_trajectory_data
+    # Smoothing window 5
+    fig = plot_trajectory(X, groups=groups, smooth_window=5, title="Smoothed")
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_trajectory_3d(mock_trajectory_data):
+    X_2d, groups, times = mock_trajectory_data
+    # Make 3D
+    X_3d = np.hstack([X_2d, np.random.randn(len(X_2d), 1)])
+
+    fig = plot_trajectory(X_3d, groups=groups, dimensions=3, times=times)
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_trajectory_interactive(mock_trajectory_data):
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        pytest.skip("plotly not installed")
+
+    X, groups, times = mock_trajectory_data
+    values = np.random.rand(len(X))
+
+    # Test interactive + values + smoothing
+    fig = plot_trajectory(
+        X,
+        groups=groups,
+        times=times,
+        values=values,
+        smooth_window=5,
+        interactive=True,
+        title="Interactive Trajectory",
+    )
+    assert isinstance(fig, go.Figure)

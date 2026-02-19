@@ -723,8 +723,10 @@ def plot_trajectory_interactive(
     X: np.ndarray,
     times: Optional[np.ndarray] = None,
     groups: Optional[np.ndarray] = None,
+    values: Optional[np.ndarray] = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
+    smooth_window: Optional[int] = None,
 ) -> go.Figure:
     """
     Plot trajectories of samples over time.
@@ -738,9 +740,13 @@ def plot_trajectory_interactive(
     groups : np.ndarray, optional
         Group labels (e.g. trial IDs) to separate trajectories.
         If None, all points are treated as one single trajectory.
+    values : np.ndarray, optional
+        Values to color the trajectory by (e.g. speed). Overrides times.
     title : str
     dimensions : int
         2 or 3.
+    smooth_window : int, optional
+        Window size for moving average smoothing.
 
     Returns
     -------
@@ -756,24 +762,43 @@ def plot_trajectory_interactive(
     unique_groups = np.unique(groups)
     fig = go.Figure()
 
-    # Determine colors
-    # If times provided, color by time (continuous)
-    # If no times, lines are solid color by group
-    use_time_color = times is not None
+    # Determine coloring variable
+    color_var = None
+    color_label = ""
+    colorscale = "Viridis"
+
+    if values is not None:
+        color_var = values
+        color_label = "Value"
+        colorscale = "Plasma"
+    elif times is not None:
+        color_var = times
+        color_label = "Time"
+        colorscale = "Viridis"
 
     for grp in unique_groups:
         mask = groups == grp
         X_g = X[mask]
+        c_g = color_var[mask] if color_var is not None else None
 
-        if use_time_color:
-            t_g = times[mask]
-            # Plotly Scatter lines don't support gradients easily solely via
-            # `line.color`
-            # But `markers` do. We can use markers+lines and color markers by time.
-            # Lines will be constant color or we separate segments.
-            # Simpler approach: Grey line + colored markers.
+        # Smoothing
+        if smooth_window is not None and smooth_window > 1:
+            from coco_pipe.dim_reduction.evaluation.geometry import moving_average
 
-            # Line (path)
+            # Smooth coords
+            X_g_list = []
+            for d in range(X_g.shape[1]):
+                X_g_list.append(moving_average(X_g[:, d], smooth_window))
+            X_g = np.stack(X_g_list, axis=1)
+
+            # Smooth color var
+            if c_g is not None:
+                c_g = moving_average(c_g, smooth_window)
+
+        if c_g is not None:
+            # Shared logic for colored trajectory (Markers + Grey line)
+
+            # Line (path structure)
             if dimensions == 2:
                 fig.add_trace(
                     go.Scatter(
@@ -786,7 +811,7 @@ def plot_trajectory_interactive(
                         hoverinfo="skip",
                     )
                 )
-                # Markers (time)
+                # Markers (colored value)
                 fig.add_trace(
                     go.Scatter(
                         x=X_g[:, 0],
@@ -794,14 +819,14 @@ def plot_trajectory_interactive(
                         mode="markers",
                         marker=dict(
                             size=6,
-                            color=t_g,
-                            colorscale="Viridis",
+                            color=c_g,
+                            colorscale=colorscale,
                             showscale=True,
-                            colorbar=dict(title="Time")
+                            colorbar=dict(title=color_label)
                             if grp == unique_groups[0]
                             else None,
                         ),
-                        text=[f"Time: {t}" for t in t_g],
+                        text=[f"{color_label}: {v:.2f}" for v in c_g],
                         name=f"Group {grp}",
                     )
                 )
@@ -827,18 +852,19 @@ def plot_trajectory_interactive(
                         mode="markers",
                         marker=dict(
                             size=4,
-                            color=t_g,
-                            colorscale="Viridis",
-                            colorbar=dict(title="Time")
+                            color=c_g,
+                            colorscale=colorscale,
+                            colorbar=dict(title=color_label)
                             if grp == unique_groups[0]
                             else None,
                         ),
+                        text=[f"{color_label}: {v:.2f}" for v in c_g],
                         name=f"Group {grp}",
                     )
                 )
 
         else:
-            # Color by group
+            # Color by group (Solid color)
             if dimensions == 2:
                 fig.add_trace(
                     go.Scatter(
