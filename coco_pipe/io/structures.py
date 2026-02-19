@@ -979,7 +979,109 @@ class DataContainer:
             ids=new_ids,
             y=new_y,
             coords=new_coords,
-            meta={**self.meta, "stacked_from": dims},
+            meta={
+                **self.meta,
+                "stacked_from": dims,
+                "stacked_shapes": tuple(stack_shape),
+            },
+        )
+
+    def unstack(self, dim: str) -> "DataContainer":
+        """
+        Unstack a dimension into multiple dimensions.
+
+        Inverse operation of `stack`. Reshapes the data tensor by splitting one
+        dimension into multiple using metadata stored during the `stack` operation.
+
+        Parameters
+        ----------
+        dim : str
+            Dimension to unstack (e.g. 'obs').
+
+        Returns
+        -------
+        DataContainer
+            New container with unstacked dimensions.
+
+        Raises
+        ------
+        ValueError
+            If the container was not previously stacked (missing metadata).
+
+        Examples
+        --------
+        >>> # Stack 'trials' and 'time' -> 'obs'
+        >>> stacked = container.stack(('trials', 'time'), new_dim='obs')
+        >>> # Unstack 'obs' -> ('trials', 'time') (automatically inferred)
+        >>> unstacked = stacked.unstack('obs')
+        """
+        if dim not in self.dims:
+            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+
+        # Strict Metadata Check
+        if "stacked_from" not in self.meta or "stacked_shapes" not in self.meta:
+            raise ValueError(
+                "Cannot unstack: Metadata 'stacked_from' or 'stacked_shapes' not found."
+                "Ensure data was processed with .stack() or metadata is preserved."
+            )
+
+        new_dims = self.meta["stacked_from"]
+        new_shapes = self.meta["stacked_shapes"]
+
+        dim_idx = self.dims.index(dim)
+        current_len = self.X.shape[dim_idx]
+        target_len = int(np.prod(new_shapes))
+
+        if target_len != current_len:
+            raise ValueError(
+                f"Shape mismatch: {dim} has length {current_len}, "
+                f"but product of new_shapes {new_shapes} is {target_len}"
+            )
+
+        # 1. Reshape: Move target dim to front, reshape, then permute back
+        # Move 'dim' to axis 0: (dim, ...)
+        X_moved = np.moveaxis(self.X, dim_idx, 0)
+
+        # Reshape to (new_d1, new_d2, ..., other_dims...)
+        X_reshaped = X_moved.reshape(*new_shapes, *X_moved.shape[1:])
+
+        # Permute to insert new dimensions at original position
+        # new dims are at [0...k-1]. We want them at [dim_idx...dim_idx+k-1]
+        k = len(new_dims)
+        # Construct permutation:
+        # [k...k+dim_idx-1] + [0...k-1] + [k+dim_idx...]
+        # axes before dim + new axes + axes after
+        perm = (
+            list(range(k, k + dim_idx))
+            + list(range(k))
+            + list(range(k + dim_idx, X_reshaped.ndim))
+        )
+        X_final = np.transpose(X_reshaped, perm)
+
+        # 2. Update Metadata
+        final_dims = []
+        for d in self.dims:
+            if d == dim:
+                final_dims.extend(new_dims)
+            else:
+                final_dims.append(d)
+
+        new_coords = {k: v for k, v in self.coords.items() if k != dim}
+
+        # Drop y/ids if they matched the unstacked dimension length
+        new_y = self.y if (self.y is None or len(self.y) != current_len) else None
+        new_ids = (
+            self.ids if (self.ids is None or len(self.ids) != current_len) else None
+        )
+
+        return replace(
+            self,
+            X=X_final,
+            dims=tuple(final_dims),
+            y=new_y,
+            ids=new_ids,
+            coords=new_coords,
+            meta={**self.meta, "unstacked_from": dim},
         )
 
     def center(self, dim: str = "time", inplace: bool = False) -> "DataContainer":

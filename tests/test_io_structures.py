@@ -336,3 +336,82 @@ def test_aggregate_unknown_method():
     dc = DataContainer(X, dims=("obs", "f"))
     with pytest.raises(ValueError, match="Unknown method"):
         dc.aggregate(by=[1, 2], method="magic")
+
+
+def test_unstack_basic():
+    # Shape: (10 trials, 500 time, 32 channels)
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((10, 500, 32))
+    dims = ("trials", "time", "channels")
+    container = DataContainer(X=X, dims=dims)
+
+    # Stack 'trials' and 'time' into 'obs'
+    # Result: (5000, 32) with dims ('obs', 'channels')
+    stacked = container.stack(dims=("trials", "time"), new_dim="obs")
+    assert stacked.shape == (5000, 32)
+    assert stacked.dims == ("obs", "channels")
+
+    # Unstack back (using stored metadata)
+    unstacked = stacked.unstack("obs")
+
+    assert unstacked.shape == (10, 500, 32)
+    assert unstacked.dims == ("trials", "time", "channels")
+    np.testing.assert_array_equal(unstacked.X, X)
+
+
+def test_unstack_preserves_order():
+    # Shape: (32 channels, 10 trials, 500 time)
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((32, 10, 500))
+    dims = ("channels", "trials", "time")
+    container = DataContainer(X=X, dims=dims)
+
+    # Stack 'trials' and 'time' -> 'obs'.
+    stacked = container.stack(dims=("trials", "time"), new_dim="obs")
+    assert stacked.shape == (5000, 32)
+
+    # Unstack 'obs' -> ('trials', 'time').
+    unstacked = stacked.unstack("obs")
+
+    # Checks
+    assert unstacked.dims == ("trials", "time", "channels")
+    X_restored = np.transpose(unstacked.X, (2, 0, 1))
+    np.testing.assert_array_equal(X_restored, X)
+
+
+def test_unstack_updates_metadata():
+    X = np.zeros((100, 5))
+    ids = np.array([f"id_{i}" for i in range(100)])
+    # Manually inject metadata as if stacked
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feats"),
+        ids=ids,
+        coords={"obs": np.arange(100), "feats": np.arange(5)},
+        meta={"stacked_from": ("a", "b"), "stacked_shapes": (10, 10)},
+    )
+
+    # Unstack 'obs' -> ('a', 'b') (10, 10) using injected metadata
+    unstacked = container.unstack("obs")
+
+    assert unstacked.shape == (10, 10, 5)
+    assert unstacked.dims == ("a", "b", "feats")
+    assert unstacked.ids is None  # Should be dropped as length mismatches
+    assert "obs" not in unstacked.coords
+    assert "feats" in unstacked.coords
+
+
+def test_unstack_error_missing_metadata():
+    X = np.zeros((100, 10))
+    # No metadata provided
+    container = DataContainer(X=X, dims=("obs", "features"))
+
+    with pytest.raises(ValueError, match="Cannot unstack: Metadata"):
+        container.unstack("obs")
+
+
+def test_unstack_error_dim_not_found():
+    X = np.zeros((10, 10))
+    container = DataContainer(X=X, dims=("a", "b"))
+    with pytest.raises(ValueError, match="Dimension 'c' not found"):
+        container.unstack("c")
