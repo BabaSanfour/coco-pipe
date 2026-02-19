@@ -20,7 +20,11 @@ from coco_pipe.dim_reduction.evaluation import (
     compute_velocity_fields,
     continuity,
     lcmc,
+    moving_average,
     shepard_diagram_data,
+    trajectory_curvature,
+    trajectory_separation,
+    trajectory_speed,
     trustworthiness,
 )
 from coco_pipe.dim_reduction.evaluation.core import _evaluate_single_method
@@ -449,3 +453,99 @@ def test_velocity_guardrails_merged():
     # delta_t invalid
     with pytest.raises(ValueError, match="delta_t must be > 0"):
         compute_velocity_fields(X, X_emb, delta_t=0, n_neighbors=5)
+
+
+def test_moving_average():
+    x = np.array([1, 2, 3, 4, 5])
+    # Window 3: [2, 3, 4]
+    smoothed = moving_average(x, 3)
+    np.testing.assert_allclose(smoothed, [2, 3, 4])
+
+    # Window 1: same
+    smoothed = moving_average(x, 1)
+    np.testing.assert_array_equal(smoothed, x)
+
+
+def test_trajectory_speed_linear():
+    # Linear motion along x: speed should be constant 1.0
+    t = np.linspace(0, 10, 11)  # 0, 1, ..., 10
+    traj = np.zeros((11, 2))
+    traj[:, 0] = t  # x = t, y = 0
+
+    sp = trajectory_speed(traj, dt=1.0)
+
+    # Speed is dx/dt = 1
+    # Last point is padded
+    expected = np.ones(11)
+    np.testing.assert_allclose(sp, expected, atol=1e-5)
+
+
+def test_trajectory_speed_circle():
+    # Circular motion: x=cos(t), y=sin(t)
+    # Speed = 1 if parameterized by arc length, but here t is angle
+    # x(t) = R cos(w t), y(t) = R sin(w t)
+    # v = R w
+    R = 2.0
+    w = 1.0
+    t = np.linspace(0, 2 * np.pi, 100)
+    dt = t[1] - t[0]
+
+    traj = np.stack([R * np.cos(w * t), R * np.sin(w * t)], axis=1)
+
+    sp = trajectory_speed(traj, dt=dt)
+
+    # Theoretical speed R*w = 2.0
+    # Numerical approx
+    np.testing.assert_allclose(sp[:-1], 2.0, rtol=1e-2)
+
+
+def test_trajectory_curvature_circle():
+    # Curvature of circle radius R is 1/R
+    R = 4.0
+    t = np.linspace(0, 2 * np.pi, 1000)
+    traj = np.stack([R * np.cos(t), R * np.sin(t)], axis=1)  # (1000, 2)
+
+    k = trajectory_curvature(traj)
+
+    # Ignore start/end edge effects of gradient
+    k_center = k[10:-10]
+    np.testing.assert_allclose(k_center, 1 / R, rtol=1e-2)
+
+
+def test_trajectory_curvature_line():
+    # Curvature of line is 0
+    t = np.linspace(0, 10, 100)
+    traj = np.stack([t, t], axis=1)
+
+    k = trajectory_curvature(traj)
+    np.testing.assert_allclose(k[10:-10], 0, atol=1e-5)
+
+
+def test_trajectory_separation():
+    # Two groups: A and B
+    # A moves along x=0, B moves along x=2
+    # Distance should be 2.0 always
+
+    n_trials = 4
+    n_times = 10
+    n_dims = 2
+
+    traj = np.zeros((n_trials, n_times, n_dims))
+    labels = np.array(["A", "A", "B", "B"])
+
+    # A: x=0, y=t
+    traj[0, :, 1] = np.arange(n_times)
+    traj[1, :, 1] = np.arange(n_times)
+
+    # B: x=2, y=t
+    traj[2, :, 0] = 2.0
+    traj[2, :, 1] = np.arange(n_times)
+    traj[3, :, 0] = 2.0
+    traj[3, :, 1] = np.arange(n_times)
+
+    sep = trajectory_separation(traj, labels)
+
+    assert ("A", "B") in sep or ("B", "A") in sep
+    dist = sep.get(("A", "B"), sep.get(("B", "A")))
+
+    np.testing.assert_allclose(dist, 2.0, atol=1e-5)
