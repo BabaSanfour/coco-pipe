@@ -5,7 +5,7 @@ Plotly Visualization Utilities
 Functions to generate interactive Plotly figures for dimensionality reduction analysis.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -705,39 +705,107 @@ def plot_shepard_interactive(
     sample_size: int = 1000,
     title: str = "Shepard Diagram",
     random_state: Optional[int] = None,
+    clip_quantiles: Optional[Tuple[float, float]] = (0.01, 0.99),
+    scatter_max_points: int = 4000,
+    scatter_opacity: float = 0.14,
 ) -> go.Figure:
     """
-    Create an interactive Shepard Diagram using Plotly (scatter/hexbin approximation).
+    Create an interactive Shepard Diagram using Plotly.
+
+    By default, axes are clipped to central quantiles to avoid outlier-driven
+    empty space, and a faint scatter overlay is added on top of density contours.
     """
     from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 
     dist_high, dist_low = shepard_diagram_data(
         X_orig, X_emb, sample_size=sample_size, random_state=random_state
     )
+    valid = np.isfinite(dist_high) & np.isfinite(dist_low)
+    dist_high = dist_high[valid]
+    dist_low = dist_low[valid]
+    if dist_high.size == 0:
+        raise ValueError("No valid pairwise distances to plot in Shepard diagram.")
 
-    # Use a 2D Histogram contour for density visualization (like hexbin)
+    if clip_quantiles is not None:
+        if len(clip_quantiles) != 2:
+            raise ValueError("`clip_quantiles` must be a tuple (q_low, q_high).")
+        q_low, q_high = clip_quantiles
+        if not (0.0 <= q_low < q_high <= 1.0):
+            raise ValueError("`clip_quantiles` must satisfy 0 <= q_low < q_high <= 1.")
+        x_q = np.quantile(dist_high, [q_low, q_high])
+        y_q = np.quantile(dist_low, [q_low, q_high])
+        data_min = float(min(x_q[0], y_q[0]))
+        data_max = float(max(x_q[1], y_q[1]))
+    else:
+        data_min = float(min(dist_high.min(), dist_low.min()))
+        data_max = float(max(dist_high.max(), dist_low.max()))
+
+    if not np.isfinite(data_min) or not np.isfinite(data_max) or data_max <= data_min:
+        data_min = float(min(dist_high.min(), dist_low.min()))
+        data_max = float(max(dist_high.max(), dist_low.max()))
+    if data_max <= data_min:
+        data_max = data_min + 1e-6
+
+    pad = 0.03 * (data_max - data_min)
+    axis_min = max(0.0, data_min - pad)
+    axis_max = data_max + pad
+
+    in_window = (
+        (dist_high >= axis_min)
+        & (dist_high <= axis_max)
+        & (dist_low >= axis_min)
+        & (dist_low <= axis_max)
+    )
+    dist_high_plot = dist_high[in_window]
+    dist_low_plot = dist_low[in_window]
+    if dist_high_plot.size < 200:
+        dist_high_plot = dist_high
+        dist_low_plot = dist_low
+
     fig = go.Figure()
 
     fig.add_trace(
         go.Histogram2dContour(
-            x=dist_high,
-            y=dist_low,
+            x=dist_high_plot,
+            y=dist_low_plot,
             colorscale="Blues",
             reversescale=False,
+            contours=dict(coloring="heatmap"),
+            ncontours=12,
+            showscale=True,
+            colorbar=dict(title="Pair density"),
             xaxis="x",
             yaxis="y",
             name="Density",
         )
     )
 
-    # Ideal Line (y=x)
-    min_val = min(dist_high.min(), dist_low.min())
-    max_val = max(dist_high.max(), dist_low.max())
+    n_pairs = dist_high_plot.size
+    if n_pairs > 0:
+        if n_pairs > scatter_max_points:
+            rng = np.random.default_rng(random_state)
+            idx = rng.choice(n_pairs, size=scatter_max_points, replace=False)
+            x_sc = dist_high_plot[idx]
+            y_sc = dist_low_plot[idx]
+        else:
+            x_sc = dist_high_plot
+            y_sc = dist_low_plot
+        fig.add_trace(
+            go.Scattergl(
+                x=x_sc,
+                y=y_sc,
+                mode="markers",
+                marker=dict(size=3, color=f"rgba(0,0,0,{scatter_opacity})"),
+                name="Pairs",
+                showlegend=False,
+            )
+        )
 
+    # Ideal Line (y=x)
     fig.add_trace(
         go.Scatter(
-            x=[min_val, max_val],
-            y=[min_val, max_val],
+            x=[axis_min, axis_max],
+            y=[axis_min, axis_max],
             mode="lines",
             line=dict(color="red", dash="dash"),
             name="Ideal",
@@ -751,8 +819,8 @@ def plot_shepard_interactive(
 
     fig.update_layout(
         title=f"{title}<br>Pearson Corr: {corr:.3f}",
-        xaxis_title="Original Distances",
-        yaxis_title="Embedded Distances",
+        xaxis=dict(title="Original Distances", range=[axis_min, axis_max]),
+        yaxis=dict(title="Embedded Distances", range=[axis_min, axis_max]),
         margin=dict(l=40, r=40, b=40, t=40),
         height=400,
         showlegend=True,

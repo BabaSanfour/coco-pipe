@@ -74,7 +74,7 @@ def filter_metrics(scores: Dict[str, Any]) -> Dict[str, float]:
     if not scores:
         return {}
 
-    exclude_keys = {"n_iter_", "n_components"}
+    exclude_keys = {"n_iter_", "n_components", "n_components_"}
 
     filtered = {}
     for k, v in scores.items():
