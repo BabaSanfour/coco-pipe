@@ -566,6 +566,7 @@ class BIDSDataset(BaseDataset):
         event_id: Optional[Dict[str, int]] = None,
         tmin: float = -0.2,
         tmax: float = 0.5,
+        baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
     ):
         self.root = Path(root)
         self.task = task
@@ -580,6 +581,7 @@ class BIDSDataset(BaseDataset):
         self.event_id = event_id
         self.tmin = tmin
         self.tmax = tmax
+        self.baseline = baseline
 
         if mne is None:
             raise ImportError("mne and mne-bids are required.")
@@ -679,6 +681,7 @@ class BIDSDataset(BaseDataset):
                                 event_id=self.event_id,
                                 tmin=self.tmin,
                                 tmax=self.tmax,
+                                baseline=self.baseline,
                             )
                         )
 

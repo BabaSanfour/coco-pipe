@@ -145,6 +145,7 @@ def read_bids_entry(
     event_id: Optional[Dict[str, int]] = None,
     tmin: float = -0.2,
     tmax: float = 0.5,
+    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[str], float, Optional[np.ndarray]]:
     if is_pre_epoched:
         # Load existing Epochs
@@ -194,7 +195,6 @@ def read_bids_entry(
             data_raw = raw.get_data()  # (C, T)
             data = data_raw[np.newaxis, :, :]  # (1, C, T)
             times = raw.times
-            labels = None
         elif event_id is not None:
             # Event-Based Epoching (Annotation aware)
             events, event_id_map = mne.events_from_annotations(
@@ -206,7 +206,7 @@ def read_bids_entry(
                 event_id=event_id_map,
                 tmin=tmin,
                 tmax=tmax,
-                baseline=None,
+                baseline=baseline,
                 preload=True,
                 verbose=False,
             )

@@ -456,6 +456,33 @@ class ContainerElement(Element):
         self.children.append(element)
         return self  # Fluent interface
 
+    def add_markdown(self, text: str) -> "ContainerElement":
+        """
+        Add a markdown block.
+
+        Note: Requires 'markdown' package. If not present, falls back to raw
+        text in <pre>.
+        """
+        try:
+            import markdown
+
+            html = markdown.markdown(text, extensions=["extra"])
+            # Wrap in prose class for consistent styling
+            wrapper = (
+                f'<div class="prose prose-sm max-w-none text-gray-700 '
+                f'dark:text-gray-200 dark:prose-invert">{html}</div>'
+            )
+            self.add_element(HtmlElement(wrapper))
+        except ImportError:
+            # Fallback
+            safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+            html = (
+                f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 '
+                f'rounded">{safe_text}</div>'
+            )
+            self.add_element(HtmlElement(html))
+        return self
+
     def render_children(self) -> str:
         """Render all child elements concatenated."""
         return "\n".join([c.render() for c in self.children])
@@ -594,32 +621,6 @@ class Report(ContainerElement):
 
         self.metadata = self.config.provenance.model_dump()
 
-    def add_markdown(self, text: str) -> "Report":
-        """
-        Add a markdown block to the report.
-
-        Note: Requires 'markdown' package. If not present, falls back to raw
-        text in <pre>.
-        """
-        try:
-            import markdown
-
-            html = markdown.markdown(text, extensions=["extra"])
-            # Wrap in prose class for consistent styling
-            wrapper = (
-                f'<div class="prose prose-sm max-w-none text-gray-700">{html}</div>'
-            )
-            self.add_element(HtmlElement(wrapper))
-        except ImportError:
-            # Fallback
-            safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-            html = (
-                f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 '
-                f'rounded">{safe_text}</div>'
-            )
-            self.add_element(HtmlElement(html))
-        return self
-
     def add_section(self, section: Section) -> "Report":
         """Syntactic sugar for adding a Section."""
         return self.add_element(section)
@@ -631,7 +632,13 @@ class Report(ContainerElement):
         self.add_element(ImageElement(fig, caption=caption))
         return self
 
-    def add_container(self, container: Any, name: str = "Data Overview") -> "Report":
+    def add_container(
+        self,
+        container: Any,
+        name: str = "Data Overview",
+        show_coords: bool = True,
+        show_dist: bool = True,
+    ) -> "Report":
         """
         Add a summary section for a DataContainer.
         Automatically runs quality checks (Missingness, Constants).
@@ -642,73 +649,70 @@ class Report(ContainerElement):
             The data container to summarize.
         name : str
             Title for the section.
+        show_coords : bool
+            If True, shows the table of coordinates.
+        show_dist : bool
+            If True, shows the data/class distribution plot.
         """
         # Create Section
         sec = Section(title=name, icon="💾")
 
-        # We'll pivot this for cleaner display: Dim Name -> Size
+        # Dimensions
         dims_data = [
             {"Dimension": d, "Size": s} for d, s in zip(container.dims, container.shape)
         ]
-
         sec.add_element(TableElement(dims_data, title="Dimensions"))
 
         # Coordinates Info
-        if container.coords:
+        if show_coords and container.coords:
             coords_data = [
                 {"Name": k, "Type": str(np.array(v).dtype), "Count": len(v)}
                 for k, v in container.coords.items()
             ]
             sec.add_element(TableElement(coords_data, title="Coordinates"))
 
-        # 2. Simple Distribution Plot (if applicable)
-        try:
-            # Quality Checks
-            if container.X is not None:
-                # Missingness
-                res_missing = check_missingness(container.X)
-                if res_missing.is_issue:
-                    sec.add_finding(res_missing)
+        # 2. Distribution Plot
+        if show_dist:
+            try:
+                # Quality Checks
+                if container.X is not None:
+                    res_missing = check_missingness(container.X)
+                    if res_missing.is_issue:
+                        sec.add_finding(res_missing)
 
-                # Constant Columns
-                for res in check_constant_columns(container.X):
-                    sec.add_finding(res)
+                    for res in check_constant_columns(container.X):
+                        sec.add_finding(res)
 
-            import matplotlib.pyplot as plt
+                import matplotlib.pyplot as plt
 
-            fig, ax = plt.subplots(figsize=(6, 3))
+                fig, ax = plt.subplots(figsize=(6, 3))
 
-            # Check for 'y' (Class Distribution)
-            if container.y is not None:
-                # Plot Class counts
-                y_series = pd.Series(container.y)
-                y_series.value_counts().plot(kind="bar", ax=ax, color="skyblue")
-                ax.set_title("Class Distribution")
-                ax.set_xlabel("Class")
-                ax.set_ylabel("Count")
-                caption = "Target label distribution."
+                if container.y is not None:
+                    y_series = pd.Series(container.y)
+                    y_series.value_counts().plot(kind="bar", ax=ax, color="skyblue")
+                    ax.set_title("Class Distribution")
+                    ax.set_xlabel("Class")
+                    ax.set_ylabel("Count")
+                    caption = "Target label distribution."
+                else:
+                    data_flat = container.X.flatten()
+                    if len(data_flat) > 5000:
+                        data_flat = np.random.choice(data_flat, 5000, replace=False)
+                    ax.hist(data_flat, bins=30, color="gray", alpha=0.7)
+                    ax.set_title("Data Value Distribution (Sampled)")
+                    caption = "Histogram of data values."
 
-            else:
-                # Plot simple data histogram (sampled if large)
-                data_flat = container.X.flatten()
-                if len(data_flat) > 5000:
-                    data_flat = np.random.choice(data_flat, 5000, replace=False)
+                plt.tight_layout()
+                sec.add_element(ImageElement(fig, caption=caption, width="80%"))
+                plt.close(fig)
 
-                ax.hist(data_flat, bins=30, color="gray", alpha=0.7)
-                ax.set_title("Data Value Distribution (Sampled)")
-                caption = "Histogram of data values."
-
-            plt.tight_layout()
-            sec.add_element(ImageElement(fig, caption=caption, width="80%"))
-            plt.close(fig)
-
-        except Exception as e:
-            sec.add_element(
-                HtmlElement(
-                    f"<div class='text-red-500 text-xs'>Could not generate plot: "
-                    f"{e}</div>"
+            except Exception as e:
+                sec.add_element(
+                    HtmlElement(
+                        f"<div class='text-red-500 text-xs'>Could not generate plot: "
+                        f"{e}</div>"
+                    )
                 )
-            )
 
         self.add_section(sec)
         return self

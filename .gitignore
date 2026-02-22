@@ -48,3 +48,4 @@ docs/source/generated/
 docs/source/autoapi/
 docs/_build/
 PhysioNet_EEGBCI/
+outputs/

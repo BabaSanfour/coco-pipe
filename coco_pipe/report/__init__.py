@@ -7,10 +7,16 @@ Reporting module for generating single-file HTML quality control reports.
 
 
 def __getattr__(name):
-    if name == "Report":
-        from .core import Report
+    if name in ["Report", "Section", "PlotlyElement", "TableElement", "ImageElement"]:
+        from .core import (  # noqa: F401
+            ImageElement,
+            PlotlyElement,
+            Report,
+            Section,
+            TableElement,
+        )
 
-        return Report
+        return locals()[name]
     if name in [
         "from_container",
         "from_bids",
@@ -32,6 +38,10 @@ def __getattr__(name):
 
 __all__ = [
     "Report",
+    "Section",
+    "PlotlyElement",
+    "TableElement",
+    "ImageElement",
     "from_container",
     "from_bids",
     "from_tabular",

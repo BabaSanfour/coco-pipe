@@ -92,3 +92,31 @@ def test_trajectory_plots():
         X_3d, times=times, groups=groups, dimensions=3, interactive=True
     )
     assert isinstance(fig, go.Figure)
+
+
+def test_trajectory_plot_interactive_accepts_3d_tensor():
+    # (n_trajectories, n_times, n_dims)
+    X = np.random.rand(4, 25, 3)
+    fig = viz_dr.plot_trajectory(X, interactive=True, dimensions=3)
+    assert isinstance(fig, go.Figure)
+
+
+def test_trajectory_plot_interactive_accepts_container():
+    n_obs, n_times, n_dims = 5, 30, 3
+    X = np.random.randn(n_obs, n_times, n_dims)
+
+    class DummyContainer:
+        def __init__(self, X, dims, coords, y):
+            self.X = X
+            self.dims = dims
+            self.coords = coords
+            self.y = y
+
+    container = DummyContainer(
+        X=X,
+        dims=("obs", "time", "component"),
+        coords={"time": np.linspace(0.0, 1.5, n_times)},
+        y=np.array([0, 1, 0, 1, 0]),
+    )
+    fig = viz_dr.plot_trajectory(container, interactive=True, dimensions=3)
+    assert isinstance(fig, go.Figure)

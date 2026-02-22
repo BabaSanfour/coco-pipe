@@ -10,8 +10,185 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from .utils import is_categorical, prepare_dataframe
+
+
+def plot_channel_traces_interactive(
+    data: np.ndarray,
+    times: Optional[np.ndarray] = None,
+    group_labels: Optional[np.ndarray] = None,
+    channel_names: Optional[Union[List[str], np.ndarray]] = None,
+    selected_channels: Optional[Union[List[int], List[str]]] = None,
+    group_name_map: Optional[Dict[Any, str]] = None,
+    color_map: Optional[Dict[Any, str]] = None,
+    title: str = "Grouped Channel Time Series",
+    xaxis_title: str = "Time",
+    yaxis_title: str = "Amplitude",
+    template: str = "plotly_white",
+    shared_xaxes: bool = True,
+    vertical_spacing: float = 0.05,
+    line_width: float = 2.0,
+    opacity: float = 1.0,
+    base_height: int = 300,
+    row_height: int = 220,
+    showlegend: bool = True,
+) -> go.Figure:
+    """
+    Plot grouped time series as channel-wise subplot rows.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Shape (n_groups, n_channels, n_times).
+    times : np.ndarray, optional
+        Time axis of length n_times. If None, uses np.arange(n_times).
+    group_labels : np.ndarray, optional
+        Labels for groups of length n_groups. If None, uses np.arange(n_groups).
+    channel_names : list or np.ndarray, optional
+        Channel names of length n_channels.
+    selected_channels : list of int or str, optional
+        Channel subset to display. If None, displays all channels.
+        String items require `channel_names`.
+    group_name_map : dict, optional
+        Mapping group label -> display name.
+    color_map : dict, optional
+        Mapping group label -> line color.
+    title : str
+        Figure title.
+    xaxis_title : str
+    yaxis_title : str
+    template : str
+    shared_xaxes : bool
+    vertical_spacing : float
+    line_width : float
+    opacity : float
+    base_height : int
+    row_height : int
+    showlegend : bool
+
+    Returns
+    -------
+    go.Figure
+    """
+    arr = np.asarray(data)
+    if arr.ndim != 3:
+        raise ValueError(
+            "`data` must be 3D with shape (n_groups, n_channels, n_times)."
+            f" Got {arr.shape}."
+        )
+    n_groups, n_channels, n_times = arr.shape
+
+    if times is None:
+        x_values = np.arange(n_times)
+    else:
+        x_values = np.asarray(times)
+        if len(x_values) != n_times:
+            raise ValueError(
+                f"`times` length ({len(x_values)}) must match n_times ({n_times})."
+            )
+
+    if group_labels is None:
+        groups = np.arange(n_groups)
+    else:
+        groups = np.asarray(group_labels)
+        if len(groups) != n_groups:
+            raise ValueError(
+                f"`group_labels` length ({len(groups)}) must match n_groups."
+                f" Got {n_groups}."
+            )
+
+    ch_names = None
+    if channel_names is not None:
+        ch_names = np.asarray(channel_names).astype(str)
+        if len(ch_names) != n_channels:
+            raise ValueError(
+                f"`channel_names` length ({len(ch_names)}) must match"
+                f" n_channels ({n_channels})."
+            )
+
+    if selected_channels is None:
+        ch_indices = list(range(n_channels))
+    else:
+        ch_indices = []
+        for ch in selected_channels:
+            if isinstance(ch, (int, np.integer)):
+                idx = int(ch)
+            elif isinstance(ch, str):
+                if ch_names is None:
+                    raise ValueError(
+                        "String-based `selected_channels` requires `channel_names`."
+                    )
+                matches = np.where(ch_names == ch)[0]
+                if len(matches) == 0:
+                    raise ValueError(f"Channel '{ch}' not found in `channel_names`.")
+                idx = int(matches[0])
+            else:
+                raise TypeError(
+                    "`selected_channels` entries must be int indices or str names."
+                )
+
+            if idx < 0 or idx >= n_channels:
+                raise ValueError(
+                    f"Channel index {idx} out of bounds for n_channels={n_channels}."
+                )
+            ch_indices.append(idx)
+
+    if len(ch_indices) == 0:
+        raise ValueError("No channels selected for plotting.")
+
+    subplot_titles = []
+    for idx in ch_indices:
+        if ch_names is not None:
+            subplot_titles.append(f"Channel: {ch_names[idx]}")
+        else:
+            subplot_titles.append(f"Channel: {idx}")
+
+    fig = make_subplots(
+        rows=len(ch_indices),
+        cols=1,
+        shared_xaxes=shared_xaxes,
+        vertical_spacing=vertical_spacing,
+        subplot_titles=subplot_titles,
+    )
+
+    for row_idx, ch_idx in enumerate(ch_indices, start=1):
+        for grp_idx, grp in enumerate(groups):
+            display_name = (
+                group_name_map.get(grp, str(grp))
+                if group_name_map is not None
+                else str(grp)
+            )
+            line_dict = {"width": line_width}
+            if color_map is not None and grp in color_map:
+                line_dict["color"] = color_map[grp]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x_values,
+                    y=arr[grp_idx, ch_idx, :],
+                    mode="lines",
+                    name=display_name,
+                    legendgroup=str(grp),
+                    line=line_dict,
+                    opacity=opacity,
+                    showlegend=showlegend and row_idx == 1,
+                ),
+                row=row_idx,
+                col=1,
+            )
+        fig.update_yaxes(title_text=yaxis_title, row=row_idx, col=1)
+
+    fig.update_xaxes(title_text=xaxis_title, row=len(ch_indices), col=1)
+    fig.update_layout(
+        title=title,
+        template=template,
+        height=base_height + row_height * len(ch_indices),
+        margin=dict(l=60, r=40, b=60, t=70),
+    )
+
+    return fig
 
 
 def plot_embedding_interactive(
@@ -720,33 +897,52 @@ def plot_streamlines_interactive(
 
 
 def plot_trajectory_interactive(
-    X: np.ndarray,
+    X: Any,
     times: Optional[np.ndarray] = None,
     groups: Optional[np.ndarray] = None,
     values: Optional[np.ndarray] = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     smooth_window: Optional[int] = None,
+    mode: str = "lines+markers",
+    line_width: int = 6,
+    group_cmaps: Optional[Dict[Any, str]] = None,
+    show_group_colorbars: bool = True,
+    colorbar_y: float = 0.5,
+    colorbar_len: float = 0.6,
 ) -> go.Figure:
     """
-    Plot trajectories of samples over time.
+    Plot trajectories of samples over time with group-specific shading.
 
     Parameters
     ----------
-    X : np.ndarray
-        Shape (n_samples, n_components). Coordinates.
+    X : np.ndarray or DataContainer-like
+        Accepted forms:
+        - 2D array: (n_samples, n_components)
+        - 3D array: (n_trajectories, n_times, n_components)
+        - container-like object with attributes `.X` and optional `.y/.coords/.dims`
+          using either 2D or 3D underlying data.
     times : np.ndarray, optional
         Time points or indices for coloring.
     groups : np.ndarray, optional
         Group labels (e.g. trial IDs) to separate trajectories.
-        If None, all points are treated as one single trajectory.
     values : np.ndarray, optional
         Values to color the trajectory by (e.g. speed). Overrides times.
-    title : str
     dimensions : int
         2 or 3.
     smooth_window : int, optional
         Window size for moving average smoothing.
+    mode : str, default="lines+markers"
+        Plot mode: 'lines', 'markers', or 'lines+markers'.
+    line_width : int, default=6
+    group_cmaps : dict, optional
+        Mapping from group label to Plotly colorscale name.
+    show_group_colorbars : bool, default=True
+        If True, each group gets its own colorbar.
+    colorbar_y : float, default=0.5
+        Vertical position of colorbars in paper coordinates.
+    colorbar_len : float, default=0.6
+        Colorbar length in paper coordinates.
 
     Returns
     -------
@@ -755,9 +951,131 @@ def plot_trajectory_interactive(
     if dimensions not in [2, 3]:
         raise ValueError("Dimensions must be 2 or 3.")
 
-    n_samples = X.shape[0]
+    container = None
+    if hasattr(X, "X"):
+        container = X
+        X_arr = np.asarray(container.X)
+    else:
+        X_arr = np.asarray(X)
+
+    # Dataset-agnostic coercion:
+    # (N, D)                    -> direct
+    # (G, T, D)                 -> flatten to (G*T, D), infer groups/times if missing
+    # container with 3D data    -> reorder to (obs, time, feature) then flatten
+    # container with 2D data    -> direct (+ infer groups from y/obs if missing)
+    if X_arr.ndim == 3:
+        if container is not None and hasattr(container, "dims"):
+            dims = list(container.dims)
+            if len(dims) != 3:
+                raise ValueError(
+                    f"3D container trajectory plotting expects 3 dims, got {dims}."
+                )
+            obs_axis = dims.index("obs") if "obs" in dims else 0
+            time_axis = dims.index("time") if "time" in dims else 1
+            feat_axis_candidates = [
+                i for i in range(3) if i not in (obs_axis, time_axis)
+            ]
+            feat_axis = feat_axis_candidates[0]
+            X_arr = np.transpose(X_arr, (obs_axis, time_axis, feat_axis))
+        n_traj, n_time, n_dim = X_arr.shape
+        X_arr = X_arr.reshape(n_traj * n_time, n_dim)
+
+        if groups is None:
+            if container is not None and getattr(container, "y", None) is not None:
+                y = np.asarray(container.y)
+                if len(y) == n_traj:
+                    groups = np.repeat(y, n_time)
+                else:
+                    groups = np.repeat(np.arange(n_traj), n_time)
+            elif (
+                container is not None
+                and hasattr(container, "coords")
+                and isinstance(container.coords, dict)
+                and "obs" in container.coords
+                and len(container.coords["obs"]) == n_traj
+            ):
+                groups = np.repeat(np.asarray(container.coords["obs"]), n_time)
+            else:
+                groups = np.repeat(np.arange(n_traj), n_time)
+
+        if times is None:
+            if (
+                container is not None
+                and hasattr(container, "coords")
+                and isinstance(container.coords, dict)
+                and "time" in container.coords
+                and len(container.coords["time"]) == n_time
+            ):
+                times = np.tile(np.asarray(container.coords["time"]), n_traj)
+            else:
+                times = np.tile(np.arange(n_time), n_traj)
+
+        if values is not None:
+            values_arr = np.asarray(values)
+            if values_arr.ndim == 2 and values_arr.shape == (n_traj, n_time):
+                values = values_arr.reshape(-1)
+
+    elif X_arr.ndim == 2:
+        if container is not None and groups is None:
+            n_samples_local = X_arr.shape[0]
+            if (
+                getattr(container, "y", None) is not None
+                and len(container.y) == n_samples_local
+            ):
+                groups = np.asarray(container.y)
+            elif (
+                hasattr(container, "coords")
+                and isinstance(container.coords, dict)
+                and "obs" in container.coords
+                and len(container.coords["obs"]) == n_samples_local
+            ):
+                groups = np.asarray(container.coords["obs"])
+    else:
+        raise ValueError(
+            "`X` must be 2D or 3D array-like (or container with such data),"
+            f" got shape {X_arr.shape}."
+        )
+
+    n_samples = X_arr.shape[0]
+    if X_arr.shape[1] < dimensions:
+        raise ValueError(
+            f"X has {X_arr.shape[1]} components, cannot plot dimensions={dimensions}."
+        )
+
+    def _coerce_1d(name: str, arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        if arr is None:
+            return None
+        out = np.asarray(arr).reshape(-1)
+        if len(out) != n_samples:
+            raise ValueError(
+                f"`{name}` length ({len(out)}) must match number of"
+                f" samples ({n_samples})."
+            )
+        return out
+
+    times = _coerce_1d("times", times)
+    groups = _coerce_1d("groups", groups)
+    values = _coerce_1d("values", values)
     if groups is None:
         groups = np.zeros(n_samples, dtype=int)  # Single group
+
+    # Drop rows with invalid coordinates or coloring variable values
+    valid = np.all(np.isfinite(X_arr[:, :dimensions]), axis=1)
+    if times is not None and np.issubdtype(np.asarray(times).dtype, np.number):
+        valid &= np.isfinite(times)
+    if values is not None and np.issubdtype(np.asarray(values).dtype, np.number):
+        valid &= np.isfinite(values)
+    if not np.all(valid):
+        X_arr = X_arr[valid]
+        groups = groups[valid]
+        if times is not None:
+            times = times[valid]
+        if values is not None:
+            values = values[valid]
+
+    n_samples = X_arr.shape[0]
+    if n_samples == 0:
+        raise ValueError("No valid samples remain after filtering invalid values.")
 
     unique_groups = np.unique(groups)
     fig = go.Figure()
@@ -765,132 +1083,194 @@ def plot_trajectory_interactive(
     # Determine coloring variable
     color_var = None
     color_label = ""
-    colorscale = "Viridis"
+    default_colorscale = "Viridis"
 
     if values is not None:
         color_var = values
         color_label = "Value"
-        colorscale = "Plasma"
+        default_colorscale = "Plasma"
     elif times is not None:
         color_var = times
         color_label = "Time"
-        colorscale = "Viridis"
+        default_colorscale = "Viridis"
 
-    for grp in unique_groups:
+    # Global min/max for color scale consistency
+    cmin, cmax = None, None
+    if color_var is not None:
+        cmin, cmax = np.nanmin(color_var), np.nanmax(color_var)
+
+    import plotly.colors as pc
+    import plotly.express as px
+
+    palette = px.colors.qualitative.Plotly
+
+    sequential_scales = [
+        "Blues",
+        "Reds",
+        "Greens",
+        "Purples",
+        "Oranges",
+        "YlOrBr",
+        "YlGnBu",
+        "RdPu",
+        "GnBu",
+    ]
+
+    for g_idx, grp in enumerate(unique_groups):
         mask = groups == grp
-        X_g = X[mask]
+        X_g = X_arr[mask]
         c_g = color_var[mask] if color_var is not None else None
+
+        # Determine colorscale for this group
+        if group_cmaps and grp in group_cmaps:
+            g_colorscale = group_cmaps[grp]
+        elif c_g is not None and len(unique_groups) > 1:
+            g_colorscale = sequential_scales[g_idx % len(sequential_scales)]
+        else:
+            g_colorscale = default_colorscale
+
+        # Sample color at 75% for legend representation
+        if c_g is not None:
+            try:
+                grp_color = pc.sample_colorscale(g_colorscale, [0.75])[0]
+            except Exception:
+                grp_color = palette[g_idx % len(palette)]
+        else:
+            grp_color = palette[g_idx % len(palette)]
 
         # Smoothing
         if smooth_window is not None and smooth_window > 1:
             from coco_pipe.dim_reduction.evaluation.geometry import moving_average
 
-            # Smooth coords
             X_g_list = []
             for d in range(X_g.shape[1]):
                 X_g_list.append(moving_average(X_g[:, d], smooth_window))
             X_g = np.stack(X_g_list, axis=1)
-
-            # Smooth color var
             if c_g is not None:
                 c_g = moving_average(c_g, smooth_window)
 
-        if c_g is not None:
-            # Shared logic for colored trajectory (Markers + Grey line)
+        # Plotting Logic
+        ScatterClass = go.Scatter3d if dimensions == 3 else go.Scatter
+        coords_names = ["x", "y", "z"] if dimensions == 3 else ["x", "y"]
 
-            # Line (path structure)
-            if dimensions == 2:
+        if c_g is not None and "lines" in mode:
+            # Segmented coloring for line
+            try:
+                scale_colors = getattr(pc.sequential, g_colorscale)
+            except AttributeError:
+                scale_colors = pc.get_colorscale(g_colorscale)
+                scale_colors = [c[1] for c in scale_colors]
+
+            for i in range(len(X_g) - 1):
+                seg_coords = {
+                    coords_names[d]: [X_g[i, d], X_g[i + 1, d]]
+                    for d in range(dimensions)
+                }
+                seg_val = (c_g[i] + c_g[i + 1]) / 2.0
+                norm_val = 0.0
+                if cmax is not None and cmin is not None and cmax > cmin:
+                    norm_val = (seg_val - cmin) / (cmax - cmin)
+
+                hex_color = pc.sample_colorscale(scale_colors, [norm_val])[0]
+
                 fig.add_trace(
-                    go.Scatter(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
+                    ScatterClass(
+                        **seg_coords,
                         mode="lines",
-                        line=dict(color="grey", width=1),
-                        opacity=0.5,
+                        line=dict(color=hex_color, width=line_width),
                         showlegend=False,
                         hoverinfo="skip",
-                    )
-                )
-                # Markers (colored value)
-                fig.add_trace(
-                    go.Scatter(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
-                        mode="markers",
-                        marker=dict(
-                            size=6,
-                            color=c_g,
-                            colorscale=colorscale,
-                            showscale=True,
-                            colorbar=dict(title=color_label)
-                            if grp == unique_groups[0]
-                            else None,
-                        ),
-                        text=[f"{color_label}: {v:.2f}" for v in c_g],
-                        name=f"Group {grp}",
-                    )
-                )
-            else:
-                # 3D
-                fig.add_trace(
-                    go.Scatter3d(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
-                        z=X_g[:, 2],
-                        mode="lines",
-                        line=dict(color="grey", width=2),
-                        opacity=0.5,
-                        showlegend=False,
-                        hoverinfo="skip",
-                    )
-                )
-                fig.add_trace(
-                    go.Scatter3d(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
-                        z=X_g[:, 2],
-                        mode="markers",
-                        marker=dict(
-                            size=4,
-                            color=c_g,
-                            colorscale=colorscale,
-                            colorbar=dict(title=color_label)
-                            if grp == unique_groups[0]
-                            else None,
-                        ),
-                        text=[f"{color_label}: {v:.2f}" for v in c_g],
-                        name=f"Group {grp}",
+                        legendgroup=str(grp),
                     )
                 )
 
-        else:
-            # Color by group (Solid color)
-            if dimensions == 2:
-                fig.add_trace(
-                    go.Scatter(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
-                        mode="lines+markers",
-                        marker=dict(size=6),
-                        name=str(grp),
-                    )
+            # Dummy trace for legend and individual colorbar
+            dummy_coords = {coords_names[d]: [None] for d in range(dimensions)}
+
+            marker_dict = None
+            if show_group_colorbars:
+                # Use wider spacing for multiple colorbars to avoid text overlap
+                cb_spacing = 0.07 if len(unique_groups) > 4 else 0.08
+                cb_x = 1.02 + (g_idx * cb_spacing)
+
+                marker_dict = dict(
+                    color=[cmin, cmax],
+                    colorscale=g_colorscale,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text="Time (s)", side="right")
+                        if g_idx == len(unique_groups) - 1
+                        else None,
+                        x=cb_x,
+                        y=colorbar_y,
+                        len=colorbar_len,
+                        thickness=10,
+                        xanchor="left",
+                        outlinecolor="white",
+                        outlinewidth=0,
+                        showticklabels=(g_idx == len(unique_groups) - 1),
+                    ),
+                )
+
+            fig.add_trace(
+                ScatterClass(
+                    **dummy_coords,
+                    mode="lines+markers" if marker_dict else "lines",
+                    marker=marker_dict,
+                    line=dict(color=grp_color, width=line_width),
+                    name=str(grp),
+                    showlegend=True,
+                    legendgroup=str(grp),
+                )
+            )
+
+        elif "markers" in mode:
+            marker_dict = dict(size=line_width * 0.8)
+            if c_g is not None:
+                marker_dict.update(
+                    color=c_g,
+                    colorscale=g_colorscale,
+                    cmin=cmin,
+                    cmax=cmax,
+                    showscale=True
+                    if show_group_colorbars and len(unique_groups) == 1
+                    else False,
                 )
             else:
-                fig.add_trace(
-                    go.Scatter3d(
-                        x=X_g[:, 0],
-                        y=X_g[:, 1],
-                        z=X_g[:, 2],
-                        mode="lines+markers",
-                        marker=dict(size=4),
-                        name=str(grp),
-                    )
+                marker_dict.update(color=grp_color)
+
+            fig.add_trace(
+                ScatterClass(
+                    **{coords_names[d]: X_g[:, d] for d in range(dimensions)},
+                    mode="markers",
+                    marker=marker_dict,
+                    name=str(grp),
+                    text=[f"{color_label}: {v:.2f}" for v in c_g]
+                    if c_g is not None
+                    else None,
                 )
+            )
+
+        if c_g is None and "lines" in mode:
+            fig.add_trace(
+                ScatterClass(
+                    **{coords_names[d]: X_g[:, d] for d in range(dimensions)},
+                    mode="lines",
+                    line=dict(color=grp_color, width=line_width),
+                    name=str(grp),
+                )
+            )
 
     fig.update_layout(
         title=title,
-        margin=dict(l=40, r=40, b=40, t=40),
+        margin=dict(l=40, r=100 + (len(unique_groups) * 40), b=40, t=40),
         height=600 if dimensions == 3 else 500,
+        template="plotly_white",
     )
+
+    if dimensions == 3:
+        fig.update_layout(
+            scene=dict(xaxis_title="Dim 1", yaxis_title="Dim 2", zaxis_title="Dim 3")
+        )
 
     return fig

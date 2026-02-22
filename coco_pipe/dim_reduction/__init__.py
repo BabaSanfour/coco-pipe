@@ -1,5 +1,10 @@
 from .config import METHODS
 from .core import DimReduction
+from .evaluation.geometry import (
+    trajectory_curvature,
+    trajectory_separation,
+    trajectory_speed,
+)
 from .evaluation.metrics import continuity, lcmc, shepard_diagram_data, trustworthiness
 from .reducers import (
     BaseReducer,
@@ -20,6 +25,9 @@ __all__ = [
     "continuity",
     "lcmc",
     "shepard_diagram_data",
+    "trajectory_speed",
+    "trajectory_curvature",
+    "trajectory_separation",
     "BaseReducer",
     "PCAReducer",
     "IncrementalPCAReducer",
