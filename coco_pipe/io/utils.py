@@ -156,6 +156,25 @@ def read_bids_entry(
                 fpath = matches[0]
 
         epochs = mne.read_epochs(fpath, verbose=False)
+        if event_id is not None:
+            filtered_epochs = None
+            matching_epoch_names = [
+                name for name in event_id if name in epochs.event_id
+            ]
+            if matching_epoch_names:
+                filtered_epochs = epochs[matching_epoch_names]
+            if filtered_epochs is None or len(filtered_epochs) == 0:
+                matching_event_codes = np.isin(
+                    epochs.events[:, -1], list(event_id.values())
+                )
+                if np.any(matching_event_codes):
+                    filtered_epochs = epochs[matching_event_codes]
+            if filtered_epochs is None or len(filtered_epochs) == 0:
+                raise ValueError(
+                    "No epochs remain after filtering precomputed "
+                    f"epochs with event_id={event_id}."
+                )
+            epochs = filtered_epochs
         data = epochs.get_data(copy=False)  # (N, C, T)
         return (
             data,
