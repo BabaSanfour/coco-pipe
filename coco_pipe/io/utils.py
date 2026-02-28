@@ -7,7 +7,7 @@ Helper functions for IO operations.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import mne
 import numpy as np
@@ -142,7 +142,7 @@ def read_bids_entry(
     mode: str,
     window_length: Optional[float],
     stride: Optional[float],
-    event_id: Optional[Dict[str, int]] = None,
+    event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
     tmin: float = -0.2,
     tmax: float = 0.5,
     baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
@@ -158,15 +158,24 @@ def read_bids_entry(
         epochs = mne.read_epochs(fpath, verbose=False)
         if event_id is not None:
             filtered_epochs = None
+            if isinstance(event_id, dict):
+                event_names = list(event_id)
+                event_codes = list(event_id.values())
+            elif isinstance(event_id, str):
+                event_names = [event_id]
+                event_codes = None
+            else:
+                event_names = list(event_id)
+                event_codes = None
             matching_epoch_names = [
-                name for name in event_id if name in epochs.event_id
+                name for name in event_names if name in epochs.event_id
             ]
             if matching_epoch_names:
                 filtered_epochs = epochs[matching_epoch_names]
-            if filtered_epochs is None or len(filtered_epochs) == 0:
-                matching_event_codes = np.isin(
-                    epochs.events[:, -1], list(event_id.values())
-                )
+            if event_codes is not None and (
+                filtered_epochs is None or len(filtered_epochs) == 0
+            ):
+                matching_event_codes = np.isin(epochs.events[:, -1], event_codes)
                 if np.any(matching_event_codes):
                     filtered_epochs = epochs[matching_event_codes]
             if filtered_epochs is None or len(filtered_epochs) == 0:

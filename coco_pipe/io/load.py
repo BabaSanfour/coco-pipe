@@ -41,6 +41,8 @@ def load_data(
     loading_mode: str = "epochs",  # Maps to BIDSDataset `mode`
     window_length: Optional[float] = None,
     stride: Optional[float] = None,
+    subject_metadata_df: Optional[Any] = None,
+    subject_key: Optional[str] = None,
     # --- Embedding Arguments ---
     pattern: str = "*.pkl",
     dims: Tuple[str, ...] = ("obs", "feature"),
@@ -110,6 +112,10 @@ def load_data(
         Window length in seconds (for 'epochs' mode).
     stride : float, optional
         Stride in seconds (for 'epochs' mode).
+    subject_metadata_df : DataFrame, optional
+        External subject-level metadata to merge by subject during BIDS loading.
+    subject_key : str, optional
+        Column in `subject_metadata_df` containing the BIDS subject identifier.
     subjects : str or List[str], optional
         Specific subject IDs to load (without 'sub-').
 
@@ -183,6 +189,8 @@ def load_data(
             suffix=suffix,
             window_length=window_length,
             stride=stride,
+            subject_metadata_df=subject_metadata_df,
+            subject_key=subject_key,
             subjects=subjects,
             **kwargs,
         ).load()

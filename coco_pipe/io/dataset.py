@@ -564,7 +564,9 @@ class BIDSDataset(BaseDataset):
         stride: Optional[float] = None,
         subjects: Optional[Union[str, List[str]]] = None,
         runs: Optional[Union[str, List[str]]] = None,
-        event_id: Optional[Dict[str, int]] = None,
+        event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+        subject_metadata_df: Optional[pd.DataFrame] = None,
+        subject_key: Optional[str] = None,
         tmin: float = -0.2,
         tmax: float = 0.5,
         baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
@@ -580,6 +582,8 @@ class BIDSDataset(BaseDataset):
         self.subjects = subjects
         self.runs = runs
         self.event_id = event_id
+        self.subject_metadata_df = subject_metadata_df
+        self.subject_key = subject_key
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
@@ -611,6 +615,19 @@ class BIDSDataset(BaseDataset):
 
         # Load participants.tsv metadata
         meta_lookup = load_participants_tsv(self.root)
+        if self.subject_metadata_df is not None:
+            if self.subject_key is None:
+                raise ValueError(
+                    "subject_key must be provided when subject_metadata_df is used."
+                )
+            if self.subject_key not in self.subject_metadata_df.columns:
+                raise ValueError(
+                    f"subject_key '{self.subject_key}' not found "
+                    "in subject_metadata_df."
+                )
+            for _, row in self.subject_metadata_df.iterrows():
+                sub = str(row[self.subject_key]).replace("sub-", "")
+                meta_lookup.setdefault(sub, {}).update(row.to_dict())
 
         data_list = []
         ids_list = []
