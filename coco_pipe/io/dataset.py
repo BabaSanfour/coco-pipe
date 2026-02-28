@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import mne
@@ -658,15 +659,44 @@ class BIDSDataset(BaseDataset):
                     runs = self.runs
 
                 for run in runs:
-                    bids_path = BIDSPath(
-                        subject=sub,
-                        session=ses,
-                        task=self.task,
-                        run=run,
-                        datatype=self.datatype,
-                        root=self.root,
-                        suffix=self.suffix or self.datatype,
-                    )
+                    if is_pre_epoched:
+                        pre_epoched_dir = self.root / f"sub-{sub}"
+                        if ses:
+                            pre_epoched_dir = pre_epoched_dir / f"ses-{ses}"
+                        pre_epoched_dir = pre_epoched_dir / self.datatype
+
+                        stem_parts = [f"sub-{sub}"]
+                        if ses:
+                            stem_parts.append(f"ses-{ses}")
+                        if self.task:
+                            stem_parts.append(f"task-{self.task}")
+                        if run:
+                            stem_parts.append(f"run-{run}")
+
+                        pre_epoched_suffix = self.suffix or "epo"
+                        stem = "_".join(stem_parts)
+                        matches = sorted(
+                            pre_epoched_dir.glob(f"{stem}*_{pre_epoched_suffix}.fif")
+                        )
+                        bids_path = SimpleNamespace(
+                            fpath=(
+                                matches[0]
+                                if matches
+                                else pre_epoched_dir
+                                / f"{stem}_{pre_epoched_suffix}.fif"
+                            ),
+                            match=lambda matches=matches: matches,
+                        )
+                    else:
+                        bids_path = BIDSPath(
+                            subject=sub,
+                            session=ses,
+                            task=self.task,
+                            run=run,
+                            datatype=self.datatype,
+                            root=self.root,
+                            suffix=self.suffix or self.datatype,
+                        )
 
                     try:
                         # --- LOAD STRATEGY (Delegated) ---
