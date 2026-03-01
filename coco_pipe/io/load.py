@@ -187,6 +187,7 @@ def load_data(
             session=session,
             datatype=datatype,
             suffix=suffix,
+            target_col=target_col,
             window_length=window_length,
             stride=stride,
             subject_metadata_df=subject_metadata_df,

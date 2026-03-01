@@ -560,6 +560,7 @@ class BIDSDataset(BaseDataset):
         datatype: str = "eeg",
         suffix: Optional[str] = None,
         mode: str = "epochs",
+        target_col: Optional[str] = None,
         window_length: Optional[float] = None,
         stride: Optional[float] = None,
         subjects: Optional[Union[str, List[str]]] = None,
@@ -577,6 +578,7 @@ class BIDSDataset(BaseDataset):
         self.datatype = datatype
         self.suffix = suffix
         self.mode = mode
+        self.target_col = target_col
         self.window_length = window_length
         self.stride = stride
         self.subjects = subjects
@@ -809,6 +811,19 @@ class BIDSDataset(BaseDataset):
         for k, v in meta_columns.items():
             if len(v) == len(ids_list):
                 coords[k] = np.array(v)
+
+        if self.target_col is not None:
+            if self.target_col not in coords:
+                raise ValueError(
+                    f"target_col '{self.target_col}' not found in BIDS coords."
+                )
+            if len(coords[self.target_col]) != len(ids_list):
+                raise ValueError(
+                    f"target_col '{self.target_col}' length "
+                    f"{len(coords[self.target_col])} does not match "
+                    f"the number of observations {len(ids_list)}."
+                )
+            y_out = np.array(coords[self.target_col])
 
         dims = ("obs", "channel", "time")
 
