@@ -843,6 +843,11 @@ class DataContainer:
         # New Coords
         # We keep coords for preserved dimensions.
         new_coords = {k: v for k, v in self.coords.items() if k in preserve}
+        if "obs" in preserve and "obs" in self.dims:
+            n_obs = self.X.shape[self.dims.index("obs")]
+            for k, v in self.coords.items():
+                if k not in self.dims and len(v) == n_obs:
+                    new_coords[k] = v
 
         flat_coords_list = []
         for d in to_flatten:
@@ -933,6 +938,7 @@ class DataContainer:
         # Logic for IDs/Y expansion if 'obs' is involved
         if "obs" in dims and new_dim == "obs":
             obs_idx = dims.index("obs")
+            n_obs = self.X.shape[self.dims.index("obs")]
 
             # Repeats (inner) and Tiles (outer) logic
             # product(dims after obs) -> repeats
@@ -947,6 +953,10 @@ class DataContainer:
             # Expand Y
             if self.y is not None:
                 new_y = np.tile(np.repeat(self.y, n_repeats), n_tiles)
+
+            for k, v in self.coords.items():
+                if k not in self.dims and len(v) == n_obs:
+                    new_coords[k] = np.tile(np.repeat(np.array(v), n_repeats), n_tiles)
 
             # Expand IDs
             if self.ids is not None:
@@ -1313,18 +1323,21 @@ class DataContainer:
         new_coords = self.coords.copy()
         new_coords["obs"] = unique_groups
 
-        # Remove aux coords that were length n_obs (unless consistent?)
-        keys_to_drop = []
         for k, v in self.coords.items():
-            if isinstance(by, str) and k == by:
-                continue
             if k == "obs":
                 continue
             if len(v) == n_obs and k not in self.dims:
-                keys_to_drop.append(k)
-
-        for k in keys_to_drop:
-            del new_coords[k]
+                coord_df = pd.DataFrame({"g": groups, "value": np.array(v)})
+                coord_nunique = coord_df.groupby("g")["value"].nunique(dropna=False)
+                if coord_nunique.max() == 1:
+                    new_coords[k] = (
+                        coord_df.groupby("g")["value"]
+                        .first()
+                        .reindex(unique_groups)
+                        .values
+                    )
+                else:
+                    del new_coords[k]
 
         return replace(
             self,
