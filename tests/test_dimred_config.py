@@ -5,10 +5,14 @@ from pydantic import ValidationError
 from coco_pipe.dim_reduction import DimReduction
 from coco_pipe.dim_reduction.config import (
     DimReductionConfig,
+    DMDConfig,
     EvaluationConfig,
+    LLEConfig,
     MDSConfig,
     PacmapConfig,
     PCAConfig,
+    TopologicalAEConfig,
+    TRCAConfig,
     TSNEConfig,
     UMAPConfig,
 )
@@ -63,9 +67,27 @@ def test_core_initialization_with_config():
     assert dr.reducer.n_components == 2
 
 
+def test_lle_config_uses_sklearn_named_parameter():
+    """Test LLE config uses a method-aligned parameter name."""
+    lle_conf = LLEConfig(method="LLE", n_neighbors=8, lle_method="modified")
+    wrapper = DimReductionConfig(config=lle_conf)
+
+    dr = DimReduction(wrapper)
+
+    assert dr.method == "LLE"
+    assert dr.reducer_kwargs["method"] == "modified"
+    assert "lle_method" not in dr.reducer_kwargs
+
+
 def test_evaluation_config():
     """Test EvaluationConfig in MethodSelector."""
-    eval_conf = EvaluationConfig(k_range=[10, 20])
+    eval_conf = EvaluationConfig(
+        k_range=[10, 20],
+        metrics=["trustworthiness"],
+        selection_metric="trustworthiness",
+        selection_k=10,
+        tie_breakers=["continuity"],
+    )
 
     # Mock reducers
     reducers = [DimReduction("PCA", n_components=2)]
@@ -81,11 +103,16 @@ def test_evaluation_config():
     assert len(res) == 2
     assert 10 in res["k"].values
     assert 20 in res["k"].values
+    assert set(res.columns) == {"k", "trustworthiness"}
+    assert selector.selection_metric_ == "trustworthiness"
+    assert selector.selection_k_ == 10
+    assert selector.tie_breakers_ == ["continuity"]
 
 
 def test_tsne_config_validation():
     # Valid
-    TSNEConfig(method="TSNE", perplexity=30)
+    cfg = TSNEConfig(method="TSNE", perplexity=30, max_iter=750)
+    assert cfg.max_iter == 750
 
     # Invalid perplexity (negative)
     with pytest.raises(ValidationError):
@@ -103,3 +130,21 @@ def test_pacmap_config():
     assert c.n_neighbors == 10
     assert c.MN_ratio == 0.5
     assert c.FP_ratio == 2.0  # default check
+    assert c.nn_backend == "faiss"
+
+
+def test_dmd_trca_config_defaults():
+    dmd = DMDConfig(method="DMD")
+    assert dmd.force_transpose is False
+    assert dmd.tlsq_rank == 0
+
+    trca = TRCAConfig(method="TRCA")
+    assert trca.sfreq == 250.0
+    assert trca.filterbank is None
+
+
+def test_topology_config_defaults():
+    topo = TopologicalAEConfig(method="TopologicalAE")
+    assert topo.device == "auto"
+    assert topo.verbose == 0
+    assert topo.hidden_dims == [128, 64]

@@ -1,39 +1,40 @@
 """
-Neighbor Embedding Reducers
-===========================
+Neighbor-embedding and graph-based reducers.
 
-This module implements dimensionality reduction techniques based on neighbor
-embeddings and graph layouts. It consolidates popular methods like t-SNE, UMAP,
-PaCMAP, TriMap, and PHATE.
+This module provides wrappers for neighborhood-preserving and graph-based
+nonlinear dimensionality reduction methods, including t-SNE, UMAP, PaCMAP,
+TriMap, PHATE, and Parametric UMAP.
 
 Classes
 -------
 TSNEReducer
-    t-Distributed Stochastic Neighbor Embedding (sklearn wrapper).
+    t-Distributed Stochastic Neighbor Embedding wrapper.
 UMAPReducer
-    Uniform Manifold Approximation and Projection (umap-learn wrapper).
+    Uniform Manifold Approximation and Projection wrapper.
 PacmapReducer
-    Pairwise Controlled Manifold Approximation (pacmap wrapper).
+    Pairwise Controlled Manifold Approximation wrapper.
 TrimapReducer
-    Large-scale dimensionality reduction using triplets (trimap wrapper).
+    Triplet-based manifold embedding wrapper.
 PHATEReducer
-    Potential of Heat-diffusion for Affinity-based Trajectory Embedding (phate wrapper).
+    Diffusion-based PHATE embedding wrapper.
+ParametricUMAPReducer
+    Neural-network-backed Parametric UMAP wrapper.
 
 References
 ----------
-.. [1] Maaten, L. van der, & Hinton, G. (2008). Visualizing data using t-SNE. JMLR.
-.. [2] McInnes, L., Healy, J., & Melville, J. (2018). UMAP: Uniform Manifold
-       Approximation and Projection for Dimension Reduction. arXiv.
-.. [3] Wang, Y., et al. (2021). PaCMAP: Pairwise Controlled Manifold
-       Approximation. JMLR.
-.. [4] Amid, E., & Warmuth, M. K. (2019). TriMap: Large-scale Dimensionality Reduction
-       Using Triplets. arXiv.
-.. [5] Moon, K. R., et al. (2019). Visualizing structure and transitions in
-       high-dimensional biological data. Nature Biotechnology.
+.. [1] van der Maaten, L., and Hinton, G. (2008). "Visualizing data using
+       t-SNE". Journal of Machine Learning Research, 9, 2579-2605.
+.. [2] McInnes, L., Healy, J., and Melville, J. (2018). "UMAP: Uniform
+       Manifold Approximation and Projection for Dimension Reduction". arXiv.
+.. [3] Wang, Y., et al. (2021). "PaCMAP: Pairwise Controlled Manifold
+       Approximation". Journal of Machine Learning Research, 22(201), 1-47.
+.. [4] Amid, E., and Warmuth, M. K. (2019). "TriMap: Large-scale
+       Dimensionality Reduction Using Triplets". arXiv.
+.. [5] Moon, K. R., et al. (2019). "Visualizing structure and transitions in
+       high-dimensional biological data". Nature Biotechnology, 37, 1482-1492.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
         Sina Esmaeili (sina.esmaeili@umontreal.ca)
-Date: 2026-01-06
 """
 
 from typing import Any, Optional
@@ -41,103 +42,150 @@ from typing import Any, Optional
 import numpy as np
 from sklearn.manifold import TSNE
 
-from .base import ArrayLike, BaseReducer
+from .base import ArrayLike, BaseReducer, import_optional_dependency
+
+__all__ = [
+    "TSNEReducer",
+    "UMAPReducer",
+    "PacmapReducer",
+    "TrimapReducer",
+    "PHATEReducer",
+    "ParametricUMAPReducer",
+]
 
 
 class TSNEReducer(BaseReducer):
     """
-    t-SNE dimensionality reducer.
+    t-SNE reducer.
 
-    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a technique for
-    dimensionality reduction that is particularly well suited for the visualization
-    of high-dimensional datasets. It converts similarities between data points to
-    joint probabilities and tries to minimize the Kullback-Leibler divergence
-    between the joint probabilities of the low-dimensional embedding and the
-    high-dimensional data.
-
-    Note: t-SNE does not support out-of-sample transformation (transform() raises
-    error).
+    t-Distributed Stochastic Neighbor Embedding (t-SNE) is a neighborhood-
+    preserving method designed primarily for visualization. It optimizes a
+    low-dimensional embedding by matching pairwise similarities between the
+    original space and the embedding.
 
     Parameters
     ----------
     n_components : int, default=2
-        Number of dimensions.
+        Number of embedding dimensions.
     **kwargs : dict
-        Additional arguments passed to TSNE.
-        Common arguments:
-        - perplexity : float, default=30.0
-        - learning_rate : float or 'auto', default='auto'
-        - n_iter : int, default=1000
+        Additional keyword arguments forwarded to
+        `sklearn.manifold.TSNE` after signature filtering. Common options
+        include `perplexity`, `learning_rate`, `max_iter`, `init`, and
+        `random_state`.
 
     Attributes
     ----------
-    embedding_ : np.ndarray
-        The learned embedding.
-    kl_divergence_ : float
-        Kullback-Leibler divergence after optimization.
-    n_iter_ : int
-        Number of iterations run.
+    embedding_ : np.ndarray or None
+        Learned training-set embedding after `fit` or `fit_transform`.
+    model : sklearn.manifold.TSNE or None
+        Fitted t-SNE estimator after `fit` or `fit_transform`.
+
+    Notes
+    -----
+    `transform` is not supported because scikit-learn t-SNE does not provide
+    an out-of-sample projection API.
+
+    See Also
+    --------
+    UMAPReducer : Nonlinear graph-based embedding with transform support.
+    PacmapReducer : Nonlinear embedding balancing local and global structure.
+    TrimapReducer : Nonlinear triplet-based embedding preserving global layout.
+    PHATEReducer : Diffusion-based embedding for continuous trajectories.
+    PCAReducer : Linear baseline for global variance preservation.
+    IsomapReducer : Nonlinear geodesic-distance manifold embedding.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.neighbor import TSNEReducer
+    >>> from coco_pipe.dim_reduction import TSNEReducer
     >>> X = np.random.rand(100, 10)
-    >>> reducer = TSNEReducer(n_components=2, random_state=42)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
+    >>> reducer = TSNEReducer(n_components=2, perplexity=20, random_state=42)
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
     (100, 2)
-    >>> print(f"{reducer.kl_divergence_:.4f}")  # Access diagnostic property
+    >>> reducer.get_quality_metadata()["kl_divergence_"] >= 0
+    True
+    >>> _ = reducer.fit(X)
+    >>> reducer.embedding_.shape
+    (100, 2)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for t-SNE.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing t-SNE as a nonlinear stochastic
+            reducer without out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=False,
+            supported_metadata=("kl_divergence_", "n_iter_", "learning_rate_"),
+            is_linear=False,
+            is_stochastic=True,
+        )
+
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the t-SNE reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `TSNE` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
-    def get_diagnostics(self) -> dict:
-        """Return t-SNE diagnostics."""
-        return {}
-
-    def get_quality_metadata(self) -> dict:
-        """Return t-SNE metadata."""
-        if self.model is None:
-            return {}
-        return {
-            "kl_divergence_": getattr(self.model, "kl_divergence_", None),
-            "n_iter_": getattr(self.model, "n_iter_", None),
-            "learning_rate_": getattr(self.model, "learning_rate_", None),
-        }
-
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TSNEReducer":
         """
-        Fit t-SNE with X.
+        Fit t-SNE on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : TSNEReducer
-            Returns the instance itself.
+        TSNEReducer
+            Fitted reducer instance.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import TSNEReducer
+        >>> X = np.random.rand(30, 6)
+        >>> reducer = TSNEReducer(n_components=2, perplexity=5, max_iter=250)
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
         """
-        self.model = TSNE(n_components=self.n_components, **self.params)
-        self.model.fit(X)
-        self.embedding_ = self.model.embedding_
+        self.model = self._build_estimator(TSNE)
+        self.embedding_ = self.model.fit_transform(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Raise because t-SNE does not support out-of-sample transformation.
+
+        Parameters
+        ----------
+        X : ArrayLike
+            Ignored input included for API compatibility.
 
         Raises
         ------
         NotImplementedError
-            t-SNE does not support transforming new data.
+            Always raised because t-SNE does not support transforming new data.
         """
         raise NotImplementedError(
             "TSNEReducer cannot transform new data. Use fit_transform()."
@@ -145,227 +193,248 @@ class TSNEReducer(BaseReducer):
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
-        Fit and return embedding.
+        Fit t-SNE and return the embedding coordinates.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        embedding : np.ndarray of shape (n_samples, n_components)
-            The learned embedding.
+        np.ndarray of shape (n_samples, n_components)
+            Embedded coordinates produced by t-SNE.
         """
         self.fit(X, y=y)
         return self.embedding_
 
-    @property
-    def kl_divergence_(self) -> float:
-        """
-        Kullback-Leibler divergence after optimization.
-
-        Returns
-        -------
-        kl_divergence_ : float
-        """
-        if self.model is None or not hasattr(self.model, "kl_divergence_"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.kl_divergence_
-
-    @property
-    def n_iter_(self) -> int:
-        """
-        Number of iterations run.
-
-        Returns
-        -------
-        n_iter_ : int
-        """
-        if self.model is None or not hasattr(self.model, "n_iter_"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.n_iter_
-
 
 class UMAPReducer(BaseReducer):
     """
-    UMAP dimensionality reducer.
+    UMAP reducer.
 
-    Uniform Manifold Approximation and Projection (UMAP) is a dimension reduction
-    technique that can be used for visualization similarly to t-SNE, but also for
-    general non-linear dimension reduction. It constructs a high dimensional graph
-    representation of the data then optimizes a low-dimensional graph to be
-    structurally similar.
-
-    Unlike t-SNE, UMAP supports out-of-sample transformation.
+    Uniform Manifold Approximation and Projection (UMAP) constructs a graph in
+    the high-dimensional space and optimizes a low-dimensional representation of
+    that graph. Unlike t-SNE, UMAP supports out-of-sample transformation.
 
     Parameters
     ----------
     n_components : int, default=2
-        Number of dimensions.
+        Number of embedding dimensions.
     **kwargs : dict
-        Additional arguments passed to umap.UMAP.
-        Common arguments:
-        - n_neighbors : int, default=15
-        - min_dist : float, default=0.1
-        - metric : str, default='euclidean'
+        Additional keyword arguments forwarded to `umap.UMAP` after signature
+        filtering. Common options include `n_neighbors`, `min_dist`, `metric`,
+        and `random_state`.
 
     Attributes
     ----------
-    model : umap.UMAP
-        The underlying UMAP estimator.
+    model : umap.UMAP or None
+        Fitted UMAP estimator after `fit`.
+
+    See Also
+    --------
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
+    PacmapReducer : Nonlinear embedding balancing local and global structure.
+    TrimapReducer : Nonlinear triplet-based embedding preserving global layout.
+    PHATEReducer : Diffusion-based embedding for continuous trajectories.
+    IsomapReducer : Nonlinear geodesic-distance manifold embedding.
+    PCAReducer : Linear baseline for global variance preservation.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.neighbor import UMAPReducer
+    >>> from coco_pipe.dim_reduction import UMAPReducer
     >>> X = np.random.rand(100, 10)
-    >>> reducer = UMAPReducer(n_components=2, n_neighbors=5, random_state=42)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
-    (100, 2)
-    >>> # Transform new data
-    >>> X_new = np.random.rand(10, 10)
-    >>> X_new_reduced = reducer.transform(X_new)
-    >>> print(X_new_reduced.shape)
+    >>> reducer = UMAPReducer(n_components=2, n_neighbors=10, random_state=42)
+    >>> _ = reducer.fit(X)
+    >>> reducer.transform(X[:10]).shape
     (10, 2)
+    >>> reducer.get_diagnostics()["graph_"] is not None
+    True
+    >>> reducer.fit_transform(X).shape
+    (100, 2)
     """
 
     @property
     def capabilities(self) -> dict:
-        """Capabilities of UMAPReducer."""
-        caps = super().capabilities
-        caps.update(
-            {
-                "has_native_plot": True,
-                # UMAP specific diagnostics/graphs
-                "supported_diagnostics": ["graph_", "embedding_"]
-                if self.model is not None
-                else [],
-            }
+        """
+        Return capability metadata for UMAP.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing UMAP as a nonlinear stochastic
+            reducer with transform support and a native plotting path.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=True,
+            has_native_plot=True,
+            supported_diagnostics=("graph_",),
+            supported_metadata=("n_features_in_",),
+            is_linear=False,
+            is_stochastic=True,
         )
-        return caps
 
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the UMAP reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `umap.UMAP` after
+            filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-
-    def get_diagnostics(self) -> dict:
-        """Return UMAP diagnostics."""
-        if self.model is None:
-            return {}
-        diag = {}
-        if hasattr(self.model, "graph_"):
-            diag["graph_"] = self.model.graph_
-        return diag
-
-    def get_quality_metadata(self) -> dict:
-        """Return UMAP qualitative metadata."""
-        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "UMAPReducer":
         """
-        Fit UMAP with X.
+        Fit UMAP on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Optional supervision supported by UMAP.
 
         Returns
         -------
-        self : UMAPReducer
-            Returns the instance itself.
-        """
-        try:
-            import umap
-        except ImportError:
-            raise ImportError(
-                "umap-learn is required for UMAPReducer. "
-                "Install it with 'pip install umap-learn'."
-            )
+        UMAPReducer
+            Fitted reducer instance.
 
-        self.model = umap.UMAP(n_components=self.n_components, **self.params)
+        Raises
+        ------
+        ImportError
+            If `umap-learn` is not installed.
+        RuntimeError
+            If `umap-learn` is installed but fails during initialization.
+        """
+        umap_cls = import_optional_dependency(
+            lambda: __import__("umap", fromlist=["UMAP"]).UMAP,
+            feature="UMAPReducer",
+            dependency="umap-learn",
+            install_hint="pip install coco-pipe[neighbor]",
+        )
+
+        self.model = self._build_estimator(umap_cls)
         self.model.fit(X, y=y)
-        # Store expected input dimension for validation
-        self.model.n_features_in_ = np.array(X).shape[1]
+        if not hasattr(self.model, "n_features_in_"):
+            self.model.n_features_in_ = np.asarray(X).shape[1]
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X using the fitted UMAP model.
+        Project data using the fitted UMAP model.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            New data, where n_samples is the number of samples
-            and n_features is the number of features.
+            Data to project.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Projection of X in the reduced space.
+        np.ndarray of shape (n_samples, n_components)
+            Low-dimensional embedding coordinates.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
-        if self.model is None:
-            raise RuntimeError("UMAPReducer must be fitted before calling transform().")
+        self._require_fitted()
         return self.model.transform(X)
-
-    @property
-    def graph_(self) -> Any:
-        """
-        The fuzzy simplicial set graph computed by UMAP.
-
-        Returns
-        -------
-        graph_ : scipy.sparse.csr.csr_matrix
-            The graph of the fuzzy simplicial set.
-        """
-        if self.model is None or not hasattr(self.model, "graph_"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.graph_
 
 
 class PacmapReducer(BaseReducer):
     """
-    PaCMAP dimensionality reducer.
+    PaCMAP reducer.
 
-    Pairwise Controlled Manifold Approximation (PaCMAP) is a dimensionality reduction
-    method that preserves both local and global structure of the data. It achieves this
-    using three kinds of pairs (near, mid-near, and far) to optimize the embedding.
+    Pairwise Controlled Manifold Approximation (PaCMAP) preserves local and
+    global structure by balancing near, mid-near, and far pairs during the
+    optimization.
 
     Parameters
     ----------
     n_components : int, default=2
-        Number of dimensions.
+        Number of embedding dimensions.
     n_neighbors : int, default=10
-        Number of neighbors.
+        Number of neighbors used to form local pairs.
     MN_ratio : float, default=0.5
-        Mid-near ratio, controlling the balance between local and global structure.
+        Ratio of mid-near pairs.
     FP_ratio : float, default=2.0
-        Far-pair ratio, weighting the repulsion of far points.
+        Ratio of far pairs.
+    nn_backend : {"faiss", "annoy", "voyager"}, default="faiss"
+        Nearest-neighbor backend used by recent PaCMAP versions. Older
+        PaCMAP releases that do not expose this argument will ignore it
+        through signature filtering.
+    init : str, default="pca"
+        Initialization strategy passed to `fit_transform`.
     **kwargs : dict
-        Additional arguments.
+        Additional keyword arguments forwarded to `pacmap.PaCMAP` after
+        signature filtering.
 
     Attributes
     ----------
-    model : pacmap.PaCMAP
-        The underlying PaCMAP estimator.
+    embedding_ : np.ndarray or None
+        Learned training-set embedding after `fit` or `fit_transform`.
+    model : pacmap.PaCMAP or None
+        Fitted PaCMAP estimator after `fit` or `fit_transform`.
+
+    Notes
+    -----
+    `transform` is not supported because PaCMAP does not provide an efficient
+    out-of-sample projection API.
+
+    See Also
+    --------
+    UMAPReducer : Nonlinear graph-based embedding with transform support.
+    TrimapReducer : Nonlinear triplet-based embedding preserving global layout.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
+    PHATEReducer : Diffusion-based embedding for continuous trajectories.
+    PCAReducer : Linear baseline for global variance preservation.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.neighbor import PacmapReducer
+    >>> from coco_pipe.dim_reduction import PacmapReducer
     >>> X = np.random.rand(100, 10)
-    >>> reducer = PacmapReducer(n_components=2, n_neighbors=10)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
+    >>> reducer = PacmapReducer(
+    ...     n_components=2,
+    ...     n_neighbors=10,
+    ...     nn_backend="faiss",
+    ...     init="random",
+    ... )
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
+    (100, 2)
+    >>> reducer.embedding_.shape
     (100, 2)
     """
+
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for PaCMAP.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing PaCMAP as a nonlinear stochastic
+            reducer without out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=False,
+            supported_metadata=(),
+            is_linear=False,
+            is_stochastic=True,
+        )
 
     def __init__(
         self,
@@ -373,90 +442,116 @@ class PacmapReducer(BaseReducer):
         n_neighbors: int = 10,
         MN_ratio: float = 0.5,
         FP_ratio: float = 2.0,
+        nn_backend: str = "faiss",
+        init: str = "pca",
         **kwargs,
     ):
-        # We manually handle these specific args to pass them cleanly
-        self.specific_args = {
-            "n_neighbors": n_neighbors,
-            "MN_ratio": MN_ratio,
-            "FP_ratio": FP_ratio,
-        }
-        # Handle 'init' separately as it goes to fit_transform, not __init__
-        self.init_type = kwargs.pop("init", "pca")
+        """
+        Initialize the PaCMAP reducer.
 
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        n_neighbors : int, default=10
+            Number of neighbors used to form local pairs.
+        MN_ratio : float, default=0.5
+            Ratio of mid-near pairs.
+        FP_ratio : float, default=2.0
+            Ratio of far pairs.
+        nn_backend : {"faiss", "annoy", "voyager"}, default="faiss"
+            Nearest-neighbor backend used during pair construction when
+            supported by the installed PaCMAP version.
+        init : str, default="pca"
+            Initialization strategy passed during fitting.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `PaCMAP` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
+        self.n_neighbors = n_neighbors
+        self.MN_ratio = MN_ratio
+        self.FP_ratio = FP_ratio
+        self.nn_backend = nn_backend
+        self.init = init
         self.embedding_ = None
-
-    def get_diagnostics(self) -> dict:
-        """Return PaCMAP diagnostics."""
-        return {}
-
-    def get_quality_metadata(self) -> dict:
-        """Return PaCMAP qualitative metadata."""
-        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PacmapReducer":
         """
-        Fit PaCMAP using X.
+        Fit PaCMAP on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : PacmapReducer
-            Returns the instance itself.
-        """
-        try:
-            import pacmap
-        except ImportError:
-            raise ImportError(
-                "pacmap is required for PacmapReducer. "
-                "Install it with 'pip install pacmap'."
-            )
+        PacmapReducer
+            Fitted reducer instance.
 
-        self.model = pacmap.PaCMAP(
-            n_components=self.n_components, **self.specific_args, **self.params
+        Raises
+        ------
+        ImportError
+            If `pacmap` is not installed.
+        RuntimeError
+            If `pacmap` is installed but fails during initialization.
+        """
+        pacmap_cls = import_optional_dependency(
+            lambda: __import__("pacmap", fromlist=["PaCMAP"]).PaCMAP,
+            feature="PacmapReducer",
+            dependency="pacmap",
+            install_hint="pip install coco-pipe[neighbor]",
         )
-        # Use the stored init_type
-        self.embedding_ = self.model.fit_transform(X, init=self.init_type)
+
+        self.model = self._build_estimator(
+            pacmap_cls,
+            params={
+                **self.params,
+                "n_neighbors": self.n_neighbors,
+                "MN_ratio": self.MN_ratio,
+                "FP_ratio": self.FP_ratio,
+                "nn_backend": self.nn_backend,
+            },
+        )
+        self.embedding_ = self.model.fit_transform(X, init=self.init)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Raise because PaCMAP does not support out-of-sample transformation.
+
+        Parameters
+        ----------
+        X : ArrayLike
+            Ignored input included for API compatibility.
 
         Raises
         ------
         NotImplementedError
-            PaCMAP does not support transforming new data efficiently without refitting.
-            Use fit_transform() on the full dataset instead.
+            Always raised because PaCMAP does not support transforming new
+            data without refitting.
         """
         raise NotImplementedError(
-            "PaCMAPReducer cannot transform new data. Use fit_transform()."
+            "PacmapReducer cannot transform new data. Use fit_transform()."
         )
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
-        Fit and return embedding.
+        Fit PaCMAP and return the embedding coordinates.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Projection of X in the reduced space.
+        np.ndarray of shape (n_samples, n_components)
+            Embedded coordinates produced by PaCMAP.
         """
         self.fit(X, y=y)
         return self.embedding_
@@ -464,41 +559,73 @@ class PacmapReducer(BaseReducer):
 
 class TrimapReducer(BaseReducer):
     """
-    TriMap dimensionality reducer.
+    TriMap reducer.
 
-    TriMap (Large-scale Dimensionality Reduction Using Triplets) is a dimensionality
-    reduction technique that preserves global structure better than t-SNE and UMAP
-    while being efficient. It uses triplet constraints (i, j, k) to capture the
-    relative similarity between points.
+    TriMap uses triplet constraints to preserve relative similarities while
+    emphasizing global layout preservation.
 
     Parameters
     ----------
     n_components : int, default=2
-        Number of dimensions.
+        Number of embedding dimensions.
     n_inliers : int, default=10
-        Number of nearest neighbors for forming inlier triplets.
+        Number of nearest-neighbor inlier triplets.
     n_outliers : int, default=5
-        Number of outliers for forming outlier triplets.
+        Number of outlier triplets.
     n_random : int, default=5
-        Number of random triplets per point.
+        Number of random triplets per sample.
     **kwargs : dict
-        Additional arguments.
+        Additional keyword arguments forwarded to `trimap.TRIMAP` after
+        signature filtering.
 
     Attributes
     ----------
-    model : trimap.TRIMAP
-        The underlying TriMap estimator.
+    embedding_ : np.ndarray or None
+        Learned training-set embedding after `fit` or `fit_transform`.
+    model : trimap.TRIMAP or None
+        Fitted TriMap estimator after `fit` or `fit_transform`.
+
+    Notes
+    -----
+    `transform` is not supported because TriMap does not provide an
+    out-of-sample projection API.
+
+    See Also
+    --------
+    UMAPReducer : Nonlinear graph-based embedding with transform support.
+    PacmapReducer : Nonlinear embedding balancing local and global structure.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
+    PHATEReducer : Diffusion-based embedding for continuous trajectories.
+    IsomapReducer : Nonlinear geodesic-distance manifold embedding.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.neighbor import TrimapReducer
+    >>> from coco_pipe.dim_reduction import TrimapReducer
     >>> X = np.random.rand(100, 10)
     >>> reducer = TrimapReducer(n_components=2)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
+    >>> reducer.fit_transform(X).shape
     (100, 2)
     """
+
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for TriMap.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing TriMap as a nonlinear stochastic
+            reducer without out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=False,
+            supported_metadata=(),
+            is_linear=False,
+            is_stochastic=True,
+        )
 
     def __init__(
         self,
@@ -508,62 +635,82 @@ class TrimapReducer(BaseReducer):
         n_random: int = 5,
         **kwargs,
     ):
-        self.specific_args = {
-            "n_inliers": n_inliers,
-            "n_outliers": n_outliers,
-            "n_random": n_random,
-        }
+        """
+        Initialize the TriMap reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        n_inliers : int, default=10
+            Number of inlier triplets.
+        n_outliers : int, default=5
+            Number of outlier triplets.
+        n_random : int, default=5
+            Number of random triplets.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `TRIMAP` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
+        self.n_inliers = n_inliers
+        self.n_outliers = n_outliers
+        self.n_random = n_random
         self.embedding_ = None
-
-    def get_diagnostics(self) -> dict:
-        """Return TriMap diagnostics."""
-        return {}
-
-    def get_quality_metadata(self) -> dict:
-        """Return TriMap qualitative metadata."""
-        return {}
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TrimapReducer":
         """
-        Fit TriMap using X.
+        Fit TriMap on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Training data, where n_samples is the number of samples
-            and n_features is the number of features.
-        y : Ignored
-            Not used, present for API consistency by convention.
+            Training data.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : TrimapReducer
-            Returns the instance itself.
-        """
-        try:
-            import trimap
-        except ImportError:
-            raise ImportError(
-                "trimap is required for TrimapReducer. "
-                "Install it with 'pip install trimap'."
-            )
+        TrimapReducer
+            Fitted reducer instance.
 
-        self.model = trimap.TRIMAP(
-            n_dims=self.n_components, **self.specific_args, **self.params
+        Raises
+        ------
+        ImportError
+            If `trimap` is not installed.
+        RuntimeError
+            If `trimap` is installed but fails during initialization.
+        """
+        trimap_cls = import_optional_dependency(
+            lambda: __import__("trimap", fromlist=["TRIMAP"]).TRIMAP,
+            feature="TrimapReducer",
+            dependency="trimap",
+            install_hint="pip install coco-pipe[neighbor]",
+        )
+
+        self.model = self._build_estimator(
+            trimap_cls,
+            component_param="n_dims",
+            n_inliers=self.n_inliers,
+            n_outliers=self.n_outliers,
+            n_random=self.n_random,
         )
         self.embedding_ = self.model.fit_transform(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Raise because TriMap does not support out-of-sample transformation.
+
+        Parameters
+        ----------
+        X : ArrayLike
+            Ignored input included for API compatibility.
 
         Raises
         ------
         NotImplementedError
-            PaCMAP does not support transforming new data efficiently without refitting.
-            Use fit_transform() on the full dataset instead.
+            Always raised because TriMap does not support transforming new
+            data without refitting.
         """
         raise NotImplementedError(
             "TrimapReducer cannot transform new data. Use fit_transform()."
@@ -571,19 +718,19 @@ class TrimapReducer(BaseReducer):
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
-        Fit and return embedding.
+        Fit TriMap and return the embedding coordinates.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Projection of X.
+        np.ndarray of shape (n_samples, n_components)
+            Embedded coordinates produced by TriMap.
         """
         self.fit(X, y=y)
         return self.embedding_
@@ -591,219 +738,234 @@ class TrimapReducer(BaseReducer):
 
 class PHATEReducer(BaseReducer):
     """
-    PHATE dimensionality reducer.
+    PHATE reducer.
 
-    Potential of Heat-diffusion for Affinity-based Trajectory Embedding (PHATE) is
-    designed to visualize high-dimensional data, specifically biological data with
-    continuous progression structures (trajectories). It uses information-theoretic
-    distances based on diffusion probabilities.
+    Potential of Heat-diffusion for Affinity-based Transition Embedding (PHATE)
+    is designed for data with continuous progression structure and uses
+    diffusion-based distances to construct the embedding.
 
     Parameters
     ----------
     n_components : int, default=2
-        Number of dimensions.
+        Number of embedding dimensions.
     knn : int, default=5
-        Number of nearest neighbors for kernel construction.
+        Number of nearest neighbors used in the kernel graph.
     decay : int, default=40
-        Decay rate for kernel.
+        Decay rate for the kernel.
+    t : int or str, default="auto"
+        Diffusion time.
     **kwargs : dict
-        Additional arguments.
+        Additional keyword arguments forwarded to `phate.PHATE` after
+        signature filtering.
 
     Attributes
     ----------
-    model : phate.PHATE
-        The underlying PHATE estimator.
+    model : phate.PHATE or None
+        Fitted PHATE estimator after `fit`.
+
+    See Also
+    --------
+    UMAPReducer : Nonlinear graph-based embedding with transform support.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
+    PacmapReducer : Nonlinear embedding balancing local and global structure.
+    TrimapReducer : Nonlinear triplet-based embedding preserving global layout.
+    ParametricUMAPReducer : Neural-network-backed UMAP approximation.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.neighbor import PHATEReducer
+    >>> from coco_pipe.dim_reduction import PHATEReducer
     >>> X = np.random.rand(100, 10)
     >>> reducer = PHATEReducer(n_components=2, knn=5)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
-    (100, 2)
+    >>> _ = reducer.fit(X)
+    >>> reducer.transform(X[:10]).shape
+    (10, 2)
+    >>> reducer.get_diagnostics()["diff_potential"] is not None
+    True
     """
 
     @property
     def capabilities(self) -> dict:
-        """Capabilities of PHATEReducer."""
-        caps = super().capabilities
-        caps.update(
-            {
-                "has_native_plot": True,
-                "supported_diagnostics": ["diff_potential"]
-                if self.model is not None
-                else [],
-            }
+        """
+        Return capability metadata for PHATE.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing PHATE as a nonlinear reducer with
+            transform support and a native plotting path.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=True,
+            has_native_plot=True,
+            supported_diagnostics=("diff_potential",),
+            supported_metadata=("n_features_in_",),
+            is_linear=False,
+            is_stochastic=True,
         )
-        return caps
 
-    def __init__(self, n_components: int = 2, **kwargs):
+    def __init__(
+        self,
+        n_components: int = 2,
+        knn: int = 5,
+        decay: int = 40,
+        t: Any = "auto",
+        **kwargs,
+    ):
+        """
+        Initialize the PHATE reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        knn : int, default=5
+            Number of nearest neighbors used in the kernel graph.
+        decay : int, default=40
+            Decay rate for the kernel.
+        t : int or str, default="auto"
+            Diffusion time.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `PHATE` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-
-    def get_diagnostics(self) -> dict:
-        """Return PHATE diagnostics."""
-        if self.model is None:
-            return {}
-        diag = {}
-        if hasattr(self.model, "diff_potential"):
-            diag["diff_potential"] = self.model.diff_potential
-        return diag
-
-    def get_quality_metadata(self) -> dict:
-        """Return PHATE qualitative metadata."""
-        return {}
+        self.knn = knn
+        self.decay = decay
+        self.t = t
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PHATEReducer":
         """
-        Fit PHATE using X.
+        Fit PHATE on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : PHATEReducer
-            Returns the instance itself.
-        """
-        try:
-            import phate
-        except ImportError:
-            raise ImportError(
-                "phate is required for PHATEReducer. "
-                "Install it with 'pip install phate'."
-            )
+        PHATEReducer
+            Fitted reducer instance.
 
-        self.model = phate.PHATE(n_components=self.n_components, **self.params)
+        Raises
+        ------
+        ImportError
+            If `phate` is not installed.
+        RuntimeError
+            If `phate` is installed but fails during initialization.
+        """
+        phate_cls = import_optional_dependency(
+            lambda: __import__("phate", fromlist=["PHATE"]).PHATE,
+            feature="PHATEReducer",
+            dependency="phate",
+            install_hint="pip install coco-pipe[neighbor]",
+        )
+
+        self.model = self._build_estimator(
+            phate_cls,
+            knn=self.knn,
+            decay=self.decay,
+            t=self.t,
+        )
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X using the fitted PHATE model.
+        Project data using the fitted PHATE model.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            New data to transform.
+            Data to project.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Projected data.
+        np.ndarray of shape (n_samples, n_components)
+            Low-dimensional embedding coordinates.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
-        if self.model is None:
-            raise RuntimeError(
-                "PHATEReducer must be fitted before calling transform()."
-            )
+        self._require_fitted()
         return self.model.transform(X)
-
-    @property
-    def diff_potential(self) -> np.ndarray:
-        """
-        The diffusion potential of the data.
-
-        Returns
-        -------
-        diff_potential : np.ndarray
-        """
-        if self.model is None or not hasattr(self.model, "diff_potential"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.diff_potential
-
-    @property
-    def diff_op(self) -> Any:
-        """
-        The diffusion operator.
-
-        Returns
-        -------
-        diff_op : scipy.sparse.csr_matrix or np.ndarray
-        """
-        if self.model is None or not hasattr(self.model, "diff_op"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.diff_op
-
-    @property
-    def graph(self) -> Any:
-        """
-        The k-nearest neighbor graph.
-
-        Returns
-        -------
-        graph : scipy.sparse.csr_matrix
-        """
-        if self.model is None or not hasattr(self.model, "graph"):
-            raise RuntimeError("Model is not fitted yet.")
-        return self.model.graph
 
 
 class ParametricUMAPReducer(BaseReducer):
     """
-    Parametric UMAP Reducer (TensorFlow backed).
+    Parametric UMAP reducer.
 
-    Learns a neural network to approximate the UMAP embedding.
-    Wrapper for umap.parametric_umap.ParametricUMAP.
+    Parametric UMAP learns a neural network that approximates the UMAP
+    embedding, enabling reusable out-of-sample projection through the trained
+    network.
 
     Parameters
     ----------
     n_components : int, default=2
-        The dimension of the space to embed into.
+        Number of embedding dimensions.
     n_neighbors : int, default=15
-        The size of local neighborhood.
+        Size of the local neighborhood.
     min_dist : float, default=0.1
-        The effective minimum distance between embedded points.
-    metric : str, default='euclidean'
-        The metric to use to compute distances.
-    n_epochs : int, default=None
-        The number of training epochs.
+        Effective minimum distance between embedded points.
+    metric : str, default="euclidean"
+        Metric used for distance computation.
+    n_epochs : int, optional
+        Number of training epochs.
     batch_size : int, default=1000
-        Batch size.
+        Batch size used during training.
     verbose : bool, default=False
-        Whether to print progress messages.
+        Whether to print backend training progress.
     **kwargs : dict
-        Additional arguments.
+        Additional keyword arguments forwarded to
+        `umap.parametric_umap.ParametricUMAP` after signature filtering.
 
     Attributes
     ----------
-    model : umap.parametric_umap.ParametricUMAP
-        The fitted estimator.
+    model : umap.parametric_umap.ParametricUMAP or None
+        Fitted Parametric UMAP estimator after `fit`.
+
+    See Also
+    --------
+    UMAPReducer : Non-parametric UMAP with graph-based transform support.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
+    PHATEReducer : Diffusion-based embedding for continuous trajectories.
+    IVISReducer : Neural metric-learning-based embedding.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from coco_pipe.dim_reduction import ParametricUMAPReducer
+    >>> X = np.random.rand(50, 10).astype(np.float32)
+    >>> reducer = ParametricUMAPReducer(n_components=2, n_epochs=5, verbose=False)
+    >>> _ = reducer.fit(X)
+    >>> reducer.transform(X[:10]).shape
+    (10, 2)
     """
 
     @property
     def capabilities(self) -> dict:
-        """Capabilities of ParametricUMAPReducer."""
-        caps = super().capabilities
-        caps.update(
-            {
-                "has_native_plot": False,  # Not supported by umap.plot usually
-                "supported_diagnostics": ["loss_history_"]
-                if self.model is not None
-                else [],
-            }
+        """
+        Return capability metadata for Parametric UMAP.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing Parametric UMAP as a nonlinear
+            stochastic reducer with transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=True,
+            supported_diagnostics=("loss_history_",),
+            supported_metadata=("n_features_in_",),
+            is_linear=False,
+            is_stochastic=True,
         )
-        return caps
-
-    def get_diagnostics(self) -> dict:
-        """Return ParametricUMAP diagnostics."""
-        if self.model is None:
-            return {}
-        diag = {}
-        # ParametricUMAP stores loss history in history attribute or similar
-        # depending on version, but we standardized on loss_history_ property
-        try:
-            diag["loss_history_"] = self.loss_history_
-        except RuntimeError:
-            pass
-        return diag
-
-    def get_quality_metadata(self) -> dict:
-        """Return ParametricUMAP qualitative metadata."""
-        return {}
 
     def __init__(
         self,
@@ -816,6 +978,29 @@ class ParametricUMAPReducer(BaseReducer):
         verbose: bool = False,
         **kwargs,
     ):
+        """
+        Initialize the Parametric UMAP reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of embedding dimensions.
+        n_neighbors : int, default=15
+            Size of the local neighborhood.
+        min_dist : float, default=0.1
+            Effective minimum distance between embedded points.
+        metric : str, default="euclidean"
+            Metric used for distance computation.
+        n_epochs : int, optional
+            Number of training epochs.
+        batch_size : int, default=1000
+            Batch size used during training.
+        verbose : bool, default=False
+            Whether to print backend training progress.
+        **kwargs : dict
+            Additional keyword arguments forwarded to Parametric UMAP after
+            filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
         self.n_neighbors = n_neighbors
         self.min_dist = min_dist
@@ -828,46 +1013,105 @@ class ParametricUMAPReducer(BaseReducer):
         self, X: ArrayLike, y: Optional[ArrayLike] = None
     ) -> "ParametricUMAPReducer":
         """
-        Fit parametric UMAP.
-        """
-        try:
-            from umap.parametric_umap import ParametricUMAP
-        except ImportError:
-            raise ImportError(
-                "umap-learn is required for ParametricUMAPReducer. "
-                "Install it with 'pip install umap-learn'."
-            )
+        Fit Parametric UMAP on the input data.
 
-        self.model = ParametricUMAP(
-            n_components=self.n_components,
+        Parameters
+        ----------
+        X : ArrayLike of shape (n_samples, n_features)
+            Training data.
+        y : ArrayLike, optional
+            Optional supervision supported by Parametric UMAP.
+
+        Returns
+        -------
+        ParametricUMAPReducer
+            Fitted reducer instance.
+
+        Raises
+        ------
+        ImportError
+            If `umap-learn` is not installed.
+        RuntimeError
+            If `umap-learn` is installed but fails during initialization.
+        """
+        parametric_umap_cls = import_optional_dependency(
+            lambda: (
+                __import__(
+                    "umap.parametric_umap", fromlist=["ParametricUMAP"]
+                ).ParametricUMAP
+            ),
+            feature="ParametricUMAPReducer",
+            dependency="umap-learn",
+            install_hint="pip install coco-pipe[parametric-umap]",
+        )
+
+        self.model = self._build_estimator(
+            parametric_umap_cls,
             n_neighbors=self.n_neighbors,
             min_dist=self.min_dist,
             metric=self.metric,
             n_epochs=self.n_epochs,
             batch_size=self.batch_size,
             verbose=self.verbose,
-            **self.params,
         )
-
         self.model.fit(X, y=y)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X into the low-dimensional space.
+        Project data using the fitted Parametric UMAP model.
+
+        Parameters
+        ----------
+        X : ArrayLike of shape (n_samples, n_features)
+            Data to project.
+
+        Returns
+        -------
+        np.ndarray of shape (n_samples, n_components)
+            Low-dimensional embedding coordinates.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        self._require_fitted()
+        return self.model.transform(X)
+
+    @property
+    def loss_history_(self) -> list:
+        """
+        Training loss history for the parametric model.
+
+        Returns
+        -------
+        list
+            Recorded loss values across training epochs.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
         if self.model is None:
-            raise RuntimeError(
-                "ParametricUMAPReducer must be fitted before calling transform()."
-            )
-
-        return self.model.transform(X)
+            raise RuntimeError("Model is not fitted yet.")
+        return list(self.model._history["loss"])
 
     def save(self, filepath: str) -> None:
         """
-        Save using joblib (wrapper).
+        Serialize the fitted reducer with joblib.
+
+        Parameters
+        ----------
+        filepath : str
+            Output path for the serialized reducer.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
         if self.model is None:
             raise RuntimeError("Model is not fitted.")
-
         super().save(filepath)

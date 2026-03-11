@@ -268,7 +268,7 @@ class TSNEConfig(BaseReducerConfig, StochasticReducerConfig):
     learning_rate: Union[float, str] = Field(
         "auto", description="Learning rate for t-SNE optimization."
     )
-    n_iter: int = Field(1000, ge=250, description="Maximum number of iterations.")
+    max_iter: int = Field(1000, ge=250, description="Maximum number of iterations.")
     init: str = Field("pca", description="Initialization of embedding: random or pca.")
 
 
@@ -279,6 +279,13 @@ class PacmapConfig(BaseReducerConfig, StochasticReducerConfig):
     n_neighbors: int = Field(10, description="Number of neighbors.")
     MN_ratio: float = Field(0.5, description="Ratio of mid-near pairs.")
     FP_ratio: float = Field(2.0, description="Ratio of far pairs.")
+    nn_backend: str = Field(
+        "faiss",
+        description=(
+            "Nearest-neighbor backend. Recent PaCMAP versions support "
+            "faiss, annoy, and voyager."
+        ),
+    )
     init: str = Field("pca", description="Initialization method.")
 
 
@@ -314,10 +321,12 @@ class LLEConfig(BaseReducerConfig, StochasticReducerConfig):
 
     method: Literal["LLE"] = "LLE"
     n_neighbors: int = Field(5, description="Number of neighbors.")
-    method_variant: str = Field(
+    lle_method: str = Field(
         "standard",
-        alias="variant",
-        description="LLE Variant (standard, hessian, modified, ltsa).",
+        description=(
+            "LLE method (standard, hessian, modified, ltsa). Named "
+            "'lle_method' because 'method' is reserved for reducer selection."
+        ),
     )
 
 
@@ -345,6 +354,13 @@ class DMDConfig(BaseReducerConfig):
     """Configuration for DMD."""
 
     method: Literal["DMD"] = "DMD"
+    force_transpose: bool = Field(
+        False,
+        description=(
+            "Transpose input from (n_snapshots, n_features) to "
+            "(n_features, n_snapshots)."
+        ),
+    )
     tlsq_rank: int = Field(0, description="Rank for Total Least Squares processing.")
     exact: bool = Field(
         False, description="Compute exact DMD (True) or projected DMD (False)."
@@ -356,8 +372,13 @@ class TRCAConfig(BaseReducerConfig):
     """Configuration for TRCA."""
 
     method: Literal["TRCA"] = "TRCA"
-    # TRCA generally takes simple args found in Base (n_components)
-    # Adding any future specific args here if needed.
+    sfreq: float = Field(250.0, description="Sampling frequency in Hertz.")
+    filterbank: Optional[list] = Field(
+        None,
+        description=(
+            "Optional filterbank definition as [(passband), (stopband)] groups."
+        ),
+    )
 
 
 class TopologicalAEConfig(BaseReducerConfig, StochasticReducerConfig):
@@ -371,7 +392,8 @@ class TopologicalAEConfig(BaseReducerConfig, StochasticReducerConfig):
     lr: float = Field(1e-3, description="Learning rate.")
     batch_size: int = Field(64, description="Batch size.")
     epochs: int = Field(50, description="Number of training epochs.")
-    device: str = Field("cpu", description="Device to use (cpu, cuda, mps, auto).")
+    device: str = Field("auto", description="Device to use (cpu, cuda, mps, auto).")
+    verbose: int = Field(0, description="Skorch verbosity level.")
 
 
 class IVISConfig(BaseReducerConfig, StochasticReducerConfig):
@@ -445,5 +467,18 @@ class EvaluationConfig(BaseModel):
         description="Neighborhood sizes (k) for multi-scale evaluation.",
     )
     viz_metric: str = Field(
-        "trustworthiness", description="Primary metric for plotting comparison curves."
+        "trustworthiness",
+        description="Primary metric for plotting comparison curves.",
+    )
+    selection_metric: Optional[str] = Field(
+        default=None,
+        description="Primary metric used for automatic method ranking.",
+    )
+    selection_k: Optional[int] = Field(
+        default=None,
+        description="Neighborhood size to compare for k-scoped ranking metrics.",
+    )
+    tie_breakers: List[str] = Field(
+        default_factory=list,
+        description="Additional metrics used in order to break ranking ties.",
     )
