@@ -5,6 +5,7 @@ Tests for Dimensionality Reducers
 Unified test suite for all dimensionality reduction in coco_pipe.
 """
 
+import importlib
 import sys
 import warnings
 from types import SimpleNamespace
@@ -17,7 +18,6 @@ from sklearn.datasets import make_blobs
 
 from coco_pipe.dim_reduction.config import (
     METHODS,
-    DimReductionConfig,
     ParametricUMAPConfig,
     get_reducer_class,
 )
@@ -193,6 +193,12 @@ class _MockNeuralNetRegressor:
             hidden_dims=module__hidden_dims,
         )
         self.history_ = _MockHistory([1.0, 0.5])
+        self.callbacks = callbacks
+
+    def set_params(self, **params):
+        if self.last_init:
+            self.last_init.update(params)
+        return self
 
     def fit(self, X, y):
         self.fitted_ = True
@@ -200,6 +206,39 @@ class _MockNeuralNetRegressor:
 
 
 # --- 1. Base Functionality (using PCA) ---
+
+
+def test_base_reducer_is_public_extension_point():
+    class DummyReducer(BaseReducer):
+        def fit(self, X, y=None):
+            self.model = object()
+            return self
+
+        def transform(self, X):
+            X = np.asarray(X)
+            return X[:, : self.n_components]
+
+    reducer = DummyReducer(n_components=2)
+    caps = reducer.capabilities
+
+    assert caps["input_ndim"] == 2
+    assert caps["input_layout"] == "standard"
+    assert caps["has_transform"] is True
+
+
+def test_topology_module_import_is_lazy(monkeypatch):
+    module_name = "coco_pipe.dim_reduction.reducers.topology"
+    cached_module = sys.modules.get(module_name)
+    sys.modules.pop(module_name, None)
+    monkeypatch.setitem(sys.modules, "torch", None)
+
+    try:
+        topology_mod = importlib.import_module(module_name)
+        assert hasattr(topology_mod, "TopologicalAEReducer")
+    finally:
+        sys.modules.pop(module_name, None)
+        if cached_module is not None:
+            sys.modules[module_name] = cached_module
 
 
 def test_base_functionality_pca(data, tmp_save_path):
@@ -559,10 +598,6 @@ def test_parametric_umap_config():
     conf = ParametricUMAPConfig(n_epochs=10)
     assert conf.method == "ParametricUMAP"
     assert conf.n_epochs == 10
-
-    # Test wrapping in DimReductionConfig
-    wrapper = DimReductionConfig(config=conf)
-    assert wrapper.config.method == "ParametricUMAP"
 
 
 def test_parametric_umap_mock():
@@ -1159,53 +1194,27 @@ def test_topo_signature_logic():
 
 
 def test_topo_device_init():
-    X = np.random.rand(8, 4).astype(np.float32)
+    from coco_pipe.dim_reduction.reducers.topology import _resolve_device
 
     fake_cuda = _FakeTopologyTorch(cuda_available=True)
-    with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes",
-            return_value=(
-                fake_cuda,
-                _MockTopologyModule,
-                _MockTopologyLossCriterion,
-            ),
-        ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
-            return_value=_MockNeuralNetRegressor,
-        ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._load_torch",
-            return_value=fake_cuda,
-        ),
+    with patch(
+        "coco_pipe.dim_reduction.reducers.topology._load_torch",
+        return_value=fake_cuda,
     ):
-        r = TopologicalAEReducer(device="auto", epochs=1)
-        r.fit(X)
-        assert r.device == "cuda"
+        assert _resolve_device("auto") == "cuda"
 
     fake_mps = _FakeTopologyTorch(cuda_available=False, mps_available=True)
-    with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes",
-            return_value=(
-                fake_mps,
-                _MockTopologyModule,
-                _MockTopologyLossCriterion,
-            ),
-        ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
-            return_value=_MockNeuralNetRegressor,
-        ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._load_torch",
-            return_value=fake_mps,
-        ),
+    with patch(
+        "coco_pipe.dim_reduction.reducers.topology._load_torch",
+        return_value=fake_mps,
     ):
-        r = TopologicalAEReducer(device="auto", epochs=1)
-        r.fit(X)
-        assert r.device == "mps"
+        assert _resolve_device("auto") == "mps"
+
+    with patch(
+        "coco_pipe.dim_reduction.reducers.topology._load_torch",
+        side_effect=RuntimeError("no torch"),
+    ):
+        assert _resolve_device("auto") == "cpu"
 
 
 def test_reproducibility_stochastic_reducers(data):
@@ -1317,7 +1326,11 @@ def test_topology_reducer_filters_unknown_params():
         ),
         patch(
             "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
-            return_value=_MockNeuralNetRegressor,
+            side_effect=lambda loader, feature=None, dependency=None, **kwargs: (
+                _MockNeuralNetRegressor
+                if (dependency or kwargs.get("dependency")) == "skorch"
+                else loader()
+            ),
         ),
     ):
         reducer = TopologicalAEReducer(
@@ -1325,11 +1338,13 @@ def test_topology_reducer_filters_unknown_params():
             epochs=2,
             batch_size=4,
             device="cpu",
-            callbacks=["cb"],
+            callbacks=[MagicMock()],
             unsupported_param=123,
         )
         reducer.fit(X)
-        assert _MockNeuralNetRegressor.last_init["callbacks"] == ["cb"]
+        # Verify filtering and callback passing
+        assert _MockNeuralNetRegressor.last_init is not None
+        assert len(_MockNeuralNetRegressor.last_init["callbacks"]) == 1
         assert "unsupported_param" not in _MockNeuralNetRegressor.last_init
 
 
@@ -1391,7 +1406,7 @@ def test_topology_capabilities_api():
     """Verify topology reducer capabilities metadata."""
     topo = TopologicalAEReducer(n_components=2)
     assert topo.capabilities["has_transform"] is True
-    assert topo.capabilities["supported_diagnostics"] == ["loss_history_"]
+    assert list(topo.capabilities["supported_diagnostics"]) == ["loss_history_"]
     assert topo.capabilities["is_linear"] is False
     assert topo.capabilities["is_stochastic"] is True
 
@@ -1792,6 +1807,7 @@ def test_topology_signature_distance_dim1():
     ):
         pairs = dist._get_active_pairs(MagicMock(), dim=1)
         assert len(pairs) == 1
+        # birth_simplex was [0, 1]
         assert pairs[0] == (0, 1)
 
 

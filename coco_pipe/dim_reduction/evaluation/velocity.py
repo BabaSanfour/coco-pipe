@@ -22,6 +22,8 @@ from typing import Iterable, Optional
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
+__all__ = ["compute_velocity_fields"]
+
 
 def _validate_inputs(
     X: np.ndarray,

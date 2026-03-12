@@ -38,6 +38,19 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
+__all__ = [
+    "moving_average",
+    "trajectory_acceleration",
+    "trajectory_speed",
+    "trajectory_curvature",
+    "trajectory_path_length",
+    "trajectory_displacement",
+    "trajectory_tortuosity",
+    "trajectory_turning_angle",
+    "trajectory_dispersion",
+    "trajectory_separation",
+]
+
 
 def _validate_trajectory_array(traj: np.ndarray, min_timepoints: int = 2) -> np.ndarray:
     """Validate generic trajectory inputs with time on axis ``-2``."""

@@ -19,7 +19,7 @@ We structure our request for a scientific instrument around **Three Tiers of Inq
 
 *The Swiss Army Knives of Data Science.*
 
-The current suite of reducers—PCA, t-SNE, UMAP, PaCMAP, TriMap, PHATE—represents the gold standard of general data science. These tools are essential for the initial "scouting" of data territory.
+The current suite of reducers—PCA, TSNE, UMAP, Pacmap, Trimap, PHATE—represents the gold standard of general data science. These tools are essential for the initial "scouting" of data territory.
 
 ### 2.1 The Limitations of the "Generalist" Paradigm
 
@@ -107,7 +107,7 @@ $$
 To make this viable for large data:
 1.  **Tree-Based Search**: KDTree/BallTree for $O(N \log N)$ neighbor finding.
 2.  **Vectorization**: Full NumPy vectorization of $Q$ matrix population.
-3.  **Benchmarking Class**: `MethodSelector` to generate "Quality Curves" (Metric vs $k$) automatically.
+3.  **Comparison Layer**: `MethodSelector` to rank already-scored reducers from tidy metric observations and compare "Quality Curves" (Metric vs $k$) post hoc.
 
 ---
 
@@ -140,9 +140,9 @@ The module's architecture is designed for robustness and scalability, moving bey
 ### 6.1 Core API and Orchestration
 The module strictly adheres to the **scikit-learn API standard**, ensuring distinct familiarity for data scientists.
 *   **Uniform Interface**: Every reducer, from simple PCA to complex Topological Autoencoders, inherits from `BaseReducer` and exposes the standard `fit(X)`, `transform(X)`, and `fit_transform(X)` methods.
-*   **The Orchestrator**: The `DimReduction` class serves as the high-level manager. It handles method instantiation from config, pipeline execution, and result aggregation.
-*   **Benchmarking**: The `MethodSelector` class automates the "tournament" between reducers. It runs multiple methods (or hyperparameter sets) in parallel and ranks them based on the Co-ranking metrics.
-*   **Visualization**: Built-in `.plot()` methods on the orchestrator provide production-ready static plots (scatter, velocity streams) instantly, abstracting away matplotlib boilerplate.
+*   **The Orchestrator**: The `DimReduction` class serves as the high-level manager for a single reducer. It handles method instantiation, execution, and scoring for one explicit embedding.
+*   **Comparison**: The `MethodSelector` class is a post-hoc comparison layer over already-scored reducers and ranks them from tidy metric observations.
+*   **Visualization**: Plotting is provided by dedicated functions in `coco_pipe.viz.dim_reduction`, keeping the reduction manager focused on execution and evaluation.
 
 ### 6.2 Modern Configuration Management
 We use a **Hydra + Pydantic** system for configuration [21].

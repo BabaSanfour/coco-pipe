@@ -11,7 +11,7 @@ The surrounding dim-reduction stack uses these interfaces to provide:
 - input validation through the reducer `capabilities` mapping
 - standardized persistence with `save` and `load`
 - reducer-aware reporting and visualization hooks
-- optional dependency loading through `import_optional_dependency`
+- optional dependency loading through `coco_pipe.utils.import_optional_dependency`
 
 Notes
 -----
@@ -36,62 +36,7 @@ import numpy as np
 # Type alias for array-like objects
 ArrayLike = Union[np.ndarray, list]
 
-__all__ = ["ArrayLike", "BaseReducer", "import_optional_dependency"]
-
-
-def import_optional_dependency(
-    loader: Any,
-    feature: str,
-    dependency: str,
-    install_hint: Optional[str] = None,
-) -> Any:
-    """
-    Lazily import an optional dependency with clearer failure modes.
-
-    This helper is primarily reducer infrastructure. It keeps heavy optional
-    imports inside `fit` and `transform` paths and normalizes both
-    missing-package errors and runtime initialization failures.
-
-    Parameters
-    ----------
-    loader : callable
-        Zero-argument callable returning the imported dependency.
-    feature : str
-        Feature or reducer name using the dependency.
-    dependency : str
-        Human-readable dependency name.
-    install_hint : str, optional
-        Installation hint shown on ImportError.
-
-    Returns
-    -------
-    Any
-        The imported dependency object returned by `loader`.
-
-    Raises
-    ------
-    ImportError
-        If the dependency is not installed.
-    RuntimeError
-        If the dependency is installed but fails during initialization.
-
-    Notes
-    -----
-    Reducers should call this helper inside execution paths instead of module
-    import time so that optional scientific dependencies do not break
-    lightweight package imports.
-    """
-    try:
-        return loader()
-    except ImportError as exc:
-        msg = f"{dependency} is required for {feature}."
-        if install_hint:
-            msg += f" Install it with '{install_hint}'."
-        raise ImportError(msg) from exc
-    except Exception as exc:
-        raise RuntimeError(
-            f"{dependency} failed to initialize for {feature}: {exc}"
-        ) from exc
+__all__ = ["ArrayLike", "BaseReducer"]
 
 
 class BaseReducer(ABC):
@@ -545,6 +490,24 @@ class BaseReducer(ABC):
         meta = self._attribute_dict(self.model, attrs)
         meta.update(self._attribute_dict(self, attrs))
         return meta
+
+    def get_components(self) -> np.ndarray:
+        """
+        Return reducer-defined component-like outputs.
+
+        Returns
+        -------
+        np.ndarray
+            Reducer-defined component array.
+
+        Raises
+        ------
+        ValueError
+            If the reducer does not expose public components.
+        """
+        raise ValueError(
+            f"{type(self).__name__} does not expose public get_components()."
+        )
 
     @classmethod
     def load(cls, filepath: Union[str, os.PathLike]) -> "BaseReducer":

@@ -4,15 +4,19 @@ Evaluation Core
 
 Pure evaluation orchestration for dimensionality-reduction workflows.
 
-This module provides two public entry points:
+This module contains the two public evaluation interfaces used by the
+dim-reduction stack:
 
-- ``evaluate_embedding(...)`` evaluates an already computed embedding and
-  returns scalar metrics, diagnostics, and tidy metric records.
+- ``evaluate_embedding(...)`` evaluates an explicit embedding and returns
+  scalar metrics, scalar metadata, diagnostics, and tidy metric records.
 - ``MethodSelector`` compares and ranks multiple already-scored
-  ``DimReduction`` objects without recomputing embeddings.
+  ``DimReduction`` objects without refitting or recomputing embeddings.
 
-The module does not fit reducers or reconstruct trajectory tensors from flat
-embeddings. Input shaping and reduction execution must happen upstream.
+The module is intentionally evaluation-only. It does not fit reducers,
+transform data, reconstruct 3D trajectory tensors from flat embeddings, or
+provide plotting methods. Reduction execution belongs to
+``coco_pipe.dim_reduction.core.DimReduction`` and plotting belongs to
+``coco_pipe.viz.dim_reduction``.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
@@ -55,6 +59,8 @@ from .metrics import (
     shepard_diagram_data,
     trustworthiness,
 )
+
+__all__ = ["evaluate_embedding", "MethodSelector"]
 
 METRIC_COLUMNS = ("method", "metric", "value", "scope", "scope_value")
 SWEEP_METRICS = (
@@ -639,7 +645,7 @@ class MethodSelector:
     ----------
     reducers : dict or list of DimReduction
         Scored ``DimReduction`` objects to compare. Lists are converted to a
-        name-keyed mapping using ``reducer.name``.
+        method-keyed mapping using ``reducer.method``.
 
     Attributes
     ----------
@@ -661,12 +667,12 @@ class MethodSelector:
     >>> from coco_pipe.dim_reduction import DimReduction
     >>> X = np.random.RandomState(0).randn(30, 4)
     >>> reducers = [
-    ...     DimReduction("pca", n_components=2),
-    ...     DimReduction("isomap", n_components=2, n_neighbors=5),
+    ...     DimReduction("PCA", n_components=2),
+    ...     DimReduction("Isomap", n_components=2, n_neighbors=5),
     ... ]
     >>> for reducer in reducers:
-    ...     _ = reducer.fit_transform(X)
-    ...     _ = reducer.score(X, k_values=[5])
+    ...     embedding = reducer.fit_transform(X)
+    ...     reducer.score(embedding, X=X, k_values=[5])
     >>> selector = MethodSelector(reducers).collect()
     >>> frame = selector.to_frame()
     >>> not frame.empty
@@ -676,6 +682,20 @@ class MethodSelector:
     def __init__(
         self, reducers: Union[Dict[str, "DimReduction"], List["DimReduction"]]
     ):
+        """
+        Create a post-hoc comparison layer over scored reductions.
+
+        Parameters
+        ----------
+        reducers : dict or list of DimReduction
+            Already-scored reductions to compare. When a list is provided,
+            reducers are keyed by ``reducer.method``.
+
+        Raises
+        ------
+        TypeError
+            If any provided object is not a ``DimReduction`` instance.
+        """
         from ..core import DimReduction
 
         if isinstance(reducers, list):
@@ -686,7 +706,7 @@ class MethodSelector:
                         "MethodSelector only accepts scored DimReduction objects. "
                         f"Got {type(reducer).__name__}."
                     )
-                validated[reducer.name] = reducer
+                validated[reducer.method] = reducer
             self.reducers = validated
         else:
             self.reducers = dict(reducers)
@@ -711,15 +731,36 @@ class MethodSelector:
         Raises
         ------
         ValueError
-            If a reducer has not been fitted or scored yet.
+            If a reducer has not been scored yet.
+
+        See Also
+        --------
+        coco_pipe.dim_reduction.core.DimReduction.score
+            Populates the ``metric_records_`` consumed by this method.
+        to_frame
+            Materialize the collected long-form records as a DataFrame.
+
+        Notes
+        -----
+        ``collect()`` does not fit reducers or recompute evaluation metrics.
+        It only gathers cached metric observations from reducers that were
+        already scored explicitly.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import DimReduction
+        >>> X = np.random.RandomState(0).randn(20, 4)
+        >>> reducer = DimReduction("PCA", n_components=2)
+        >>> embedding = reducer.fit_transform(X)
+        >>> reducer.score(embedding, X=X, k_values=[5])
+        >>> selector = MethodSelector([reducer]).collect()
+        >>> len(selector.metric_records_) > 0
+        True
         """
         self.metric_records_ = []
         records: List[Dict[str, Any]] = []
         for name, reducer in self.reducers.items():
-            if reducer.embedding_ is None:
-                raise ValueError(
-                    f"Reducer '{name}' has no embedding. Call fit_transform() first."
-                )
             if not reducer.metric_records_:
                 raise ValueError(
                     f"Reducer '{name}' has no metric records. Call score() first."
@@ -747,6 +788,25 @@ class MethodSelector:
         This method only materializes a DataFrame at the public export
         boundary. Internally, ``MethodSelector`` stores metric records as plain
         Python dictionaries.
+
+        See Also
+        --------
+        collect
+            Gather cached metric records from scored reducers.
+        rank_methods
+            Rank reducers from the collected metric table.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import DimReduction
+        >>> X = np.random.RandomState(0).randn(20, 4)
+        >>> reducer = DimReduction("PCA", n_components=2)
+        >>> embedding = reducer.fit_transform(X)
+        >>> reducer.score(embedding, X=X, k_values=[5])
+        >>> frame = MethodSelector([reducer]).collect().to_frame()
+        >>> set(["method", "metric", "value"]).issubset(frame.columns)
+        True
         """
         if not self.metric_records_:
             return pd.DataFrame(columns=METRIC_COLUMNS)
@@ -789,20 +849,29 @@ class MethodSelector:
         ``selection_k`` restricts comparison to a single neighborhood size when
         requested.
 
+        See Also
+        --------
+        collect
+            Gather cached metric observations before ranking.
+        to_frame
+            Inspect the underlying long-form metric observations directly.
+        coco_pipe.dim_reduction.core.DimReduction.score
+            Produces the metric records that feed into ranking.
+
         Examples
         --------
         >>> import numpy as np
         >>> from coco_pipe.dim_reduction import DimReduction
         >>> X = np.random.RandomState(0).randn(20, 4)
-        >>> reducers = [DimReduction("pca", n_components=2)]
+        >>> reducers = [DimReduction("PCA", n_components=2)]
         >>> reducer = reducers[0]
-        >>> _ = reducer.fit_transform(X)
-        >>> _ = reducer.score(X, k_values=[5])
+        >>> embedding = reducer.fit_transform(X)
+        >>> reducer.score(embedding, X=X, k_values=[5])
         >>> ranked = MethodSelector(reducers).collect().rank_methods(
         ...     "trustworthiness",
         ...     selection_k=5,
         ... )
-        >>> ranked.iloc[0]["method"] == reducer.name
+        >>> ranked.iloc[0]["method"] == reducer.method
         True
         """
         if selection_metric not in RANKING_DIRECTIONS:

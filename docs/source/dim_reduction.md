@@ -7,14 +7,21 @@ reducer contracts.
 
 - Optional dependencies are now lazy at import time.
 - `DimReduction` caches normalized state on:
-  - `context_`
   - `metrics_`
+  - `metric_records_`
   - `quality_metadata_`
   - `diagnostics_`
-- `MethodSelector` keeps:
-  - per-method wide result tables in `results_`
-  - reusable artifacts in `artifacts_`
-  - tidy metric observations via `to_frame()`
+  - `interpretation_`
+  - `interpretation_records_`
+- Plotting is done through `coco_pipe.viz.dim_reduction`, not through manager
+  methods on `DimReduction`.
+- `DimReduction` does not cache embeddings. Embeddings are returned explicitly
+  from `transform()` and `fit_transform()` and must be passed explicitly to
+  `score()`, plotting, or report-building paths that need them.
+- `coco_pipe.dim_reduction.evaluation.core` is the evaluation authority used by
+  `DimReduction.score()`.
+- `MethodSelector` is now a post-hoc comparison layer over already-scored
+  `DimReduction` objects and exposes tidy metric observations via `to_frame()`.
 
 ## Core Interfaces
 
@@ -24,19 +31,87 @@ Use `DimReduction` directly for most workflows:
 from coco_pipe.dim_reduction import DimReduction
 
 reducer = DimReduction("PCA", n_components=2, random_state=42)
-reducer.set_context(
-    labels=labels,
-    metadata={"subject": subjects, "condition": conditions},
-    sample_ids=sample_ids,
-    groups=trial_ids,
-    times=timepoints,
-)
 embedding = reducer.fit_transform(X, y=labels)
-scores = reducer.score(X)
+scores = reducer.score(embedding, X=X, labels=labels, times=timepoints)
+interpretation = reducer.interpret(
+    X,
+    X_emb=embedding,
+    analyses=["correlation"],
+    feature_names=feature_names,
+)
 summary = reducer.get_summary()
 ```
 
-Context is stored once and reused by plotting and reporting.
+`DimReduction.get_summary()` returns cached scalar metrics, reducer metadata,
+diagnostics, tidy metric records, cached interpretation payloads, cached
+interpretation records, and capability flags. It does not carry an embedding
+payload.
+
+Evaluation can be narrowed to specific metric families:
+
+```python
+from coco_pipe.dim_reduction.config import EvaluationConfig
+
+config = EvaluationConfig(
+    metrics=["trustworthiness", "continuity"],
+    selection_metric="trustworthiness",
+    selection_k=10,
+    tie_breakers=["continuity"],
+    separation_method="centroid",
+)
+```
+
+Each reducer is scored directly:
+
+```python
+for reducer in reducers:
+    embedding = reducer.fit_transform(X, y=labels)
+    reducer.score(
+        embedding,
+        X=X,
+        metrics=config.metrics,
+        k_values=config.k_range,
+        separation_method=config.separation_method,
+    )
+    reducer.interpret(
+        X,
+        X_emb=embedding,
+        analyses=["correlation"],
+        feature_names=feature_names,
+    )
+```
+
+Then compare the scored reducers:
+
+```python
+from coco_pipe.dim_reduction.evaluation import MethodSelector
+
+selector = MethodSelector(reducers).collect()
+ranked = selector.rank_methods(
+    selection_metric=config.selection_metric,
+    selection_k=config.selection_k,
+    tie_breakers=config.tie_breakers,
+)
+best_name = ranked.iloc[0]["method"]
+best = selector.reducers[best_name]
+```
+
+When trajectory labels are available, `separation_method` is passed through
+during `score()` to `trajectory_separation(..., method=...)` for evaluator-level
+separation summaries.
+
+Feature interpretation is separate from preservation scoring:
+
+- `score()` evaluates whether the embedding preserves structure
+- `interpret()` evaluates which input features appear to drive the embedding
+
+`interpret()` delegates to the pure backend
+`coco_pipe.dim_reduction.analysis.interpret_features(...)` and currently
+supports:
+
+- `correlation`
+- `perturbation`
+- `gradient`
 
 ## Custom Reducers
 
@@ -70,9 +145,8 @@ expected `input_ndim` and `input_layout`.
 
 If a reducer depends on heavy optional libraries, keep those imports inside
 `fit()` / `transform()` paths. The helper
-`coco_pipe.dim_reduction.reducers.base.import_optional_dependency(...)` exists
-for built-in reducers and custom advanced integrations, but it is not the main
-public entry point.
+`coco_pipe.utils.import_optional_dependency(...)` exists for built-in reducers
+and custom advanced integrations, but it is not the main public entry point.
 
 ## Supported Metric Shapes
 
@@ -90,6 +164,8 @@ Optional columns such as `group`, `condition`, `pair`, `subject`, `session`,
 ## Metric Plot Types
 
 Use `plot_metrics(..., plot_type=...)` or the report comparison helpers.
+Embedding visualizations are also external to `DimReduction`; pass the explicit
+embedding array to the plotting function you need.
 
 - `grouped_bar`: one scalar per method/metric
 - `box` / `boxen`: repeated observations
@@ -110,29 +186,47 @@ Default behavior:
 ## Generic Trajectories
 
 Trajectory scoring is not EEG-specific. Any grouped or ordered embedding can
-use trajectory-native metrics when either:
+use trajectory-native metrics when:
 
-- the embedding is already a 3D tensor `(trajectory, time, dim)`, or
-- `set_context(groups=..., times=...)` is provided for a 2D embedding
+- the embedding is already a 3D tensor `(trajectory, time, dim)`
+
+Trajectory reshaping or unstacking must happen upstream. The evaluation module
+does not reconstruct 3D trajectories from flat 2D embeddings.
 
 Trajectory outputs include:
 
 - `trajectory_speed_mean`
 - `trajectory_speed_peak`
+- `trajectory_acceleration_mean`
+- `trajectory_acceleration_peak`
 - `trajectory_curvature_mean`
 - `trajectory_curvature_peak`
+- `trajectory_turning_angle_mean`
+- `trajectory_turning_angle_peak`
+- `trajectory_dispersion_mean`
+- `trajectory_dispersion_peak`
+- `trajectory_path_length_final`
+- `trajectory_displacement_final`
+- `trajectory_tortuosity_final`
 - pairwise separation AUC / peak summaries when labels exist per trajectory
 
 Detailed timecourses are cached under `diagnostics_`.
 
+`trajectory_dispersion` in the evaluation pipeline is currently the global,
+unlabeled dispersion over all trajectories. This is narrower than the lower-level
+`geometry.py` primitive, which can also compute label-conditioned dispersion.
+Trajectory labels are only used automatically for `trajectory_separation`.
+
+Trajectory metrics are descriptive outputs for plotting and reporting. They are
+not used as automatic method-selection metrics by default.
+
 ## Reports
 
-`Report.add_reduction()` now consumes `get_summary()` when available and falls
-back to normalized attributes otherwise.
+`Report.add_reduction()` consumes `get_summary()` when available.
 
 It can render:
 
-- interactive embeddings
+- interactive embeddings when an explicit embedding payload is provided
 - trajectory plots for 3D embeddings
 - scalar metric tables and charts
 - loss and scree diagnostics
@@ -142,22 +236,14 @@ It can render:
 `Report.add_comparison()` accepts tidy metric frames or `MethodSelector`
 instances directly.
 
+Shepard plots and comparison/report views reuse cached diagnostics such as
+`shepard_distances_` and `coranking_matrix_` when those artifacts already exist.
+
 ## End-to-End Execution
 
-For legacy scripts and simple batch execution, `DimReductionPipeline` is now a
-thin compatibility wrapper around:
-
-- `coco_pipe.io.load_data`
-- `DimReduction`
-- optional report generation
-
-It saves `.npz` outputs with at least:
-
-- `reduced`
-- `ids`
-- `labels`
-- `method`
-- `metrics_json`
+Batch execution should use `coco_pipe.io.load_data` plus `DimReduction`
+directly. The old `DimReductionPipeline` compatibility wrapper has been
+removed.
 
 ## Dependency Notes
 
@@ -182,7 +268,7 @@ pip install coco-pipe[spatiotemporal]
 pip install coco-pipe[eeg]
 ```
 
-The `neighbor` and `dim-red` extras include `faiss-cpu`, so PaCMAP can use
+The `neighbor` and `dim-red` extras include `faiss-cpu`, so Pacmap can use
 `nn_backend="faiss"` by default on supported platforms.
 
 Base imports that should remain lightweight:

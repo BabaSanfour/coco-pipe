@@ -33,7 +33,8 @@ from typing import Optional
 
 import numpy as np
 
-from .base import ArrayLike, BaseReducer, import_optional_dependency
+from ...utils import import_optional_dependency
+from .base import ArrayLike, BaseReducer
 
 __all__ = ["DMDReducer", "TRCAReducer"]
 

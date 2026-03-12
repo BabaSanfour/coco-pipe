@@ -36,6 +36,15 @@ import numpy as np
 from scipy.spatial.distance import pdist
 from sklearn.neighbors import NearestNeighbors
 
+__all__ = [
+    "compute_coranking_matrix",
+    "trustworthiness",
+    "continuity",
+    "lcmc",
+    "compute_mrre",
+    "shepard_diagram_data",
+]
+
 
 def _validate_embedding_pair(
     X: np.ndarray,

@@ -14,6 +14,7 @@ from .dim_reduction import (
     SpectralEmbeddingReducer,
     TSNEReducer,
     continuity,
+    interpret_features,
     lcmc,
     shepard_diagram_data,
     trustworthiness,
@@ -23,6 +24,7 @@ from .dim_reduction import (
 __all__ = [
     "DimReduction",
     "METHODS",
+    "interpret_features",
     "BaseReducer",
     "PCAReducer",
     "IncrementalPCAReducer",
@@ -49,10 +51,24 @@ __all__ = [
     "ParametricUMAPReducer",
 ]
 
+_LAZY_DIM_REDUCTION_EXPORTS = {
+    "UMAPReducer",
+    "PacmapReducer",
+    "TrimapReducer",
+    "PHATEReducer",
+    "DMDReducer",
+    "TRCAReducer",
+    "IVISReducer",
+    "TopologicalAEReducer",
+    "DaskPCAReducer",
+    "DaskTruncatedSVDReducer",
+    "ParametricUMAPReducer",
+}
+
 
 def __getattr__(name):
     # Lazily fetch optional members from dim_reduction
-    if name in __all__:
+    if name in _LAZY_DIM_REDUCTION_EXPORTS:
         import importlib
 
         return getattr(

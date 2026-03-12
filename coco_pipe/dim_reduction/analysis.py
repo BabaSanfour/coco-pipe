@@ -2,73 +2,173 @@
 Feature Attribution and Analysis
 ================================
 
-Methods for explaining and interpreting embedding axes.
+Pure attribution and interpretability utilities for dimensionality reduction.
 
-Functions
----------
-compute_feature_importance
-    Compute feature importance using perturbation or gradient (if available).
-correlate_features
-    Compute Spearman correlation between input features and embedding dimensions.
+This module is intentionally separate from the preservation-focused evaluation
+stack. The functions here answer a different question:
 
-Author: Hamza Abdelhedi
-Date: 2026-01-16
+- ``evaluate_embedding(...)`` in :mod:`coco_pipe.dim_reduction.evaluation`
+  asks whether an embedding preserves structure well.
+- ``analysis.py`` asks which input features appear to drive an embedding.
+
+The public surface is explicit and array-first:
+
+- ``correlate_features(...)`` computes feature-to-dimension correlations.
+- ``perturbation_importance(...)`` measures embedding sensitivity to shuffled
+  features.
+- ``gradient_importance(...)`` computes encoder saliency for supported
+  torch-based reducers.
+- ``interpret_features(...)`` is a pure backend that combines one or more of
+  these analyses and returns normalized payloads plus tidy records for future
+  manager/report integration.
+
+Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 from scipy.stats import spearmanr
-from sklearn.utils import check_random_state
+
+from ..utils import import_optional_dependency
+
+__all__ = [
+    "correlate_features",
+    "perturbation_importance",
+    "gradient_importance",
+    "interpret_features",
+]
+
+
+def _analysis_records_from_correlations(
+    correlations: Dict[str, Dict[str, float]],
+    *,
+    method_name: str,
+) -> list[Dict[str, Any]]:
+    """Flatten nested correlation output into tidy analysis records."""
+    records: list[Dict[str, Any]] = []
+    for component, feature_scores in correlations.items():
+        for feature, value in feature_scores.items():
+            records.append(
+                {
+                    "method": method_name,
+                    "analysis": "correlation",
+                    "component": component,
+                    "feature": feature,
+                    "value": float(value),
+                }
+            )
+    return records
+
+
+def _analysis_records_from_importance(
+    scores: Dict[str, float],
+    *,
+    analysis_name: str,
+    method_name: str,
+) -> list[Dict[str, Any]]:
+    """Flatten feature-importance scores into tidy analysis records."""
+    records: list[Dict[str, Any]] = []
+    for feature, value in scores.items():
+        if isinstance(value, (int, float, np.number)) and not isinstance(value, bool):
+            records.append(
+                {
+                    "method": method_name,
+                    "analysis": analysis_name,
+                    "feature": feature,
+                    "value": float(value),
+                }
+            )
+    return records
 
 
 def correlate_features(
-    X_orig: np.ndarray, X_emb: np.ndarray, feature_names: Optional[List[str]] = None
-) -> dict:
+    X_orig: np.ndarray,
+    X_emb: np.ndarray,
+    feature_names: Sequence[str],
+) -> Dict[str, Dict[str, float]]:
     """
-    Compute correlation between original features and embedding dimensions.
-
-    Helps interpret non-linear embeddings by identifying which original features
-    covary most strongly with the reduced dimensions.
+    Compute Spearman correlations between original features and embedding axes.
 
     Parameters
     ----------
     X_orig : np.ndarray
-        Original high-dimensional data (N_samples, N_features).
+        Original data with shape ``(n_samples, n_features)``.
     X_emb : np.ndarray
-        Low-dimensional embedding (N_samples, N_components).
-    feature_names : list, optional
-        Names of the original features. If None, uses "Feature {i}".
+        Embedded data with shape ``(n_samples, n_dimensions)``.
+    feature_names : sequence of str
+        Feature names aligned with the columns of ``X_orig``.
 
     Returns
     -------
-    correlations : dict
-        Nested dictionary: {
-            'Component 1': {'Feature A': 0.8, 'Feature B': -0.1, ...},
-            'Component 2': ...
-        }
-        ordered by magnitude of correlation.
+    dict
+        Nested mapping of dimension names to feature-correlation mappings,
+        sorted by descending absolute correlation magnitude within each
+        dimension.
+
+    Raises
+    ------
+    ValueError
+        If ``X_orig`` or ``X_emb`` is not 2D, if sample counts do not match,
+        or if ``feature_names`` has the wrong length.
+
+    Notes
+    -----
+    Constant features or constant embedding dimensions can yield undefined
+    Spearman coefficients. These are reported as ``0.0`` to keep the output
+    stable and sortable.
+
+    See Also
+    --------
+    perturbation_importance
+        Model-agnostic feature importance by embedding perturbation.
+    gradient_importance
+        Encoder saliency for supported torch-based reducers.
+    interpret_features
+        Higher-level backend that packages correlation and importance outputs.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> X = np.array([[0.0, 1.0], [1.0, 0.0], [2.0, 1.0]])
+    >>> X_emb = np.array([[0.0, 0.5], [1.0, 0.0], [2.0, 0.5]])
+    >>> result = correlate_features(X, X_emb, feature_names=["f1", "f2"])
+    >>> sorted(result)
+    ['Dimension 1', 'Dimension 2']
     """
-    n_features = X_orig.shape[1]
-    n_components = X_emb.shape[1]
+    X_orig = np.asarray(X_orig)
+    X_emb = np.asarray(X_emb)
+    if X_orig.ndim != 2:
+        raise ValueError("`X_orig` must be a 2D array.")
+    if X_emb.ndim != 2:
+        raise ValueError("`X_emb` must be a 2D array.")
+    if X_orig.shape[0] != X_emb.shape[0]:
+        raise ValueError("`X_orig` and `X_emb` must have matching sample counts.")
 
-    if feature_names is None:
-        feature_names = [f"Feature {i}" for i in range(n_features)]
-
-    results = {}
-
-    for j in range(n_components):
-        comp_res = {}
-        for i in range(n_features):
-            # Spearman Rank Correlation (Robust to non-linear monotonic relationships)
-            rho, _ = spearmanr(X_orig[:, i], X_emb[:, j])
-            comp_res[feature_names[i]] = float(rho)
-
-        # Sort by absolute correlation
-        sorted_res = dict(
-            sorted(comp_res.items(), key=lambda item: abs(item[1]), reverse=True)
+    names = list(feature_names)
+    if len(names) != X_orig.shape[1]:
+        raise ValueError(
+            "Length of `feature_names` must match the number of input features."
         )
-        results[f"Component {j + 1}"] = sorted_res
+    results: Dict[str, Dict[str, float]] = {}
+
+    for component_index in range(X_emb.shape[1]):
+        component_scores: Dict[str, float] = {}
+        for feature_index, feature_name in enumerate(names):
+            rho, _ = spearmanr(X_orig[:, feature_index], X_emb[:, component_index])
+            if not np.isfinite(rho):
+                rho = 0.0
+            component_scores[feature_name] = float(rho)
+
+        results[f"Dimension {component_index + 1}"] = dict(
+            sorted(
+                component_scores.items(),
+                key=lambda item: abs(item[1]),
+                reverse=True,
+            )
+        )
 
     return results
 
@@ -76,182 +176,376 @@ def correlate_features(
 def perturbation_importance(
     model: Any,
     X: np.ndarray,
-    feature_names: Optional[List[str]] = None,
+    feature_names: Sequence[str],
+    X_emb: np.ndarray,
     n_repeats: int = 5,
     random_state: Optional[int] = None,
-) -> dict:
+) -> Dict[str, float]:
     """
-    Compute feature importance by shuffling features.
+    Compute model-agnostic feature importance by feature shuffling.
 
     Parameters
     ----------
-    model : fitted estimator
-        Must have a `transform` method.
+    model : Any
+        Fitted reducer or estimator exposing ``transform(X)``.
     X : np.ndarray
-        Data.
-    feature_names : list, optional
-        Names of features.
-    n_repeats : int
-        Number of shuffles per feature.
+        Input data with shape ``(n_samples, n_features)``.
+    feature_names : sequence of str
+        Feature names aligned with the columns of ``X``.
+    X_emb : np.ndarray
+        Explicit embedding of ``X`` used as the perturbation reference.
+    n_repeats : int, default=5
+        Number of independent shuffles per feature.
+    random_state : int, optional
+        Random seed for reproducible shuffling.
 
     Returns
     -------
-    importances : dict
-        Dictionary mapping feature names to importance scores. Sums to 1.
+    dict
+        Mapping of feature name to normalized importance score. Scores sum to 1
+        when the perturbation signal is nonzero; otherwise all scores are 0.
+
+    Raises
+    ------
+    ValueError
+        If ``X`` is not 2D, if ``X_emb`` does not align with ``X`` along the
+        sample axis, or if ``feature_names`` has the wrong length.
+
+    See Also
+    --------
+    correlate_features
+        Cheap feature-to-dimension interpretation based on correlations.
+    gradient_importance
+        Encoder saliency for supported torch-based reducers.
+    interpret_features
+        Higher-level backend that packages correlation and importance outputs.
 
     Examples
     --------
-    >>> from sklearn.decomposition import PCA
-    >>> model = PCA(n_components=2).fit(X)
-    >>> scores = perturbation_importance(model, X, feature_names=['A', 'B'])
+    >>> import numpy as np
+    >>> class MockReducer:
+    ...     def transform(self, X):
+    ...         return X[:, :2]
+    >>> X = np.array([[0.0, 1.0], [1.0, 0.0], [2.0, 1.0]])
+    >>> X_emb = X[:, :2]
+    >>> scores = perturbation_importance(
+    ...     MockReducer(),
+    ...     X,
+    ...     feature_names=["f1", "f2"],
+    ...     X_emb=X_emb,
+    ...     n_repeats=1,
+    ...     random_state=0,
+    ... )
+    >>> sorted(scores)
+    ['f1', 'f2']
     """
-    if not hasattr(model, "transform"):
-        raise ValueError("Model must have a transform method.")
-
-    rng = check_random_state(random_state)
-    original_emb = model.transform(X)
-    n_features = X.shape[1]
-
-    scores = np.zeros(n_features)
-
-    for f in range(n_features):
-        feature_score = 0
-        for r in range(n_repeats):
-            X_permuted = X.copy()
-            # Use local RNG for shuffling
-            rng.shuffle(X_permuted[:, f])
-
-            emb_permuted = model.transform(X_permuted)
-
-            dist = np.mean((original_emb - emb_permuted) ** 2)
-            feature_score += dist
-
-        scores[f] = feature_score / n_repeats
-
-    # Normalize
-    scores /= np.sum(scores)
-
-    if feature_names is None:
-        return {f"Feature {i}": s for i, s in enumerate(scores)}
-
-    return {n: s for n, s in zip(feature_names, scores)}
-
-
-def compute_feature_importance(
-    model: Any, X: np.ndarray, method: str = "perturbation", **kwargs
-) -> dict:
-    """
-    Compute feature importance for a given dimensionality reduction model.
-
-    Parameters
-    ----------
-    model : fitted estimator
-        The dimensionality reduction model (e.g., PCA, UMAP, or TopologicalAE).
-    X : np.ndarray
-        Input data.
-    method : {'perturbation', 'gradient'}, default='perturbation'
-        Method to calculate importance.
-        - 'perturbation': Model-agnostic. Shuffles features and measures embedding
-          displacement.
-        - 'gradient': Model-specific. Computes saliency maps (requires PyTorch
-          model).
-    **kwargs : dict
-        Additional arguments passed to the specific importance function
-        (e.g., `n_repeats` for perturbation, `feature_names`).
-
-    Returns
-    -------
-    importances : dict
-        Dictionary feature_name -> importance_score.
-
-    Examples
-    --------
-    >>> scores = compute_feature_importance(model, X, method='perturbation')
-    """
-    if method == "perturbation":
-        return perturbation_importance(model, X, **kwargs)
-    elif method == "gradient":
-        if hasattr(model, "get_pytorch_module") or (
-            hasattr(model, "model") and hasattr(model.model, "encoder")
-        ):
-            # Supported neural reducers (TopoAE via skorch or others via direct attr)
-            return gradient_importance(model, X, **kwargs)
-        raise NotImplementedError(
-            "Gradient method requires a supported PyTorch model (e.g., "
-            "TopologicalAEReducer)."
+    X = np.asarray(X)
+    X_emb = np.asarray(X_emb)
+    if X.ndim != 2:
+        raise ValueError("`X` must be a 2D array.")
+    if X_emb.shape[0] != X.shape[0]:
+        raise ValueError("`X_emb` must have the same number of samples as `X`.")
+    names = list(feature_names)
+    if len(names) != X.shape[1]:
+        raise ValueError(
+            "Length of `feature_names` must match the number of input features."
         )
+    rng = np.random.default_rng(random_state)
+
+    original_emb = X_emb
+
+    scores = np.zeros(X.shape[1], dtype=float)
+    for feature_index in range(X.shape[1]):
+        feature_score = 0.0
+        for _ in range(n_repeats):
+            X_permuted = X.copy()
+            rng.shuffle(X_permuted[:, feature_index])
+            emb_permuted = np.asarray(model.transform(X_permuted))
+            feature_score += float(np.mean((original_emb - emb_permuted) ** 2))
+        scores[feature_index] = feature_score / float(n_repeats)
+
+    total = float(np.sum(scores))
+    if total <= 0 or not np.isfinite(total):
+        scores = np.zeros_like(scores, dtype=float)
     else:
-        raise ValueError(f"Unknown method {method}")
+        scores = scores / total
+    return {name: float(score) for name, score in zip(names, scores)}
 
 
-def gradient_importance(wrapper: Any, X: np.ndarray, **kwargs) -> dict:
+def gradient_importance(
+    wrapper: Any,
+    X: np.ndarray,
+    feature_names: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
     """
-    Compute gradient-based feature importance (Saliency).
-
-    Calculates the mean absolute gradient of the embedding sum with respect
-    to the input features. This estimates how sensitive the embedding is to
-    changes in each feature.
+    Compute encoder saliency by differentiating embedding magnitude w.r.t. input.
 
     Parameters
     ----------
     wrapper : Any
-        Fitted reducer wrapper containing the PyTorch model (e.g.,
-        TopologicalAEReducer).
+        Fitted encoder-based reducer wrapper exposing
+        ``get_pytorch_module()``.
     X : np.ndarray
-        Input data.
-    **kwargs : dict
-        - feature_names: List of strings.
+        Input array. The sample axis is assumed to be axis 0. Remaining axes are
+        treated as feature dimensions.
+    feature_names : sequence of str, optional
+        Feature names for 2D inputs. Named outputs are only supported when the
+        reduced saliency is one-dimensional.
 
     Returns
     -------
-    importances : dict
-        Dictionary feature_name -> importance_score.
+    dict
+        For one-dimensional reduced saliency with names, returns a mapping of
+        feature name to normalized importance score. For higher-dimensional
+        saliency, returns ``{"importance_matrix": scores}``.
+
+    Raises
+    ------
+    ValueError
+        If ``X`` has fewer than 2 dimensions, or if ``feature_names`` is
+        incompatible with the reduced saliency shape.
+
+    Notes
+    -----
+    This function assumes an encoder-based torch wrapper that exposes
+    ``get_pytorch_module()`` and an ``encoder`` submodule.
+
+    See Also
+    --------
+    perturbation_importance
+        Model-agnostic importance that only requires ``transform``.
+    correlate_features
+        Cheap feature-to-dimension interpretation from explicit embeddings.
+    interpret_features
+        Higher-level backend that packages gradient and perturbation outputs.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> class Encoder:
+    ...     def __call__(self, X):
+    ...         return X
+    >>> class MockModule:
+    ...     def __init__(self):
+    ...         self.encoder = Encoder()
+    ...     def eval(self):
+    ...         return None
+    ...     def parameters(self):
+    ...         return iter(())
+    >>> class MockWrapper:
+    ...     def get_pytorch_module(self):
+    ...         return MockModule()
+    >>> X = np.array([[1.0, 2.0], [3.0, 4.0]])
+    >>> result = gradient_importance(MockWrapper(), X)
+    >>> isinstance(result, dict)
+    True
     """
-    import torch
+    torch = import_optional_dependency(
+        lambda: __import__("torch"),
+        feature="gradient_importance",
+        dependency="torch",
+        install_hint="pip install coco-pipe[topology]",
+    )
 
-    # Extract PyTorch module from wrapper
-    if hasattr(wrapper, "get_pytorch_module"):
-        model = wrapper.get_pytorch_module()
-    else:
-        model = wrapper.model
+    X = np.asarray(X)
+    if X.ndim < 2:
+        raise ValueError("`X` must have at least 2 dimensions.")
 
-    if model is None:
-        raise RuntimeError("Model is not fitted or does not support gradients.")
+    model = wrapper.get_pytorch_module()
+    model.eval()
 
-    device = next(model.parameters()).device
+    parameters = iter(model.parameters())
+    try:
+        device = next(parameters).device
+    except StopIteration:
+        device = torch.device("cpu")
 
-    # Check dimensions
-    if X.ndim == 2:
-        # (N, Features)
-        X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
-    else:
-        X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
-
+    X_tensor = torch.tensor(X, dtype=torch.float32, requires_grad=True).to(device)
     Z = model.encoder(X_tensor)
-
-    target = Z.sum()
-    target.backward()
+    Z.sum().backward()
 
     grads = X_tensor.grad
-
-    # Mean absolute gradient per feature
-    if X.ndim == 2:
-        mean_grads = torch.mean(torch.abs(grads), dim=0)  # (Features,)
+    scores = torch.mean(torch.abs(grads), dim=0).detach().cpu().numpy()
+    total = float(np.sum(scores))
+    if total <= 0 or not np.isfinite(total):
+        scores = np.zeros_like(scores, dtype=float)
     else:
-        mean_grads = torch.mean(torch.abs(grads), dim=0)  # (Ch, Time)
+        scores = scores / total
 
-    scores = mean_grads.detach().cpu().numpy()
-
-    if np.sum(scores) > 0:
-        scores /= np.sum(scores)  # Normalize
-
-    feature_names = kwargs.get("feature_names")
     if feature_names is None:
-        if scores.ndim == 1:
-            scores = scores.reshape(-1, 1)  # Ensure 2D for permutation
-        if hasattr(scores, "todense"):
-            scores = scores.todense()  # Simplify logic for sparse input
-        # Return raw array for complex shapes if no names
         return {"importance_matrix": scores}
 
-    return {n: s for n, s in zip(feature_names, scores.flatten())}
+    if scores.ndim != 1:
+        raise ValueError(
+            "Named gradient importance is only supported when the reduced "
+            "saliency is one-dimensional."
+        )
+
+    names = list(feature_names)
+    if len(names) != scores.shape[0]:
+        raise ValueError(
+            "Length of `feature_names` must match the number of reduced features."
+        )
+    return {name: float(score) for name, score in zip(names, scores)}
+
+
+def interpret_features(
+    X: np.ndarray,
+    *,
+    X_emb: Optional[np.ndarray] = None,
+    model: Optional[Any] = None,
+    analyses: Optional[Sequence[str]] = None,
+    feature_names: Optional[Sequence[str]] = None,
+    method_name: str = "embedding",
+    n_repeats: int = 5,
+    random_state: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Run one or more feature interpretation analyses.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Original input data.
+    X_emb : np.ndarray, optional
+        Explicit embedding used by correlation-based analysis.
+    model : Any, optional
+        Fitted reducer or model used by importance analyses.
+    analyses : sequence of {"correlation", "perturbation", "gradient"}, optional
+        Analyses to compute. ``None`` defaults to ``("correlation",)``.
+    feature_names : sequence of str, optional
+        Feature names aligned with ``X`` when the requested analysis returns
+        feature-keyed outputs.
+    method_name : str, default="embedding"
+        Display name written into the returned analysis records.
+    n_repeats : int, default=5
+        Number of permutations per feature for perturbation importance.
+    random_state : int, optional
+        Random seed for perturbation importance.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+
+        - ``analysis``: nested analysis payloads
+        - ``records``: tidy analysis records as ``list[dict]``
+
+    Raises
+    ------
+    ValueError
+        If a requested analysis is unsupported, missing required inputs, or
+        lacks required feature names.
+
+    Notes
+    -----
+    This function is a pure interpretation backend for manager, report, or
+    visualization workflows. It does not fit models, compute embeddings, or
+    mutate reducer state.
+
+    See Also
+    --------
+    correlate_features
+        Feature-to-dimension interpretation from explicit embeddings.
+    perturbation_importance
+        Model-agnostic importance based on shuffled features.
+    gradient_importance
+        Encoder saliency for supported torch-based reducers.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> class MockReducer:
+    ...     def transform(self, X):
+    ...         return X[:, :2]
+    >>> X = np.array([[0.0, 1.0], [1.0, 0.0], [2.0, 1.0]])
+    >>> X_emb = X[:, :2]
+    >>> result = interpret_features(
+    ...     X,
+    ...     X_emb=X_emb,
+    ...     model=MockReducer(),
+    ...     analyses=["correlation", "perturbation"],
+    ...     feature_names=["f1", "f2"],
+    ...     n_repeats=1,
+    ...     random_state=0,
+    ... )
+    >>> sorted(result)
+    ['analysis', 'records']
+    """
+    requested = list(analyses) if analyses is not None else ["correlation"]
+
+    analysis_payload: Dict[str, Any] = {}
+    records: list[Dict[str, Any]] = []
+
+    for analysis_name in requested:
+        if analysis_name == "correlation":
+            if X_emb is None:
+                raise ValueError("`X_emb` is required for correlation analysis.")
+            if feature_names is None:
+                raise ValueError(
+                    "`feature_names` is required for correlation analysis."
+                )
+            result = correlate_features(X, X_emb, feature_names=feature_names)
+            analysis_payload["correlation"] = result
+            records.extend(
+                _analysis_records_from_correlations(
+                    result,
+                    method_name=method_name,
+                )
+            )
+            continue
+
+        if analysis_name == "perturbation":
+            if model is None:
+                raise ValueError("`model` is required for perturbation importance.")
+            if X_emb is None:
+                raise ValueError("`X_emb` is required for perturbation importance.")
+            if feature_names is None:
+                raise ValueError(
+                    "`feature_names` is required for perturbation importance."
+                )
+            result = perturbation_importance(
+                model,
+                X,
+                feature_names=feature_names,
+                X_emb=X_emb,
+                n_repeats=n_repeats,
+                random_state=random_state,
+            )
+            analysis_payload["perturbation"] = result
+            records.extend(
+                _analysis_records_from_importance(
+                    result,
+                    analysis_name="perturbation",
+                    method_name=method_name,
+                )
+            )
+            continue
+
+        if analysis_name == "gradient":
+            if model is None:
+                raise ValueError("`model` is required for gradient importance.")
+            result = gradient_importance(
+                model,
+                X,
+                feature_names=feature_names,
+            )
+            analysis_payload["gradient"] = result
+            if "importance_matrix" not in result and all(
+                isinstance(value, (int, float, np.number)) for value in result.values()
+            ):
+                records.extend(
+                    _analysis_records_from_importance(
+                        result,
+                        analysis_name="gradient",
+                        method_name=method_name,
+                    )
+                )
+            continue
+
+        raise ValueError(f"Unknown analysis selector: {analysis_name!r}")
+
+    return {
+        "analysis": analysis_payload,
+        "records": records,
+    }

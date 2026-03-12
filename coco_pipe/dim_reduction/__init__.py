@@ -1,3 +1,4 @@
+from .analysis import interpret_features
 from .config import METHODS
 from .core import DimReduction
 from .evaluation.geometry import (
@@ -21,6 +22,7 @@ from .reducers import (
 __all__ = [
     "DimReduction",
     "METHODS",
+    "interpret_features",
     "trustworthiness",
     "continuity",
     "lcmc",
@@ -50,10 +52,24 @@ __all__ = [
     "ParametricUMAPReducer",
 ]
 
+_LAZY_REDUCER_EXPORTS = {
+    "UMAPReducer",
+    "PacmapReducer",
+    "TrimapReducer",
+    "PHATEReducer",
+    "DMDReducer",
+    "TRCAReducer",
+    "IVISReducer",
+    "TopologicalAEReducer",
+    "DaskPCAReducer",
+    "DaskTruncatedSVDReducer",
+    "ParametricUMAPReducer",
+}
+
 
 def __getattr__(name):
     # Lazily import optional reducers from .reducers package
-    if name in __all__:
+    if name in _LAZY_REDUCER_EXPORTS:
         import importlib
 
         return getattr(importlib.import_module(".reducers", package=__name__), name)

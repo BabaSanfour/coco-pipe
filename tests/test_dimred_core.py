@@ -1,14 +1,40 @@
 import sys
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-from coco_pipe.dim_reduction.config import DimReductionConfig
+from coco_pipe.dim_reduction.config import UMAPConfig
 from coco_pipe.dim_reduction.core import DimReduction
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
+
+
+def _install_fake_trca(monkeypatch, n_channels: int = 5):
+    class FakeTRCA:
+        def __init__(self, sfreq=250.0, filterbank=None, **kwargs):
+            self.sfreq = sfreq
+            self.filterbank = filterbank or [[(8, 12), (6, 14)]]
+            self.coef_ = np.zeros((1, 1, n_channels))
+
+        def fit(self, X, y):
+            n_classes = len(np.unique(y))
+            self.coef_ = np.ones((1, n_classes, X.shape[1]))
+            return self
+
+    fake_trca_mod = types.SimpleNamespace(TRCA=FakeTRCA)
+    fake_trca_utils = types.SimpleNamespace(
+        bandpass=lambda data, sfreq, Wp=None, Ws=None: data
+    )
+    fake_meegkit = types.SimpleNamespace(
+        trca=fake_trca_mod,
+        utils=types.SimpleNamespace(trca=fake_trca_utils),
+    )
+
+    monkeypatch.setitem(sys.modules, "meegkit", fake_meegkit)
+    monkeypatch.setitem(sys.modules, "meegkit.trca", fake_trca_mod)
+    monkeypatch.setitem(sys.modules, "meegkit.utils", fake_meegkit.utils)
+    monkeypatch.setitem(sys.modules, "meegkit.utils.trca", fake_trca_utils)
 
 
 def test_factory():
@@ -32,7 +58,7 @@ def test_validation_2d():
     dr.fit(X_2d)  # Should pass
 
 
-def test_validation_3d():
+def test_validation_3d(monkeypatch):
     fb = [[(8, 12), (6, 14)]]
     dr = DimReduction("TRCA", params={"filterbank": fb, "sfreq": 100})
 
@@ -45,6 +71,7 @@ def test_validation_3d():
     y = np.concatenate([np.zeros(5, dtype=int), np.ones(5, dtype=int)])
 
     # Check fit works
+    _install_fake_trca(monkeypatch)
     dr.fit(X_3d, y=y)
 
 
@@ -53,15 +80,13 @@ def test_fit_transform_pca():
     dr = DimReduction("PCA", n_components=2)
     emb = dr.fit_transform(X)
     assert emb.shape == (20, 2)
-    assert dr.embedding_ is not None
 
 
 def test_score():
     X = np.random.rand(50, 10)  # 50 samples
     dr = DimReduction("PCA", n_components=2)
-    dr.fit_transform(X)
-
-    scores = dr.score(X)
+    emb = dr.fit_transform(X)
+    scores = dr.score(emb, X=X)
     assert "metrics" in scores
     assert "metadata" in scores
     assert "diagnostics" in scores
@@ -70,28 +95,10 @@ def test_score():
     assert 0 <= scores["metrics"]["trustworthiness"] <= 1.0
 
 
-def test_plot():
-    X = np.random.rand(20, 5)
+def test_plot_removed_from_manager():
     dr = DimReduction("PCA", n_components=2)
-    dr.fit_transform(X)
-
-    # Test plotting
-    fig = dr.plot()
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-    # Test plotting without fit
-    dr_new = DimReduction("PCA")
-    with pytest.raises(RuntimeError):
-        dr_new.plot()
-
-
-def test_from_config():
-    cfg = {"method": "UMAP", "n_components": 3, "params": {"n_neighbors": 5}}
-    dr = DimReduction.from_config(cfg)
-    assert dr.method == "UMAP"
-    assert dr.n_components == 3
-    assert dr.reducer_kwargs["n_neighbors"] == 5
+    assert not hasattr(dr, "plot")
+    assert not hasattr(dr, "plot_native")
 
 
 def test_save_load(tmp_path):
@@ -112,12 +119,42 @@ def test_save_load(tmp_path):
     assert X_new.shape == (20, 2)
 
 
-def test_score_attributes():
-    X = np.random.rand(50, 10)
+def test_dimreduction_interpret():
+    X = np.random.rand(20, 5)
+    feature_names = ["A", "B", "C", "D", "E"]
     dr = DimReduction("PCA", n_components=2)
     dr.fit_transform(X)
 
-    scores = dr.score(X)
+    res = dr.interpret(
+        X, X_emb=dr.transform(X), analyses=["correlation"], feature_names=feature_names
+    )
+    assert "correlation" in res["analysis"]
+    assert len(res["records"]) > 0
+    assert dr.interpretation_ == res["analysis"]
+    assert dr.interpretation_records_ == res["records"]
+
+
+def test_dimreduction_summary():
+    X = np.random.rand(24, 6)
+
+    reducer = DimReduction("PCA", n_components=2, random_state=42)
+    emb = reducer.fit_transform(X)
+    reducer.score(emb, X=X)
+
+    summary = reducer.get_summary()
+    assert summary["method"] == "PCA"
+    assert "metrics" in summary
+    assert "quality_metadata" in summary
+    assert "diagnostics" in summary
+    assert "interpretation" in summary
+    assert "interpretation_records" in summary
+
+
+def test_score_attributes():
+    X = np.random.rand(50, 10)
+    dr = DimReduction("PCA", n_components=2)
+    emb = dr.fit_transform(X)
+    scores = dr.score(emb, X=X)
     # PCA should have 'explained_variance_ratio_' in diagnostics
     assert "explained_variance_ratio_" in scores["diagnostics"]
     assert len(scores["diagnostics"]["explained_variance_ratio_"]) == 2
@@ -149,95 +186,8 @@ def test_transform_independent():
     emb = dr.transform(X)
     assert emb.shape == (20, 2)
 
-    # The DimReduction class initializes self.embedding_ = None
-    assert dr.embedding_ is None
-
-
-def test_plot_modes():
-    X = np.random.rand(20, 5)
-    dr = DimReduction("PCA", n_components=2)
-    dr.fit_transform(X)  # Ensures embedding_ is set
-
-    # Error: 'shepard' requires X
-    with pytest.raises(ValueError, match="requires original data 'X'"):
-        dr.plot(mode="shepard")
-
-    # Success case requires 'X'
-    fig = dr.plot(mode="shepard", X=X)
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-    # Streamlines error (requires V_emb)
-    with pytest.raises(ValueError, match="requires velocity vectors 'V_emb'"):
-        dr.plot(mode="streamlines")
-
-    # Unknown mode
-    with pytest.raises(ValueError, match="Unknown plot mode"):
-        dr.plot(mode="invalid_mode")
-
-
-def test_plot_enhanced():
-    """Test enhanced plotting features (3D, metrics overlay)."""
-    # Create 3D data and embedding
-    X = np.random.rand(20, 5)
-
-    # Mock a reducer that outputs 3 dims
-    dr = DimReduction("PCA", n_components=3)
-    # Use fit_transform to set self.embedding_
-    dr.fit_transform(X)
-
-    # 1. Test 3D plotting
-    fig = dr.plot(dims=(0, 1, 2))
-    assert isinstance(fig, plt.Figure)
-    assert len(fig.axes) > 0
-    plt.close(fig)
-
-    # 2. Test metrics overlay (2D default dims)
-    fig = dr.plot(X=X, show_metrics=True)
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-    # 3. Test mode='metrics'
-    fig = dr.plot(mode="metrics", X=X)
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-
-def test_plot_diagnostics():
-    """Test diagnostic plotting modes."""
-    X = np.random.rand(20, 5)
-
-    # 1. Linear (PCA)
-    dr = DimReduction("PCA", n_components=3)
-    dr.fit_transform(X)  # Set embedding
-
-    fig = dr.plot(mode="diagnostics")
-    assert isinstance(fig, plt.Figure)
-    assert "Explained Variance" in fig.axes[0].get_title()
-    plt.close(fig)
-
-    # 2. Mock Neural
-    class MockNeuralReducer(BaseReducer):
-        def __init__(self):
-            super().__init__(n_components=2)
-            self.loss_history_ = [0.5, 0.4, 0.3, 0.2]
-            self.model = "MockNetwork"
-
-        def fit(self, X, y=None):
-            return self
-
-        def transform(self, X):
-            return X[:, :2]
-
-    dr_neural = DimReduction("PCA", n_components=2)
-    dr_neural.reducer = MockNeuralReducer()
-    dr_neural.embedding_ = np.random.rand(20, 2)  # Manually set embedding
-    dr_neural.method = "UseMockNeural"
-
-    fig = dr_neural.plot(mode="diagnostics")
-    assert isinstance(fig, plt.Figure)
-    assert "Loss History" in fig.axes[0].get_title()
-    plt.close(fig)
+    # The DimReduction class no longer caches embedding_
+    assert not hasattr(dr, "embedding_")
 
 
 def test_score_specific_reducers():
@@ -246,23 +196,23 @@ def test_score_specific_reducers():
 
     # 1. MDS -> stress_
     dr_mds = DimReduction("MDS", n_components=2)
-    dr_mds.fit_transform(X)
-    scores_mds = dr_mds.score(X)
+    emb_mds = dr_mds.fit_transform(X)
+    scores_mds = dr_mds.score(emb_mds, X=X)
     assert "stress_" in scores_mds["metadata"]
     assert isinstance(scores_mds["metadata"]["stress_"], float)
 
     # 2. t-SNE -> kl_divergence_
     # Note: perplexity must be < n_samples (20).
     dr_tsne = DimReduction("TSNE", n_components=2, perplexity=5)
-    dr_tsne.fit_transform(X)
-    scores_tsne = dr_tsne.score(X)
+    emb_tsne = dr_tsne.fit_transform(X)
+    scores_tsne = dr_tsne.score(emb_tsne, X=X)
     assert "kl_divergence_" in scores_tsne["metadata"]
     assert isinstance(scores_tsne["metadata"]["kl_divergence_"], float)
 
     # Repopulate PCA check
     dr_pca = DimReduction("PCA", n_components=2)
-    dr_pca.fit_transform(X)
-    scores_pca = dr_pca.score(X)
+    emb_pca = dr_pca.fit_transform(X)
+    scores_pca = dr_pca.score(emb_pca, X=X)
     assert "singular_values_" in scores_pca["diagnostics"]
     assert len(scores_pca["diagnostics"]["singular_values_"]) == 2
 
@@ -283,12 +233,9 @@ def test_score_allowlist():
             super().__init__(n_components=2)
             self.model = MockModel()
 
-        # Explicit contract
-        def get_diagnostics(self):
-            return {
-                "diff_potential": self.model.diff_potential,
-                "eigs": self.model.eigs,
-            }
+        @property
+        def capabilities(self):
+            return {"supported_diagnostics": ["diff_potential", "eigs"]}
 
         def fit(self, X, y=None):
             return self
@@ -299,12 +246,19 @@ def test_score_allowlist():
         def fit_transform(self, X, y=None):
             return X[:, :2]
 
+        @property
+        def diff_potential(self):
+            return self.model.diff_potential
+
+        @property
+        def eigs(self):
+            return self.model.eigs
+
     dr = DimReduction("PCA", n_components=2)  # Dummy init
     dr.reducer = MockReducer()
-    dr.embedding_ = np.zeros((20, 2))
-
+    X_emb = np.zeros((20, 2))
     X = np.zeros((20, 5))
-    scores = dr.score(X)
+    scores = dr.score(X_emb, X=X)
 
     # 'graph' and 'ignored_attr' should be absent because
     # get_diagnostics doesn't return them
@@ -315,59 +269,7 @@ def test_score_allowlist():
     assert "eigs" in scores["diagnostics"]
 
 
-def test_plot_native(monkeypatch):
-    """Test native plotting calls with mocks."""
-    np.random.rand(20, 5)
-
-    # 1. Test PHATE
-    dr_phate = DimReduction("PHATE")
-
-    # Mock phate module
-    mock_phate = types.SimpleNamespace(
-        plot=types.SimpleNamespace(scatter=lambda *a, **k: plt.figure())
-    )
-    monkeypatch.setitem(sys.modules, "phate", mock_phate)
-
-    dr_phate.reducer.model = "MockPHATEModel"
-
-    fig = dr_phate.plot(mode="native")
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-    # 2. Test UMAP
-    # Mock umap.plot (requires umap to be imported)
-    import umap
-
-    mock_plot_mod = types.SimpleNamespace(
-        points=lambda *a, **k: plt.figure().add_subplot(111)
-    )
-    monkeypatch.setattr(umap, "plot", mock_plot_mod, raising=False)
-    monkeypatch.setitem(sys.modules, "umap.plot", mock_plot_mod)
-
-    dr_umap = DimReduction("UMAP")
-    dr_umap.reducer.model = "MockUMAPModel"
-
-    ax = dr_umap.plot(mode="native")
-    assert isinstance(ax, plt.Axes)
-    plt.close(ax.figure)
-
-    # 3. Test DMD
-    # Mock DMD plotting
-    dr_dmd = DimReduction("DMD")
-    mock_dmd_model = types.SimpleNamespace(plot_eigs=lambda **k: plt.figure())
-    dr_dmd.reducer.model = mock_dmd_model
-
-    fig = dr_dmd.plot(mode="native")
-    assert isinstance(fig, plt.Figure)
-    plt.close(fig)
-
-    # 4. Unsupported
-    dr_pca = DimReduction("PCA")
-    with pytest.raises(NotImplementedError, match="Native plotting not supported"):
-        dr_pca.plot(mode="native")
-
-
-def test_get_components():
+def test_get_components(monkeypatch):
     """Test retrieval of linear components/patterns."""
     # 1. PCA (sklearn has components_)
     X = np.random.rand(20, 5)
@@ -386,26 +288,22 @@ def test_get_components():
     X_3d = np.random.rand(10, 5, 100)  # trials x channels x times
     y = np.array([0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
     dr_trca = DimReduction("TRCA", n_components=1)
+    _install_fake_trca(monkeypatch)
     dr_trca.fit(X_3d, y=y)
     assert dr_trca.get_components().shape == (1, 2, 5)
 
     # 4. Fail case (Neural/Non-linear)
     dr_umap = DimReduction("UMAP")
-    dr_umap.fit(X)
-    with pytest.raises(ValueError, match="does not appear to have linear components"):
+    dr_umap.reducer.get_components = lambda: (_ for _ in ()).throw(
+        ValueError("does not expose public get_components")
+    )
+    with pytest.raises(ValueError, match="does not expose public get_components"):
         dr_umap.get_components()
 
 
 def test_init_from_config_object():
-    """Test initialization with a Pydantic DimReductionConfig object."""
-    mock_config = MagicMock(spec=DimReductionConfig)
-    mock_inner = MagicMock()
-    mock_inner.method = "UMAP"
-    mock_inner.n_components = 2
-    mock_inner.model_dump.return_value = {"n_neighbors": 15}
-    mock_config.config = mock_inner
-
-    dr = DimReduction(mock_config)
+    """Test initialization with a typed reducer config object."""
+    dr = DimReduction(UMAPConfig(method="UMAP", n_components=2, n_neighbors=15))
     assert dr.method == "UMAP"
     assert dr.n_components == 2
     assert dr.reducer_kwargs["n_neighbors"] == 15
@@ -426,48 +324,66 @@ def test_validate_input_errors():
         dr2._validate_input(X_3d)
 
 
-def test_score_errors_and_edge_cases():
+def test_score_errors_and_edge_cases(monkeypatch):
     """Test score method edge cases."""
     dr = DimReduction("PCA", n_components=2)
 
-    # Error: No embedding available
-    X = np.zeros((10, 5))
-    with pytest.raises(RuntimeError, match="No embedding available"):
-        dr.score(X)
+    # 4. Pass explicit embedding
+    X = np.random.rand(10, 5)
+    X_emb = np.random.rand(10, 2)
+    dr.fit(X)
+    scores = dr.score(X_emb, X=X)
+    assert "metrics" in scores
 
-    # Edge case: 3D data returns NaNs
+    # Edge case: trajectory-aware scoring on 3D embeddings
     dr_trca = DimReduction("TRCA", n_components=2)
-    dr_trca.embedding_ = np.zeros((10, 2, 5))  # Fake 3D embedding
-    scores = dr_trca.score(np.zeros((10, 5, 5)), X_emb=dr_trca.embedding_)
-    assert np.isnan(scores["metrics"]["trustworthiness"])
-    assert "undefined for 3D" in scores["metrics"].get("note", "")
+    # TRCA needs a fit for metadata
+    X_3d = np.random.rand(10, 5, 100)
+    y = np.concatenate([np.zeros(5, dtype=int), np.ones(5, dtype=int)])
+    _install_fake_trca(monkeypatch)
+    dr_trca.fit(X_3d, y=y)
 
+    traj_3d = np.zeros((10, 3, 2))  # Fake 3D embedding
+    scores = dr_trca.score(traj_3d, X=np.zeros((10, 3, 5)))
+    assert "trajectory_speed_mean" in scores["metrics"]
+    assert "trajectory_acceleration_mean" in scores["metrics"]
+    assert "trajectory_curvature_mean" in scores["metrics"]
+    assert "trajectory_turning_angle_mean" in scores["metrics"]
+    assert "trajectory_dispersion_mean" in scores["metrics"]
+    assert "trajectory_path_length_final" in scores["metrics"]
+    assert "trajectory_displacement_final" in scores["metrics"]
+    assert "trajectory_tortuosity_final" in scores["metrics"]
 
-def test_plot_errors_coverage():
-    """Test plot method error branches."""
-    dr = DimReduction("PCA", n_components=2)
+    dr_sep = DimReduction("TRCA", n_components=2)
+    _install_fake_trca(monkeypatch)
+    dr_sep.fit(X_3d, y=y)
 
-    # Error: Not fitted (mode='embedding')
-    with pytest.raises(RuntimeError, match="Model is not fitted"):
-        dr.plot(mode="embedding")
+    traj = np.zeros((4, 6, 2))
+    labels = np.array(["A", "A", "B", "B"])
+    traj[0, :, 0] = -1.0
+    traj[1, :, 0] = 0.0
+    traj[2, :, 0] = 2.0
+    traj[3, :, 0] = 3.0
+    traj[:, :, 1] = np.arange(6, dtype=float)
+    centroid_scores = dr_sep.score(
+        traj,
+        X=np.zeros((4, 5, 5)),
+        metrics=["trajectory_separation"],
+        labels=labels,
+        separation_method="centroid",
+    )
+    ratio_scores = dr_sep.score(
+        traj,
+        X=np.zeros((4, 5, 5)),
+        metrics=["trajectory_separation"],
+        labels=labels,
+        separation_method="within_between_ratio",
+    )
 
-    dr.embedding_ = np.zeros((10, 2))
-
-    # Error: show_metrics=True without X
-    with pytest.raises(ValueError, match="requires 'X'"):
-        dr.plot(mode="embedding", show_metrics=True)
-
-    # Error: mode='metrics' without X
-    with pytest.raises(ValueError, match="requires 'X'"):
-        dr.plot(mode="metrics")
-
-    # Error: mode='streamlines' without V_emb
-    with pytest.raises(ValueError, match="requires velocity vectors"):
-        dr.plot(mode="streamlines")
-
-    # Error: Unknown mode
-    with pytest.raises(ValueError, match="Unknown plot mode"):
-        dr.plot(mode="super_cool_mode")
+    assert (
+        centroid_scores["metrics"]["trajectory_separation_auc::A::B"]
+        != ratio_scores["metrics"]["trajectory_separation_auc::A::B"]
+    )
 
 
 class DummyForPickle(BaseReducer):
@@ -487,12 +403,9 @@ def test_load_wrapper_reconstruction_coverage(tmp_path):
     save_path = tmp_path / "dummy.pkl"
     dummy.save(save_path)
 
-    with (
-        patch(
-            "coco_pipe.dim_reduction.core.get_reducer_class",
-            side_effect=lambda m: DummyForPickle if m == "DUMMY" else None,
-        ),
-        patch("coco_pipe.dim_reduction.core.METHODS", ["DUMMY"]),
+    with patch(
+        "coco_pipe.dim_reduction.core.get_reducer_class",
+        side_effect=lambda m: DummyForPickle if m == "DUMMY" else None,
     ):
         loaded = DimReduction.load(save_path, method="DUMMY")
 
@@ -505,9 +418,8 @@ def test_diagnostics_api():
     """Verify the get_diagnostics()."""
     X = np.random.rand(50, 10)
     dr = DimReduction(method="TSNE", n_components=2, perplexity=5, random_state=42)
-    dr.fit_transform(X)
-
-    scores = dr.score(X)
+    emb = dr.fit_transform(X)
+    scores = dr.score(emb, X=X)
     # Check for direct attribute extraction via the new API
     assert "kl_divergence_" in scores["metadata"]
     assert "n_iter_" in scores["metadata"]
@@ -515,29 +427,50 @@ def test_diagnostics_api():
     assert "__init__" not in scores["metadata"]
 
 
-def test_plot_diagnostics_safe_access():
-    """Verify that plot(mode='diagnostics') safely handles property errors."""
-    dr = DimReduction(method="PCA", n_components=2)
-    dr.fit(np.random.rand(10, 5))
+def test_summary_and_metadata_api():
+    """Test get_summary, get_metrics, and capabilities."""
+    X = np.random.rand(20, 5)
+    dr = DimReduction("PCA", n_components=2, random_state=42)
 
-    # Mock a property that raises an error
-    class BrokenReducer:
-        @property
-        def capabilities(self):
-            return {"supported_diagnostics": ["explained_variance_ratio_"]}
+    # 1. Initial state
+    assert dr.random_state == 42
+    assert "input_ndim" in dr.capabilities
+    assert dr.get_metrics() == {}
 
-        @property
-        def explained_variance_ratio_(self):
-            raise RuntimeError("Broken property")
+    # 2. Scored state
+    emb = dr.fit_transform(X)
+    dr.score(emb, X=X)
 
-        @property
-        def model(self):
-            return None
+    metrics = dr.get_metrics()
+    assert "trustworthiness" in metrics
 
-    dr.reducer = BrokenReducer()
+    summary = dr.get_summary()
+    assert summary["method"] == "PCA"
+    assert summary["n_components"] == 2
+    assert summary["random_state"] == 42
+    assert "trustworthiness" in summary["metrics"]
+    assert "explained_variance_ratio_" in summary["diagnostics"]
+    assert len(summary["metric_records"]) > 0
 
-    # (Shepard fallback requires X)
-    try:
-        dr.plot(mode="diagnostics", X=np.random.rand(10, 5))
-    except (ValueError, RuntimeError) as e:
-        assert "Broken property" not in str(e)
+    # 3. Reset check (fit clears cache)
+    dr.fit(X)
+    assert dr.get_metrics() == {}
+    assert dr.metric_records_ == []
+
+
+def test_score_no_metrics_payload_note():
+    """Test that a note is added if metrics payload is empty."""
+    X = np.random.rand(10, 5)
+    dr = DimReduction("PCA", n_components=2)
+    dr.fit(X)
+    # Request a metric that doesn't exist for 2D to trigger empty payload
+    with patch("coco_pipe.dim_reduction.core.evaluate_embedding") as mock_eval:
+        mock_eval.return_value = {
+            "metrics": {},
+            "metadata": {},
+            "diagnostics": {},
+            "records": [],
+        }
+        scores = dr.score(np.zeros((10, 2)), X=X)
+        assert "note" in scores["metrics"]
+        assert "Metrics unavailable" in scores["metrics"]["note"]

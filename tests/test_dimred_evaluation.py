@@ -64,19 +64,33 @@ def test_method_selector(data):
     ]
     for reducer in reducers:
         reducer.fit_transform(X, y=y)
-        reducer.score(X, metrics=sweep_metrics, k_values=[5, 10, 20])
+        reducer.score(
+            reducer.transform(X), X=X, metrics=sweep_metrics, k_values=[5, 10, 20]
+        )
 
     evaluator = MethodSelector(reducers)
     evaluator.collect()
 
     metrics_df = evaluator.to_frame()
-    assert set(metrics_df["method"]) == {"PCA", "ISOMAP"}
+    assert set(metrics_df["method"]) == {"PCA", "Isomap"}
 
     res_pca = metrics_df[
         (metrics_df["method"] == "PCA") & (metrics_df["metric"] == "trustworthiness")
     ]
     assert len(res_pca) == 3
     assert set(pd.to_numeric(res_pca["scope_value"])) == {5, 10, 20}
+
+
+def test_method_selector_to_frame_global_records():
+    X = np.random.rand(20, 5)
+    reducer = DimReduction("PCA", n_components=2)
+    emb = reducer.fit_transform(X)
+    reducer.score(emb, X=X, metrics=["trustworthiness"], k_values=[5])
+    selector = MethodSelector([reducer]).collect()
+
+    frame = selector.to_frame()
+    assert not frame.empty
+    assert {"method", "metric", "value", "scope", "scope_value"} <= set(frame.columns)
 
 
 def test_method_selector_to_frame(data):
@@ -91,7 +105,7 @@ def test_method_selector_to_frame(data):
     ]
     reducer = DimReduction("PCA", n_components=2)
     reducer.fit_transform(X, y=y)
-    reducer.score(X, metrics=sweep_metrics, k_values=[5, 10])
+    reducer.score(reducer.transform(X), X=X, metrics=sweep_metrics, k_values=[5, 10])
     selector = MethodSelector([reducer]).collect()
 
     metrics_df = selector.to_frame()
@@ -498,9 +512,8 @@ def test_feature_importance():
     X[:, 1] = np.random.randn(100)
 
     model = DimReduction("PCA", n_components=1)
-    model.fit(X)
-
-    scores = perturbation_importance(model, X, feature_names=["Signal", "Noise"])
+    X_emb = model.fit_transform(X)
+    scores = perturbation_importance(model, X, ["Signal", "Noise"], X_emb)
 
     assert scores["Signal"] > scores["Noise"]
 
@@ -748,12 +761,14 @@ def test_method_selector_collects_scored_reducers():
 
     for reducer in (pca, isomap):
         reducer.fit_transform(X)
-        reducer.score(X, metrics=sweep_metrics, k_values=[5, 10])
+        reducer.score(
+            reducer.transform(X), X=X, metrics=sweep_metrics, k_values=[5, 10]
+        )
 
     selector = MethodSelector([pca, isomap]).collect()
 
     metrics_df = selector.to_frame()
-    assert {"PCA", "ISOMAP"} <= set(metrics_df["method"])
+    assert {"PCA", "Isomap"} <= set(metrics_df["method"])
 
     # Check tidy results structure
     res_pca = metrics_df[
@@ -761,7 +776,7 @@ def test_method_selector_collects_scored_reducers():
     ]
     assert len(res_pca) == 2  # 2 k values
     ranked = selector.rank_methods(selection_metric="trustworthiness")
-    assert selector.reducers[ranked.iloc[0]["method"]].embedding_ is not None
+    assert not ranked.empty
 
 
 def test_method_selector_single_method():
@@ -777,7 +792,7 @@ def test_method_selector_single_method():
     ]
     reducer = DimReduction("PCA", n_components=2)
     reducer.fit_transform(X)
-    reducer.score(X, metrics=sweep_metrics, k_values=[5])
+    reducer.score(reducer.transform(X), X=X, metrics=sweep_metrics, k_values=[5])
     reducers = {"PCA": reducer}
 
     selector = MethodSelector(reducers).collect()
@@ -845,7 +860,7 @@ def test_dimreduction_score_respects_metric_selection():
     reducer = DimReduction("PCA", n_components=2)
     reducer.fit_transform(X)
 
-    payload = reducer.score(X, metrics=["trustworthiness"])
+    payload = reducer.score(reducer.transform(X), X=X, metrics=["trustworthiness"])
 
     assert set(payload["metrics"]) == {"trustworthiness"}
     assert "coranking_matrix_" in payload["diagnostics"]
@@ -984,7 +999,7 @@ def test_method_selector_guardrails_extended():
 
     # 2. Collect error: no embedding
     reducer_no_emb = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no embedding"):
+    with pytest.raises(ValueError, match="has no metric records"):
         MethodSelector([reducer_no_emb]).collect()
 
     # 3. Collect error: no records
@@ -992,13 +1007,16 @@ def test_method_selector_guardrails_extended():
     reducer_no_recs = DimReduction("PCA")
     reducer_no_recs.fit_transform(X)
     # No score() call
+    # With stateless DimReduction, this now checks metric_records_
     with pytest.raises(ValueError, match="has no metric records"):
         MethodSelector([reducer_no_recs]).collect()
 
     # 4. Rank methods: invalid tie-breaker
     reducer_ok = DimReduction("PCA")
     reducer_ok.fit_transform(X)
-    reducer_ok.score(X, metrics=["trustworthiness"], k_values=[5, 10])
+    reducer_ok.score(
+        reducer_ok.transform(X), X=X, metrics=["trustworthiness"], k_values=[5, 10]
+    )
     selector = MethodSelector([reducer_ok]).collect()
 
     with pytest.raises(ValueError, match="Unsupported tie-breaker"):
@@ -1169,7 +1187,7 @@ def test_method_selector_rank_methods_missing_observations():
     X = np.random.rand(10, 5)
     reducer = DimReduction("PCA")
     reducer.fit_transform(X)
-    reducer.score(X, metrics=["trustworthiness"], k_values=[5])
+    reducer.score(reducer.transform(X), X=X, metrics=["trustworthiness"], k_values=[5])
 
     selector = MethodSelector([reducer]).collect()
 
@@ -1208,7 +1226,7 @@ def test_method_selector_rank_methods_nan_mean():
     X = np.random.rand(10, 5)
     reducer = DimReduction("PCA")
     reducer.fit_transform(X)
-    reducer.score(X, metrics=["trustworthiness"])
+    reducer.score(reducer.transform(X), X=X, metrics=["trustworthiness"])
 
     selector = MethodSelector([reducer]).collect()
     ranked = selector.rank_methods(selection_metric="trustworthiness")
@@ -1226,7 +1244,7 @@ def test_evaluate_embedding_standard_metrics_k_boundary_checks():
 
 def test_method_selector_collect_unfitted_reducer():
     reducer = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no embedding"):
+    with pytest.raises(ValueError, match="has no metric records"):
         MethodSelector([reducer]).collect()
 
     reducer.embedding_ = np.random.rand(10, 2)
@@ -1253,7 +1271,7 @@ def test_evaluate_embedding_ndim_guard_branch():
 def test_method_selector_collect_not_fitted_guard():
     # DimReduction starts with embedding_ = None
     reducer = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no embedding"):
+    with pytest.raises(ValueError, match="has no metric records"):
         MethodSelector([reducer]).collect()
 
 
