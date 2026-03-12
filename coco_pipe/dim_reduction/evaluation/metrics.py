@@ -1,32 +1,34 @@
 """
-Advanced Dimensionality Reduction Metrics
-=========================================
+Rank-based dimensionality reduction quality metrics.
 
-This module implements rigorous quality metrics based on the Co-ranking Matrix
-framework. It includes efficient implementations of Trustworthiness, Continuity,
-LCMC, and MRRE.
+This module provides co-ranking-matrix metrics for comparing high-dimensional
+data with a low-dimensional embedding. The implementations are reducer-agnostic
+and operate directly on NumPy arrays.
 
 Functions
 ---------
 compute_coranking_matrix
-    Compute the co-ranking matrix Q.
-compute_mrre
-    Compute Mean Relative Rank Errors (Intrusion/Extrusion).
+    Compute the co-ranking matrix between the original and embedded spaces.
 trustworthiness
-    Compute Trustworthiness using Q matrix.
+    Measure how well original neighbors remain neighbors after embedding.
 continuity
-    Compute Continuity using Q matrix.
+    Measure how well embedded neighbors are close in the original space.
 lcmc
-    Compute Local Continuity Meta-Criterion.
+    Compute the local continuity meta-criterion.
+compute_mrre
+    Compute mean relative rank errors for intrusions and extrusions.
+shepard_diagram_data
+    Sample pairwise distances for Shepard-diagram visualization.
 
 References
 ----------
-.. [1] Lee, J. A., & Verleysen, M. (2009). Quality assessment of dimensionality
-       reduction: Rank-based criteria. Neurocomputing.
+.. [1] Lee, J. A., & Verleysen, M. (2009). Quality assessment of
+       dimensionality reduction: Rank-based criteria. Neurocomputing.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
-Date: 2026-01-08
 """
+
+from __future__ import annotations
 
 from typing import Optional, Tuple
 
@@ -35,309 +37,344 @@ from scipy.spatial.distance import pdist
 from sklearn.neighbors import NearestNeighbors
 
 
+def _validate_embedding_pair(
+    X: np.ndarray,
+    X_emb: np.ndarray,
+    *,
+    func_name: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate paired original and embedded sample matrices."""
+    X_arr = np.asarray(X, dtype=float)
+    X_emb_arr = np.asarray(X_emb, dtype=float)
+
+    if X_arr.ndim != 2:
+        raise ValueError(f"`X` must be a 2D array in `{func_name}`.")
+    if X_emb_arr.ndim != 2:
+        raise ValueError(f"`X_emb` must be a 2D array in `{func_name}`.")
+    if X_arr.shape[0] != X_emb_arr.shape[0]:
+        raise ValueError("`X` and `X_emb` must contain the same number of samples.")
+    if X_arr.shape[0] < 2:
+        raise ValueError("At least 2 samples are required.")
+    return X_arr, X_emb_arr
+
+
+def _validate_k(
+    Q: np.ndarray,
+    k: int,
+    metric_name: str,
+    *,
+    require_positive_normalizer: bool = False,
+) -> tuple[np.ndarray, int, int]:
+    """Validate co-ranking neighborhood size for a metric."""
+    Q_arr = np.asarray(Q)
+    if Q_arr.ndim != 2 or Q_arr.shape[0] != Q_arr.shape[1]:
+        raise ValueError("`Q` must be a square 2D co-ranking matrix.")
+
+    n = Q_arr.shape[0] + 1
+
+    if not isinstance(k, (int, np.integer)):
+        raise ValueError(f"Neighborhood size k for `{metric_name}` must be an integer.")
+    k_int = int(k)
+
+    if k_int <= 0:
+        raise ValueError("Neighborhood size k must be > 0.")
+    if k_int >= n - 1:
+        raise ValueError(
+            f"Neighborhood size k ({k_int}) must be less than n_samples - 1 ({n - 1})."
+        )
+
+    if require_positive_normalizer and (2 * n - 3 * k_int - 1) <= 0:
+        raise ValueError(
+            f"Neighborhood size k ({k_int}) is too large for `{metric_name}` with "
+            f"n_samples={n}; the normalization term must stay positive."
+        )
+
+    return Q_arr, n, k_int
+
+
+def _trust_continuity_scale(n: int, k: int, metric_name: str) -> float:
+    """Return the shared normalization scale for trustworthiness/continuity."""
+    denom = n * k * (2 * n - 3 * k - 1)
+    if denom <= 0:
+        raise ValueError(
+            f"Neighborhood size k ({k}) is too large for `{metric_name}` with "
+            f"n_samples={n}; the normalization term must stay positive."
+        )
+    return 2.0 / float(denom)
+
+
 def compute_coranking_matrix(X: np.ndarray, X_emb: np.ndarray) -> np.ndarray:
     """
-    Compute the co-ranking matrix Q.
+    Compute the co-ranking matrix between two sample spaces.
 
-    The co-ranking matrix Q_kl counts how many points have rank k in high-dimensional
-    space and rank l in low-dimensional space.
+    The co-ranking matrix ``Q`` counts how often each point pair appears with
+    high-dimensional rank ``k`` and low-dimensional rank ``l``. Self-neighbors
+    are excluded from the rank construction.
 
     Parameters
     ----------
     X : np.ndarray of shape (n_samples, n_features)
-        High-dimensional data.
+        Original high-dimensional data.
     X_emb : np.ndarray of shape (n_samples, n_components)
-        Low-dimensional embedding.
+        Low-dimensional embedding of the same samples.
 
     Returns
     -------
-    Q : np.ndarray of shape (n_samples-1, n_samples-1)
-        The co-ranking matrix. Q[k, l] corresponds to rank k+1 and l+1 (0-indexed).
-    """
-    n = X.shape[0]
+    np.ndarray of shape (n_samples - 1, n_samples - 1)
+        Integer co-ranking matrix where ``Q[k, l]`` corresponds to ranks
+        ``k + 1`` and ``l + 1`` in the original and embedded spaces.
 
-    # Use n_neighbors=n to include the point itself as the 1st neighbor, then remove it.
-    # This avoids the bias where including self in ranks shift all other neighbors.
-    nbrs_high = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=-1).fit(X)
-    _, indices_high = nbrs_high.kneighbors(X)
-    # Remove self-indices (the first neighbor of a point is itself)
+    Raises
+    ------
+    ValueError
+        If the inputs are not two-dimensional, do not share the same sample
+        count, or contain fewer than two samples.
+
+    See Also
+    --------
+    trustworthiness : Compute intrusion-based neighborhood preservation.
+    continuity : Compute extrusion-based neighborhood preservation.
+    lcmc : Compute the local continuity meta-criterion.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> X = np.array([[0.0], [1.0], [2.0]])
+    >>> X_emb = np.array([[0.0], [2.0], [4.0]])
+    >>> Q = compute_coranking_matrix(X, X_emb)
+    >>> Q.shape
+    (2, 2)
+    """
+    X_arr, X_emb_arr = _validate_embedding_pair(
+        X,
+        X_emb,
+        func_name="compute_coranking_matrix",
+    )
+    n = X_arr.shape[0]
+
+    nbrs_high = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=1).fit(X_arr)
+    _, indices_high = nbrs_high.kneighbors(X_arr)
     indices_high = indices_high[:, 1:]
 
-    nbrs_low = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=-1).fit(X_emb)
-    _, indices_low = nbrs_low.kneighbors(X_emb)
-    # Remove self-indices
+    nbrs_low = NearestNeighbors(n_neighbors=n, algorithm="auto", n_jobs=1).fit(
+        X_emb_arr
+    )
+    _, indices_low = nbrs_low.kneighbors(X_emb_arr)
     indices_low = indices_low[:, 1:]
 
-    # Calculate ranks in Low-D
-    # rank_low[i, j] = rank of node j w.r.t node i in Low-D space
-    # we need a rank matrix of size (n, n) to store pairwise ranks
     rank_low = np.zeros((n, n), dtype=int)
-    rows = np.arange(n)[:, None]
+    row_indices = np.arange(n)[:, None]
+    rank_low[row_indices, indices_low] = np.arange(n - 1)
 
-    # Each row in indices_low corresponds to ranks 0, 1, ..., n-2
-    rank_low[rows, indices_low] = np.arange(n - 1)
+    low_rank_indices = rank_low[row_indices, indices_high]
+    high_rank_indices = np.broadcast_to(np.arange(n - 1), (n, n - 1))
 
-    # For each point i, take its high-D neighbors j = indices_high[i, :]
-    # Their High-D rank is simply the column index (0, 1, ..., n-2)
-    # Their Low-D rank is looked up in rank_low[i, indices_high[i, :]]
-
-    # Get the Low-D ranks for the High-D neighbors
-    l_indices = rank_low[rows, indices_high].flatten()
-
-    # The "k" coordinate (High-D rank) is repeating 0..n-2 for each row
-    k_indices = np.tile(np.arange(n - 1), n)
-
-    # Compute 2D histogram
-    Q, _, _ = np.histogram2d(
-        k_indices, l_indices, bins=n - 1, range=[[0, n - 1], [0, n - 1]]
-    )
-
-    return Q.astype(int)
+    Q = np.zeros((n - 1, n - 1), dtype=int)
+    np.add.at(Q, (high_rank_indices.ravel(), low_rank_indices.ravel()), 1)
+    return Q
 
 
 def trustworthiness(Q: np.ndarray, k: int) -> float:
     """
-    Compute Trustworthiness from Co-ranking matrix Q.
+    Compute trustworthiness from a co-ranking matrix.
 
-    Trustworthiness penalizes intrusions (upper triangle of Q).
-    It measures how well local neighbors in the original space remain neighbors
-    in the embedding.
+    Trustworthiness penalizes intrusions, i.e. points that appear among the
+    ``k`` nearest neighbors in the embedding but were farther away in the
+    original space.
 
     Parameters
     ----------
-    Q : np.ndarray
+    Q : np.ndarray of shape (n_samples - 1, n_samples - 1)
         Co-ranking matrix.
     k : int
-        Size of the neighborhood.
+        Neighborhood size. The normalization used by trustworthiness requires
+        ``2 * n_samples - 3 * k - 1 > 0``.
 
     Returns
     -------
-    score : float
-        Trustworthiness score in [0, 1]. Higher is better.
+    float
+        Trustworthiness score in ``[0, 1]``. Higher is better.
+
+    Raises
+    ------
+    ValueError
+        If ``Q`` is invalid or if ``k`` falls outside the valid domain.
+
+    See Also
+    --------
+    continuity : Complementary extrusion-based metric.
+    compute_coranking_matrix : Construct the required co-ranking matrix.
 
     Examples
     --------
-    >>> Q = compute_coranking_matrix(X, X_emb)
-    >>> t = trustworthiness(Q, k=10)
+    >>> import numpy as np
+    >>> Q = np.diag([1, 1, 1, 1])
+    >>> trustworthiness(Q, k=1)
+    1.0
     """
-    n = Q.shape[0] + 1
-    if k <= 0:
-        raise ValueError("Neighborhood size k must be > 0.")
-    if k >= n - 1:
-        raise ValueError(
-            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
-        )
+    Q_arr, n, k_int = _validate_k(
+        Q,
+        k,
+        "trustworthiness",
+        require_positive_normalizer=True,
+    )
 
-    # Intrusions: High-D rank (r) > k, Low-D rank (c) <= k
-    # We sum Q[r, c] * (r + 1 - k)
-
-    # Slice the relevant region: r from k to n-2, c from 0 to k-1
-    Q_sub = Q[k:, :k]
-
-    # Weights depend only on r (row index in Q_sub)
-    # r_actual = r_sub + k
-    # weight = r_actual + 1 - k = r_sub + 1
-
-    row_indices = np.arange(Q_sub.shape[0])  # 0 to n-2-k
-    weights = row_indices + 1
-
-    # Sum over columns first (axis 1), then weighted sum over rows
-    # int_sum = sum_{r} weight[r] * sum_{c} Q[r,c]
-    int_sum = np.sum(Q_sub.sum(axis=1) * weights)
-
-    # Normalization
-    if n <= 5:
-        # Robust handling for small N edge cases
-        # For N=5, K=3 -> 2N-3K-1 = 10-9-1=0.
-        denom = n * k * (2 * n - 3 * k - 1)
-        if denom == 0:
-            term = 1.0  # Fallback
-        else:
-            term = 2 / denom
-    else:
-        term = 2 / (n * k * (2 * n - 3 * k - 1))
-
-    return 1 - term * int_sum
+    intrusions = Q_arr[k_int:, :k_int]
+    row_weights = np.arange(1, intrusions.shape[0] + 1, dtype=float)
+    intrusion_sum = float(np.sum(intrusions.sum(axis=1) * row_weights))
+    scale = _trust_continuity_scale(n, k_int, "trustworthiness")
+    return 1.0 - scale * intrusion_sum
 
 
 def continuity(Q: np.ndarray, k: int) -> float:
     """
-    Compute Continuity from Co-ranking matrix Q.
+    Compute continuity from a co-ranking matrix.
 
-    Continuity penalizes extrusions (lower triangle of Q).
-    It measures how well points close in the embedding are also close in the
-    original space (no false clusters).
+    Continuity penalizes extrusions, i.e. points that are among the
+    ``k`` nearest neighbors in the original space but are pushed farther away in
+    the embedding.
 
     Parameters
     ----------
-    Q : np.ndarray
+    Q : np.ndarray of shape (n_samples - 1, n_samples - 1)
         Co-ranking matrix.
     k : int
-        Size of the neighborhood.
+        Neighborhood size. The normalization used by continuity requires
+        ``2 * n_samples - 3 * k - 1 > 0``.
 
     Returns
     -------
-    score : float
-        Continuity score in [0, 1]. Higher is better.
+    float
+        Continuity score in ``[0, 1]``. Higher is better.
+
+    Raises
+    ------
+    ValueError
+        If ``Q`` is invalid or if ``k`` falls outside the valid domain.
+
+    See Also
+    --------
+    trustworthiness : Complementary intrusion-based metric.
+    compute_coranking_matrix : Construct the required co-ranking matrix.
 
     Examples
     --------
-    >>> c = continuity(Q, k=10)
+    >>> import numpy as np
+    >>> Q = np.diag([1, 1, 1, 1])
+    >>> continuity(Q, k=1)
+    1.0
     """
-    n = Q.shape[0] + 1
-    if k <= 0:
-        raise ValueError("Neighborhood size k must be > 0.")
-    if k >= n - 1:
-        raise ValueError(
-            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
-        )
+    Q_arr, n, k_int = _validate_k(
+        Q,
+        k,
+        "continuity",
+        require_positive_normalizer=True,
+    )
 
-    # Extrusions: High-D rank (r) <= k, Low-D rank (c) > k
-    # Slice: r from 0 to k-1, c from k to n-2
-    Q_sub = Q[:k, k:]
-
-    # Weights depend only on c (col index in Q_sub)
-    # c_actual = c_sub + k
-    # weight = c_actual + 1 - k = c_sub + 1
-
-    col_indices = np.arange(Q_sub.shape[1])
-    weights = col_indices + 1
-
-    # Sum over rows first, then weighted sum over cols
-    ext_sum = np.sum(Q_sub.sum(axis=0) * weights)
-
-    if n <= 5:
-        denom = n * k * (2 * n - 3 * k - 1)
-        if denom == 0:
-            term = 1.0
-        else:
-            term = 2 / denom
-    else:
-        term = 2 / (n * k * (2 * n - 3 * k - 1))
-
-    return 1 - term * ext_sum
+    extrusions = Q_arr[:k_int, k_int:]
+    col_weights = np.arange(1, extrusions.shape[1] + 1, dtype=float)
+    extrusion_sum = float(np.sum(extrusions.sum(axis=0) * col_weights))
+    scale = _trust_continuity_scale(n, k_int, "continuity")
+    return 1.0 - scale * extrusion_sum
 
 
 def lcmc(Q: np.ndarray, k: int) -> float:
     """
-    Compute Local Continuity Meta-Criterion (LCMC).
-
-    LCMC measures the overlap between the k-nearest neighbors in the original
-    space and the low-dimensional space. The value is normalized to be roughly
-    independent of k.
+    Compute the local continuity meta-criterion (LCMC).
 
     Parameters
     ----------
-    Q : np.ndarray
+    Q : np.ndarray of shape (n_samples - 1, n_samples - 1)
         Co-ranking matrix.
     k : int
-        Size of the neighborhood.
+        Neighborhood size.
 
     Returns
     -------
-    score : float
-        LCMC score. Higher is better (ranges typically [0, 1]).
+    float
+        LCMC score. Higher is better.
+
+    Raises
+    ------
+    ValueError
+        If ``Q`` is invalid or if ``k`` falls outside the valid domain.
+
+    See Also
+    --------
+    trustworthiness : Neighbor-preservation metric.
+    continuity : Neighbor-consistency metric.
 
     Examples
     --------
-    >>> score = lcmc(Q, k=10)
+    >>> import numpy as np
+    >>> Q = np.diag([1, 1, 1, 1])
+    >>> isinstance(lcmc(Q, k=1), float)
+    True
     """
-    n = Q.shape[0] + 1
-    if k <= 0:
-        raise ValueError("Neighborhood size k must be > 0.")
-    if k >= n - 1:
-        raise ValueError(
-            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
-        )
-
-    overlap = np.sum(Q[:k, :k])
-
-    term1 = k / (1 - n)
-    term2 = (1 / (n * k)) * overlap
-
-    return term1 + term2
+    Q_arr, n, k_int = _validate_k(Q, k, "lcmc")
+    overlap = float(np.sum(Q_arr[:k_int, :k_int]))
+    return (overlap / (n * k_int)) - (k_int / (n - 1))
 
 
 def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
     """
-    Compute Mean Relative Rank Errors (MRRE).
+    Compute mean relative rank errors (MRRE).
 
-    Calculates both MRRE_X (Intrusion) and MRRE_Y (Extrusion). These metrics
-    measure the preservation of neighborhood ranks, weighting errors by their
-    rank magnitude.
+    Both intrusion and extrusion MRRE are returned. These are error metrics, so
+    lower values are better and ``0`` indicates perfect rank preservation.
 
     Parameters
     ----------
-    Q : np.ndarray
+    Q : np.ndarray of shape (n_samples - 1, n_samples - 1)
         Co-ranking matrix.
     k : int
-        Size of the neighborhood.
+        Neighborhood size.
 
     Returns
     -------
-    mrre_int : float
-        MRRE of Intrusions ($M_{int}$). Closer to 1 is better (0 is perfect
-        preservation).
-        *Note*: Interpretation depends on formula variant; here we compute standard
-        error.
-    mrre_ext : float
-        MRRE of Extrusions ($M_{ext}$).
+    tuple[float, float]
+        ``(mrre_intrusion, mrre_extrusion)``.
+
+    Raises
+    ------
+    ValueError
+        If ``Q`` is invalid or if ``k`` falls outside the valid domain.
+
+    See Also
+    --------
+    trustworthiness : Intrusion-sensitive preservation score.
+    continuity : Extrusion-sensitive preservation score.
 
     Examples
     --------
-    >>> m_int, m_ext = compute_mrre(Q, k=20)
+    >>> import numpy as np
+    >>> Q = np.diag([1, 1, 1, 1])
+    >>> compute_mrre(Q, k=1)
+    (0.0, 0.0)
     """
-    n = Q.shape[0] + 1
-    if k <= 0:
-        raise ValueError("Neighborhood size k must be > 0.")
-    if k >= n - 1:
-        raise ValueError(
-            f"Neighborhood size k ({k}) must be less than n_samples - 1 ({n - 1})."
-        )
+    Q_arr, n, k_int = _validate_k(Q, k, "compute_mrre")
 
-    # Normalizer
-    # H_k = sum_{i=1}^k |n - 2i + 1| / i
-    i_vals = np.arange(1, k + 1)
-    H_k = np.sum(np.abs(n - 2 * i_vals + 1) / i_vals)
+    i_vals = np.arange(1, k_int + 1, dtype=float)
+    harmonic_like = float(np.sum(np.abs(n - 2 * i_vals + 1) / i_vals))
 
-    # --- Intrusions ---
-    # r > k, c < k
-    # weight = |rank_low - rank_high| / rank_high
-    #        = |(c+1) - (r+1)| / (r+1) = |c-r| / (r+1)
+    rows_int = np.arange(k_int, n - 1)
+    cols_int = np.arange(k_int)
+    high_int, low_int = np.meshgrid(rows_int, cols_int, indexing="ij")
+    high_rank_int = high_int + 1
+    low_rank_int = low_int + 1
+    weights_int = np.abs(low_rank_int - high_rank_int) / high_rank_int
+    intrusion_sum = float(np.sum(Q_arr[k_int:, :k_int] * weights_int))
 
-    # Slice for Intrusions: Q[k:, :k]
-    # r from k to n-2 (indices), c from 0 to k-1 (indices)
-    rows_int = np.arange(k, n - 1)
-    cols_int = np.arange(k)
+    rows_ext = np.arange(k_int)
+    cols_ext = np.arange(k_int, n - 1)
+    high_ext, low_ext = np.meshgrid(rows_ext, cols_ext, indexing="ij")
+    high_rank_ext = high_ext + 1
+    low_rank_ext = low_ext + 1
+    weights_ext = np.abs(low_rank_ext - high_rank_ext) / high_rank_ext
+    extrusion_sum = float(np.sum(Q_arr[:k_int, k_int:] * weights_ext))
 
-    # Meshgrid for this sub-block
-    R_int, C_int = np.meshgrid(rows_int, cols_int, indexing="ij")
-    # Rank values (1-based)
-    Rho_int = R_int + 1
-    Rnk_int = C_int + 1
-
-    W_int = np.abs(Rnk_int - Rho_int) / Rho_int
-
-    # Element-wise multiply with Q slice and sum
-    int_sum = np.sum(Q[k:, :k] * W_int)
-    mrre_int = int_sum / (n * H_k)
-
-    # --- Extrusions ---
-    # r <= k, c > k
-    # Slice Q[:k, k:]
-    rows_ext = np.arange(k)
-    cols_ext = np.arange(k, n - 1)
-
-    R_ext, C_ext = np.meshgrid(rows_ext, cols_ext, indexing="ij")
-    Rho_ext = R_ext + 1
-    Rnk_ext = C_ext + 1
-
-    W_ext = np.abs(Rnk_ext - Rho_ext) / Rho_ext
-
-    ext_sum = np.sum(Q[:k, k:] * W_ext)
-    mrre_ext = ext_sum / (n * H_k)
-
-    return mrre_int, mrre_ext
+    normalizer = n * harmonic_like
+    return intrusion_sum / normalizer, extrusion_sum / normalizer
 
 
 def shepard_diagram_data(
@@ -347,41 +384,66 @@ def shepard_diagram_data(
     random_state: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Compute pairwise distances for Shepard Diagram.
+    Compute sampled pairwise distances for a Shepard diagram.
 
     Parameters
     ----------
-    X : np.ndarray
-        Original data.
-    X_embedded : np.ndarray
-        Embedded data.
+    X : np.ndarray of shape (n_samples, n_features)
+        Original high-dimensional data.
+    X_embedded : np.ndarray of shape (n_samples, n_components)
+        Low-dimensional embedding of the same samples.
     sample_size : int, default=1000
-        Number of points to sample if N is large (to avoid N^2 complexity).
-        If N <= sample_size, uses all points.
+        Number of samples to keep before computing pairwise distances. If
+        ``sample_size`` is at least ``n_samples``, all samples are used.
     random_state : int, optional
-        Seed for reproducibility when subsampling.
+        Random seed used when subsampling.
 
     Returns
     -------
-    dist_orig : np.ndarray
-        Pairwise distances in high-dimensional space.
-    dist_emb : np.ndarray
-        Pairwise distances in low-dimensional space.
+    tuple[np.ndarray, np.ndarray]
+        Pairwise distances in the original and embedded spaces.
+
+    Raises
+    ------
+    ValueError
+        If the inputs are invalid or if ``sample_size <= 1``.
+
+    See Also
+    --------
+    compute_coranking_matrix : Rank-based global quality summary.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> X = np.random.RandomState(0).rand(10, 3)
+    >>> X_emb = X[:, :2]
+    >>> d_orig, d_emb = shepard_diagram_data(X, X_emb, sample_size=5, random_state=0)
+    >>> len(d_orig) == len(d_emb)
+    True
     """
     from sklearn.utils import check_random_state
 
-    n_samples = X.shape[0]
+    X_arr, X_emb_arr = _validate_embedding_pair(
+        X,
+        X_embedded,
+        func_name="shepard_diagram_data",
+    )
 
-    if n_samples > sample_size:
+    if not isinstance(sample_size, (int, np.integer)):
+        raise ValueError("`sample_size` must be an integer.")
+    sample_size_int = int(sample_size)
+    if sample_size_int <= 1:
+        raise ValueError("`sample_size` must be greater than 1.")
+
+    n_samples = X_arr.shape[0]
+
+    if n_samples > sample_size_int:
         rng = check_random_state(random_state)
-        indices = rng.choice(n_samples, sample_size, replace=False)
-        X_sub = X[indices]
-        Emb_sub = X_embedded[indices]
+        indices = rng.choice(n_samples, sample_size_int, replace=False)
+        X_sub = X_arr[indices]
+        X_emb_sub = X_emb_arr[indices]
     else:
-        X_sub = X
-        Emb_sub = X_embedded
+        X_sub = X_arr
+        X_emb_sub = X_emb_arr
 
-    dist_orig = pdist(X_sub)
-    dist_emb = pdist(Emb_sub)
-
-    return dist_orig, dist_emb
+    return pdist(X_sub), pdist(X_emb_sub)

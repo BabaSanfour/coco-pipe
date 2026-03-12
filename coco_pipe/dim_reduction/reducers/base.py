@@ -180,6 +180,12 @@ class BaseReducer(ABC):
         self.n_components = n_components
         self.params = kwargs
         self.model = None
+        self.context_: Dict[str, Any] = {}
+
+    @property
+    def name(self) -> str:
+        """Return a stable public display name for the reducer."""
+        return type(self).__name__
 
     def _filter_params(self, fn_or_class: Any, params: dict) -> dict:
         """
