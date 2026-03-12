@@ -33,20 +33,22 @@ def mock_container():
 @pytest.fixture
 def mock_reducer():
     red = MagicMock()
-    # Important: Set to real arrays,
-    # otherwise Plotly validation fails when it sees a MagicMock
-    red.embedding_ = np.random.randn(10, 2)
-    red.loss_history_ = [10, 5, 2]
-    red.explained_variance_ratio_ = np.array([0.5, 0.3, 0.2])
-    red.labels_ = None
-    red.metadata_ = None
     red.get_diagnostics.return_value = {
         "explained_variance_ratio_": np.array([0.5, 0.5])
     }
     red.get_quality_metadata.return_value = {"n_iter": 100}
     red.capabilities = {
-        "has_native_plot": False,
         "supported_diagnostics": ["explained_variance_ratio_"],
+    }
+    red.get_summary.return_value = {
+        "method": "MockReducer",
+        "metrics": {},
+        "metric_records": [],
+        "quality_metadata": red.get_quality_metadata.return_value,
+        "diagnostics": red.get_diagnostics.return_value,
+        "interpretation": {},
+        "interpretation_records": [],
+        "capabilities": red.capabilities,
     }
     return red
 
@@ -119,8 +121,9 @@ def test_from_embeddings(MockEmbDataset, mock_container, tmp_path):
 
 def test_from_reductions(mock_reducer, mock_container):
     reductions = [mock_reducer, mock_reducer]  # 2 reducers
+    embeddings = [np.random.randn(10, 2), np.random.randn(10, 2)]
 
-    rep = from_reductions(reductions, container=mock_container)
+    rep = from_reductions(reductions, container=mock_container, embeddings=embeddings)
     html = rep.render()
 
     assert "DimReduction Comparison" in html

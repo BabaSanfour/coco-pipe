@@ -2,9 +2,6 @@
 Tests for dim_reduction.evaluation module.
 """
 
-import sys
-import types
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -32,7 +29,7 @@ from coco_pipe.dim_reduction.evaluation import (
     trajectory_turning_angle,
     trustworthiness,
 )
-from coco_pipe.viz.dim_reduction import plot_comparison
+from coco_pipe.viz.dim_reduction import plot_metrics
 
 
 @pytest.fixture
@@ -804,14 +801,12 @@ def test_method_selector_single_method():
     assert len(res_pca) == 1
 
 
-def test_evaluation_plot(monkeypatch, data):
-    """Test plotting of evaluation results."""
+def test_evaluation_plot(data):
+    """Test plotting of selector metric records through plot_metrics."""
     X, y = data
     import matplotlib.pyplot as plt
 
-    # Mock running
     selector = MethodSelector([])
-    selector.data = X
     selector.metric_records_ = [
         {
             "method": "PCA",
@@ -843,14 +838,7 @@ def test_evaluation_plot(monkeypatch, data):
         },
     ]
 
-    # Mock viz.plot_comparison
-    types.SimpleNamespace(plot_comparison=lambda *a, **k: plt.figure())
-
-    mock_viz = types.SimpleNamespace(plot_comparison=lambda *a, **k: plt.figure())
-    monkeypatch.setitem(sys.modules, "coco_pipe.viz.dim_reduction", mock_viz)
-
-    fig = plot_comparison(selector, metric="trustworthiness")
-    fig = plot_comparison(selector, metric="trustworthiness")
+    fig = plot_metrics(selector, metric="trustworthiness")
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 

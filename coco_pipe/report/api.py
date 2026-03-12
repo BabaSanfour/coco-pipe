@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+import numpy as np
+
 if TYPE_CHECKING:
     from coco_pipe.io.structures import DataContainer
 
@@ -166,6 +168,10 @@ def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
 def from_reductions(
     reductions: List[Any],
     container: Optional["DataContainer"] = None,
+    embeddings: Optional[List[np.ndarray]] = None,
+    labels: Optional[np.ndarray] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    times: Optional[np.ndarray] = None,
     title: str = "DimReduction Comparison",
     config: Optional[Dict] = None,
 ) -> Report:
@@ -175,9 +181,17 @@ def from_reductions(
     Parameters
     ----------
     reductions : List[Any]
-        List of fitted reduction objects (must have `embedding_`).
+        List of scored reduction objects implementing ``get_summary()``.
     container : DataContainer, optional
         Original data container to include in "Data Overview".
+    embeddings : list of np.ndarray, optional
+        Explicit embedding payloads aligned with ``reductions``.
+    labels : np.ndarray, optional
+        Optional labels aligned with each embedding.
+    metadata : dict, optional
+        Optional column-oriented metadata aligned with 2D embeddings.
+    times : np.ndarray, optional
+        Optional time axis aligned with 3D trajectory embeddings.
     title : str
         Report title.
 
@@ -186,9 +200,15 @@ def from_reductions(
     Report
         Report with Data Overview (if valid) and one section per reduction.
 
+    Notes
+    -----
+    Reduction summaries no longer carry cached embedding payloads. Pass
+    ``embeddings`` explicitly when the report should render embedding or
+    trajectory plots.
+
     Examples
     --------
-    >>> report = from_reductions([pca, tsne])
+    >>> report = from_reductions([pca, tsne], embeddings=[pca_emb, tsne_emb])
     >>> report.save("report.html")
     """
     from .core import Report
@@ -198,13 +218,16 @@ def from_reductions(
     if container:
         report.add_container(container)
 
+    if embeddings is not None and len(embeddings) != len(reductions):
+        raise ValueError("`embeddings` must align with `reductions`.")
+
     for i, red in enumerate(reductions):
         # Try to guess a name
         name = None
 
-        # Priority 1: provided 'name' attribute (if it's a valid string)
-        if hasattr(red, "name"):
-            candidate = getattr(red, "name")
+        # Priority 1: method attribute
+        if hasattr(red, "method"):
+            candidate = getattr(red, "method")
             if isinstance(candidate, str):
                 name = candidate
 
@@ -216,6 +239,13 @@ def from_reductions(
         if name is None or not isinstance(name, str):
             name = f"Method {i + 1}"
 
-        report.add_reduction(red, name=name)
+        report.add_reduction(
+            red,
+            name=name,
+            X_emb=None if embeddings is None else embeddings[i],
+            labels=labels,
+            metadata=metadata,
+            times=times,
+        )
 
     return report

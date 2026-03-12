@@ -11,17 +11,18 @@ ProvenanceConfig
 ReportConfig
     Main configuration for the report generation.
 
-Author: Antigravity
-Date: 2026-01-17
+Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProvenanceConfig(BaseModel):
     """Configuration for execution provenance."""
+
+    model_config = ConfigDict(extra="allow")
 
     source: str = Field(
         "Unknown", description="Source of the data (BIDS, Tabular, etc.)"
@@ -35,14 +36,13 @@ class ProvenanceConfig(BaseModel):
         default_factory=dict, description="Package versions."
     )
 
-    class Config:
-        extra = "allow"  # Allow extra fields like 'root', 'task', etc.
-
 
 class ReportConfig(BaseModel):
     """
     Configuration for the Report object.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     title: str = Field("CoCo Analysis Report", description="Title of the report.")
     author: Optional[str] = Field(None, description="Author of the report.")
@@ -57,6 +57,3 @@ class ReportConfig(BaseModel):
     run_params: Dict[str, Any] = Field(
         default_factory=dict, description="Parameters used in the analysis run."
     )
-
-    class Config:
-        extra = "allow"

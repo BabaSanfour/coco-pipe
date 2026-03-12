@@ -74,7 +74,9 @@ def get_environment_info() -> Dict[str, Any]:
     'a1b2c3d'
     """
     info = {
-        "timestamp_utc": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "timestamp_utc": datetime.datetime.now(datetime.UTC).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
         "os_platform": platform.platform(),
         "python_version": platform.python_version(),
         "command": " ".join(sys.argv),

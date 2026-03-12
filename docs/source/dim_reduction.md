@@ -183,6 +183,24 @@ Default behavior:
 - varying `scope_value` -> line
 - explicit matrix summaries -> heatmap
 
+## Visualization Entry Points
+
+The dim-reduction viz surface is data-first and explicit. Plotting helpers do
+not read manager-owned embedding or context state.
+
+- `plot_embedding(embedding, labels=..., metadata=...)`
+- `plot_metrics(metric_records, metric=..., scope=..., method=...)`
+- `plot_shepard_diagram(X, embedding, distances=...)`
+- `plot_trajectory(trajectories, times=..., labels=..., values=...)`
+- `plot_trajectory_metric_series(series, times=..., labels=...)`
+- `plot_feature_importance(scores_or_records, analysis=..., method=..., dimension=...)`
+- `plot_feature_correlation_heatmap(correlation_payload, method=...)`
+- `plot_interpretation(interpretation_payload, analysis=..., method=..., dimension=...)`
+
+`plot_trajectory(...)` and `plot_trajectory_metric_series(...)` require native
+trajectory tensors or explicit time-series arrays. They do not reshape flat 2D
+embeddings or infer grouping metadata.
+
 ## Generic Trajectories
 
 Trajectory scoring is not EEG-specific. Any grouped or ordered embedding can
@@ -222,19 +240,25 @@ not used as automatic method-selection metrics by default.
 
 ## Reports
 
-`Report.add_reduction()` consumes `get_summary()` when available.
+`Report.add_reduction()` consumes `get_summary()` when available and accepts an
+explicit embedding payload when the section should render an embedding or
+trajectory plot.
 
 It can render:
 
-- interactive embeddings when an explicit embedding payload is provided
+- interactive embeddings when `X_emb` is provided explicitly
 - trajectory plots for 3D embeddings
 - scalar metric tables and charts
 - loss and scree diagnostics
 - co-ranking heatmaps
 - trajectory metric timecourses
+- interpretation plots from `interpretation` / `interpretation_records`
 
 `Report.add_comparison()` accepts tidy metric frames or `MethodSelector`
 instances directly.
+
+`from_reductions(...)` follows the same rule: pass `embeddings=[...]` explicitly
+when the report should include embedding or trajectory plots.
 
 Shepard plots and comparison/report views reuse cached diagnostics such as
 `shepard_distances_` and `coranking_matrix_` when those artifacts already exist.
