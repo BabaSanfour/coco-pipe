@@ -28,6 +28,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _sample_metadata(container) -> dict[str, np.ndarray]:
+    """Extract observation-aligned metadata columns from a DataContainer."""
+    n_samples = np.asarray(container.X).shape[0]
+    metadata = {}
+    for key, value in (getattr(container, "coords", {}) or {}).items():
+        value = np.asarray(value)
+        if key == "obs":
+            continue
+        if value.ndim >= 1 and value.shape[0] == n_samples:
+            metadata[key] = value
+    return metadata
+
+
 def create_synthetic_csv(path: Path):
     """Create a dummy CSV file for the demo."""
     logger.info(f"Creating synthetic dataset at {path}...")
@@ -100,8 +113,8 @@ def main():
         reductions=[pca, umap],
         container=container,
         embeddings=[pca_emb, umap_emb],
-        labels=container.ids,
-        metadata=container.coords,
+        labels=container.y,
+        metadata=_sample_metadata(container),
         title="Pipeline Demo: PCA vs UMAP",
         config={"pipeline": "Full Demo", "scaling": "StandardScaler"},
     )

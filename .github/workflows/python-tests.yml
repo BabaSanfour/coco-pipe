@@ -63,7 +63,7 @@ jobs:
         cache: 'pip'
     - name: Install dependencies
       run: |
-        pip install -e .[docs]
+        pip install -e .[docs,full]
         # Install pandoc for some sphinx extensions if needed
         sudo apt-get install -y pandoc
     - name: Build docs

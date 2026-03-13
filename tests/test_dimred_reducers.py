@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from sklearn.datasets import make_blobs
 
+import coco_pipe.dim_reduction.reducers.topology as topology_mod
 from coco_pipe.dim_reduction.config import (
     METHODS,
     ParametricUMAPConfig,
@@ -447,8 +448,6 @@ def test_trca_reducer(data_trca):
 
     # Check if fit works without error
     reducer.fit(data_trca, y=y)
-
-    # Transform
     X_out = reducer.transform(data_trca)
 
     # Expected output: (n_trials, n_components_out, n_times)
@@ -500,22 +499,21 @@ def test_topo_ae_reducer(data_ts):
     fake_torch = _FakeTopologyTorch()
 
     with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes",
+        patch.object(
+            topology_mod,
+            "_build_topology_training_classes",
             return_value=(
                 fake_torch,
                 _MockTopologyModule,
                 _MockTopologyLossCriterion,
             ),
         ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
+        patch.object(
+            topology_mod,
+            "import_optional_dependency",
             return_value=_MockNeuralNetRegressor,
         ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._load_torch",
-            return_value=fake_torch,
-        ),
+        patch.object(topology_mod, "_load_torch", return_value=fake_torch),
     ):
         reducer = TopologicalAEReducer(
             n_components=2, epochs=2, batch_size=16, device="cpu"
@@ -557,22 +555,21 @@ def test_skorch_topological_ae():
     fake_torch = _FakeTopologyTorch()
 
     with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes",
+        patch.object(
+            topology_mod,
+            "_build_topology_training_classes",
             return_value=(
                 fake_torch,
                 _MockTopologyModule,
                 _MockTopologyLossCriterion,
             ),
         ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
+        patch.object(
+            topology_mod,
+            "import_optional_dependency",
             return_value=_MockNeuralNetRegressor,
         ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._load_torch",
-            return_value=fake_torch,
-        ),
+        patch.object(topology_mod, "_load_torch", return_value=fake_torch),
     ):
         reducer = TopologicalAEReducer(
             n_components=2,
@@ -1197,27 +1194,18 @@ def test_topo_signature_logic():
 
 
 def test_topo_device_init():
-    from coco_pipe.dim_reduction.reducers.topology import _resolve_device
-
     fake_cuda = _FakeTopologyTorch(cuda_available=True)
-    with patch(
-        "coco_pipe.dim_reduction.reducers.topology._load_torch",
-        return_value=fake_cuda,
-    ):
-        assert _resolve_device("auto") == "cuda"
+    with patch.object(topology_mod, "_load_torch", return_value=fake_cuda):
+        assert topology_mod._resolve_device("auto") == "cuda"
 
     fake_mps = _FakeTopologyTorch(cuda_available=False, mps_available=True)
-    with patch(
-        "coco_pipe.dim_reduction.reducers.topology._load_torch",
-        return_value=fake_mps,
-    ):
-        assert _resolve_device("auto") == "mps"
+    with patch.object(topology_mod, "_load_torch", return_value=fake_mps):
+        assert topology_mod._resolve_device("auto") == "mps"
 
-    with patch(
-        "coco_pipe.dim_reduction.reducers.topology._load_torch",
-        side_effect=RuntimeError("no torch"),
+    with patch.object(
+        topology_mod, "_load_torch", side_effect=RuntimeError("no torch")
     ):
-        assert _resolve_device("auto") == "cpu"
+        assert topology_mod._resolve_device("auto") == "cpu"
 
 
 def test_reproducibility_stochastic_reducers(data):
@@ -1319,16 +1307,18 @@ def test_topology_reducer_filters_unknown_params():
     _MockNeuralNetRegressor.last_init = None
 
     with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes",
+        patch.object(
+            topology_mod,
+            "_build_topology_training_classes",
             return_value=(
                 fake_torch,
                 _MockTopologyModule,
                 _MockTopologyLossCriterion,
             ),
         ),
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency",
+        patch.object(
+            topology_mod,
+            "import_optional_dependency",
             side_effect=lambda loader, feature=None, dependency=None, **kwargs: (
                 _MockNeuralNetRegressor
                 if (dependency or kwargs.get("dependency")) == "skorch"
@@ -1597,25 +1587,20 @@ def test_base_reducer_quality_metadata_default():
 
 def test_topology_ae_edge_cases(data_ts):
     """Test TopologicalAEReducer edge cases and internal classes."""
-    from coco_pipe.dim_reduction.reducers.topology import _resolve_device
-
     # Global mock for topology training classes to avoid gudhi/skorch issues
     with (
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology._build_topology_training_classes"
-        ) as mock_build,
-        patch(
-            "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency"
-        ) as mock_import,
+        patch.object(topology_mod, "_build_topology_training_classes") as mock_build,
+        patch.object(topology_mod, "import_optional_dependency") as mock_import,
     ):
-        mock_torch = MagicMock()
-        mock_ae = MagicMock()
-        mock_crit = MagicMock()
-        mock_build.return_value = (mock_torch, mock_ae, mock_crit)
+        mock_torch = _FakeTopologyTorch()
+        mock_build.return_value = (
+            mock_torch,
+            _MockTopologyModule,
+            _MockTopologyLossCriterion,
+        )
 
         # Mock skorch NeuralNetRegressor
-        mock_skorch = MagicMock()
-        mock_import.return_value = mock_skorch
+        mock_import.return_value = _MockNeuralNetRegressor
 
         reducer = TopologicalAEReducer(device="cpu")
 
@@ -1635,11 +1620,8 @@ def test_topology_ae_edge_cases(data_ts):
             unfitted.get_quality_metadata()
 
         # 4. _resolve_device exception path
-        with patch(
-            "coco_pipe.dim_reduction.reducers.topology._load_torch",
-            side_effect=Exception,
-        ):
-            assert _resolve_device("auto") == "cpu"
+        with patch.object(topology_mod, "_load_torch", side_effect=Exception):
+            assert topology_mod._resolve_device("auto") == "cpu"
 
 
 def test_topological_signature_distance_and_module():
@@ -1785,12 +1767,8 @@ def test_reducer_property_access_coverage(data_ts, data_trca):
     topo.model = None
     assert topo.get_pytorch_module() is None
 
-    with patch(
-        "coco_pipe.dim_reduction.reducers.topology.import_optional_dependency"
-    ) as mock_import:
-        from coco_pipe.dim_reduction.reducers.topology import _load_gudhi
-
-        _load_gudhi()
+    with patch.object(topology_mod, "import_optional_dependency") as mock_import:
+        topology_mod._load_gudhi()
         assert mock_import.called
 
 
@@ -1805,9 +1783,7 @@ def test_topology_signature_distance_dim1():
     mock_gd = MagicMock()
     mock_gd.RipsComplex.return_value.create_simplex_tree.return_value = mock_st
 
-    with patch(
-        "coco_pipe.dim_reduction.reducers.topology._load_gudhi", return_value=mock_gd
-    ):
+    with patch.object(topology_mod, "_load_gudhi", return_value=mock_gd):
         pairs = dist._get_active_pairs(MagicMock(), dim=1)
         assert len(pairs) == 1
         # birth_simplex was [0, 1]

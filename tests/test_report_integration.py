@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import coco_pipe.io.dataset as dataset_mod
 from coco_pipe.io.structures import DataContainer
 from coco_pipe.report import (
     from_bids,
@@ -68,7 +69,7 @@ def test_from_container(mock_container):
     assert "🔍" in html
 
 
-@patch("coco_pipe.io.dataset.BIDSDataset")
+@patch.object(dataset_mod, "BIDSDataset")
 def test_from_bids(MockBIDSDataset, mock_container, tmp_path):
     # Setup Mock
     instance = MockBIDSDataset.return_value
@@ -107,7 +108,7 @@ def test_from_tabular(tmp_path):
     assert "Data Overview" in html
 
 
-@patch("coco_pipe.io.dataset.EmbeddingDataset")
+@patch.object(dataset_mod, "EmbeddingDataset")
 def test_from_embeddings(MockEmbDataset, mock_container, tmp_path):
     instance = MockEmbDataset.return_value
     instance.load.return_value = mock_container

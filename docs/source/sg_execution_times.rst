@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:37.622** total execution time for 10 files **from all galleries**:
+**00:38.939** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -32,32 +32,32 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_auto_examples_plot_velocity_embedding.py` (``../../examples/plot_velocity_embedding.py``)
-     - 00:14.035
-     - 0.0
    * - :ref:`sphx_glr_auto_examples_plot_quality_metrics.py` (``../../examples/plot_quality_metrics.py``)
-     - 00:13.955
+     - 00:28.831
      - 0.0
    * - :ref:`sphx_glr_auto_examples_benchmark_dim_reduction.py` (``../../examples/benchmark_dim_reduction.py``)
-     - 00:06.182
+     - 00:04.345
      - 0.0
-   * - :ref:`sphx_glr_auto_examples_demo_report.py` (``../../examples/demo_report.py``)
-     - 00:01.809
+   * - :ref:`sphx_glr_auto_examples_plot_velocity_embedding.py` (``../../examples/plot_velocity_embedding.py``)
+     - 00:03.669
      - 0.0
    * - :ref:`sphx_glr_auto_examples_plot_scientific_dimred.py` (``../../examples/plot_scientific_dimred.py``)
-     - 00:01.208
+     - 00:01.047
      - 0.0
-   * - :ref:`sphx_glr_auto_examples_demo_pipeline.py` (``../../examples/demo_pipeline.py``)
-     - 00:00.384
+   * - :ref:`sphx_glr_auto_examples_demo_report.py` (``../../examples/demo_report.py``)
+     - 00:00.395
      - 0.0
    * - :ref:`sphx_glr_auto_examples_compare_phate_umap.py` (``../../examples/compare_phate_umap.py``)
-     - 00:00.029
+     - 00:00.337
+     - 0.0
+   * - :ref:`sphx_glr_auto_examples_demo_pipeline.py` (``../../examples/demo_pipeline.py``)
+     - 00:00.296
      - 0.0
    * - :ref:`sphx_glr_auto_examples_demo_iterative_balancing.py` (``../../examples/demo_iterative_balancing.py``)
      - 00:00.011
      - 0.0
    * - :ref:`sphx_glr_auto_examples_demo_structures.py` (``../../examples/demo_structures.py``)
-     - 00:00.007
+     - 00:00.006
      - 0.0
    * - :ref:`sphx_glr_auto_examples_compare_dim_reduction.py` (``../../examples/compare_dim_reduction.py``)
      - 00:00.002
