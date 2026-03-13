@@ -11,7 +11,6 @@ import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import dask.array as da
 import numpy as np
 import pytest
 from sklearn.datasets import make_blobs
@@ -660,6 +659,8 @@ def test_incremental_pca_reducer():
 def test_dask_pca_reducer():
     """Test DaskPCAReducer."""
     pytest.skip("Skipping Dask PCA to avoid coverage hangs.")
+    import dask.array as da
+
     # Create dask array
     X_np = np.random.rand(100, 10)
     X_da = da.from_array(X_np, chunks=(20, 10))
@@ -683,6 +684,8 @@ def test_dask_pca_reducer():
 def test_dask_truncated_svd_reducer():
     """Test DaskTruncatedSVDReducer."""
     pytest.skip("Skipping Dask SVD to avoid coverage hangs.")
+    import dask.array as da
+
     X_np = np.random.rand(100, 10)
     X_da = da.from_array(X_np, chunks=(20, 10))
 
