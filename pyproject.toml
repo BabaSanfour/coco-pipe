@@ -47,6 +47,10 @@ dev = [
     "sphinx-autoapi",
     "myst-parser",
 ]
+test = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
 docs = [
     "sphinx>=4.0.0",
     "insegel",
