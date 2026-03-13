@@ -12,7 +12,12 @@ def data_container_cls():
 @pytest.fixture
 def sample_container(data_container_cls):
     X = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    coords = {"channel": ["Fz", "Cz", "Pz"], "time": np.array([0, 1, 2, 3])}
+    coords = {
+        "channel": ["Fz", "Cz", "Pz"],
+        "time": np.array([0, 1, 2, 3]),
+        "Study ID": np.array(["S0", "S1"]),
+        "group": np.array(["control", "patient"]),
+    }
     y = np.array([0, 1])
     ids = np.array(["s0", "s1"])
     return data_container_cls(
@@ -52,6 +57,8 @@ def test_flatten_and_stack(sample_container):
     assert flat.dims == ("obs", "feature")
     assert flat.X.shape == (2, 12)
     assert flat.coords["feature"][0] == "Fz_0"
+    assert flat.coords["Study ID"].tolist() == ["S0", "S1"]
+    assert flat.coords["group"].tolist() == ["control", "patient"]
 
     stacked = sample_container.stack(dims=("obs", "time"), new_dim="obs")
     assert stacked.X.shape == (
@@ -60,6 +67,8 @@ def test_flatten_and_stack(sample_container):
     )
     assert stacked.y.tolist() == [0, 0, 0, 0, 1, 1, 1, 1]
     assert stacked.ids[0].startswith("s0_")
+    assert stacked.coords["Study ID"].tolist() == ["S0"] * 4 + ["S1"] * 4
+    assert stacked.coords["group"].tolist() == ["control"] * 4 + ["patient"] * 4
 
 
 def test_balance_undersample(data_container_cls):
@@ -296,7 +305,12 @@ def test_aggregate():
     X = np.array([[1, 1], [2, 2], [3, 3]])
     y = np.array([0, 0, 1])  # Consistent for group 'A', unique for 'B'
     ids = np.array(["a1", "a2", "b1"])
-    coords = {"group": ["A", "A", "B"], "bad_len": [1, 2]}
+    coords = {
+        "Study ID": ["A", "A", "B"],
+        "site": ["north", "north", "south"],
+        "mixed": ["x", "y", "z"],
+        "bad_len": [1, 2],
+    }
 
     dc = DataContainer(X, dims=("obs", "feat"), coords=coords, y=y, ids=ids)
 
@@ -314,20 +328,23 @@ def test_aggregate():
         dc.aggregate(by=[1, 2])
 
     # 4. Aggregation Mean (Standard)
-    agg = dc.aggregate(by="group", method="mean")
+    agg = dc.aggregate(by="Study ID", method="mean")
     assert agg.shape == (2, 2)
     assert np.array_equal(agg.coords["obs"], ["A", "B"])
+    assert np.array_equal(agg.coords["Study ID"], ["A", "B"])
+    assert np.array_equal(agg.coords["site"], ["north", "south"])
+    assert "mixed" not in agg.coords
     # Group A: (1+2)/2 = 1.5. Group B: 3.
     assert agg.X[0, 0] == 1.5
     assert agg.y is not None
     assert np.array_equal(agg.y, [0, 1])  # 0 is consistent for A
 
     # 5. Method variants
-    agg_std = dc.aggregate(by="group", method="std")
+    agg_std = dc.aggregate(by="Study ID", method="std")
     assert agg_std.ids is None  # Std voids IDs
 
     with pytest.raises(ValueError, match="Unknown method"):
-        dc.aggregate(by="group", method="invalid")
+        dc.aggregate(by="Study ID", method="invalid")
 
 
 def test_aggregate_unknown_method():

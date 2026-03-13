@@ -12,13 +12,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import mne
 import numpy as np
 import pandas as pd
-from mne_bids import BIDSPath
 
 from .structures import DataContainer
 from .utils import (
+    _get_bids_path,
     default_id_extractor,
     detect_runs,
     detect_sessions,
@@ -590,9 +589,6 @@ class BIDSDataset(BaseDataset):
         self.tmax = tmax
         self.baseline = baseline
 
-        if mne is None:
-            raise ImportError("mne and mne-bids are required.")
-
     def load(self) -> DataContainer:
         """
         Load the BIDS dataset into a DataContainer.
@@ -707,7 +703,7 @@ class BIDSDataset(BaseDataset):
                             match=lambda matches=matches: matches,
                         )
                     else:
-                        bids_path = BIDSPath(
+                        bids_path = _get_bids_path()(
                             subject=sub,
                             session=ses,
                             task=self.task,

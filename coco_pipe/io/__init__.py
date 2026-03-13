@@ -5,7 +5,6 @@ from .config import (
     EmbeddingConfig,
     TabularConfig,
 )
-from .dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 from .load import load_data
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
@@ -24,3 +23,15 @@ __all__ = [
     "EmbeddingConfig",
     "DatasetConfig",
 ]
+
+
+def __getattr__(name):
+    if name in {"BIDSDataset", "EmbeddingDataset", "TabularDataset"}:
+        from .dataset import (  # noqa: F401
+            BIDSDataset,
+            EmbeddingDataset,
+            TabularDataset,
+        )
+
+        return locals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

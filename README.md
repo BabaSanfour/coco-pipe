@@ -48,26 +48,24 @@ CoCo Pipe provides two main ways to use the ML module:
 
 ### 1. Direct Python API Usage
 
-You can use the ML module directly in your Python scripts by importing from `coco_pipe.io` for data loading/feature selection and `coco_pipe.ml` for machine learning pipelines:
+You can use the ML module directly in your Python scripts by importing from `coco_pipe.io` for data loading and `coco_pipe.ml` for machine learning pipelines:
 
 ```python
-from coco_pipe.io import load, select_features
+from coco_pipe.io import load_data
 from coco_pipe.ml import MLPipeline
 
-# Load your data
-X, y = load(
-    type="tabular",  # Supports: 'tabular', 'embeddings', 'meeg'
-    data_path="data/your_dataset.csv",
+# Load your data into the canonical package container
+container = load_data(
+    "data/your_dataset.csv",
+    mode="tabular",
+    target_col="target_class",
+    sep=",",
 )
 
-# Optionally select specific features
-X, y = select_features(
-    df=X,  # Your feature DataFrame
-    target_columns=y,  # Target variable(s)
-    covariates=["age", "sex"],  # Optional demographic/clinical variables
-    spatial_units=["left_frontal", "right_frontal"],  # Brain regions/sensors
-    feature_names=["alpha", "beta"]  # Features to include
-)
+# Select a subset explicitly from the container when needed
+container = container.select(feature=["feat1", "feat2"], y=["case", "control"])
+X = container.X
+y = container.y
 
 # Configure and run ML pipeline
 config = {

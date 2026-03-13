@@ -139,8 +139,10 @@ def test_read_bids_entry(monkeypatch, tmp_path):
     mne_mock.read_epochs.return_value.times = np.arange(10)
     mne_mock.read_epochs.return_value.ch_names = ["C1"]
     mne_mock.read_epochs.return_value.info = {"sfreq": 100}
+    mne_mock.read_epochs.return_value.events = np.array([[0, 0, 1]])
+    mne_mock.read_epochs.return_value.event_id = {"stim": 1}
 
-    d, t, c, s = utils_mod.read_bids_entry(
+    d, t, c, s, labels = utils_mod.read_bids_entry(
         bids_path,
         is_pre_epoched=True,
         is_evoked=False,
@@ -149,6 +151,7 @@ def test_read_bids_entry(monkeypatch, tmp_path):
         stride=None,
     )
     assert d.shape == (1, 1, 10)
+    assert np.array_equal(labels, [1])
 
     # 2. Raw (Continuous match)
     raw = read_raw_mock.return_value
@@ -157,7 +160,7 @@ def test_read_bids_entry(monkeypatch, tmp_path):
     raw.ch_names = ["C1", "C2"]
     raw.info = {"sfreq": 100}
 
-    d_cont, t_cont, c_cont, s_cont = utils_mod.read_bids_entry(
+    d_cont, t_cont, c_cont, s_cont, labels_cont = utils_mod.read_bids_entry(
         bids_path,
         is_pre_epoched=False,
         is_evoked=False,
@@ -166,6 +169,148 @@ def test_read_bids_entry(monkeypatch, tmp_path):
         stride=None,
     )
     assert d_cont.shape == (1, 2, 100)  # Added batch dim
+    assert labels_cont is None
+
+
+def test_read_bids_entry_pre_epoched_event_id_filters(monkeypatch, tmp_path):
+    """Test event_id filtering for precomputed epochs."""
+
+    class FakeEpochs:
+        def __init__(self, data, event_codes, event_id):
+            self._data = data
+            self.events = np.column_stack(
+                [
+                    np.arange(len(event_codes)),
+                    np.zeros(len(event_codes), dtype=int),
+                    np.asarray(event_codes),
+                ]
+            )
+            self.event_id = event_id
+            self.times = np.arange(data.shape[-1])
+            self.ch_names = ["C1"]
+            self.info = {"sfreq": 100}
+
+        def __len__(self):
+            return len(self._data)
+
+        def __getitem__(self, item):
+            if isinstance(item, list):
+                keep_codes = [self.event_id[name] for name in item]
+                mask = np.isin(self.events[:, -1], keep_codes)
+            else:
+                mask = np.asarray(item, dtype=bool)
+            return FakeEpochs(
+                self._data[mask],
+                self.events[mask, -1],
+                self.event_id,
+            )
+
+        def get_data(self, copy=False):
+            return self._data
+
+    mne_mock = MagicMock()
+    monkeypatch.setattr(utils_mod, "mne", mne_mock)
+
+    bids_path = MagicMock()
+    bids_path.fpath = tmp_path / "dummy_eeg.epo.fif"
+    bids_path.fpath.touch()
+
+    epochs = FakeEpochs(
+        np.arange(3 * 1 * 5).reshape(3, 1, 5),
+        [1, 2, 1],
+        {"left": 1, "right": 2},
+    )
+    mne_mock.read_epochs.return_value = epochs
+
+    data, _, _, _, labels = utils_mod.read_bids_entry(
+        bids_path,
+        is_pre_epoched=True,
+        is_evoked=False,
+        mode="epochs",
+        window_length=None,
+        stride=None,
+        event_id={"target": 2},
+    )
+
+    assert data.shape == (1, 1, 5)
+    assert np.array_equal(labels, [2])
+
+    with pytest.raises(ValueError, match="No epochs remain after filtering"):
+        utils_mod.read_bids_entry(
+            bids_path,
+            is_pre_epoched=True,
+            is_evoked=False,
+            mode="epochs",
+            window_length=None,
+            stride=None,
+            event_id={"missing": 99},
+        )
+
+
+@pytest.mark.parametrize("event_id", ["EO_baseline", ["EO_baseline"]])
+def test_read_bids_entry_pre_epoched_event_name_filters(
+    monkeypatch, tmp_path, event_id
+):
+    """Test event name filtering for precomputed epochs."""
+
+    class FakeEpochs:
+        def __init__(self, data, event_codes, event_id_map):
+            self._data = data
+            self.events = np.column_stack(
+                [
+                    np.arange(len(event_codes)),
+                    np.zeros(len(event_codes), dtype=int),
+                    np.asarray(event_codes),
+                ]
+            )
+            self.event_id = event_id_map
+            self.times = np.arange(data.shape[-1])
+            self.ch_names = ["C1"]
+            self.info = {"sfreq": 100}
+
+        def __len__(self):
+            return len(self._data)
+
+        def __getitem__(self, item):
+            if isinstance(item, list):
+                keep_codes = [self.event_id[name] for name in item]
+                mask = np.isin(self.events[:, -1], keep_codes)
+            else:
+                mask = np.asarray(item, dtype=bool)
+            return FakeEpochs(
+                self._data[mask],
+                self.events[mask, -1],
+                self.event_id,
+            )
+
+        def get_data(self, copy=False):
+            return self._data
+
+    mne_mock = MagicMock()
+    monkeypatch.setattr(utils_mod, "mne", mne_mock)
+
+    bids_path = MagicMock()
+    bids_path.fpath = tmp_path / "dummy_eeg.epo.fif"
+    bids_path.fpath.touch()
+
+    mne_mock.read_epochs.return_value = FakeEpochs(
+        np.arange(3 * 1 * 5).reshape(3, 1, 5),
+        [11, 12, 11],
+        {"EO_baseline": 11, "EC_baseline": 12},
+    )
+
+    data, _, _, _, labels = utils_mod.read_bids_entry(
+        bids_path,
+        is_pre_epoched=True,
+        is_evoked=False,
+        mode="epochs",
+        window_length=None,
+        stride=None,
+        event_id=event_id,
+    )
+
+    assert data.shape == (2, 1, 5)
+    assert np.array_equal(labels, [11, 11])
 
 
 def test_participants_tsv(tmp_path):

@@ -95,6 +95,11 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     class FakeBIDSPath:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self.fpath = MagicMock()
+            self.fpath.exists.return_value = True
+
+        def match(self):
+            return []
 
     fake_mne_bids = types.SimpleNamespace(
         BIDSPath=FakeBIDSPath, read_raw_bids=lambda *a, **k: None
@@ -104,6 +109,7 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "mne_bids", fake_mne_bids)
 
     dataset = importlib.reload(dataset_mod)
+    monkeypatch.setattr(dataset, "_get_bids_path", lambda: FakeBIDSPath)
 
     monkeypatch.setattr(dataset, "detect_subjects", lambda root: ["01"])
     monkeypatch.setattr(dataset, "detect_sessions", lambda root, sub: [])
@@ -112,12 +118,18 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     )
 
     def fake_read_bids_entry(
-        bids_path, is_pre_epoched, is_evoked, mode, window_length, stride
+        bids_path,
+        is_pre_epoched,
+        is_evoked,
+        mode,
+        window_length,
+        stride,
+        **kwargs,
     ):
         data = np.arange(2 * 3 * 4).reshape(2, 3, 4)
         times = np.linspace(0, 1, 4)
         ch = np.array(["C1", "C2", "C3"])
-        return data, times, ch, 100.0
+        return data, times, ch, 100.0, None
 
     monkeypatch.setattr(dataset, "read_bids_entry", fake_read_bids_entry)
 
@@ -214,10 +226,18 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
     monkeypatch.setitem(
         sys.modules,
         "mne_bids",
-        types.SimpleNamespace(BIDSPath=lambda **k: k, read_raw_bids=lambda *a: None),
+        types.SimpleNamespace(
+            BIDSPath=lambda **k: types.SimpleNamespace(match=lambda: [], **k),
+            read_raw_bids=lambda *a: None,
+        ),
     )
 
     dataset = importlib.reload(dataset_mod)
+    monkeypatch.setattr(
+        dataset,
+        "_get_bids_path",
+        lambda: (lambda **k: types.SimpleNamespace(match=lambda: [], **k)),
+    )
 
     # One subject, two sessions
     monkeypatch.setattr(dataset, "detect_subjects", lambda root: ["01"])
@@ -226,14 +246,14 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
 
     # Mock reader to return different channels for ses2
     def fake_read(bids_path, **kwargs):
-        ses = bids_path["session"]
+        ses = bids_path.session
         if ses == "ses1":
             ch = ["C1", "C2"]
             data = np.zeros((1, 2, 10))
         else:
             ch = ["C1", "C3"]  # Mismatch
             data = np.zeros((1, 2, 10))
-        return data, np.arange(10), np.array(ch), 100.0
+        return data, np.arange(10), np.array(ch), 100.0, None
 
     monkeypatch.setattr(dataset, "read_bids_entry", fake_read)
 
@@ -446,9 +466,15 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
     def fake_read(bids_path, **k):
         sub = bids_path.subject
         if sub == "01":
-            return np.zeros((1, 5, 10)), [0], ["c"], 100
+            return np.zeros((1, 5, 10)), [0], ["c"], 100, None
         else:
-            return np.zeros((1, 6, 10)), [0], ["c"], 100  # Different channels count
+            return (
+                np.zeros((1, 6, 10)),
+                [0],
+                ["c"],
+                100,
+                None,
+            )  # Different channels count
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -457,8 +483,13 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
         def __init__(self, subject, **kwargs):
             self.subject = subject
             self.kwargs = kwargs
+            self.fpath = MagicMock()
+            self.fpath.exists.return_value = True
 
-    monkeypatch.setattr(dataset_mod, "BIDSPath", MockBIDSPath)
+        def match(self):
+            return []
+
+    monkeypatch.setattr(dataset_mod, "_get_bids_path", lambda: MockBIDSPath)
     monkeypatch.setitem(sys.modules, "mne", MagicMock())
     monkeypatch.setitem(sys.modules, "mne_bids", MagicMock())
 
@@ -478,10 +509,10 @@ def test_bids_time_warning(monkeypatch, tmp_path, caplog):
     def fake_read(bids_path, **k):
         sub = bids_path.subject
         if sub == "01":
-            return np.zeros((1, 1, 10)), np.arange(10), ["c"], 100
+            return np.zeros((1, 1, 10)), np.arange(10), ["c"], 100, None
         else:
             # Different time length
-            return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100
+            return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -490,7 +521,7 @@ def test_bids_time_warning(monkeypatch, tmp_path, caplog):
             self.subject = subject
             self.kwargs = kwargs
 
-    monkeypatch.setattr(dataset_mod, "BIDSPath", MockBIDSPath)
+    monkeypatch.setattr(dataset_mod, "_get_bids_path", lambda: MockBIDSPath)
     monkeypatch.setitem(sys.modules, "mne", MagicMock())
     monkeypatch.setitem(sys.modules, "mne_bids", MagicMock())
 

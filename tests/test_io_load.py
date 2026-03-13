@@ -1,8 +1,12 @@
+import importlib
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
+import coco_pipe.io.dataset as dataset_mod
 import coco_pipe.io.load as load_mod
 
 
@@ -69,8 +73,11 @@ def test_load_data_explicit_modes():
             session=None,
             datatype="eeg",
             suffix=None,
+            target_col=None,
             window_length=None,
             stride=None,
+            subject_metadata_df=None,
+            subject_key=None,
             subjects=None,
         )
 
@@ -92,3 +99,132 @@ def test_load_data_error():
     """Test invalid mode error."""
     with pytest.raises(ValueError, match="Unknown mode"):
         load_mod.load_data("dummy", mode="invalid")
+
+
+def test_load_data_bids_pre_epoched_load_existing(monkeypatch, tmp_path):
+    epo_path = tmp_path / "sub-0001" / "eeg" / "sub-0001_task-rest_epo.fif"
+    epo_path.parent.mkdir(parents=True)
+    epo_path.touch()
+    meta_df = np.array([["0001", 42, "case"]], dtype=object)
+
+    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda root: ["0001"])
+    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda root, sub: [])
+    monkeypatch.setattr(
+        dataset_mod,
+        "detect_runs",
+        lambda root, sub, ses, task, datatype: [None],
+    )
+    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda root: {})
+    monkeypatch.setattr(
+        dataset_mod,
+        "_get_bids_path",
+        lambda: (
+            lambda **kwargs: (_ for _ in ()).throw(
+                AssertionError("BIDSPath should not be used for precomputed epochs")
+            )
+        ),
+    )
+
+    def fake_read_bids_entry(bids_path, **kwargs):
+        assert bids_path.fpath == epo_path
+        assert kwargs["is_pre_epoched"] is True
+        data = np.zeros((2, 1, 4))
+        times = np.arange(4)
+        return data, times, ["C1"], 100.0, np.array([7, 7])
+
+    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read_bids_entry)
+
+    container = load_mod.load_data(
+        tmp_path,
+        mode="bids",
+        task="rest",
+        suffix="epo",
+        loading_mode="load_existing",
+        subject_metadata_df=dataset_mod.pd.DataFrame(
+            meta_df, columns=["Study ID", "age", "group"]
+        ),
+        subject_key="Study ID",
+    )
+
+    assert container.X.shape == (2, 1, 4)
+    assert container.ids.tolist() == ["0001_0", "0001_1"]
+    assert container.y.tolist() == [7, 7]
+    assert container.coords["Study ID"].tolist() == ["0001", "0001"]
+    assert container.coords["age"].tolist() == [42, 42]
+    assert container.coords["group"].tolist() == ["case", "case"]
+
+
+def test_load_data_bids_target_col_from_metadata(monkeypatch, tmp_path):
+    epo_path = tmp_path / "sub-0001" / "eeg" / "sub-0001_task-rest_epo.fif"
+    epo_path.parent.mkdir(parents=True)
+    epo_path.touch()
+    meta_df = np.array([["0001", "stimulant"]], dtype=object)
+
+    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda root: ["0001"])
+    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda root, sub: [])
+    monkeypatch.setattr(
+        dataset_mod,
+        "detect_runs",
+        lambda root, sub, ses, task, datatype: [None],
+    )
+    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda root: {})
+    monkeypatch.setattr(
+        dataset_mod,
+        "_get_bids_path",
+        lambda: (
+            lambda **kwargs: (_ for _ in ()).throw(
+                AssertionError("BIDSPath should not be used for precomputed epochs")
+            )
+        ),
+    )
+
+    def fake_read_bids_entry(bids_path, **kwargs):
+        assert bids_path.fpath == epo_path
+        return np.zeros((2, 1, 4)), np.arange(4), ["C1"], 100.0, np.array([7, 7])
+
+    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read_bids_entry)
+
+    container = load_mod.load_data(
+        tmp_path,
+        mode="bids",
+        task="rest",
+        suffix="epo",
+        loading_mode="load_existing",
+        subject_metadata_df=dataset_mod.pd.DataFrame(
+            meta_df, columns=["Study ID", "psychostimulant_category"]
+        ),
+        subject_key="Study ID",
+        target_col="psychostimulant_category",
+    )
+
+    assert container.coords["psychostimulant_category"].tolist() == [
+        "stimulant",
+        "stimulant",
+    ]
+    assert container.y.tolist() == ["stimulant", "stimulant"]
+
+
+def test_io_import_is_lightweight(monkeypatch):
+    module_names = [
+        "coco_pipe.io",
+        "coco_pipe.io.load",
+        "coco_pipe.io.structures",
+        "coco_pipe.io.utils",
+    ]
+    cached_modules = {name: sys.modules.get(name) for name in module_names}
+
+    for module_name in module_names:
+        sys.modules.pop(module_name, None)
+
+    monkeypatch.setitem(sys.modules, "mne", None)
+    monkeypatch.setitem(sys.modules, "mne_bids", None)
+
+    try:
+        io_mod = importlib.import_module("coco_pipe.io")
+        assert hasattr(io_mod, "DataContainer")
+        assert callable(io_mod.load_data)
+        assert "load" not in getattr(io_mod, "__all__", [])
+    finally:
+        for module_name, module_obj in cached_modules.items():
+            if module_obj is not None:
+                sys.modules[module_name] = module_obj

@@ -269,6 +269,51 @@ Batch execution should use `coco_pipe.io.load_data` plus `DimReduction`
 directly. The old `DimReductionPipeline` compatibility wrapper has been
 removed.
 
+## IO Workflow
+
+The recommended IO-to-dim-reduction flow is explicit:
+
+```python
+from coco_pipe.dim_reduction import DimReduction
+from coco_pipe.io import load_data
+
+container = load_data("data.csv", mode="tabular", target_col="label", sep=",")
+
+X = container.X
+labels = container.y
+
+reducer = DimReduction("UMAP", n_components=2, random_state=42)
+embedding = reducer.fit_transform(X, y=labels)
+scores = reducer.score(embedding, X=X, labels=labels)
+```
+
+Use `DataContainer` to inspect and reshape data upstream:
+
+- `container.dims`
+- `container.coords`
+- `container.flatten(...)`
+- `container.stack(...)`
+- `container.unstack(...)`
+
+For example:
+
+```python
+container = load_data("embeddings/", mode="embedding")
+container_2d = container.flatten(preserve="obs")
+
+X = container_2d.X
+embedding = reducer.fit_transform(X)
+```
+
+Trajectory scoring requires embeddings that are already shaped as
+`(n_trajectories, n_times, n_dims)`. The evaluation module does not reconstruct
+3D trajectories from flat 2D arrays. Any reshaping or unstacking must happen
+upstream through IO or explicit user code before calling `score()`.
+
+`coco_pipe.io.utils` remains available for lower-level and advanced workflows,
+but it is not the recommended starting point for dim reduction. Prefer
+`load_data(...)`, `DataContainer`, and explicit reshaping operations first.
+
 ## Dependency Notes
 
 Heavy optional libraries such as `torch`, `umap`, `meegkit`, and `pydmd` are

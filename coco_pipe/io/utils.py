@@ -5,17 +5,57 @@ IO Utilities
 Helper functions for IO operations.
 """
 
+import importlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import mne
 import numpy as np
 import pandas as pd
-from mne_bids import read_raw_bids
 from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
+from coco_pipe.utils import import_optional_dependency
+
 logger = logging.getLogger(__name__)
+mne = None
+BIDSPath = None
+read_raw_bids = None
+
+
+def _get_mne():
+    """Lazily import MNE so base IO structures stay lightweight."""
+    global mne
+    if mne is None:
+        mne = import_optional_dependency(
+            lambda: importlib.import_module("mne"),
+            feature="IO workflows",
+            dependency="mne",
+        )
+    return mne
+
+
+def _get_bids_path():
+    """Lazily import mne-bids' ``BIDSPath``."""
+    global BIDSPath
+    if BIDSPath is None:
+        BIDSPath = import_optional_dependency(
+            lambda: importlib.import_module("mne_bids").BIDSPath,
+            feature="BIDS IO workflows",
+            dependency="mne-bids",
+        )
+    return BIDSPath
+
+
+def _get_read_raw_bids():
+    """Lazily import the MNE-BIDS raw reader."""
+    global read_raw_bids
+    if read_raw_bids is None:
+        read_raw_bids = import_optional_dependency(
+            lambda: importlib.import_module("mne_bids").read_raw_bids,
+            feature="BIDS IO workflows",
+            dependency="mne-bids",
+        )
+    return read_raw_bids
 
 
 def row_quality_score(
@@ -147,6 +187,7 @@ def read_bids_entry(
     tmax: float = 0.5,
     baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[str], float, Optional[np.ndarray]]:
+    mne_mod = _get_mne()
     if is_pre_epoched:
         # Load existing Epochs
         fpath = bids_path.fpath
@@ -155,7 +196,7 @@ def read_bids_entry(
             if matches:
                 fpath = matches[0]
 
-        epochs = mne.read_epochs(fpath, verbose=False)
+        epochs = mne_mod.read_epochs(fpath, verbose=False)
         if event_id is not None:
             filtered_epochs = None
             if isinstance(event_id, dict):
@@ -201,7 +242,7 @@ def read_bids_entry(
             if matches:
                 fpath = matches[0]
 
-        evokeds = mne.read_evokeds(fpath, verbose=False)
+        evokeds = mne_mod.read_evokeds(fpath, verbose=False)
         # Stack conditions (N_cond, C, T)
         data = np.stack([e.data for e in evokeds], axis=0)
         labels = np.arange(len(evokeds))
@@ -215,7 +256,7 @@ def read_bids_entry(
 
     else:
         # Load Raw (default)
-        raw = read_raw_bids(bids_path, verbose=False)
+        raw = _get_read_raw_bids()(bids_path, verbose=False)
         raw.load_data()
         raw.pick_types(eeg=True, meg=True, eog=False)
 
@@ -223,12 +264,13 @@ def read_bids_entry(
             data_raw = raw.get_data()  # (C, T)
             data = data_raw[np.newaxis, :, :]  # (1, C, T)
             times = raw.times
+            labels = None
         elif event_id is not None:
             # Event-Based Epoching (Annotation aware)
-            events, event_id_map = mne.events_from_annotations(
+            events, event_id_map = mne_mod.events_from_annotations(
                 raw, event_id=event_id, verbose=False
             )
-            epochs = mne.Epochs(
+            epochs = mne_mod.Epochs(
                 raw,
                 events=events,
                 event_id=event_id_map,
@@ -251,7 +293,7 @@ def read_bids_entry(
             else:
                 dur_s = window_length
                 stride_s = stride if stride else dur_s
-                epochs = mne.make_fixed_length_epochs(
+                epochs = mne_mod.make_fixed_length_epochs(
                     raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
                 )
                 data = epochs.get_data(copy=False)
@@ -316,9 +358,7 @@ def detect_runs(
     """
     Detect available runs for a given subject/session/task.
     """
-    from mne_bids import BIDSPath
-
-    bp = BIDSPath(
+    bp = _get_bids_path()(
         root=root, subject=subject, session=session, task=task, datatype=datatype
     )
     matches = bp.match()
