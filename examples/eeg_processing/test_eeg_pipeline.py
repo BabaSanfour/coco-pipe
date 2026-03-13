@@ -13,10 +13,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import openneuro
 
-from coco_pipe.dim_reduction import DimReductionPipeline
-
-# Import coco_pipe functionality
-from coco_pipe.io.load import load
+from coco_pipe.dim_reduction import DimReduction
+from coco_pipe.io import load_data
 
 # Define constants
 DATASET_NAME = "ds002778"  # Parkinson's disease EEG dataset
@@ -41,50 +39,38 @@ def download_dataset():
 
 
 def load_eeg_data():
-    """Load the EEG data using coco_pipe's load function."""
+    """Load the EEG data into a DataContainer."""
     print(f"Loading EEG data for subject {SUBJECT}...")
-    # Load the data using our load function from coco_pipe
-    raw = load(
-        type="eeg",
-        data_path=str(BIDS_ROOT),
+    container = load_data(
+        BIDS_ROOT,
+        mode="bids",
         subjects=SUBJECT,
         session=SESSION,
         task=TASK,
         datatype="eeg",
         suffix="eeg",
-        verbose=True,  # Show detailed loading information
+        loading_mode="continuous",
     )
-    print(f"Successfully loaded EEG data: {raw}")
-    return raw
+    print(f"Successfully loaded EEG data with shape: {container.X.shape}")
+    return container
 
 
-def run_dim_reduction(raw, method="PCA", n_components=2):
+def run_dim_reduction(container, method="PCA", n_components=2):
     """Run dimensionality reduction on the EEG data."""
     print(f"Running {method} dimensionality reduction...")
 
-    # Extract the EEG data as a numpy array
-    data = raw.get_data()
+    data = container.X
+    if data.ndim == 3:
+        data = data[0]
+    elif data.ndim != 2:
+        raise ValueError(f"Expected 2D or 3D EEG data, got shape {data.shape}.")
 
     # Reshape to (n_samples, n_features) if needed
     # For simplicity, we'll flatten across channels
     n_channels, n_times = data.shape
     data_reshaped = data.reshape(n_channels, -1).T
 
-    # Initialize the dimensionality reduction pipeline
-    DimReductionPipeline(
-        type="eeg",
-        method=method,
-        data_path=str(BIDS_ROOT),
-        task=TASK,
-        run=SESSION,  # Using session as run since that's what our dataset has
-        n_components=n_components,
-    )
-
-    # For this quick test, we'll create a small wrapper to avoid needing to save files
-    # This is a simplified version compared to the full pipeline
-    from coco_pipe.dim_reduction.reducer import DimReducer
-
-    reducer = DimReducer(method=method, n_components=n_components)
+    reducer = DimReduction(method=method, n_components=n_components)
     reduced_data = reducer.fit_transform(data_reshaped)
 
     print(f"Original data shape: {data.shape}")
@@ -96,16 +82,16 @@ def run_dim_reduction(raw, method="PCA", n_components=2):
         plt.figure(figsize=(10, 8))
         if n_components == 2:
             plt.scatter(reduced_data[:, 0], reduced_data[:, 1], alpha=0.7)
-            plt.xlabel(f"{method} Component 1")
-            plt.ylabel(f"{method} Component 2")
+            plt.xlabel(f"{method} Dimension 1")
+            plt.ylabel(f"{method} Dimension 2")
         else:  # 3D
             ax = plt.figure().add_subplot(111, projection="3d")
             ax.scatter(
                 reduced_data[:, 0], reduced_data[:, 1], reduced_data[:, 2], alpha=0.7
             )
-            ax.set_xlabel(f"{method} Component 1")
-            ax.set_ylabel(f"{method} Component 2")
-            ax.set_zlabel(f"{method} Component 3")
+            ax.set_xlabel(f"{method} Dimension 1")
+            ax.set_ylabel(f"{method} Dimension 2")
+            ax.set_zlabel(f"{method} Dimension 3")
 
         plt.title(f"{method} Reduction of EEG Data")
         plt.tight_layout()
@@ -122,16 +108,21 @@ def main():
     download_dataset()
 
     # Step 2: Load the EEG data
-    raw = load_eeg_data()
+    container = load_eeg_data()
 
     # Optional: Basic visualization of the EEG data
-    raw.plot(duration=10, n_channels=10, scalings="auto", show=False)
+    preview = container.X[0] if container.X.ndim == 3 else container.X
+    plt.figure(figsize=(12, 4))
+    plt.plot(preview[0])
+    plt.xlabel("Time")
+    plt.ylabel("Amplitude")
+    plt.title("EEG preview (first channel)")
     plt.savefig("eeg_visualization.png")
     plt.close()
     print("EEG visualization saved as eeg_visualization.png")
 
     # Step 3: Run dimensionality reduction
-    run_dim_reduction(raw, method="PCA", n_components=2)
+    run_dim_reduction(container, method="PCA", n_components=2)
 
     print("Pipeline completed successfully!")
 

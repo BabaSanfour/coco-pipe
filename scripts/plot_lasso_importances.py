@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from coco_pipe.io import load as load_data
+from coco_pipe.io import load_data
 from coco_pipe.viz import plot_bar, plot_scatter2d
 
 

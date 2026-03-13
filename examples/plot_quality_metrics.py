@@ -53,7 +53,7 @@ for name, dr in reducers.items():
     # Calculate Metrics
     # Note: These metrics are calculated via scikit-learn or internal utils
     # For this demo, we assume they are computed and stored in the 'scores'
-    scores = dr.score(X, X_emb)
+    scores = dr.score(X_emb, X=X)
 
     results[name] = {"embedding": X_emb, "scores": scores}
 

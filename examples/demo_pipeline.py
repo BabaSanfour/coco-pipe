@@ -79,16 +79,11 @@ def main():
 
     # PCA
     pca = DimReduction(method="PCA", n_components=2)
-    pca.fit_transform(container.X)
-    # Manually attach metadata/labels for interactive plotting demo
-    pca.labels_ = container.ids
-    pca.metadata_ = container.coords
+    pca_emb = pca.fit_transform(container.X)
 
     # UMAP
     umap = DimReduction(method="UMAP", n_components=2, n_neighbors=15)
-    umap.fit_transform(container.X)
-    umap.labels_ = container.ids
-    umap.metadata_ = container.coords
+    umap_emb = umap.fit_transform(container.X)
 
     # 4. Generate Comparative Report
     logger.info("4. Generating Report...")
@@ -104,6 +99,9 @@ def main():
     report = from_reductions(
         reductions=[pca, umap],
         container=container,
+        embeddings=[pca_emb, umap_emb],
+        labels=container.ids,
+        metadata=container.coords,
         title="Pipeline Demo: PCA vs UMAP",
         config={"pipeline": "Full Demo", "scaling": "StandardScaler"},
     )

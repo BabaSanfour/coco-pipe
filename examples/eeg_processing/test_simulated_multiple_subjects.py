@@ -60,8 +60,7 @@ raw_data_list, subjects, sessions = create_sim_data()
 # Mock our dimension reduction on this data
 print("\n=== SIMULATING DIMENSION REDUCTION PIPELINE ===")
 
-# Process the loaded data (similar to what happens in the
-# DimReductionPipeline.execute method)
+# Process the loaded data (similar to a direct `load_data + DimReduction` flow)
 X_list = []
 subjects_list = []
 

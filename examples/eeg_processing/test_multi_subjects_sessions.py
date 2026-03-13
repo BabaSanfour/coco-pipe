@@ -1,8 +1,8 @@
 import logging
 
 import numpy as np
+from _dimred_example_utils import execute_reduction
 
-from coco_pipe.dim_reduction import DimReductionPipeline
 from coco_pipe.io.meeg import load_meeg_multi_sessions
 
 # Set up logging to see more details
@@ -33,20 +33,16 @@ for i, raw in enumerate(raw_data):
         f"Session={session}"
     )
 
-# Now run the pipeline
-print("\n=== RUNNING PIPELINE WITH AUTO-DETECTED SESSIONS ===")
-pipeline = DimReductionPipeline(
-    type="eeg",
+# Now run the reduction directly
+print("\n=== RUNNING DIMREDUCTION WITH AUTO-DETECTED SESSIONS ===")
+output_path = execute_reduction(
     method="pca",
     data_path="./test_data/bids_eeg",
+    type="eeg",
     task="rest",
     subjects=["pd6"],  # Using the same subject
-    # Auto-detect sessions
     n_components=10,
 )
-
-# Execute pipeline
-output_path = pipeline.execute()
 print(f"Output saved to: {output_path}")
 
 # Analyze output shapes
