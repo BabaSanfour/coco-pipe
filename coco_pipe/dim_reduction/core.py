@@ -2,190 +2,210 @@
 Dimensionality Reduction Core
 =============================
 
-This module provides the main entry point for dimensionality reduction workflow.
-It consolidates method instantiation, execution, validation, visualization, and
-benchmarking into a single high-level `DimReduction` class.
+Execution manager for one dimensionality reduction method.
+
+`DimReduction` is intentionally narrow. It owns reducer instantiation,
+input-shape validation for execution, fit/transform operations, and cached
+evaluation/interpretation state for one reducer instance. Plotting, trajectory
+reshaping, reporting, and multi-method comparison live in dedicated modules.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
-Date: 2026-01-07
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from .config import METHODS, METHODS_DICT
-from .reducers.base import ArrayLike, BaseReducer
+from .analysis import interpret_features
+from .config import BaseReducerConfig, get_reducer_class
+from .evaluation.core import evaluate_embedding
+from .reducers.base import BaseReducer
 
-if TYPE_CHECKING:
-    from .config import DimReductionConfig
+__all__ = ["DimReduction"]
 
 
 class DimReduction:
     """
-    Main manager for Dimensionality Reduction.
-
-    This class orchestrates the entire workflow:
-    1.  **Factory**: Instantiates the correct reducer (PCA, UMAP, TRCA, etc.).
-    2.  **Validation**: Verifies input data shapes match method requirements.
-    3.  **Execution**: fit/transform/fit_transform.
-    4.  **Benchmarking**: Calculates quality metrics (Trustworthiness, Continuity).
-    5.  **Visualization**: Integrated plotting.
+    Manage one dimensionality reduction workflow.
 
     Parameters
     ----------
-    method : str
-        Name of the reduction method (e.g., 'UMAP', 'PCA', 'TRCA').
-        Case-insensitive.
+    method : str or BaseReducerConfig
+        Canonical public reducer name or a typed configuration object.
+        Method names are exact and must match the registry, for example
+        ``"PCA"``, ``"Isomap"``, ``"Pacmap"``, or ``"TopologicalAE"``.
     n_components : int, default=2
-        Number of dimensions to reduce to.
+        Target dimensionality when ``method`` is a string.
     params : dict, optional
-        Additional keyword arguments passed to the underlying reducer.
+        Additional reducer keyword arguments merged into the constructor
+        arguments when ``method`` is a string.
+    **kwargs : dict
+        Runtime reducer keyword overrides. These are merged after ``params``.
 
     Attributes
     ----------
     method : str
-        The reduction method used.
+        Canonical reducer name.
     n_components : int
-        Number of dimensions reduced to.
+        Target dimensionality used for the reducer instance.
     reducer : BaseReducer
-        The instantiated reducer object.
-    embedding_ : np.ndarray
-        The reduced embedding.
+        Instantiated reducer backend.
+    metrics_ : dict
+        Cached scalar evaluation summaries from the latest ``score()`` call.
+    quality_metadata_ : dict
+        Cached scalar reducer metadata exposed through the reducer contract.
+    diagnostics_ : dict
+        Cached non-scalar diagnostic artifacts exposed through the reducer
+        contract or the evaluation layer.
+    metric_records_ : list of dict
+        Cached tidy metric observations produced by the evaluator.
+    interpretation_ : dict
+        Cached feature interpretation payloads from the latest
+        ``interpret()`` call.
+    interpretation_records_ : list of dict
+        Cached tidy feature-interpretation observations.
 
-    Methods
-    -------
-    fit(X, y=None)
-        Fit the reducer to the data.
-    transform(X)
-        Transform the data.
-    fit_transform(X, y=None)
-        Fit and transform the data.
-    score(X, X_emb=None, n_neighbors=5)
-        Calculate quality metrics.
-    plot(labels=None, mode='embedding', **kwargs)
-        Visualize the result.
-    save(path)
-        Save the reducer to disk.
-    load(path, method)
-        Load a reducer from disk.
-    from_config(config)
-        Initialize from configuration dictionary.
+    See Also
+    --------
+    coco_pipe.dim_reduction.analysis.interpret_features
+        Pure interpretation backend used by ``interpret()``.
+    coco_pipe.dim_reduction.evaluation.core.evaluate_embedding
+        Pure evaluator used by ``score()``.
+    coco_pipe.dim_reduction.evaluation.core.MethodSelector
+        Post-hoc comparison and ranking over already-scored reducers.
+    coco_pipe.viz.dim_reduction
+        Plotting utilities for embeddings, metrics, and diagnostics.
 
     Examples
     --------
-    >>> reducer = DimReduction('UMAP', n_components=2)
-    >>> reducer.fit_transform(X)
-    >>> reducer.score(X)
-    >>> reducer.plot()
-    >>> reducer.save('reducer.pkl')
-    >>> reducer = DimReduction.load('reducer.pkl', 'UMAP')
-    >>> reducer.from_config({'method': 'UMAP', 'n_components': 2})
+    >>> reducer = DimReduction("UMAP", n_components=2, n_neighbors=15)
+    >>> embedding = reducer.fit_transform(X)
+    >>> scores = reducer.score(embedding, X=X)
+    >>> "trustworthiness" in scores["metrics"]
+    True
+    >>> interpretation = reducer.interpret(
+    ...     X,
+    ...     X_emb=embedding,
+    ...     analyses=["correlation"],
+    ...     feature_names=feature_names,
+    ... )
+    >>> "correlation" in interpretation["analysis"]
+    True
     """
 
     def __init__(
         self,
-        method: Union[str, "DimReductionConfig"],
+        method: Union[str, "BaseReducerConfig"],
         n_components: int = 2,
         params: Optional[Dict[str, Any]] = None,
-        name: Optional[str] = None,
         **kwargs,
     ):
-        from .config import DimReductionConfig
+        """
+        Create a reduction manager for one canonical reducer.
 
-        if isinstance(method, DimReductionConfig):
-            # Handle Pydantic Config
-            self.config = method
-            # access the inner discriminated union
-            inner_conf = self.config.config
+        Parameters
+        ----------
+        method : str or BaseReducerConfig
+            Exact canonical reducer name or a typed dim-reduction
+            configuration.
+        n_components : int, default=2
+            Target dimensionality when ``method`` is a string.
+        params : dict, optional
+            Reducer keyword arguments merged before ``**kwargs`` when
+            ``method`` is a string.
+        **kwargs : dict
+            Runtime reducer keyword overrides.
+        """
+        self.reducer_kwargs = params.copy() if params else {}
 
-            self.method = inner_conf.method.upper()
-            self.n_components = inner_conf.n_components
-
-            # Convert to dict and remove init-arguments (Pydantic V2)
-            self.reducer_kwargs = inner_conf.model_dump(
-                exclude={"method", "n_components"}
-            )
-            # Merge any extra overrides provided at runtime
-            if params:
-                self.reducer_kwargs.update(params)
-            self.reducer_kwargs.update(kwargs)
-
+        if isinstance(method, BaseReducerConfig):
+            self.method = method.method
+            self.n_components = method.n_components
+            self.reducer_kwargs.update(method.to_reducer_kwargs())
         else:
-            # Legacy/String initialization
-            self.method = method.upper()
-            if self.method not in METHODS:
-                valid = ", ".join(METHODS)
-                raise ValueError(
-                    f"Unknown method '{method}'. Valid options are: {valid}"
-                )
-
+            self.method = method
             self.n_components = n_components
 
-            self.reducer_kwargs = params.copy() if params else {}
-            self.reducer_kwargs.update(kwargs)
+        self.reducer_kwargs.update(kwargs)
 
-        self.name = name or self.method
-
-        ReducerCls = METHODS_DICT[self.method]
+        ReducerCls = get_reducer_class(self.method)
         self.reducer: BaseReducer = ReducerCls(
             n_components=self.n_components, **self.reducer_kwargs
         )
 
-        self.embedding_ = None
+        self.metrics_: Dict[str, Any] = {}
+        self.quality_metadata_: Dict[str, Any] = {}
+        self.diagnostics_: Dict[str, Any] = {}
+        self.metric_records_: List[Dict[str, Any]] = []
+        self.interpretation_: Dict[str, Any] = {}
+        self.interpretation_records_: List[Dict[str, Any]] = []
+
+    @property
+    def random_state(self) -> Optional[int]:
+        """Return the random seed from parameters if any."""
+        return self.reducer_kwargs.get("random_state")
+
+    @property
+    def capabilities(self) -> Dict[str, Any]:
+        """Return reducer capability metadata through the manager interface."""
+        return self.reducer.capabilities
+
+    def _reset_cached_outputs(self) -> None:
+        """Clear cached evaluation outputs."""
+        self.metrics_ = {}
+        self.quality_metadata_ = {}
+        self.diagnostics_ = {}
+        self.metric_records_ = []
+        self.interpretation_ = {}
+        self.interpretation_records_ = []
 
     def _validate_input(self, X: Any) -> np.ndarray:
         """
-        Validate input data shape and type.
-
-        TRCA/DMD require 3D input: (n_trials, n_channels, n_times).
-        Others (PCA, UMAP, etc.) require 2D: (n_samples, n_features).
+        Validate reducer input shape and coerce to a NumPy array.
 
         Parameters
         ----------
         X : array-like or MNE object
-            Input data.
+            Input data accepted by the reducer. Objects exposing ``get_data()``
+            are unwrapped before validation.
 
         Returns
         -------
-        X_arr : np.ndarray
-            Validated input data as a numpy array.
+        X : np.ndarray
+            Validated reducer input.
+
+        Raises
+        ------
+        ValueError
+            If the input dimensionality does not match the reducer contract.
         """
         if hasattr(X, "get_data"):  # Handle MNE objects
             X = X.get_data()
 
-        X_arr = np.array(X)
+        X = np.asarray(X)
 
-        # Define 3D-required methods
-        spatiotemporal_methods = {"TRCA", "DMD"}
+        caps = self.reducer.capabilities
+        expected_ndim = caps.get("input_ndim", 2)
 
-        if self.method in spatiotemporal_methods:
-            if X_arr.ndim != 3:
-                raise ValueError(
-                    f"Method '{self.method}' requires 3D input (Trials x Channels x "
-                    f"Time), got shape {X_arr.shape}."
-                )
-        else:
-            if X_arr.ndim != 2:
-                raise ValueError(
-                    f"Method '{self.method}' requires 2D input (Samples x Features), "
-                    f"got shape {X_arr.shape}. "
-                    "Consider flattening your data."
-                )
+        if X.ndim != expected_ndim:
+            raise ValueError(
+                f"Method '{self.method}' requires {expected_ndim}D input; "
+                f"got shape {X.shape}."
+            )
 
-        return X_arr
+        return X
 
     def fit(self, X: Any, y: Optional[Any] = None) -> "DimReduction":
         """
-        Fit the reducer.
+        Fit the reducer on the provided data.
 
         Parameters
         ----------
         X : array-like or MNE object
-            Input data.
+            Input data in the reducer's native layout.
         y : array-like, optional
-            Target labels (for supervised methods like LDA, TRCA).
+            Optional supervision forwarded to the reducer.
 
         Returns
         -------
@@ -193,428 +213,325 @@ class DimReduction:
             The fitted reducer.
         """
         X_arr = self._validate_input(X)
+        self._reset_cached_outputs()
         self.reducer.fit(X_arr, y=y)
         return self
 
     def transform(self, X: Any) -> np.ndarray:
         """
-        Transform new data using the fitted reducer.
+        Transform new data with a fitted reducer.
 
         Parameters
         ----------
         X : array-like or MNE object
-            Input data.
+            Input data in the reducer's native layout.
 
         Returns
         -------
         X_emb : np.ndarray
-            Transformed data.
+            Reduced representation returned by the reducer.
         """
-        X_arr = self._validate_input(X)
-        return self.reducer.transform(X_arr)
+        X = self._validate_input(X)
+        return self.reducer.transform(X)
 
     def fit_transform(self, X: Any, y: Optional[Any] = None) -> np.ndarray:
         """
-        Fit and transform in one step.
-        Updates self.embedding_.
+        Fit the reducer and return the reduced representation.
 
         Parameters
         ----------
         X : array-like or MNE object
-            Input data.
+            Input data in the reducer's native layout.
         y : array-like, optional
-            Target labels (for supervised methods like LDA, TRCA).
+            Optional supervision forwarded to the reducer.
 
         Returns
         -------
         X_emb : np.ndarray
-            Transformed data.
+            Reduced representation returned by the reducer.
         """
-        X_arr = self._validate_input(X)
-        self.embedding_ = self.reducer.fit_transform(X_arr, y=y)
-        return self.embedding_
+        X = self._validate_input(X)
+        self._reset_cached_outputs()
+        return self.reducer.fit_transform(X, y=y)
 
     def get_components(self) -> np.ndarray:
         """
-        Extract feature weights (filters/patterns) from linear models.
-
-        Useful for visualization (e.g., Topomaps).
-
-        Tries to find:
-        1. `components_` (PCA, ICA, etc.)
-        2. `patterns_` (CSP, TRCA - Spatial Patterns)
-        3. `filters_` (CSP, TRCA - Spatial Filters)
+        Return reducer-defined component-like outputs.
 
         Returns
         -------
         components : np.ndarray
-            Shape (n_components, n_features).
+            Component-like array exposed by the reducer.
 
         Raises
         ------
         ValueError
-            If the underlying model does not expose linear components.
+            If the reducer does not expose public components.
         """
-        # 1. Check the wrapper first (e.g. TRCAReducer might expose patterns_)
-        candidates = ["components_", "patterns_", "filters_"]
-
-        # Check wrapper
-        for attr in candidates:
-            if hasattr(self.reducer, attr):
-                return getattr(self.reducer, attr)
-
-        # Check internal model (e.g. sklearn PCA inside Wrapper)
-        if hasattr(self.reducer, "model"):
-            for attr in candidates:
-                if hasattr(self.reducer.model, attr):
-                    return getattr(self.reducer.model, attr)
-
-        raise ValueError(
-            f"Method '{self.method}' does not appear to have linear "
-            f"components/patterns. Checked: {candidates}"
-        )
+        return self.reducer.get_components()
 
     def score(
-        self, X: Any, X_emb: Optional[np.ndarray] = None, n_neighbors: int = 5
-    ) -> Dict[str, float]:
+        self,
+        X_emb: np.ndarray,
+        X: Any = None,
+        n_neighbors: int = 5,
+        metrics: Optional[List[str]] = None,
+        k_values: Optional[List[int]] = None,
+        labels: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
+        separation_method: str = "centroid",
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        Compute quality metrics for the embedding.
-
-        Metrics:
-        - Trustworthiness: Preservation of local neighborhoods (penalizes false
-          positives).
-        - Continuity: Preservation of local neighborhoods (penalizes missing
-          neighbors).
+        Evaluate an explicit embedding against the original data.
 
         Parameters
         ----------
-        X : array-like
-            Original high-dimensional data.
-        X_emb : array-like, optional
-            Embedded data. If None, uses cached self.embedding_.
+        X_emb : array-like
+            Embedded data to evaluate.
+        X : array-like, optional
+            Original high-dimensional data in evaluation-ready layout. This is
+            required for standard 2D metrics and optional for native 3D
+            trajectory metrics.
         n_neighbors : int, default=5
             K-nearest neighbors size for metric computation.
+        metrics : list of str, optional
+            Metric selectors to compute. ``None`` evaluates all metric families
+            available for the embedding shape.
+        k_values : list of int, optional
+            Neighborhood sizes used for multi-scale standard metric evaluation.
+        labels : np.ndarray, optional
+            Optional labels aligned with the embedding. Used for trajectory
+            separation when ``X_emb`` is 3D.
+        times : np.ndarray, optional
+            Optional trajectory time coordinates aligned with the trajectory
+            length axis.
+        separation_method : str, default="centroid"
+            Separation definition passed to trajectory evaluation when labels
+            are available for native 3D trajectory embeddings.
 
         Returns
         -------
         scores : dict
+            Dictionary with keys ``"metrics"``, ``"metadata"``, and
+            ``"diagnostics"``.
+
+        Notes
+        -----
+        ``score()`` does not infer or cache embeddings. Callers must pass
+        ``X_emb`` explicitly. ``X`` is only required when the requested
+        evaluation path needs the original high-dimensional samples.
         """
-        X_arr = self._validate_input(X)
+        payload = evaluate_embedding(
+            X_emb=X_emb,
+            X=X,
+            method_name=self.method,
+            metrics=metrics,
+            labels=labels,
+            times=times,
+            quality_metadata=self.get_quality_metadata(),
+            diagnostics=self.get_diagnostics(),
+            random_state=getattr(self, "random_state", None),
+            n_neighbors=n_neighbors,
+            k_values=k_values,
+            separation_method=separation_method,
+        )
 
-        if X_emb is None:
-            if self.embedding_ is None:
-                raise RuntimeError(
-                    "No embedding available. Call fit_transform() first or provide "
-                    "X_emb."
-                )
-            X_emb = self.embedding_
+        metrics_payload = payload["metrics"]
+        metadata_payload = payload["metadata"]
+        diagnostics_payload = payload["diagnostics"]
 
-        if X_emb.ndim == 3 or X_arr.ndim == 3:
-            # Skip standard metrics for spatiotemporal for now, or implement
-            # specialized ones.
-            return {
-                "trustworthiness": np.nan,
-                "continuity": np.nan,
-                "note": "Metrics undefined for 3D spatiotemporal data",
-            }
+        if not metrics_payload:
+            metrics_payload["note"] = (
+                "Metrics unavailable for the current embedding layout."
+            )
 
-        from .evaluation import metrics
+        self.metrics_ = metrics_payload
+        self.quality_metadata_ = dict(metadata_payload)
+        self.diagnostics_ = dict(diagnostics_payload)
+        self.metric_records_ = list(payload["records"])
 
-        # Compute Co-ranking Matrix Q once
-        Q = metrics.compute_coranking_matrix(X_arr, X_emb)
-
-        scores = {
-            "trustworthiness": metrics.trustworthiness(Q, k=n_neighbors),
-            "continuity": metrics.continuity(Q, k=n_neighbors),
-            "lcmc": metrics.lcmc(Q, k=n_neighbors),
+        return {
+            "metrics": self.metrics_,
+            "metadata": self.quality_metadata_,
+            "diagnostics": self.diagnostics_,
         }
 
-        from scipy.stats import spearmanr
-
-        # Shepard Correlation (Global Distance Preservation)
-        # We sample 1000 points max to keep it efficient
-        d_orig, d_emb = metrics.shepard_diagram_data(X_arr, X_emb, sample_size=1000)
-        if len(d_orig) > 1:
-            # Spearman correlation deals with non-linear monotonic relationships
-            corr, _ = spearmanr(d_orig, d_emb)
-            scores["shepard_correlation"] = float(corr)
-        else:
-            scores["shepard_correlation"] = np.nan
-
-        # Scrape reducer-specific metrics (attributes ending in _ or in allow-list)
-        # Check both the wrapper (BaseReducer subclass) and the internal model
-        sources = [self.reducer]
-        if hasattr(self.reducer, "model"):
-            sources.append(self.reducer.model)
-
-        # Attributes that don't follow the underscore convention but are valuable
-        allow_list = {
-            "eigs",
-            "modes",
-            "dynamics",
-            "diff_potential",
-            "reconstruction_error",
-            "n_features_in",
-            "coef",
-            "loss_history",
-        }
-
-        for source in sources:
-            for attr in dir(source):
-                is_allowed = attr in allow_list
-                is_standard = (
-                    attr.endswith("_")
-                    and not attr.startswith("_")
-                    and not attr.endswith("__")
-                )
-
-                if is_allowed or is_standard:
-                    # Exclude standard sklearn attributes that might be huge arrays
-                    # (like labels_ or embedding_)
-                    if attr in [
-                        "embedding_",
-                        "labels_",
-                        "components_",
-                        "fit_transform",
-                    ]:
-                        continue
-
-                    try:
-                        val = getattr(source, attr)
-                        if isinstance(val, (int, float, np.number)):
-                            scores[attr] = float(val)
-                        # Allow explicit lists/arrays if small enough or if in
-                        # allow_list (careful with graph)
-                        elif isinstance(val, (list, tuple, np.ndarray)):
-                            if is_allowed:
-                                scores[attr] = val
-                            elif np.size(val) < 50:  # Increased limit slightly
-                                scores[attr] = val
-                    except Exception:
-                        pass
-
-        return scores
-
-    def plot(
+    def interpret(
         self,
-        mode: str = "embedding",
-        dims: Union[Tuple[int, int], Tuple[int, int, int]] = (0, 1),
-        X: Optional[ArrayLike] = None,
-        V_emb: Optional[np.ndarray] = None,
-        labels: Optional[np.ndarray] = None,
-        y: Optional[np.ndarray] = None,
-        show_metrics: bool = False,
-        **kwargs,
-    ) -> Any:
+        X: np.ndarray,
+        *,
+        X_emb: np.ndarray,
+        analyses: Optional[List[str]] = None,
+        feature_names: Optional[List[str]] = None,
+        n_repeats: int = 5,
+        random_state: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
-        Plot the results.
+        Run feature interpretation analyses for an explicit embedding.
 
         Parameters
         ----------
-        mode : {'embedding', 'shepard', 'streamlines', 'metrics', 'diagnostics',
-            'native'}
-            Type of plot.
-        dims : tuple
-            Dimensions to plot (e.g., (0, 1) for 2D, (0, 1, 2) for 3D).
-        X : ArrayLike, optional
-            Original high-dimensional data (required for 'shepard', 'metrics').
-        V_emb : np.ndarray, optional
-            Velocity vectors (required for 'streamlines').
-        labels : np.ndarray, optional
-            Labels for coloring points.
-        y : np.ndarray, optional
-            Alias for labels.
-        show_metrics : bool, default=False
-            If True, overlays quality metrics on the 'embedding' plot. Requires X.
-        **kwargs : dict
-            Additional arguments passed to the plotting function.
+        X : np.ndarray
+            Original input data.
+        X_emb : np.ndarray
+            Explicit embedding aligned with ``X``.
+        analyses : list of {"correlation", "perturbation", "gradient"}, optional
+            Interpretation analyses to compute. ``None`` defaults to
+            ``["correlation"]``.
+        feature_names : list of str, optional
+            Feature names aligned with the columns of ``X`` when the requested
+            interpretation returns feature-keyed outputs.
+        n_repeats : int, default=5
+            Number of shuffles per feature for perturbation importance.
+        random_state : int, optional
+            Random seed for perturbation importance.
 
         Returns
         -------
-        fig : matplotlib.figure.Figure
+        dict
+            Dictionary with keys ``"analysis"`` and ``"records"``.
+
+        Notes
+        -----
+        ``interpret()`` does not fit the reducer or compute embeddings.
+        Callers must pass both ``X`` and ``X_emb`` explicitly.
+
+        See Also
+        --------
+        coco_pipe.dim_reduction.analysis.interpret_features
+            Pure interpretation backend used by this manager method.
+        score
+            Evaluate structure-preservation metrics for an explicit embedding.
+
+        Examples
+        --------
+        >>> reducer = DimReduction("PCA", n_components=2)
+        >>> embedding = reducer.fit_transform(X)
+        >>> result = reducer.interpret(
+        ...     X,
+        ...     X_emb=embedding,
+        ...     analyses=["correlation"],
+        ...     feature_names=feature_names,
+        ... )
+        >>> sorted(result)
+        ['analysis', 'records']
         """
-        from ..viz import dim_reduction as viz
-
-        # Dispatch 'native' mode immediately
-        if mode == "native":
-            return self.plot_native(**kwargs)
-
-        # Alias resolution
-        lbls = y if y is not None else labels
-
-        # Decide on embedding to use
-        # Diagnostics mode might not need embedding (e.g. loss history)
-        if mode != "diagnostics" and self.embedding_ is None:
-            raise RuntimeError(
-                "Model is not fitted. Use fit() or fit_transform() first."
-            )
-
-        X_emb = self.embedding_
-
-        # Calculate metrics if requested and X provided
-        metrics_dict = None
-        if show_metrics:
-            if X is None:
-                raise ValueError("show_metrics=True requires 'X' to compute scores.")
-            metrics_dict = self.score(X)
-
-        if mode == "embedding":
-            return viz.plot_embedding(
-                X_emb, labels=lbls, dims=dims, metrics=metrics_dict, **kwargs
-            )
-
-        elif mode == "metrics":
-            if X is None:
-                raise ValueError("mode='metrics' requires 'X' to compute scores.")
-            scores = self.score(X)
-            return viz.plot_metrics(scores, **kwargs)
-
-        elif mode == "diagnostics":
-            # Check for loss history (Neural)
-            if hasattr(self.reducer, "loss_history_") and self.reducer.loss_history_:
-                return viz.plot_loss_history(
-                    self.reducer.loss_history_,
-                    title=f"Loss History ({self.method})",
-                    **kwargs,
-                )
-
-            # Check for eigenvalues/explained variance (Linear)
-            if hasattr(self.reducer, "explained_variance_ratio_"):
-                return viz.plot_eigenvalues(
-                    self.reducer.explained_variance_ratio_,
-                    title=f"Explained Variance ({self.method})",
-                    **kwargs,
-                )
-
-            if hasattr(self.reducer, "eigs_"):
-                # eigs_ can be complex for DMD, take magnitude
-                eigs = np.abs(self.reducer.eigs_)
-                # Sort descending
-                eigs = -np.sort(-eigs)  # numpy sort is ascending
-                return viz.plot_eigenvalues(
-                    eigs,
-                    title=f"Eigenvalues ({self.method})",
-                    ylabel="Magnitude",
-                    **kwargs,
-                )
-
-            # Check for singular values
-            if hasattr(self.reducer, "singular_values_"):
-                return viz.plot_eigenvalues(
-                    self.reducer.singular_values_,
-                    title=f"Singular Values ({self.method})",
-                    ylabel="Value",
-                    **kwargs,
-                )
-
-            # Fallback: Shepard Diagram (Manifold)
-            if X is None:
-                raise ValueError(
-                    "mode='diagnostics' fallback to Shepard diagram requires 'X'."
-                )
-            return viz.plot_shepard_diagram(np.array(X), X_emb, **kwargs)
-
-        elif mode == "shepard":
-            if X is None:
-                raise ValueError("mode='shepard' requires original data 'X'")
-            # Handle MNE object
-            X_arr = np.array(X) if not hasattr(X, "get_data") else X.get_data()
-            if X_arr.ndim > 2:
-                # Shepard needs 2D inputs usually (scipy pdist)
-                X_arr = X_arr.reshape(len(X_arr), -1)
-
-            return viz.plot_shepard_diagram(X_arr, X_emb, **kwargs)
-
-        elif mode == "streamlines":
-            if V_emb is None:
-                raise ValueError("mode='streamlines' requires velocity vectors 'V_emb'")
-            return viz.plot_streamlines(X_emb, V_emb, **kwargs)
-
-        else:
-            raise ValueError(f"Unknown plot mode: {mode}")
-
-    def plot_native(self, **kwargs) -> Any:
-        """
-        Attempt to use the underlying library's native plotting function.
-
-        Supported:
-        - PHATE (phate.plot.*)
-        - UMAP (umap.plot.*)
-        - DMD (pydmd.plot_eigs / plot_modes_2D)
-
-        Returns
-        -------
-        result : Any
-             The result of the native plot call (usually axis or figure).
-        """
-        # PHATE
-        if self.method == "PHATE":
-            import phate
-
-            return phate.plot.scatter(self.reducer.model, **kwargs)
-
-        # UMAP
-        if self.method == "UMAP":
-            try:
-                import umap.plot
-
-                return umap.plot.points(self.reducer.model, **kwargs)
-            except ImportError:
-                raise ImportError(
-                    "umap.plot requires 'umap-learn[plot]' or manually installed "
-                    "dependencies."
-                )
-
-        # DMD (PyDMD)
-        if self.method == "DMD":
-            # Try plot_eigs first if not specified in kwargs?
-            # Or check kwargs? Simple default: plot_eigs
-            if hasattr(self.reducer.model, "plot_eigs"):
-                return self.reducer.model.plot_eigs(**kwargs)
-
-        raise NotImplementedError(
-            f"Native plotting not supported or implemented for {self.method}."
+        payload = interpret_features(
+            X,
+            X_emb=X_emb,
+            model=self.reducer,
+            analyses=analyses,
+            feature_names=feature_names,
+            method_name=self.method,
+            n_repeats=n_repeats,
+            random_state=random_state,
         )
+        self.interpretation_ = dict(payload["analysis"])
+        self.interpretation_records_ = list(payload["records"])
+        return {
+            "analysis": self.interpretation_,
+            "records": list(self.interpretation_records_),
+        }
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        Return cached diagnostics merged with reducer diagnostics.
+
+        Returns
+        -------
+        diagnostics : dict
+            Diagnostic artifacts declared by the reducer contract and the
+            evaluation layer.
+        """
+        self.diagnostics_.update(self.reducer.get_diagnostics())
+        return self.diagnostics_.copy()
+
+    def get_quality_metadata(self) -> Dict[str, Any]:
+        """
+        Return cached scalar metadata merged with reducer metadata.
+
+        Returns
+        -------
+        metadata : dict
+            Scalar metadata declared by the reducer contract and the evaluation
+            layer.
+        """
+        self.quality_metadata_.update(self.reducer.get_quality_metadata())
+        return self.quality_metadata_.copy()
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Return cached scalar metrics from the latest ``score()`` call."""
+        return self.metrics_.copy()
+
+    def get_summary(self) -> Dict[str, Any]:
+        """
+        Return a normalized summary payload for report and export paths.
+
+        Returns
+        -------
+        dict
+            Plain dictionary containing method identity, cached scalar
+            summaries, reducer metadata, diagnostics, tidy metric records, and
+            capability flags, plus cached feature interpretation payloads.
+
+        Notes
+        -----
+        The summary does not include an embedding payload. Embeddings are
+        handled explicitly outside the manager and must be passed directly to
+        plotting or reporting utilities that need them.
+        """
+        return {
+            "method": self.method,
+            "n_components": self.n_components,
+            "random_state": self.random_state,
+            "metrics": self.get_metrics(),
+            "metric_records": list(self.metric_records_),
+            "quality_metadata": self.get_quality_metadata(),
+            "diagnostics": self.get_diagnostics(),
+            "interpretation": dict(self.interpretation_),
+            "interpretation_records": list(self.interpretation_records_),
+            "capabilities": self.capabilities,
+        }
 
     def save(self, path: Union[str, Path]):
-        """Save the reducer to disk."""
+        """
+        Save the underlying reducer to disk.
+
+        Parameters
+        ----------
+        path : str or Path
+            Output path for reducer persistence.
+
+        Notes
+        -----
+        Only the reducer model is persisted. Cached manager state such as
+        metrics and diagnostics is not included.
+        """
         self.reducer.save(path)
 
     @classmethod
     def load(cls, path: Union[str, Path], method: str) -> "DimReduction":
         """
-        Load a reducer from disk.
+        Load a persisted reducer and wrap it in a fresh manager.
 
-        Note: We need to know the 'method' to instantiate the correct class wrapper,
-        or we just return the raw reducer?
-        The BaseReducer.load() returns the specific Reducer instance (e.g. UMAPReducer).
-        But that instance is not a 'DimReduction' manager instance.
+        Parameters
+        ----------
+        path : str or Path
+            Path to a serialized reducer saved with ``save()``.
+        method : str
+            Canonical public reducer name used to reconstruct the manager.
 
-        To restore a 'DimReduction' manager, we can wrap the loaded reducer.
+        Returns
+        -------
+        DimReduction
+            Fresh manager wrapping the loaded reducer model.
+
+        Notes
+        -----
+        This restores the reducer model only. Cached manager state such as
+        scores, diagnostics, and metric records is not persisted.
         """
-        # Load raw reducer
         reducer_instance = BaseReducer.load(path)
-
-        # Hacky reconstruction:
         manager = cls(method=method, n_components=reducer_instance.n_components)
         manager.reducer = reducer_instance
         return manager
-
-    @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "DimReduction":
-        """
-        Initialize from configuration dictionary.
-
-        Expected keys:
-        - method: str
-        - n_components: int
-        - params: dict
-        """
-        if "method" not in config:
-            raise ValueError("Config must contain 'method' key.")
-
-        return cls(
-            method=config["method"],
-            n_components=config.get("n_components", 2),
-            params=config.get("params", {}),
-        )

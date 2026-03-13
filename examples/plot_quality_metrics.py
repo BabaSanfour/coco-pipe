@@ -53,7 +53,7 @@ for name, dr in reducers.items():
     # Calculate Metrics
     # Note: These metrics are calculated via scikit-learn or internal utils
     # For this demo, we assume they are computed and stored in the 'scores'
-    scores = dr.score(X, X_emb)
+    scores = dr.score(X_emb, X=X)
 
     results[name] = {"embedding": X_emb, "scores": scores}
 
@@ -72,10 +72,11 @@ for i, (name, res) in enumerate(نتائج := results.items()):
     X_emb = res["embedding"]
     scores = res["scores"]
 
-    # Extract metrics (defaulting to 0.0 if not computed by that specific wrapper)
-    trust = scores.get("trustworthiness", 0.0)
-    cont = scores.get("continuity", 0.0)
-    lcmc = scores.get("lcmc", 0.0)
+    # Extract metrics from the structured payload
+    m = scores.get("metrics", {})
+    trust = m.get("trustworthiness", 0.0)
+    cont = m.get("continuity", 0.0)
+    lcmc = m.get("lcmc", 0.0)
 
     ax = axes[i]
     scatter = ax.scatter(

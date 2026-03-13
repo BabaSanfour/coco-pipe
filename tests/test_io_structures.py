@@ -12,7 +12,12 @@ def data_container_cls():
 @pytest.fixture
 def sample_container(data_container_cls):
     X = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-    coords = {"channel": ["Fz", "Cz", "Pz"], "time": np.array([0, 1, 2, 3])}
+    coords = {
+        "channel": ["Fz", "Cz", "Pz"],
+        "time": np.array([0, 1, 2, 3]),
+        "Study ID": np.array(["S0", "S1"]),
+        "group": np.array(["control", "patient"]),
+    }
     y = np.array([0, 1])
     ids = np.array(["s0", "s1"])
     return data_container_cls(
@@ -52,6 +57,8 @@ def test_flatten_and_stack(sample_container):
     assert flat.dims == ("obs", "feature")
     assert flat.X.shape == (2, 12)
     assert flat.coords["feature"][0] == "Fz_0"
+    assert flat.coords["Study ID"].tolist() == ["S0", "S1"]
+    assert flat.coords["group"].tolist() == ["control", "patient"]
 
     stacked = sample_container.stack(dims=("obs", "time"), new_dim="obs")
     assert stacked.X.shape == (
@@ -60,6 +67,8 @@ def test_flatten_and_stack(sample_container):
     )
     assert stacked.y.tolist() == [0, 0, 0, 0, 1, 1, 1, 1]
     assert stacked.ids[0].startswith("s0_")
+    assert stacked.coords["Study ID"].tolist() == ["S0"] * 4 + ["S1"] * 4
+    assert stacked.coords["group"].tolist() == ["control"] * 4 + ["patient"] * 4
 
 
 def test_balance_undersample(data_container_cls):
@@ -296,7 +305,12 @@ def test_aggregate():
     X = np.array([[1, 1], [2, 2], [3, 3]])
     y = np.array([0, 0, 1])  # Consistent for group 'A', unique for 'B'
     ids = np.array(["a1", "a2", "b1"])
-    coords = {"group": ["A", "A", "B"], "bad_len": [1, 2]}
+    coords = {
+        "Study ID": ["A", "A", "B"],
+        "site": ["north", "north", "south"],
+        "mixed": ["x", "y", "z"],
+        "bad_len": [1, 2],
+    }
 
     dc = DataContainer(X, dims=("obs", "feat"), coords=coords, y=y, ids=ids)
 
@@ -314,20 +328,23 @@ def test_aggregate():
         dc.aggregate(by=[1, 2])
 
     # 4. Aggregation Mean (Standard)
-    agg = dc.aggregate(by="group", method="mean")
+    agg = dc.aggregate(by="Study ID", method="mean")
     assert agg.shape == (2, 2)
     assert np.array_equal(agg.coords["obs"], ["A", "B"])
+    assert np.array_equal(agg.coords["Study ID"], ["A", "B"])
+    assert np.array_equal(agg.coords["site"], ["north", "south"])
+    assert "mixed" not in agg.coords
     # Group A: (1+2)/2 = 1.5. Group B: 3.
     assert agg.X[0, 0] == 1.5
     assert agg.y is not None
     assert np.array_equal(agg.y, [0, 1])  # 0 is consistent for A
 
     # 5. Method variants
-    agg_std = dc.aggregate(by="group", method="std")
+    agg_std = dc.aggregate(by="Study ID", method="std")
     assert agg_std.ids is None  # Std voids IDs
 
     with pytest.raises(ValueError, match="Unknown method"):
-        dc.aggregate(by="group", method="invalid")
+        dc.aggregate(by="Study ID", method="invalid")
 
 
 def test_aggregate_unknown_method():
@@ -336,3 +353,82 @@ def test_aggregate_unknown_method():
     dc = DataContainer(X, dims=("obs", "f"))
     with pytest.raises(ValueError, match="Unknown method"):
         dc.aggregate(by=[1, 2], method="magic")
+
+
+def test_unstack_basic():
+    # Shape: (10 trials, 500 time, 32 channels)
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((10, 500, 32))
+    dims = ("trials", "time", "channels")
+    container = DataContainer(X=X, dims=dims)
+
+    # Stack 'trials' and 'time' into 'obs'
+    # Result: (5000, 32) with dims ('obs', 'channels')
+    stacked = container.stack(dims=("trials", "time"), new_dim="obs")
+    assert stacked.shape == (5000, 32)
+    assert stacked.dims == ("obs", "channels")
+
+    # Unstack back (using stored metadata)
+    unstacked = stacked.unstack("obs")
+
+    assert unstacked.shape == (10, 500, 32)
+    assert unstacked.dims == ("trials", "time", "channels")
+    np.testing.assert_array_equal(unstacked.X, X)
+
+
+def test_unstack_preserves_order():
+    # Shape: (32 channels, 10 trials, 500 time)
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((32, 10, 500))
+    dims = ("channels", "trials", "time")
+    container = DataContainer(X=X, dims=dims)
+
+    # Stack 'trials' and 'time' -> 'obs'.
+    stacked = container.stack(dims=("trials", "time"), new_dim="obs")
+    assert stacked.shape == (5000, 32)
+
+    # Unstack 'obs' -> ('trials', 'time').
+    unstacked = stacked.unstack("obs")
+
+    # Checks
+    assert unstacked.dims == ("trials", "time", "channels")
+    X_restored = np.transpose(unstacked.X, (2, 0, 1))
+    np.testing.assert_array_equal(X_restored, X)
+
+
+def test_unstack_updates_metadata():
+    X = np.zeros((100, 5))
+    ids = np.array([f"id_{i}" for i in range(100)])
+    # Manually inject metadata as if stacked
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feats"),
+        ids=ids,
+        coords={"obs": np.arange(100), "feats": np.arange(5)},
+        meta={"stacked_from": ("a", "b"), "stacked_shapes": (10, 10)},
+    )
+
+    # Unstack 'obs' -> ('a', 'b') (10, 10) using injected metadata
+    unstacked = container.unstack("obs")
+
+    assert unstacked.shape == (10, 10, 5)
+    assert unstacked.dims == ("a", "b", "feats")
+    assert unstacked.ids is None  # Should be dropped as length mismatches
+    assert "obs" not in unstacked.coords
+    assert "feats" in unstacked.coords
+
+
+def test_unstack_error_missing_metadata():
+    X = np.zeros((100, 10))
+    # No metadata provided
+    container = DataContainer(X=X, dims=("obs", "features"))
+
+    with pytest.raises(ValueError, match="Cannot unstack: Metadata"):
+        container.unstack("obs")
+
+
+def test_unstack_error_dim_not_found():
+    X = np.zeros((10, 10))
+    container = DataContainer(X=X, dims=("a", "b"))
+    with pytest.raises(ValueError, match="Dimension 'c' not found"):
+        container.unstack("c")

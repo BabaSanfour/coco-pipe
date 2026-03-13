@@ -5,17 +5,57 @@ IO Utilities
 Helper functions for IO operations.
 """
 
+import importlib
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import mne
 import numpy as np
 import pandas as pd
-from mne_bids import read_raw_bids
 from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
+from coco_pipe.utils import import_optional_dependency
+
 logger = logging.getLogger(__name__)
+mne = None
+BIDSPath = None
+read_raw_bids = None
+
+
+def _get_mne():
+    """Lazily import MNE so base IO structures stay lightweight."""
+    global mne
+    if mne is None:
+        mne = import_optional_dependency(
+            lambda: importlib.import_module("mne"),
+            feature="IO workflows",
+            dependency="mne",
+        )
+    return mne
+
+
+def _get_bids_path():
+    """Lazily import mne-bids' ``BIDSPath``."""
+    global BIDSPath
+    if BIDSPath is None:
+        BIDSPath = import_optional_dependency(
+            lambda: importlib.import_module("mne_bids").BIDSPath,
+            feature="BIDS IO workflows",
+            dependency="mne-bids",
+        )
+    return BIDSPath
+
+
+def _get_read_raw_bids():
+    """Lazily import the MNE-BIDS raw reader."""
+    global read_raw_bids
+    if read_raw_bids is None:
+        read_raw_bids = import_optional_dependency(
+            lambda: importlib.import_module("mne_bids").read_raw_bids,
+            feature="BIDS IO workflows",
+            dependency="mne-bids",
+        )
+    return read_raw_bids
 
 
 def row_quality_score(
@@ -142,7 +182,12 @@ def read_bids_entry(
     mode: str,
     window_length: Optional[float],
     stride: Optional[float],
-) -> Tuple[np.ndarray, np.ndarray, List[str], float]:
+    event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+    tmin: float = -0.2,
+    tmax: float = 0.5,
+    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
+) -> Tuple[np.ndarray, np.ndarray, List[str], float, Optional[np.ndarray]]:
+    mne_mod = _get_mne()
     if is_pre_epoched:
         # Load existing Epochs
         fpath = bids_path.fpath
@@ -151,9 +196,43 @@ def read_bids_entry(
             if matches:
                 fpath = matches[0]
 
-        epochs = mne.read_epochs(fpath, verbose=False)
+        epochs = mne_mod.read_epochs(fpath, verbose=False)
+        if event_id is not None:
+            filtered_epochs = None
+            if isinstance(event_id, dict):
+                event_names = list(event_id)
+                event_codes = list(event_id.values())
+            elif isinstance(event_id, str):
+                event_names = [event_id]
+                event_codes = None
+            else:
+                event_names = list(event_id)
+                event_codes = None
+            matching_epoch_names = [
+                name for name in event_names if name in epochs.event_id
+            ]
+            if matching_epoch_names:
+                filtered_epochs = epochs[matching_epoch_names]
+            if event_codes is not None and (
+                filtered_epochs is None or len(filtered_epochs) == 0
+            ):
+                matching_event_codes = np.isin(epochs.events[:, -1], event_codes)
+                if np.any(matching_event_codes):
+                    filtered_epochs = epochs[matching_event_codes]
+            if filtered_epochs is None or len(filtered_epochs) == 0:
+                raise ValueError(
+                    "No epochs remain after filtering precomputed "
+                    f"epochs with event_id={event_id}."
+                )
+            epochs = filtered_epochs
         data = epochs.get_data(copy=False)  # (N, C, T)
-        return data, epochs.times, epochs.ch_names, epochs.info["sfreq"]
+        return (
+            data,
+            epochs.times,
+            epochs.ch_names,
+            epochs.info["sfreq"],
+            epochs.events[:, -1],
+        )
 
     elif is_evoked:
         # Load Evoked
@@ -163,14 +242,21 @@ def read_bids_entry(
             if matches:
                 fpath = matches[0]
 
-        evokeds = mne.read_evokeds(fpath, verbose=False)
+        evokeds = mne_mod.read_evokeds(fpath, verbose=False)
         # Stack conditions (N_cond, C, T)
         data = np.stack([e.data for e in evokeds], axis=0)
-        return data, evokeds[0].times, evokeds[0].ch_names, evokeds[0].info["sfreq"]
+        labels = np.arange(len(evokeds))
+        return (
+            data,
+            evokeds[0].times,
+            evokeds[0].ch_names,
+            evokeds[0].info["sfreq"],
+            labels,
+        )
 
     else:
         # Load Raw (default)
-        raw = read_raw_bids(bids_path, verbose=False)
+        raw = _get_read_raw_bids()(bids_path, verbose=False)
         raw.load_data()
         raw.pick_types(eeg=True, meg=True, eog=False)
 
@@ -178,22 +264,43 @@ def read_bids_entry(
             data_raw = raw.get_data()  # (C, T)
             data = data_raw[np.newaxis, :, :]  # (1, C, T)
             times = raw.times
+            labels = None
+        elif event_id is not None:
+            # Event-Based Epoching (Annotation aware)
+            events, event_id_map = mne_mod.events_from_annotations(
+                raw, event_id=event_id, verbose=False
+            )
+            epochs = mne_mod.Epochs(
+                raw,
+                events=events,
+                event_id=event_id_map,
+                tmin=tmin,
+                tmax=tmax,
+                baseline=baseline,
+                preload=True,
+                verbose=False,
+            )
+            data = epochs.get_data(copy=False)
+            times = epochs.times
+            labels = epochs.events[:, -1]
         else:
             # Raw -> Fixed Length Epochs
             if window_length is None:
                 data_raw = raw.get_data()
                 data = data_raw[np.newaxis, :, :]
                 times = raw.times
+                labels = None
             else:
                 dur_s = window_length
                 stride_s = stride if stride else dur_s
-                epochs = mne.make_fixed_length_epochs(
+                epochs = mne_mod.make_fixed_length_epochs(
                     raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
                 )
                 data = epochs.get_data(copy=False)
                 times = epochs.times
+                labels = epochs.events[:, -1]
 
-        return data, times, raw.ch_names, raw.info["sfreq"]
+        return data, times, raw.ch_names, raw.info["sfreq"], labels
 
 
 def load_participants_tsv(root: Path) -> Dict[str, Dict[str, Any]]:
@@ -236,7 +343,30 @@ def detect_sessions(root: Path, subject: str) -> List[str]:
     sub_dir = root / f"sub-{subject}"
     if not sub_dir.exists():
         return []
-    return [d.name.replace("ses-", "") for d in sub_dir.glob("ses-*") if d.is_dir()]
+    return sorted(
+        [d.name.replace("ses-", "") for d in sub_dir.glob("ses-*") if d.is_dir()]
+    )
+
+
+def detect_runs(
+    root: Path,
+    subject: str,
+    session: Optional[str] = None,
+    task: Optional[str] = None,
+    datatype: str = "eeg",
+) -> List[str]:
+    """
+    Detect available runs for a given subject/session/task.
+    """
+    bp = _get_bids_path()(
+        root=root, subject=subject, session=session, task=task, datatype=datatype
+    )
+    matches = bp.match()
+    runs = set()
+    for m in matches:
+        if m.run is not None:
+            runs.add(m.run)
+    return sorted(list(runs))
 
 
 def smart_reader(path: Path) -> Any:

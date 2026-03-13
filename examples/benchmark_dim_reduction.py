@@ -36,7 +36,7 @@ def main():
     # 2. Define Methods to Benchmark
     methods = [
         ("PCA", {"n_components": 2}),
-        ("ISOMAP", {"n_components": 2, "n_neighbors": 30}),
+        ("Isomap", {"n_components": 2, "n_neighbors": 30}),
         ("UMAP", {"n_components": 2, "n_neighbors": 15, "min_dist": 0.1}),
     ]
 

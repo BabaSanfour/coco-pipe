@@ -4,11 +4,11 @@ Run dimensionality reduction on multiple subjects and sessions from the EEG
 Motor Movement/Imagery Dataset.
 This demonstrates processing a BIDS dataset with multiple subjects and sessions.
 """
+
 import logging
 
 import numpy as np
-
-from coco_pipe.dim_reduction import DimReductionPipeline
+from _dimred_example_utils import execute_reduction
 
 # Set up logging
 logging.basicConfig(
@@ -21,19 +21,16 @@ bids_root = "./test_data/eegmmidb_bids"
 
 # 1. Single subject with one run per session
 logger.info("=== PROCESSING SINGLE SUBJECT WITH SPECIFIC RUNS ===")
-single_subject_pipeline = DimReductionPipeline(
-    type="eeg",
+output_path = execute_reduction(
     method="pca",
     data_path=bids_root,
+    type="eeg",
     task="motor",
     subjects=["01"],  # Single subject
     session="hands",  # Specify one session
     run="03",  # Specify the run number
     n_components=10,
 )
-
-# Execute pipeline and save output
-output_path = single_subject_pipeline.execute()
 logger.info(f"Output saved to: {output_path}")
 
 # Display output information
@@ -42,19 +39,16 @@ logger.info(f"Single subject output shape: {data['reduced'].shape}")
 
 # 2. Multiple subjects with a single session
 logger.info("\n=== PROCESSING MULTIPLE SUBJECTS WITH A SINGLE SESSION ===")
-multi_subj_single_session_pipeline = DimReductionPipeline(
-    type="eeg",
+output_path = execute_reduction(
     method="pca",
     data_path=bids_root,
+    type="eeg",
     task="motor",
     subjects=["01", "02", "03", "04", "05"],  # Multiple subjects
     session="hands",  # Single session
     run="03",  # For hands sessions, use run 03
     n_components=10,
 )
-
-# Execute pipeline and save output
-output_path = multi_subj_single_session_pipeline.execute()
 logger.info(f"Output saved to: {output_path}")
 
 # Display output information
@@ -70,35 +64,29 @@ all_subjects_data = []
 all_time_segments = []
 
 # Process hands sessions (run 03) for all subjects
-hands_pipeline = DimReductionPipeline(
-    type="eeg",
+hands_output_path = execute_reduction(
     method="pca",
     data_path=bids_root,
+    type="eeg",
     task="motor",
     subjects=["01", "02", "03", "04", "05"],
     session="hands",
     run="03",  # For hands sessions, use run 03
     n_components=10,
 )
-
-# Execute pipeline and save output
-hands_output_path = hands_pipeline.execute()
 logger.info(f"Hands session output saved to: {hands_output_path}")
 
 # Process feet sessions (run 04) for all subjects
-feet_pipeline = DimReductionPipeline(
-    type="eeg",
+feet_output_path = execute_reduction(
     method="pca",
     data_path=bids_root,
+    type="eeg",
     task="motor",
     subjects=["01", "02", "03", "04", "05"],
     session="feet",
     run="04",  # For feet sessions, use run 04
     n_components=10,
 )
-
-# Execute pipeline and save output
-feet_output_path = feet_pipeline.execute()
 logger.info(f"Feet session output saved to: {feet_output_path}")
 
 # Load and combine data from both sessions

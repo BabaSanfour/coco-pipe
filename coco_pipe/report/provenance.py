@@ -74,12 +74,14 @@ def get_environment_info() -> Dict[str, Any]:
     'a1b2c3d'
     """
     info = {
-        "timestamp_utc": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
         "os_platform": platform.platform(),
         "python_version": platform.python_version(),
         "command": " ".join(sys.argv),
         "git_hash": get_git_revision_hash(),
-        "coco_pipe_version": "0.0.1",  # TODO: fetch dynamically if setup properly
+        "coco_pipe_version": get_package_version("coco-pipe"),
         "versions": {
             "numpy": get_package_version("numpy"),
             "pandas": get_package_version("pandas"),

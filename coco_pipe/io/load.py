@@ -3,8 +3,7 @@ coco_pipe/io/load.py
 --------------------
 High-level data loading factory.
 
-Author: Hamza Abdelhedi <hamza.abdelhedii@gmail.com>
-Date: 2026-01-14
+Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
 
 import logging
@@ -13,10 +12,24 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from .dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 from .structures import DataContainer
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["load_data"]
+
+
+def __getattr__(name):
+    if name in {"TabularDataset", "BIDSDataset", "EmbeddingDataset"}:
+        from . import dataset as dataset_mod
+
+        return getattr(dataset_mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def _resolve_dataset_class(name: str):
+    """Resolve dataset classes lazily while remaining patch-friendly in tests."""
+    return globals().get(name) or __getattr__(name)
 
 
 def load_data(
@@ -41,6 +54,8 @@ def load_data(
     loading_mode: str = "epochs",  # Maps to BIDSDataset `mode`
     window_length: Optional[float] = None,
     stride: Optional[float] = None,
+    subject_metadata_df: Optional[Any] = None,
+    subject_key: Optional[str] = None,
     # --- Embedding Arguments ---
     pattern: str = "*.pkl",
     dims: Tuple[str, ...] = ("obs", "feature"),
@@ -110,6 +125,10 @@ def load_data(
         Window length in seconds (for 'epochs' mode).
     stride : float, optional
         Stride in seconds (for 'epochs' mode).
+    subject_metadata_df : DataFrame, optional
+        External subject-level metadata to merge by subject during BIDS loading.
+    subject_key : str, optional
+        Column in `subject_metadata_df` containing the BIDS subject identifier.
     subjects : str or List[str], optional
         Specific subject IDs to load (without 'sub-').
 
@@ -157,7 +176,7 @@ def load_data(
 
     # 2. Dispatch
     if mode == "tabular":
-        return TabularDataset(
+        return _resolve_dataset_class("TabularDataset")(
             path=path,
             target_col=target_col,
             index_col=index_col,
@@ -174,21 +193,24 @@ def load_data(
 
     elif mode == "bids":
         # Note: mapping loading_mode -> mode
-        return BIDSDataset(
+        return _resolve_dataset_class("BIDSDataset")(
             root=path,
             mode=loading_mode,
             task=task,
             session=session,
             datatype=datatype,
             suffix=suffix,
+            target_col=target_col,
             window_length=window_length,
             stride=stride,
+            subject_metadata_df=subject_metadata_df,
+            subject_key=subject_key,
             subjects=subjects,
             **kwargs,
         ).load()
 
     elif mode == "embedding":
-        return EmbeddingDataset(
+        return _resolve_dataset_class("EmbeddingDataset")(
             path=path,
             pattern=pattern,
             dims=dims,

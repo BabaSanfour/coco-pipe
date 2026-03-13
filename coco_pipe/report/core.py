@@ -2,7 +2,8 @@
 Core Reporting Classes
 ======================
 
-Defines the object hierarchy for the reporting system.
+Defines the generic reporting primitives and dim-reduction report adapters used
+to assemble single-file HTML reports.
 """
 
 import base64
@@ -18,15 +19,6 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from coco_pipe.viz.plotly_utils import (
-    plot_embedding_interactive,
-    plot_loss_history_interactive,
-    plot_metric_details,
-    plot_radar_comparison,
-    plot_raw_preview,
-    plot_scree_interactive,
-)
-
 from .config import ReportConfig
 from .engine import render_template
 from .provenance import get_environment_info
@@ -37,6 +29,84 @@ from .quality import (
     check_missingness,
     check_outliers_zscore,
 )
+
+
+def _get_reducer_summary(reducer: Any) -> Dict[str, Any]:
+    """Collect the strict summary payload from a reduction-like object."""
+    if not hasattr(reducer, "get_summary"):
+        raise TypeError(
+            "Reduction objects passed to Report.add_reduction() must implement "
+            "get_summary()."
+        )
+
+    summary = reducer.get_summary()
+    if not isinstance(summary, dict):
+        raise TypeError("Reducer get_summary() must return a dictionary.")
+
+    metrics = summary.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+
+    metric_records = summary.get("metric_records")
+    if not isinstance(metric_records, list):
+        metric_records = []
+
+    quality_metadata = summary.get("quality_metadata")
+    if not isinstance(quality_metadata, dict):
+        quality_metadata = {}
+
+    diagnostics = summary.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+
+    interpretation = summary.get("interpretation")
+    if not isinstance(interpretation, dict):
+        interpretation = {}
+
+    interpretation_records = summary.get("interpretation_records")
+    if not isinstance(interpretation_records, list):
+        interpretation_records = []
+
+    return {
+        "method": summary.get("method") or type(reducer).__name__,
+        "metrics": metrics,
+        "metric_records": metric_records,
+        "quality_metadata": quality_metadata,
+        "diagnostics": diagnostics,
+        "interpretation": interpretation,
+        "interpretation_records": interpretation_records,
+        "capabilities": summary.get("capabilities") or {},
+    }
+
+
+def _metrics_summary_table(metrics: Any) -> pd.DataFrame:
+    """Reduce metric observations to a method x metric summary table."""
+    from coco_pipe.viz.utils import prepare_metrics_frame
+
+    metrics_df = prepare_metrics_frame(metrics)
+    if metrics_df.empty:
+        return pd.DataFrame()
+
+    return metrics_df.pivot_table(
+        index="method", columns="metric", values="value", aggfunc="mean"
+    )
+
+
+def _trajectory_times(
+    diagnostics: Dict[str, Any], times: Optional[np.ndarray]
+) -> Optional[np.ndarray]:
+    """Return the explicit trajectory time axis when it aligns with diagnostics."""
+    if times is not None:
+        time_values = np.asarray(times).reshape(-1)
+        if time_values.size > 0:
+            return time_values
+
+    diagnostic_times = diagnostics.get("trajectory_times_")
+    if diagnostic_times is None:
+        return None
+
+    time_values = np.asarray(diagnostic_times).reshape(-1)
+    return time_values if time_values.size > 0 else None
 
 
 class Element(ABC):
@@ -142,8 +212,12 @@ class ImageElement(Element):
         <figure class="my-6">
             <img src="data:image/png;base64,{b64_str}" style="width: {self.width};"
                  class="rounded shadow-sm mx-auto border border-gray-100">
-            {f'<figcaption class="text-center text-sm text-gray-500 mt-2">'
-             f'{self.caption}</figcaption>' if self.caption else ''}
+            {
+            f'<figcaption class="text-center text-sm text-gray-500 mt-2">'
+            f"{self.caption}</figcaption>"
+            if self.caption
+            else ""
+        }
         </figure>
         """
         return html
@@ -272,6 +346,16 @@ class TableElement(Element):
         # Convert to DataFrame
         if isinstance(self.data, pd.DataFrame):
             df = self.data
+        elif isinstance(self.data, dict):
+            # Check if all values are scalars
+            # (to avoid "If using all scalar values, you must pass an index")
+            if all(
+                isinstance(v, (int, float, str, np.number)) or v is None
+                for v in self.data.values()
+            ):
+                df = pd.DataFrame([self.data])
+            else:
+                df = pd.DataFrame(self.data)
         else:
             df = pd.DataFrame(self.data)
 
@@ -439,6 +523,33 @@ class ContainerElement(Element):
         self.children.append(element)
         return self  # Fluent interface
 
+    def add_markdown(self, text: str) -> "ContainerElement":
+        """
+        Add a markdown block.
+
+        Note: Requires 'markdown' package. If not present, falls back to raw
+        text in <pre>.
+        """
+        try:
+            import markdown
+
+            html = markdown.markdown(text, extensions=["extra"])
+            # Wrap in prose class for consistent styling
+            wrapper = (
+                f'<div class="prose prose-sm max-w-none text-gray-700 '
+                f'dark:text-gray-200 dark:prose-invert">{html}</div>'
+            )
+            self.add_element(HtmlElement(wrapper))
+        except ImportError:
+            # Fallback
+            safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+            html = (
+                f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 '
+                f'rounded">{safe_text}</div>'
+            )
+            self.add_element(HtmlElement(html))
+        return self
+
     def render_children(self) -> str:
         """Render all child elements concatenated."""
         return "\n".join([c.render() for c in self.children])
@@ -577,32 +688,6 @@ class Report(ContainerElement):
 
         self.metadata = self.config.provenance.model_dump()
 
-    def add_markdown(self, text: str) -> "Report":
-        """
-        Add a markdown block to the report.
-
-        Note: Requires 'markdown' package. If not present, falls back to raw
-        text in <pre>.
-        """
-        try:
-            import markdown
-
-            html = markdown.markdown(text, extensions=["extra"])
-            # Wrap in prose class for consistent styling
-            wrapper = (
-                f'<div class="prose prose-sm max-w-none text-gray-700">{html}</div>'
-            )
-            self.add_element(HtmlElement(wrapper))
-        except ImportError:
-            # Fallback
-            safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-            html = (
-                f'<div class="whitespace-pre-wrap font-mono text-sm bg-gray-50 p-4 '
-                f'rounded">{safe_text}</div>'
-            )
-            self.add_element(HtmlElement(html))
-        return self
-
     def add_section(self, section: Section) -> "Report":
         """Syntactic sugar for adding a Section."""
         return self.add_element(section)
@@ -614,7 +699,13 @@ class Report(ContainerElement):
         self.add_element(ImageElement(fig, caption=caption))
         return self
 
-    def add_container(self, container: Any, name: str = "Data Overview") -> "Report":
+    def add_container(
+        self,
+        container: Any,
+        name: str = "Data Overview",
+        show_coords: bool = True,
+        show_dist: bool = True,
+    ) -> "Report":
         """
         Add a summary section for a DataContainer.
         Automatically runs quality checks (Missingness, Constants).
@@ -625,134 +716,311 @@ class Report(ContainerElement):
             The data container to summarize.
         name : str
             Title for the section.
+        show_coords : bool
+            If True, shows the table of coordinates.
+        show_dist : bool
+            If True, shows the data/class distribution plot.
         """
-        # Create Section
-        sec = Section(title=name, icon="💾")
-
-        # 1. Metadata Table
-        # Extract general info
-        {
-            "Dimension": list(container.dims),
-            "Size": list(container.shape),
-        }
-
-        # Add shape info to meta_info for table
-        # We'll pivot this for cleaner display: Dim Name -> Size
-        dims_data = [
-            {"Dimension": d, "Size": s} for d, s in zip(container.dims, container.shape)
-        ]
-
-        sec.add_element(TableElement(dims_data, title="Dimensions"))
-
-        # Coordinates Info
-        if container.coords:
-            coords_data = [
-                {"Name": k, "Type": str(np.array(v).dtype), "Count": len(v)}
-                for k, v in container.coords.items()
-            ]
-            sec.add_element(TableElement(coords_data, title="Coordinates"))
-
-        # 2. Simple Distribution Plot (if applicable)
         try:
-            # Quality Checks
-            if container.X is not None:
-                # Missingness
-                res_missing = check_missingness(container.X)
-                if res_missing.is_issue:
-                    sec.add_finding(res_missing)
+            # Create Section
+            sec = Section(title=name, icon="💾")
 
-                # Constant Columns
-                for res in check_constant_columns(container.X):
-                    sec.add_finding(res)
+            # Dimensions
+            dims_data = [
+                {"Dimension": d, "Size": s}
+                for d, s in zip(container.dims, container.shape)
+            ]
+            sec.add_element(TableElement(dims_data, title="Dimensions"))
 
-            import matplotlib.pyplot as plt
+            # Coordinates Info
+            if show_coords and container.coords:
+                coords_data = [
+                    {"Name": k, "Type": str(np.array(v).dtype), "Count": len(v)}
+                    for k, v in container.coords.items()
+                ]
+                sec.add_element(TableElement(coords_data, title="Coordinates"))
 
-            fig, ax = plt.subplots(figsize=(6, 3))
+            # 2. Distribution Plot
+            if show_dist:
+                try:
+                    # Quality Checks
+                    if container.X is not None:
+                        res_missing = check_missingness(container.X)
+                        if res_missing.is_issue:
+                            sec.add_finding(res_missing)
 
-            # Check for 'y' (Class Distribution)
-            if container.y is not None:
-                # Plot Class counts
-                y_series = pd.Series(container.y)
-                y_series.value_counts().plot(kind="bar", ax=ax, color="skyblue")
-                ax.set_title("Class Distribution")
-                ax.set_xlabel("Class")
-                ax.set_ylabel("Count")
-                caption = "Target label distribution."
+                        for res in check_constant_columns(container.X):
+                            sec.add_finding(res)
 
-            else:
-                # Plot simple data histogram (sampled if large)
-                data_flat = container.X.flatten()
-                if len(data_flat) > 5000:
-                    data_flat = np.random.choice(data_flat, 5000, replace=False)
+                    import matplotlib.pyplot as plt
 
-                ax.hist(data_flat, bins=30, color="gray", alpha=0.7)
-                ax.set_title("Data Value Distribution (Sampled)")
-                caption = "Histogram of data values."
+                    fig, ax = plt.subplots(figsize=(6, 3))
 
-            plt.tight_layout()
-            sec.add_element(ImageElement(fig, caption=caption, width="80%"))
-            plt.close(fig)
+                    if container.y is not None:
+                        y_series = pd.Series(container.y)
+                        y_series.value_counts().plot(kind="bar", ax=ax, color="skyblue")
+                        ax.set_title("Class Distribution")
+                        ax.set_xlabel("Class")
+                        ax.set_ylabel("Count")
+                        caption = "Target label distribution."
+                    else:
+                        data_flat = container.X.flatten()
+                        if len(data_flat) > 5000:
+                            data_flat = np.random.choice(data_flat, 5000, replace=False)
+                        ax.hist(data_flat, bins=30, color="gray", alpha=0.7)
+                        ax.set_title("Data Value Distribution (Sampled)")
+                        caption = "Histogram of data values."
 
+                    plt.tight_layout()
+                    sec.add_element(ImageElement(fig, caption=caption, width="80%"))
+                    plt.close(fig)
+
+                except Exception as e:
+                    msg = f"Could not generate plot: {e}"
+                    html = f"<div class='text-red-500 text-xs'>{msg}</div>"
+                    sec.add_element(HtmlElement(html))
+
+            self.add_section(sec)
         except Exception as e:
-            sec.add_element(
-                HtmlElement(
-                    f"<div class='text-red-500 text-xs'>Could not generate plot: "
-                    f"{e}</div>"
-                )
-            )
+            import warnings
 
-        self.add_section(sec)
+            warnings.warn(f"Failed to add container info to report: {e}", UserWarning)
+
         return self
 
-    def add_reduction(self, reducer: Any, name: str = None) -> "Report":
+    def add_reduction(
+        self,
+        reducer: Any,
+        name: Optional[str] = None,
+        *,
+        X_emb: Optional[np.ndarray] = None,
+        labels: Optional[np.ndarray] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        times: Optional[np.ndarray] = None,
+    ) -> "Report":
         """
-        Add a dimensionality reduction result to the report.
+        Add one scored and optionally interpreted reduction result to the report.
 
         Parameters
         ----------
-        reducer : DimReduction or similar
-            Fitted dimensionality reduction object. Must have 'embedding_' attribute.
+        reducer : Any
+            Reduction object implementing ``get_summary()``.
         name : str, optional
-            Name of the reduction (e.g., "UMAP"). If None, inferred from class name.
+            Section title. Defaults to the reduction method name.
+        X_emb : np.ndarray, optional
+            Explicit embedding to visualize. When omitted, the section renders
+            scalar summaries, diagnostics, and interpretation outputs only.
+        labels : np.ndarray, optional
+            Optional labels aligned with ``X_emb`` for embedding or trajectory
+            plots.
+        metadata : dict, optional
+            Optional column-oriented metadata aligned with the sample axis of a
+            2D embedding.
+        times : np.ndarray, optional
+            Optional explicit time axis aligned with the time dimension of a 3D
+            trajectory tensor.
+
+        Returns
+        -------
+        Report
+            The report instance for fluent chaining.
+
+        Raises
+        ------
+        ValueError
+            If the supplied embedding or aligned plotting metadata are invalid.
+        TypeError
+            If ``reducer`` does not implement the strict summary contract.
+
+        See Also
+        --------
+        coco_pipe.dim_reduction.core.DimReduction.get_summary
+        coco_pipe.viz.plotly_utils.plot_embedding_interactive
+        coco_pipe.viz.plotly_utils.plot_interpretation_interactive
         """
-        if name is None:
-            name = type(reducer).__name__
+        summary = _get_reducer_summary(reducer)
+        method_name = summary["method"]
+        title = name or method_name
+        sec = Section(title=title, icon="📉")
 
-        sec = Section(title=name, icon="📉")
+        if X_emb is not None:
+            emb = np.asarray(X_emb)
+            if emb.ndim == 2:
+                from coco_pipe.viz.plotly_utils import plot_embedding_interactive
 
-        # 1. Main Interactive Embedding Plot
-        if hasattr(reducer, "embedding_"):
-            emb = reducer.embedding_
-            dims = emb.shape[1]
-            if dims > 3:
-                dimensions = 3
+                fig = plot_embedding_interactive(
+                    embedding=emb,
+                    labels=labels,
+                    metadata=metadata,
+                    title=f"{title} Embedding",
+                    dimensions=min(emb.shape[1], 3),
+                )
+                sec.add_element(PlotlyElement(fig))
+            elif emb.ndim == 3:
+                from coco_pipe.viz.plotly_utils import plot_trajectory_interactive
+
+                time_values = _trajectory_times(summary["diagnostics"], times)
+                fig = plot_trajectory_interactive(
+                    emb,
+                    times=time_values,
+                    labels=labels,
+                    title=f"{title} Trajectory",
+                    dimensions=min(emb.shape[-1], 3),
+                )
+                sec.add_element(PlotlyElement(fig))
             else:
-                dimensions = dims
+                msg = "`X_emb` must be a 2D embedding or 3D trajectory tensor."
+                raise ValueError(msg)
 
-            meta = getattr(reducer, "metadata_", None)
-            labels = getattr(reducer, "labels_", None)
+        metrics = summary["metrics"]
+        quality_metadata = summary["quality_metadata"]
+        scalar_table = {
+            **{
+                key: value
+                for key, value in metrics.items()
+                if isinstance(value, (int, float, np.number))
+                and not isinstance(value, bool)
+            },
+            **{
+                key: value
+                for key, value in quality_metadata.items()
+                if isinstance(value, (int, float, np.number))
+                and not isinstance(value, bool)
+            },
+        }
+        if scalar_table:
+            sec.add_element(TableElement(scalar_table, title="Quality Metrics"))
 
-            fig = plot_embedding_interactive(
-                embedding=emb,
-                labels=labels,
-                meta=meta,
-                title=f"{name} Embedding",
-                dimensions=dimensions,
+        metric_records = summary["metric_records"]
+        if metric_records:
+            from coco_pipe.viz.plotly_utils import plot_metric_details
+
+            sec.add_element(
+                PlotlyElement(
+                    plot_metric_details(metric_records, title="Metric Details"),
+                    height="380px",
+                )
             )
-            sec.add_element(PlotlyElement(fig))
 
-        # 2. Metrics Table (TODO: Add if metrics attribute exists)
+        diagnostics = summary["diagnostics"]
 
-        # 3. Diagnostics
-        # Loss Curve
-        if hasattr(reducer, "loss_history_") and reducer.loss_history_ is not None:
-            fig_loss = plot_loss_history_interactive(reducer.loss_history_)
-            sec.add_element(PlotlyElement(fig_loss, height="350px"))
+        loss_history = diagnostics.get("loss_history_")
+        if loss_history is not None:
+            from coco_pipe.viz.plotly_utils import plot_loss_history_interactive
 
-        # Scree Plot (PCA)
-        if hasattr(reducer, "explained_variance_ratio_"):
-            fig_scree = plot_scree_interactive(reducer.explained_variance_ratio_)
-            sec.add_element(PlotlyElement(fig_scree, height="350px"))
+            sec.add_element(
+                PlotlyElement(
+                    plot_loss_history_interactive(loss_history),
+                    height="350px",
+                )
+            )
+
+        explained_variance = diagnostics.get("explained_variance_ratio_")
+        if explained_variance is not None:
+            from coco_pipe.viz.plotly_utils import plot_scree_interactive
+
+            sec.add_element(
+                PlotlyElement(
+                    plot_scree_interactive(explained_variance),
+                    height="350px",
+                )
+            )
+
+        coranking = diagnostics.get("coranking_matrix_")
+        if coranking is not None:
+            import plotly.graph_objects as go
+
+            fig_coranking = go.Figure(
+                data=[
+                    go.Heatmap(
+                        z=np.asarray(coranking),
+                        colorscale="Viridis",
+                        colorbar=dict(title="Count"),
+                    )
+                ]
+            )
+            fig_coranking.update_layout(
+                title="Co-Ranking Matrix",
+                xaxis_title="Embedded Rank",
+                yaxis_title="Original Rank",
+                margin=dict(l=40, r=40, b=40, t=40),
+                template="plotly_white",
+            )
+            sec.add_element(PlotlyElement(fig_coranking, height="420px"))
+
+        from coco_pipe.viz.plotly_utils import (
+            plot_interpretation_interactive,
+            plot_trajectory_metric_series_interactive,
+        )
+
+        time_values = _trajectory_times(diagnostics, times)
+        trajectory_series = (
+            "trajectory_speed_",
+            "trajectory_acceleration_",
+            "trajectory_curvature_",
+            "trajectory_turning_angle_",
+            "trajectory_dispersion_",
+            "trajectory_path_length_",
+            "trajectory_displacement_",
+        )
+        for metric_key in trajectory_series:
+            values = diagnostics.get(metric_key)
+            if values is None:
+                continue
+            sec.add_element(
+                PlotlyElement(
+                    plot_trajectory_metric_series_interactive(
+                        values,
+                        times=time_values,
+                        labels=labels,
+                        title=metric_key.rstrip("_").replace("_", " ").title(),
+                        ylabel="Value",
+                    ),
+                    height="360px",
+                )
+            )
+
+        separation = diagnostics.get("trajectory_separation_")
+        if separation is not None:
+            sec.add_element(
+                PlotlyElement(
+                    plot_trajectory_metric_series_interactive(
+                        separation,
+                        times=time_values,
+                        title="Trajectory Separation",
+                        ylabel="Separation",
+                    ),
+                    height="380px",
+                )
+            )
+
+        interpretation = summary["interpretation"]
+        if interpretation:
+            interpretation_payload = {
+                "analysis": interpretation,
+                "records": summary["interpretation_records"],
+            }
+            record_analyses = {
+                record.get("analysis")
+                for record in summary["interpretation_records"]
+                if isinstance(record, dict) and record.get("analysis")
+            }
+            analysis_names = sorted(record_analyses | set(interpretation.keys()))
+            for analysis_name in analysis_names:
+                sec.add_element(
+                    PlotlyElement(
+                        plot_interpretation_interactive(
+                            interpretation_payload,
+                            analysis=analysis_name,
+                            title=(
+                                f"{analysis_name.replace('_', ' ').title()} "
+                                "Interpretation"
+                            ),
+                            method=method_name,
+                        ),
+                        height="420px",
+                    )
+                )
 
         self.add_section(sec)
         return self
@@ -796,6 +1064,8 @@ class Report(ContainerElement):
             # Concatenating for flattened view
             X = X.reshape(X.shape[0] * X.shape[1], -1)
 
+        from coco_pipe.viz.plotly_utils import plot_raw_preview
+
         fig = plot_raw_preview(X, names=names, title=name)
         sec.add_element(PlotlyElement(fig, height="450px"))
 
@@ -803,35 +1073,68 @@ class Report(ContainerElement):
         return self
 
     def add_comparison(
-        self, metrics_df: pd.DataFrame, name: str = "Method Comparison"
+        self, metrics_df: Any, name: str = "Method Comparison"
     ) -> "Report":
         """
-        Add a comparison section for multiple reduction methods (Radar + Bar Chart).
+        Add a comparison section for multiple reduction methods.
 
         Parameters
         ----------
-        metrics_df : pd.DataFrame
-            DataFrame with Index=Method, Columns=Metrics.
+        metrics_df : DataFrame or MethodSelector-like
+            Wide/tidy metric data or an object exposing ``to_frame()``.
         name : str
-            Section Title.
+            Section title.
+
+        Returns
+        -------
+        Report
+            The report instance for fluent chaining.
+
+        Raises
+        ------
+        ValueError
+            If no comparison metrics are available after normalization.
+
+        See Also
+        --------
+        coco_pipe.viz.plotly_utils.plot_metric_details
+        coco_pipe.dim_reduction.evaluation.core.MethodSelector
         """
         sec = Section(title=name, icon="📊")
+        from coco_pipe.viz.plotly_utils import (
+            plot_metric_details,
+            plot_radar_comparison,
+        )
+        from coco_pipe.viz.utils import infer_metric_plot_type, prepare_metrics_frame
+
+        long_df = prepare_metrics_frame(metrics_df)
+        summary_table = _metrics_summary_table(long_df)
+
+        if summary_table.empty:
+            raise ValueError("No comparison metrics available to add to the report.")
 
         # 1. Metrics Table (Best values highlighted)
-        sec.add_element(MetricsTableElement(metrics_df, title="Quality Metrics"))
+        sec.add_element(MetricsTableElement(summary_table, title="Quality Metrics"))
 
-        # 2. Side-by-Side Visuals (Grid)
+        # 2. Primary visual summaries
+        fig_heatmap = plot_metric_details(
+            long_df, title="Metric Heatmap", plot_type="heatmap"
+        )
+        sec.add_element(PlotlyElement(fig_heatmap, height="400px"))
 
-        # Radar Chart
-        fig_radar = plot_radar_comparison(metrics_df, normalize=True)
-        elem_radar = PlotlyElement(fig_radar, height="400px")
+        primary_plot_type = infer_metric_plot_type(long_df)
+        fig_primary = plot_metric_details(
+            long_df, title="Metric Details", plot_type=primary_plot_type
+        )
+        sec.add_element(PlotlyElement(fig_primary, height="400px"))
 
-        # Metric Details
-        fig_bars = plot_metric_details(metrics_df)
-        elem_bars = PlotlyElement(fig_bars, height="400px")
-
-        sec.add_element(elem_radar)
-        sec.add_element(elem_bars)
+        if (
+            long_df["scope_value"].astype(str).nunique() == 1
+            and summary_table.shape[1] >= 3
+            and summary_table.shape[0] >= 2
+        ):
+            fig_radar = plot_radar_comparison(summary_table, normalize=True)
+            sec.add_element(PlotlyElement(fig_radar, height="400px"))
 
         self.add_section(sec)
         return self

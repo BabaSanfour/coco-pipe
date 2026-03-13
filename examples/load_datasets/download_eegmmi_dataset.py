@@ -4,6 +4,7 @@ Download a subset of the EEG Motor Movement/Imagery Dataset from Physionet and
 convert it to BIDS format.
 Dataset source: https://physionet.org/content/eegmmidb/1.0.0/
 """
+
 import json
 import logging
 import os

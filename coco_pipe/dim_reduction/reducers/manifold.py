@@ -1,35 +1,37 @@
 """
-Manifold Learning Reducers
-==========================
+Nonlinear manifold-learning reducers.
 
-This module implements nonlinear dimensionality reduction techniques based on
-manifold learning. It wraps Scikit-Learn's manifold learning algorithms.
+This module provides wrappers around scikit-learn manifold-learning estimators.
+These reducers follow the shared `BaseReducer` contract so they can be used
+with `DimReduction`, reporting, and visualization utilities while preserving a
+consistent reducer API.
 
 Classes
 -------
 IsomapReducer
-    Isometric Mapping (Isomap).
+    Nonlinear geodesic-distance embedding based on Isomap.
 LLEReducer
-    Locally Linear Embedding (LLE).
+    Nonlinear neighborhood-preserving embedding based on Locally Linear
+    Embedding.
 MDSReducer
-    Multidimensional Scaling (MDS).
+    Distance-preserving embedding based on multidimensional scaling.
 SpectralEmbeddingReducer
-    Spectral Embedding (Laplacian Eigenmaps).
+    Graph Laplacian embedding based on spectral decomposition.
 
 References
 ----------
-.. [1] Tenenbaum, J.B.; De Silva, V.; Langford, J.C. (2000). A global geometric
-       framework for nonlinear dimensionality reduction. Science. 290 (5500):
-       2319-2323.
-.. [2] Roweis, S. T., & Saul, L. K. (2000). Nonlinear dimensionality reduction by
-       locally linear embedding. Science, 290(5500), 2323-2326.
-.. [3] Borg, I., & Groenen, P. J. (2005). Modern multidimensional scaling: Theory and
-       applications. Springer.
-.. [4] Belkin, M., & Niyogi, P. (2003). Laplacian eigenmaps for dimensionality reduction
-       and data representation. Neural computation, 15(6), 1373-1396.
+.. [1] Tenenbaum, J. B., de Silva, V., and Langford, J. C. (2000).
+       "A global geometric framework for nonlinear dimensionality reduction".
+       Science, 290(5500), 2319-2323.
+.. [2] Roweis, S. T., and Saul, L. K. (2000). "Nonlinear dimensionality
+       reduction by locally linear embedding". Science, 290(5500), 2323-2326.
+.. [3] Borg, I., and Groenen, P. J. F. (2005). Modern multidimensional scaling:
+       Theory and applications. Springer.
+.. [4] Belkin, M., and Niyogi, P. (2003). "Laplacian eigenmaps for
+       dimensionality reduction and data representation". Neural Computation,
+       15(6), 1373-1396.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
-Date: 2026-01-06
 """
 
 from typing import Optional
@@ -39,202 +41,310 @@ from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedd
 
 from .base import ArrayLike, BaseReducer
 
+__all__ = [
+    "IsomapReducer",
+    "LLEReducer",
+    "MDSReducer",
+    "SpectralEmbeddingReducer",
+]
+
 
 class IsomapReducer(BaseReducer):
     """
-    Isometric Mapping (Isomap) reducer.
+    Isometric Mapping reducer.
 
-    Isomap is a nonlinear dimensionality reduction method that combines the key
-    features of PCA and MDS. It estimates the geodesic distance between all
-    points and then uses MDS to compute the low-dimensional embedding.
+    Isomap estimates geodesic distances on a nearest-neighbor graph and then
+    computes a low-dimensional embedding consistent with those distances.
 
     Parameters
     ----------
     n_components : int, default=2
         Number of coordinates for the manifold.
     **kwargs : dict
-        Additional arguments passed to sklearn.manifold.Isomap.
-        Common arguments:
-        - n_neighbors : int, default=5
-        - metric : str, default='minkowski'
-        - p : int, default=2
-        - eigen_solver : {'auto', 'arpack', 'dense'}, default='auto'
+        Additional keyword arguments forwarded to `sklearn.manifold.Isomap`
+        after signature filtering. Common options include `n_neighbors`,
+        `metric`, `p`, and `eigen_solver`.
 
     Attributes
     ----------
-    model : sklearn.manifold.Isomap
-        The underlying fitted Isomap estimator.
+    model : sklearn.manifold.Isomap or None
+        Fitted Isomap estimator after `fit`.
+
+    See Also
+    --------
+    LLEReducer : Nonlinear local-neighborhood manifold embedding.
+    MDSReducer : Distance-preserving manifold embedding.
+    SpectralEmbeddingReducer : Nonlinear graph Laplacian embedding.
+    PCAReducer : Linear baseline for global variance preservation.
+    UMAPReducer : Nonlinear graph-based embedding for local and global structure.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.manifold import IsomapReducer
+    >>> from coco_pipe.dim_reduction import IsomapReducer
     >>> X = np.random.rand(100, 10)
     >>> reducer = IsomapReducer(n_components=2, n_neighbors=5)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
-    (100, 2)
-    >>> print(f"{reducer.n_features_in_}")
+    >>> _ = reducer.fit(X)
+    >>> reducer.transform(X[:8]).shape
+    (8, 2)
+    >>> reducer.n_features_in_
     10
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
+    (100, 2)
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for Isomap.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing Isomap as a nonlinear reducer with
+            out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=True,
+            supported_metadata=("n_features_in_", "reconstruction_error_"),
+            is_linear=False,
+        )
+
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the Isomap reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of coordinates for the manifold.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `Isomap` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IsomapReducer":
         """
-        Fit the Isomap model.
+        Fit Isomap on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : IsomapReducer
-            Returns the instance itself.
+        IsomapReducer
+            Fitted reducer instance.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import IsomapReducer
+        >>> X = np.random.rand(30, 6)
+        >>> reducer = IsomapReducer(n_components=2, n_neighbors=4)
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
         """
-        self.model = Isomap(n_components=self.n_components, **self.params)
+        self.model = self._build_estimator(Isomap)
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Project data into the fitted Isomap embedding space.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            New data.
+            Data to project.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Transformed data.
+        np.ndarray of shape (n_samples, n_components)
+            Low-dimensional embedding coordinates.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
-        if self.model is None:
-            raise RuntimeError(
-                "IsomapReducer must be fitted before calling transform()."
-            )
+        self._require_fitted()
         return self.model.transform(X)
 
     @property
-    def reconstruction_error_(self) -> float:
+    def reconstruction_error_(self) -> Optional[float]:
         """
-        Reconstruction error associated with the embedding.
+        Return the Isomap reconstruction error.
 
         Returns
         -------
-        reconstruction_error_ : float or None
-        """
-        if self.model is None:
-            raise RuntimeError("Model is not fitted yet.")
-        return getattr(self.model, "reconstruction_error_", None)
+        float
+            Reconstruction error returned by the fitted estimator.
 
-    @property
-    def n_features_in_(self) -> int:
-        """
-        Number of features seen during fit.
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
         if self.model is None:
             raise RuntimeError("Model is not fitted yet.")
-        return self.model.n_features_in_
+        return self.model.reconstruction_error()
 
 
 class LLEReducer(BaseReducer):
     """
-    Locally Linear Embedding (LLE) reducer.
+    Locally Linear Embedding reducer.
 
-    LLE seeks a lower-dimensional projection of the data which preserves distances
-    within local neighborhoods. It can be thought of as a series of local Principal
-    Component Analyses which are globally compared to find the best non-linear
-    embedding.
+    LLE learns a nonlinear embedding by reconstructing each point from its
+    local neighborhood in the input space and preserving those reconstruction
+    weights in the low-dimensional space.
 
     Parameters
     ----------
     n_components : int, default=2
         Number of coordinates for the manifold.
     **kwargs : dict
-        Additional arguments passed to sklearn.manifold.LocallyLinearEmbedding.
-        Common arguments:
-        - n_neighbors : int, default=5
-        - method : {'standard', 'hessian', 'modified', 'ltsa'}, default='standard'
-        - eigen_solver : {'auto', 'arpack', 'dense'}, default='auto'
-        - random_state : int, RandomState instance or None, default=None
+        Additional keyword arguments forwarded to
+        `sklearn.manifold.LocallyLinearEmbedding` after signature filtering.
+        Common options include `n_neighbors`, `method`, `eigen_solver`, and
+        `random_state`.
 
     Attributes
     ----------
-    model : sklearn.manifold.LocallyLinearEmbedding
-        The underlying fitted LLE estimator.
+    model : sklearn.manifold.LocallyLinearEmbedding or None
+        Fitted LLE estimator after `fit`.
+
+    See Also
+    --------
+    IsomapReducer : Nonlinear geodesic-distance embedding.
+    MDSReducer : Distance-preserving manifold embedding.
+    SpectralEmbeddingReducer : Nonlinear graph Laplacian embedding.
+    PCAReducer : Linear baseline for global variance preservation.
+    UMAPReducer : Nonlinear graph-based embedding for local and global structure.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.manifold import LLEReducer
+    >>> from coco_pipe.dim_reduction import LLEReducer
     >>> X = np.random.rand(100, 10)
-    >>> reducer = LLEReducer(n_components=2, n_neighbors=10)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
+    >>> reducer = LLEReducer(n_components=2, n_neighbors=10, eigen_solver="dense")
+    >>> _ = reducer.fit(X)
+    >>> reducer.transform(X[:6]).shape
+    (6, 2)
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
     (100, 2)
-    >>> print(f"{reducer.reconstruction_error_:.4e}")
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for LLE.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing LLE as a nonlinear reducer with
+            out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=True,
+            supported_metadata=("reconstruction_error_", "n_features_in_"),
+            is_linear=False,
+        )
+
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the LLE reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of coordinates for the manifold.
+        **kwargs : dict
+            Additional keyword arguments forwarded to LLE after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "LLEReducer":
         """
-        Fit the LLE model.
+        Fit LLE on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : LLEReducer
-            Returns the instance itself.
+        LLEReducer
+            Fitted reducer instance.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import LLEReducer
+        >>> X = np.random.rand(30, 6)
+        >>> reducer = LLEReducer(n_components=2, n_neighbors=5, eigen_solver="dense")
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
+        >>> reducer = LLEReducer(n_components=2, method="modified", n_neighbors=5)
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
         """
-        self.model = LocallyLinearEmbedding(
-            n_components=self.n_components, **self.params
-        )
+        self.model = self._build_estimator(LocallyLinearEmbedding)
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Project data into the fitted LLE embedding space.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            New data.
+            Data to project.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Transformed data.
+        np.ndarray of shape (n_samples, n_components)
+            Low-dimensional embedding coordinates.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
-        if self.model is None:
-            raise RuntimeError("LLEReducer must be fitted before calling transform().")
+        self._require_fitted()
         return self.model.transform(X)
 
     @property
     def reconstruction_error_(self) -> float:
         """
-        Reconstruction error associated with the embedding.
+        Return the LLE reconstruction error.
 
         Returns
         -------
-        reconstruction_error_ : float
+        float
+            Reconstruction error associated with the embedding.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
         if self.model is None or not hasattr(self.model, "reconstruction_error_"):
             raise RuntimeError("Model is not fitted yet.")
@@ -243,111 +353,175 @@ class LLEReducer(BaseReducer):
 
 class MDSReducer(BaseReducer):
     """
-    Multidimensional Scaling (MDS) reducer.
+    Multidimensional Scaling reducer.
 
-    MDS seeks a low-dimensional representation of the data in which the distances
-    respect well the distances in the original high-dimensional space.
-
-    Note: MDS is computationally expensive for large datasets.
+    MDS seeks a low-dimensional representation whose pairwise distances best
+    match the pairwise distances in the original space.
 
     Parameters
     ----------
     n_components : int, default=2
         Number of coordinates for the manifold.
     **kwargs : dict
-        Additional arguments passed to sklearn.manifold.MDS.
-        Common arguments:
-        - metric : bool, default=True (True for metric MDS, False for non-metric MDS)
-        - n_init : int, default=4
-        - max_iter : int, default=300
-        - dissimilarity : {'euclidean', 'precomputed'}, default='euclidean'
-        - random_state : int, RandomState instance or None, default=None
+        Additional keyword arguments forwarded to `sklearn.manifold.MDS` after
+        signature filtering. Common options include `metric`, `n_init`,
+        `max_iter`, `dissimilarity`, and `random_state`.
 
     Attributes
     ----------
-    model : sklearn.manifold.MDS
-        The underlying MDS estimator.
+    model : sklearn.manifold.MDS or None
+        Fitted MDS estimator after `fit` or `fit_transform`.
+
+    Notes
+    -----
+    `transform` is not supported because scikit-learn MDS does not provide an
+    out-of-sample projection API.
+
+    See Also
+    --------
+    IsomapReducer : Nonlinear geodesic-distance embedding.
+    LLEReducer : Nonlinear local-neighborhood embedding.
+    SpectralEmbeddingReducer : Nonlinear graph Laplacian embedding.
+    PCAReducer : Linear baseline for global variance preservation.
+    UMAPReducer : Nonlinear graph-based embedding for local and global structure.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.manifold import MDSReducer
-    >>> X = np.random.rand(100, 10)
-    >>> reducer = MDSReducer(n_components=2)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
-    (100, 2)
-    >>> print(f"{reducer.stress_:.4f}")
+    >>> from coco_pipe.dim_reduction import MDSReducer
+    >>> X = np.random.rand(60, 8)
+    >>> reducer = MDSReducer(n_components=2, random_state=42)
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
+    (60, 2)
+    >>> reducer.stress_ >= 0
+    True
+    >>> _ = reducer.fit(X)
+    >>> reducer.model is not None
+    True
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for MDS.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing MDS as a nonlinear reducer without
+            out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=False,
+            supported_metadata=("stress_", "n_iter_", "n_features_in_"),
+            is_linear=False,
+            is_stochastic=True,
+        )
+
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the MDS reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of coordinates for the manifold.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `MDS` after filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "MDSReducer":
         """
-        Fit the MDS model.
-
-        Note: MDS does not implement a separate fit/transform paradigm in the same
-        way as other estimators in scikit-learn. fit_transform remains the primary
-        usage.
-        However, for consistency, we initialize the model here.
+        Fit MDS on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : MDSReducer
-            Returns the instance itself.
+        MDSReducer
+            Fitted reducer instance.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import MDSReducer
+        >>> X = np.random.rand(25, 5)
+        >>> reducer = MDSReducer(n_components=2, random_state=0)
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
         """
-        self.model = MDS(n_components=self.n_components, **self.params)
+        self.model = self._build_estimator(MDS)
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Raise because scikit-learn MDS does not support out-of-sample transform.
+
+        Parameters
+        ----------
+        X : ArrayLike
+            Ignored input included for API compatibility.
 
         Raises
         ------
         NotImplementedError
-            MDS does not support transforming new data.
+            Always raised because MDS does not support transforming new data.
         """
         raise NotImplementedError("MDS cannot transform new data. Use fit_transform().")
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
-        Fit the data from X, and returns the embedded coordinates.
+        Fit MDS and return the embedding coordinates.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Transformed data (embedding).
+        np.ndarray of shape (n_samples, n_components)
+            Embedded coordinates produced by MDS.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import MDSReducer
+        >>> X = np.random.rand(20, 4)
+        >>> reducer = MDSReducer(n_components=2, random_state=0)
+        >>> reducer.fit_transform(X).shape
+        (20, 2)
         """
-        self.model = MDS(n_components=self.n_components, **self.params)
+        self.model = self._build_estimator(MDS)
         return self.model.fit_transform(X)
 
     @property
     def stress_(self) -> float:
         """
-        The final value of the stress (sum of squared distance of the disparities
-        and the distances for all constrained points).
+        Return the MDS stress (sum of squared distances mismatch).
 
         Returns
         -------
-        stress_ : float
+        float
+            Stress value returned by the fitted MDS model.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
         """
         if self.model is None or not hasattr(self.model, "stress_"):
             raise RuntimeError("Model is not fitted yet.")
@@ -356,75 +530,132 @@ class MDSReducer(BaseReducer):
 
 class SpectralEmbeddingReducer(BaseReducer):
     """
-    Spectral Embedding (Laplacian Eigenmaps) reducer.
+    Spectral Embedding reducer.
 
-    Uses the Laplacian of the graph (formed by the data points) to perform
-    dimensionality reduction. This is a non-linear method.
+    Spectral Embedding computes a nonlinear embedding using eigenvectors of the
+    graph Laplacian built from the data affinity graph.
 
     Parameters
     ----------
     n_components : int, default=2
         Number of coordinates for the manifold.
     **kwargs : dict
-        Additional arguments passed to sklearn.manifold.SpectralEmbedding.
-        Common arguments:
-        - affinity : str or callable, default='nearest_neighbors'
-        - gamma : float, default=None
-        - random_state : int, RandomState instance or None, default=None
-        - eigen_solver : {'arpack', 'lobpcg', 'amg'}, default=None
-        - n_neighbors : int, default=None
+        Additional keyword arguments forwarded to
+        `sklearn.manifold.SpectralEmbedding` after signature filtering. Common
+        options include `affinity`, `gamma`, `random_state`, `eigen_solver`,
+        and `n_neighbors`.
 
     Attributes
     ----------
-    model : sklearn.manifold.SpectralEmbedding
-        The underlying estimator.
+    model : sklearn.manifold.SpectralEmbedding or None
+        Fitted spectral embedding estimator after `fit` or `fit_transform`.
+
+    Notes
+    -----
+    `transform` is not supported because scikit-learn SpectralEmbedding does
+    not provide an out-of-sample projection API.
+
+    See Also
+    --------
+    IsomapReducer : Nonlinear geodesic-distance embedding.
+    LLEReducer : Nonlinear local-neighborhood embedding.
+    MDSReducer : Distance-preserving manifold embedding.
+    PCAReducer : Linear baseline for global variance preservation.
+    UMAPReducer : Nonlinear graph-based embedding for local and global structure.
+    TSNEReducer : Nonlinear neighborhood-preserving visualization method.
 
     Examples
     --------
     >>> import numpy as np
-    >>> from coco_pipe.dim_reduction.reducers.manifold import SpectralEmbeddingReducer
-    >>> X = np.random.rand(100, 10)
-    >>> reducer = SpectralEmbeddingReducer(n_components=2)
-    >>> X_reduced = reducer.fit_transform(X)
-    >>> print(X_reduced.shape)
-    (100, 2)
+    >>> from coco_pipe.dim_reduction import SpectralEmbeddingReducer
+    >>> X = np.random.rand(80, 10)
+    >>> reducer = SpectralEmbeddingReducer(n_components=2, random_state=42)
+    >>> embedding = reducer.fit_transform(X)
+    >>> embedding.shape
+    (80, 2)
+    >>> _ = reducer.fit(X)
+    >>> reducer.model is not None
+    True
     """
 
+    @property
+    def capabilities(self) -> dict:
+        """
+        Return capability metadata for Spectral Embedding.
+
+        Returns
+        -------
+        dict
+            Capability mapping describing Spectral Embedding as a nonlinear
+            reducer without out-of-sample transform support.
+        """
+        return self._merge_capabilities(
+            super().capabilities,
+            has_transform=False,
+            supported_metadata=("n_features_in_",),
+            is_linear=False,
+        )
+
     def __init__(self, n_components: int = 2, **kwargs):
+        """
+        Initialize the Spectral Embedding reducer.
+
+        Parameters
+        ----------
+        n_components : int, default=2
+            Number of coordinates for the manifold.
+        **kwargs : dict
+            Additional keyword arguments forwarded to `SpectralEmbedding` after
+            filtering.
+        """
         super().__init__(n_components=n_components, **kwargs)
-        self.model = None
 
     def fit(
         self, X: ArrayLike, y: Optional[ArrayLike] = None
     ) -> "SpectralEmbeddingReducer":
         """
-        Fit the Spectral model.
+        Fit Spectral Embedding on the input data.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        self : SpectralEmbeddingReducer
-            Returns the instance itself.
+        SpectralEmbeddingReducer
+            Fitted reducer instance.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import SpectralEmbeddingReducer
+        >>> X = np.random.rand(30, 6)
+        >>> reducer = SpectralEmbeddingReducer(n_components=2, random_state=0)
+        >>> _ = reducer.fit(X)
+        >>> reducer.model is not None
+        True
         """
-        self.model = SpectralEmbedding(n_components=self.n_components, **self.params)
+        self.model = self._build_estimator(SpectralEmbedding)
         self.model.fit(X)
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
         """
-        Transform X.
+        Raise because scikit-learn Spectral Embedding lacks out-of-sample transform.
+
+        Parameters
+        ----------
+        X : ArrayLike
+            Ignored input included for API compatibility.
 
         Raises
         ------
         NotImplementedError
-            SpectralEmbedding only provides fit_transform; it does not support
-            out-of-sample transformation in scikit-learn.
+            Always raised because Spectral Embedding does not support
+            transforming new data.
         """
         raise NotImplementedError(
             "SpectralEmbedding does not support out-of-sample transformation. "
@@ -433,19 +664,28 @@ class SpectralEmbeddingReducer(BaseReducer):
 
     def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
         """
-        Fit the model from data in X and transform X.
+        Fit Spectral Embedding and return the embedding coordinates.
 
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Training data.
-        y : Ignored
-            Not used.
+        y : ArrayLike, optional
+            Ignored. Present for API compatibility.
 
         Returns
         -------
-        X_new : np.ndarray of shape (n_samples, n_components)
-            Transformed data (embedding).
+        np.ndarray of shape (n_samples, n_components)
+            Embedded coordinates produced by Spectral Embedding.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import SpectralEmbeddingReducer
+        >>> X = np.random.rand(20, 4)
+        >>> reducer = SpectralEmbeddingReducer(n_components=2, random_state=0)
+        >>> reducer.fit_transform(X).shape
+        (20, 2)
         """
-        self.model = SpectralEmbedding(n_components=self.n_components, **self.params)
+        self.model = self._build_estimator(SpectralEmbedding)
         return self.model.fit_transform(X)

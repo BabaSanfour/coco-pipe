@@ -9,16 +9,17 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import mne
 import numpy as np
 import pandas as pd
-from mne_bids import BIDSPath
 
 from .structures import DataContainer
 from .utils import (
+    _get_bids_path,
     default_id_extractor,
+    detect_runs,
     detect_sessions,
     detect_subjects,
     load_participants_tsv,
@@ -558,9 +559,17 @@ class BIDSDataset(BaseDataset):
         datatype: str = "eeg",
         suffix: Optional[str] = None,
         mode: str = "epochs",
+        target_col: Optional[str] = None,
         window_length: Optional[float] = None,
         stride: Optional[float] = None,
         subjects: Optional[Union[str, List[str]]] = None,
+        runs: Optional[Union[str, List[str]]] = None,
+        event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+        subject_metadata_df: Optional[pd.DataFrame] = None,
+        subject_key: Optional[str] = None,
+        tmin: float = -0.2,
+        tmax: float = 0.5,
+        baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
     ):
         self.root = Path(root)
         self.task = task
@@ -568,12 +577,17 @@ class BIDSDataset(BaseDataset):
         self.datatype = datatype
         self.suffix = suffix
         self.mode = mode
+        self.target_col = target_col
         self.window_length = window_length
         self.stride = stride
         self.subjects = subjects
-
-        if mne is None:
-            raise ImportError("mne and mne-bids are required.")
+        self.runs = runs
+        self.event_id = event_id
+        self.subject_metadata_df = subject_metadata_df
+        self.subject_key = subject_key
+        self.tmin = tmin
+        self.tmax = tmax
+        self.baseline = baseline
 
     def load(self) -> DataContainer:
         """
@@ -599,6 +613,19 @@ class BIDSDataset(BaseDataset):
 
         # Load participants.tsv metadata
         meta_lookup = load_participants_tsv(self.root)
+        if self.subject_metadata_df is not None:
+            if self.subject_key is None:
+                raise ValueError(
+                    "subject_key must be provided when subject_metadata_df is used."
+                )
+            if self.subject_key not in self.subject_metadata_df.columns:
+                raise ValueError(
+                    f"subject_key '{self.subject_key}' not found "
+                    "in subject_metadata_df."
+                )
+            for _, row in self.subject_metadata_df.iterrows():
+                sub = str(row[self.subject_key]).replace("sub-", "")
+                meta_lookup.setdefault(sub, {}).update(row.to_dict())
 
         data_list = []
         ids_list = []
@@ -607,6 +634,7 @@ class BIDSDataset(BaseDataset):
             if meta_lookup
             else {}
         )
+        labels_list = []
 
         ch_names = None
         times = None
@@ -633,74 +661,127 @@ class BIDSDataset(BaseDataset):
             sub_meta = meta_lookup.get(sub, {})
 
             for ses in sessions:
-                bids_path = BIDSPath(
-                    subject=sub,
-                    session=ses,
-                    task=self.task,
-                    datatype=self.datatype,
-                    root=self.root,
-                    suffix=self.suffix or self.datatype,
-                )
-
-                try:
-                    # --- LOAD STRATEGY (Delegated) ---
-                    data, current_times, current_ch, current_sfreq = read_bids_entry(
-                        bids_path,
-                        is_pre_epoched=is_pre_epoched,
-                        is_evoked=is_evoked,
-                        mode=self.mode,
-                        window_length=self.window_length,
-                        stride=self.stride,
+                # Resolve runs
+                if self.runs is None:
+                    runs = detect_runs(
+                        self.root, sub, ses, task=self.task, datatype=self.datatype
                     )
+                    if not runs:
+                        runs = [None]
+                elif isinstance(self.runs, str):
+                    runs = [self.runs]
+                else:
+                    runs = self.runs
 
-                    # --- CONSISTENCY CHECKS ---
-                    if ch_names is None:
-                        ch_names = current_ch
-                        sfreq = current_sfreq
-                        times = current_times
+                for run in runs:
+                    if is_pre_epoched:
+                        pre_epoched_dir = self.root / f"sub-{sub}"
+                        if ses:
+                            pre_epoched_dir = pre_epoched_dir / f"ses-{ses}"
+                        pre_epoched_dir = pre_epoched_dir / self.datatype
+
+                        stem_parts = [f"sub-{sub}"]
+                        if ses:
+                            stem_parts.append(f"ses-{ses}")
+                        if self.task:
+                            stem_parts.append(f"task-{self.task}")
+                        if run:
+                            stem_parts.append(f"run-{run}")
+
+                        pre_epoched_suffix = self.suffix or "epo"
+                        stem = "_".join(stem_parts)
+                        matches = sorted(
+                            pre_epoched_dir.glob(f"{stem}*_{pre_epoched_suffix}.fif")
+                        )
+                        bids_path = SimpleNamespace(
+                            fpath=(
+                                matches[0]
+                                if matches
+                                else pre_epoched_dir
+                                / f"{stem}_{pre_epoched_suffix}.fif"
+                            ),
+                            match=lambda matches=matches: matches,
+                        )
                     else:
-                        # 1. Channel Consistency
-                        if list(current_ch) != list(ch_names):
-                            diff = set(current_ch) ^ set(ch_names)
-                            logger.warning(
-                                f"Channel mismatch for sub-{sub} ses-{ses}. "
-                                f"Expected {len(ch_names)}, got {len(current_ch)}. "
-                                f"Differing channels: {list(diff)[:5]}..."
+                        bids_path = _get_bids_path()(
+                            subject=sub,
+                            session=ses,
+                            task=self.task,
+                            run=run,
+                            datatype=self.datatype,
+                            root=self.root,
+                            suffix=self.suffix or self.datatype,
+                        )
+
+                    try:
+                        # --- LOAD STRATEGY (Delegated) ---
+                        data, current_times, current_ch, current_sfreq, current_y = (
+                            read_bids_entry(
+                                bids_path,
+                                is_pre_epoched=is_pre_epoched,
+                                is_evoked=is_evoked,
+                                mode=self.mode,
+                                window_length=self.window_length,
+                                stride=self.stride,
+                                event_id=self.event_id,
+                                tmin=self.tmin,
+                                tmax=self.tmax,
+                                baseline=self.baseline,
                             )
+                        )
 
-                        # 2. Time/Length Consistency
-                        if len(current_times) != len(times):
-                            logger.warning(
-                                f"Time length mismatch for sub-{sub} ses-{ses}. "
-                                f"Expected {len(times)}, got {len(current_times)}. "
-                                "This may cause concatenation failure."
-                            )
-                        elif not np.allclose(current_times, times, atol=1e-5):
-                            # Often simple jitter in start times, but important if
-                            # rigorous
-                            pass
+                        # --- CONSISTENCY CHECKS ---
+                        if ch_names is None:
+                            ch_names = current_ch
+                            sfreq = current_sfreq
+                            times = current_times
+                        else:
+                            # 1. Channel Consistency
+                            if list(current_ch) != list(ch_names):
+                                diff = set(current_ch) ^ set(ch_names)
+                                logger.warning(
+                                    f"Channel mismatch for sub-{sub} ses-{ses}. "
+                                    f"Expected {len(ch_names)}, got {len(current_ch)}. "
+                                    f"Differing channels: {list(diff)[:5]}..."
+                                )
 
-                    # --- APPEND DATA ---
-                    data_list.append(data)
+                            # 2. Time/Length Consistency
+                            if len(current_times) != len(times):
+                                logger.warning(
+                                    f"Time length mismatch for sub-{sub} ses-{ses}. "
+                                    f"Expected {len(times)}, got {len(current_times)}. "
+                                    "This may cause concatenation failure."
+                                )
+                            elif not np.allclose(current_times, times, atol=1e-5):
+                                # Often simple jitter in start times, but important if
+                                # rigorous
+                                pass
 
-                    # --- GENERATE IDs & METADATA ---
-                    # data shape is (N_epochs, C, T)
-                    n_epochs = data.shape[0]
+                        # --- APPEND DATA ---
+                        data_list.append(data)
+                        if current_y is not None:
+                            labels_list.append(current_y)
 
-                    sid_base = f"{sub}"
-                    if ses:
-                        sid_base += f"_{ses}"
+                        # --- GENERATE IDs & METADATA ---
+                        # data shape is (N_epochs, C, T)
+                        n_epochs = data.shape[0]
 
-                    new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
-                    ids_list.extend(new_ids)
+                        sid_base = f"{sub}"
+                        if ses:
+                            sid_base += f"_{ses}"
+                        if run:
+                            sid_base += f"_run-{run}"
 
-                    # Repeatedly append subject metadata for each epoch
-                    for k, v in sub_meta.items():
-                        meta_columns.setdefault(k, []).extend([v] * n_epochs)
+                        new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
+                        ids_list.extend(new_ids)
 
-                except Exception as e:
-                    logger.debug(f"Failed to load subject {sub} session {ses}: {e}")
-                    continue
+                        # Repeatedly append subject metadata for each epoch
+                        for k, v in sub_meta.items():
+                            meta_columns.setdefault(k, []).extend([v] * n_epochs)
+
+                    except Exception as e:
+                        logger.debug(f"Failed to load subject {sub} session {ses}: {e}")
+                        continue
 
         if not data_list:
             raise RuntimeError(f"No valid data found in {self.root}")
@@ -709,6 +790,7 @@ class BIDSDataset(BaseDataset):
         try:
             # data_list contains (N_i, C, T)
             X_out = np.concatenate(data_list, axis=0)
+            y_out = np.concatenate(labels_list, axis=0) if labels_list else None
         except ValueError as e:
             shapes = [d.shape for d in data_list[:5]]
             raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
@@ -726,11 +808,24 @@ class BIDSDataset(BaseDataset):
             if len(v) == len(ids_list):
                 coords[k] = np.array(v)
 
+        if self.target_col is not None:
+            if self.target_col not in coords:
+                raise ValueError(
+                    f"target_col '{self.target_col}' not found in BIDS coords."
+                )
+            if len(coords[self.target_col]) != len(ids_list):
+                raise ValueError(
+                    f"target_col '{self.target_col}' length "
+                    f"{len(coords[self.target_col])} does not match "
+                    f"the number of observations {len(ids_list)}."
+                )
+            y_out = np.array(coords[self.target_col])
+
         dims = ("obs", "channel", "time")
 
         return DataContainer(
             X=X_out,
-            y=None,
+            y=y_out,
             ids=np.array(ids_list),
             dims=dims,
             coords=coords,

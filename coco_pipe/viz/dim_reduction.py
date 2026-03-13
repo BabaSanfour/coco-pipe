@@ -1,38 +1,36 @@
 """
-Dimensionality Reduction Visualization
+Dim-Reduction Matplotlib Visualization
 ======================================
 
-This module provides specialized plotting functions for analyzing dimensionality
-reduction results, ensuring publication-ready aesthetics via Seaborn.
+Matplotlib plotting helpers for explicit embeddings, tidy evaluation records,
+trajectory diagnostics, and interpretation payloads.
 
-Functions
----------
-plot_embedding
-    Enhanced scatter plot for 2D/3D embeddings with automatic legend/colorbar.
-plot_metrics
-    Bar chart visualizing quality metrics.
-plot_loss_history
-    Line plot of training loss.
-plot_eigenvalues
-    Scree plot of eigenvalues.
-plot_shepard_diagram
-    Scatter plot of original vs. embedded distances.
-plot_streamlines
-    Streamline plot for vector fields (e.g., velocity) on 2D embeddings.
-
-Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
-Date: 2026-01-07
+The functions in this module accept arrays, mappings, or tidy tables directly.
+They do not depend on manager-owned embedding or context state.
 """
 
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
+import pandas as pd
 import seaborn as sns
 
+from ..dim_reduction.evaluation.geometry import moving_average
 from ..dim_reduction.evaluation.metrics import shepard_diagram_data
 from . import plotly_utils
+from .utils import (
+    extract_interpretation_matrix,
+    filter_metric_frame,
+    filter_metrics,
+    infer_metric_plot_type,
+    is_categorical,
+    prepare_embedding_frame,
+    prepare_feature_scores,
+    prepare_interpretation_frame,
+    prepare_metrics_frame,
+)
 
 # --- Style Constants ---
 STYLE_CONFIG = {
@@ -58,6 +56,22 @@ STYLE_CONFIG = {
 }
 
 
+__all__ = [
+    "plot_embedding",
+    "plot_metrics",
+    "plot_loss_history",
+    "plot_eigenvalues",
+    "plot_shepard_diagram",
+    "plot_streamlines",
+    "plot_feature_importance",
+    "plot_feature_correlation_heatmap",
+    "plot_interpretation",
+    "plot_trajectory",
+    "plot_trajectory_metric_series",
+    "plot_local_metrics",
+]
+
+
 def _set_style(context: str = "paper", style: str = "ticks"):
     """
     Set plotting style for publication-ready aesthetics using Seaborn.
@@ -80,34 +94,10 @@ def _set_style(context: str = "paper", style: str = "ticks"):
     sns.despine(trim=True, offset=10)
 
 
-def _is_categorical(labels: np.ndarray) -> bool:
-    """
-    Heuristic to check if labels are categorical or continuous.
-
-    Parameters
-    ----------
-    labels : np.ndarray
-        Array of labels.
-
-    Returns
-    -------
-    bool
-        True if categorical (string, bool, or few unique numeric values),
-        False otherwise.
-    """
-    if labels.dtype.kind in ("U", "S", "O", "b"):  # String/Object/Bool
-        return True
-
-    # If numeric, check unique count
-    n_unique = len(np.unique(labels))
-    if n_unique < 20:
-        return True
-    return False
-
-
 def plot_embedding(
     X_emb: np.ndarray,
     labels: Optional[np.ndarray] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     dims: Union[Tuple[int, int], Tuple[int, int, int]] = (0, 1),
     title: str = "Embedding",
     figsize: Tuple[int, int] = (10, 8),
@@ -119,101 +109,111 @@ def plot_embedding(
     ax: Optional[plt.Axes] = None,
     save_path: Optional[str] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
 ) -> Union[plt.Figure, Any]:
     """
-    Plot 2D or 3D embedding with publication-ready aesthetics.
+    Plot an explicit embedding with optional labels and metadata.
 
     Parameters
     ----------
     X_emb : np.ndarray
-        Coordinates of the embedding. Shape (n_samples, n_components).
+        Embedding array with shape ``(n_samples, n_dimensions)``.
     labels : np.ndarray, optional
-        Labels for coloring points. Automatically detected as categorical or continuous.
-    dims : tuple, optional
-        Indices of dimensions to plot (e.g. (0, 1) for 2D, (0, 1, 2) for 3D),
-        by default (0, 1).
-    title : str, optional
-        Plot title, by default "Embedding".
-    figsize : tuple, optional
-        Figure size in inches, by default (10, 8).
-    cmap : str, optional
-        Colormap for continuous labels (e.g. 'viridis', 'magma'),
-        by default 'viridis'.
-    palette : str, optional
-        Seaborn palette for categorical labels (e.g. 'deep', 'tab10', 'Set2'),
-        by default 'deep'.
-    s : int, optional
-        Marker size, by default 40.
-    alpha : float, optional
-        Point transparency (0 to 1), by default 0.8.
+        Optional values aligned with the sample axis. Categorical values are
+        shown with a legend and continuous values with a colorbar.
+    metadata : dict, optional
+        Optional column-oriented metadata aligned with the sample axis.
+    dims : tuple of int, default=(0, 1)
+        Embedding dimensions to visualize. Length must be 2 or 3.
+    title : str, default="Embedding"
+        Figure title.
+    figsize : tuple of int, default=(10, 8)
+        Matplotlib figure size for static plots.
+    cmap : str, default="viridis"
+        Colormap for continuous labels or value overlays.
+    palette : str, default="deep"
+        Seaborn categorical palette name.
+    s : int, default=40
+        Marker size.
+    alpha : float, default=0.8
+        Marker opacity.
     metrics : dict, optional
-        Dictionary of metrics to overlay on the plot, by default None.
-    ax : plt.Axes, optional
-        Existing axes to plot on. If None, a new figure is created.
+        Optional scalar metrics to annotate on the figure.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
     save_path : str, optional
-        Path to save the figure to. If None, figure is not saved.
-    interactive : bool, optional
-        If True, returns a Plotly figure. If False, returns a Matplotlib figure.
+        Optional file path for saving the static figure.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    random_state : int, optional
+        Random seed used by the interactive path when sampling is needed.
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
 
     Raises
     ------
     ValueError
-        If the number of dimensions in `dims` is not 2 or 3.
+        If the embedding is not 2D or the requested dimensions are invalid.
+
+    See Also
+    --------
+    plotly_utils.plot_embedding_interactive
+    prepare_embedding_frame
+    plot_metrics
     """
+    dims = tuple(dims)
+    if len(dims) not in {2, 3}:
+        raise ValueError("`dims` must contain 2 or 3 embedding dimensions.")
+
+    embedding = np.asarray(X_emb)
+    if embedding.ndim != 2:
+        raise ValueError("`X_emb` must be a 2D embedding array.")
+    if embedding.shape[1] <= max(dims):
+        raise ValueError("`dims` must reference valid embedding dimensions.")
+    coords = embedding[:, list(dims)]
+
     if interactive:
-        if len(dims) == 2:
-            return plotly_utils.plot_embedding_interactive(
-                X_emb[:, list(dims)], labels=labels, title=title, dimensions=2
-            )
-        elif len(dims) == 3:
-            return plotly_utils.plot_embedding_interactive(
-                X_emb[:, list(dims)], labels=labels, title=title, dimensions=3
-            )
-        else:
-            raise ValueError("Interactive plot only supports 2D or 3D.")
+        return plotly_utils.plot_embedding_interactive(
+            embedding=coords,
+            labels=labels,
+            metadata=metadata,
+            title=title,
+            dimensions=len(dims),
+            cmap=cmap,
+            palette=palette,
+            random_state=random_state,
+        )
 
     _set_style()
-
-    # Handle DataContainer inputs
-    if hasattr(X_emb, "X") and hasattr(X_emb, "y"):
-        if labels is None and X_emb.y is not None:
-            labels = X_emb.y
-        X_emb = X_emb.X
-
-    n_plot_dim = len(dims)
-    if n_plot_dim not in [2, 3]:
-        raise ValueError(
-            f"plot_embedding only supports 2D or 3D plotting, got {n_plot_dim}."
-        )
+    frame = prepare_embedding_frame(
+        coords,
+        labels=labels,
+        metadata=metadata,
+        dimensions=len(dims),
+    )
 
     if ax is None:
         fig = plt.figure(figsize=figsize)
-        if n_plot_dim == 3:
+        if len(dims) == 3:
             ax = fig.add_subplot(111, projection="3d")
         else:
             ax = fig.add_subplot(111)
     else:
         fig = ax.get_figure()
 
-    coords = X_emb[:, list(dims)]
-
-    # Label handling
-    if labels is not None:
-        is_cat = _is_categorical(labels)
-
-        if is_cat:
-            # Categorical: Use Seaborn for best legend handling
-            if n_plot_dim == 2:
+    label_values = frame["Label"] if "Label" in frame.columns else None
+    if label_values is not None:
+        if is_categorical(label_values):
+            if len(dims) == 2:
                 sns.scatterplot(
-                    x=coords[:, 0],
-                    y=coords[:, 1],
-                    hue=labels,
-                    style=None,
+                    data=frame,
+                    x="x",
+                    y="y",
+                    hue="Label",
                     palette=palette,
                     s=s,
                     alpha=alpha,
@@ -227,73 +227,67 @@ def plot_embedding(
                     loc="upper left",
                     borderaxespad=0.0,
                     frameon=False,
-                    title="Group",
+                    title="Label",
                 )
             else:
-                # 3D Manual
-                unique_labels = np.unique(labels)
-                n_classes = len(unique_labels)
-                colors = sns.color_palette(palette, n_classes)
-
-                for i, lbl in enumerate(unique_labels):
-                    idx = labels == lbl
-                    c = colors[i]
+                unique_labels = frame["Label"].cat.categories.tolist()
+                colors = sns.color_palette(palette, len(unique_labels))
+                for color, label in zip(colors, unique_labels):
+                    mask = frame["Label"] == label
                     ax.scatter(
-                        coords[idx, 0],
-                        coords[idx, 1],
-                        coords[idx, 2],
-                        label=str(lbl),
-                        color=c,
+                        frame.loc[mask, "x"],
+                        frame.loc[mask, "y"],
+                        frame.loc[mask, "z"],
+                        label=str(label),
+                        color=color,
                         s=s,
                         alpha=alpha,
                         edgecolors="w",
                         linewidth=0.5,
                     )
-
                 ax.legend(
-                    title="Group",
+                    title="Label",
                     bbox_to_anchor=(1.05, 1),
                     loc="upper left",
                     frameon=False,
                 )
-
         else:
-            # Continuous
-            if n_plot_dim == 2:
-                scatter = ax.scatter(
-                    coords[:, 0],
-                    coords[:, 1],
-                    c=labels,
+            scatter = (
+                ax.scatter(
+                    frame["x"],
+                    frame["y"],
+                    c=label_values,
                     cmap=cmap,
                     s=s,
                     alpha=alpha,
                     edgecolors="none",
                 )
-            else:
-                scatter = ax.scatter(
-                    coords[:, 0],
-                    coords[:, 1],
-                    coords[:, 2],
-                    c=labels,
+                if len(dims) == 2
+                else ax.scatter(
+                    frame["x"],
+                    frame["y"],
+                    frame["z"],
+                    c=label_values,
                     cmap=cmap,
                     s=s,
                     alpha=alpha,
                     edgecolors="none",
                 )
-
+            )
             cbar = plt.colorbar(
-                scatter, ax=ax, pad=0.02 if n_plot_dim == 2 else 0.1, fraction=0.046
+                scatter,
+                ax=ax,
+                pad=0.02 if len(dims) == 2 else 0.1,
+                fraction=0.046,
             )
             cbar.set_label("Value", size=12)
             cbar.outline.set_visible(False)
-
     else:
-        # No labels
         color = sns.color_palette()[0]
-        if n_plot_dim == 2:
+        if len(dims) == 2:
             ax.scatter(
-                coords[:, 0],
-                coords[:, 1],
+                frame["x"],
+                frame["y"],
                 color=color,
                 s=s,
                 alpha=alpha,
@@ -302,9 +296,9 @@ def plot_embedding(
             )
         else:
             ax.scatter(
-                coords[:, 0],
-                coords[:, 1],
-                coords[:, 2],
+                frame["x"],
+                frame["y"],
+                frame["z"],
                 color=color,
                 s=s,
                 alpha=alpha,
@@ -312,38 +306,28 @@ def plot_embedding(
                 linewidth=0.5,
             )
 
-    # Axis Formatting
-    ax.set_xlabel(f"Dimension {dims[0]+1}", fontweight="bold")
-    ax.set_ylabel(f"Dimension {dims[1]+1}", fontweight="bold")
-    if n_plot_dim == 3:
-        ax.set_zlabel(f"Dimension {dims[2]+1}", fontweight="bold")
+    ax.set_xlabel(f"Dimension {dims[0] + 1}", fontweight="bold")
+    ax.set_ylabel(f"Dimension {dims[1] + 1}", fontweight="bold")
+    if len(dims) == 3:
+        ax.set_zlabel(f"Dimension {dims[2] + 1}", fontweight="bold")
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
     ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
-
     ax.set_title(title, pad=15, fontweight="bold")
 
-    # Metrics Overlay
     if metrics:
-        clean_metrics = {
-            k: v
-            for k, v in metrics.items()
-            if isinstance(v, (float, int, str)) and k not in ["n_iter_", "n_components"]
-        }
+        clean_metrics = filter_metrics(metrics)
         text_str = "\n".join(
-            [
-                f"{k}: {v:.3f}" if isinstance(v, float) else f"{k}: {v}"
-                for k, v in clean_metrics.items()
-            ]
+            f"{key}: {value:.3f}" if isinstance(value, float) else f"{key}: {value}"
+            for key, value in clean_metrics.items()
         )
-
-        if n_plot_dim == 2:
-            props = dict(
-                boxstyle="round,pad=0.5",
-                facecolor="white",
-                alpha=0.9,
-                edgecolor="#CCCCCC",
-            )
+        props = dict(
+            boxstyle="round,pad=0.5",
+            facecolor="white",
+            alpha=0.9,
+            edgecolor="#CCCCCC",
+        )
+        if len(dims) == 2:
             ax.text(
                 0.02,
                 0.98,
@@ -355,112 +339,346 @@ def plot_embedding(
                 zorder=100,
             )
         else:
-            plt.figtext(
-                0.02,
-                0.02,
-                text_str,
-                fontsize=10,
-                bbox=dict(boxstyle="round", facecolor="white", alpha=0.9),
-            )
+            plt.figtext(0.02, 0.02, text_str, fontsize=10, bbox=props)
 
     plt.tight_layout()
-
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches="tight", transparent=False)
-
     return fig
 
 
+def _metric_grouping_roles(metrics_df: pd.DataFrame) -> Tuple[str, Optional[str]]:
+    """Choose x/hue roles for scalar or repeated metric observations."""
+    n_methods = metrics_df["method"].nunique()
+    n_metrics = metrics_df["metric"].nunique()
+
+    if n_metrics == 1 and n_methods > 1:
+        return "method", None
+    if n_methods == 1:
+        return "metric", None
+    return "metric", "method"
+
+
+def _plot_metric_bars(
+    metrics_df: pd.DataFrame,
+    title: str,
+    ax: plt.Axes,
+    palette: str = "viridis",
+    annotate: bool = True,
+) -> None:
+    """Render scalar metric comparisons as grouped bars."""
+    x_col, hue_col = _metric_grouping_roles(metrics_df)
+
+    sns.barplot(
+        data=metrics_df,
+        x=x_col,
+        y="value",
+        hue=hue_col,
+        estimator=np.mean,
+        errorbar=None,
+        palette=palette if hue_col is not None else None,
+        color=None if hue_col is not None else sns.color_palette(palette, 1)[0],
+        edgecolor="black",
+        linewidth=0.8,
+        ax=ax,
+    )
+
+    if annotate:
+        for patch in ax.patches:
+            height = patch.get_height()
+            if np.isfinite(height):
+                ax.text(
+                    patch.get_x() + patch.get_width() / 2.0,
+                    height,
+                    f"{height:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                    color="#333333",
+                )
+
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_ylabel("Score", fontweight="bold")
+    ax.set_xlabel(x_col.replace("_", " ").title(), fontweight="bold")
+    ax.tick_params(axis="x", rotation=35)
+    ax.yaxis.grid(True, linestyle="--", alpha=0.5)
+    if hue_col is not None and ax.legend_ is not None:
+        ax.legend(title="Method", frameon=False)
+
+
+def _plot_metric_distribution(
+    metrics_df: pd.DataFrame,
+    title: str,
+    ax: plt.Axes,
+    plot_type: str,
+) -> None:
+    """Render repeated observations with distribution-aware plots."""
+    x_col, hue_col = _metric_grouping_roles(metrics_df)
+
+    if plot_type == "box":
+        sns.boxplot(data=metrics_df, x=x_col, y="value", hue=hue_col, ax=ax)
+    elif plot_type == "boxen":
+        sns.boxenplot(data=metrics_df, x=x_col, y="value", hue=hue_col, ax=ax)
+    else:
+        sns.violinplot(
+            data=metrics_df,
+            x=x_col,
+            y="value",
+            hue=hue_col,
+            inner=None if plot_type == "raincloud" else "box",
+            cut=0,
+            linewidth=0.8,
+            ax=ax,
+        )
+        if plot_type == "raincloud":
+            sns.boxplot(
+                data=metrics_df,
+                x=x_col,
+                y="value",
+                hue=hue_col,
+                width=0.25,
+                showcaps=True,
+                boxprops={"facecolor": "white", "zorder": 3},
+                showfliers=False,
+                whiskerprops={"linewidth": 1},
+                ax=ax,
+            )
+            sns.stripplot(
+                data=metrics_df,
+                x=x_col,
+                y="value",
+                hue=hue_col,
+                dodge=hue_col is not None,
+                jitter=0.18,
+                alpha=0.45,
+                size=3,
+                color="black",
+                ax=ax,
+            )
+        elif plot_type in {"strip", "swarm"}:
+            plot_fn = sns.swarmplot if plot_type == "swarm" else sns.stripplot
+            plot_fn(
+                data=metrics_df,
+                x=x_col,
+                y="value",
+                hue=hue_col,
+                dodge=hue_col is not None,
+                alpha=0.65,
+                size=3,
+                color="black",
+                ax=ax,
+            )
+
+    if ax.legend_ is not None:
+        handles, labels = ax.get_legend_handles_labels()
+        if hue_col is not None and handles:
+            dedup = dict(zip(labels, handles))
+            ax.legend(dedup.values(), dedup.keys(), title="Method", frameon=False)
+        else:
+            ax.legend_.remove()
+
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_ylabel("Score", fontweight="bold")
+    ax.set_xlabel(x_col.replace("_", " ").title(), fontweight="bold")
+    ax.tick_params(axis="x", rotation=35)
+
+
+def _plot_metric_heatmap(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+    """Render metric comparisons as a heatmap."""
+    scope_values = metrics_df["scope_value"].astype(str).nunique()
+    if scope_values > 1 and metrics_df["metric"].nunique() == 1:
+        heatmap_df = metrics_df.pivot_table(
+            index="method", columns="scope_value", values="value", aggfunc="mean"
+        )
+        x_label = metrics_df["scope"].iloc[0].replace("_", " ").title()
+    else:
+        heatmap_df = metrics_df.pivot_table(
+            index="method", columns="metric", values="value", aggfunc="mean"
+        )
+        x_label = "Metric"
+
+    sns.heatmap(
+        heatmap_df,
+        cmap="viridis",
+        annot=True,
+        fmt=".3f",
+        linewidths=0.5,
+        cbar_kws={"label": "Score"},
+        ax=ax,
+    )
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_xlabel(x_label, fontweight="bold")
+    ax.set_ylabel("Method", fontweight="bold")
+
+
+def _plot_metric_lines(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+    """Render scope-varying metrics as trajectories with optional variance bands."""
+    group_cols = ["method"]
+    if metrics_df["metric"].nunique() > 1:
+        group_cols.append("metric")
+
+    summary = (
+        metrics_df.groupby(group_cols + ["scope", "scope_value"], dropna=False)["value"]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+    )
+
+    for keys, sub_df in summary.groupby(group_cols, dropna=False):
+        keys = (keys,) if not isinstance(keys, tuple) else keys
+        label = " / ".join(str(k) for k in keys)
+        sub_df = sub_df.copy()
+        sub_df["scope_numeric"] = pd.to_numeric(sub_df["scope_value"], errors="coerce")
+        use_numeric = sub_df["scope_numeric"].notna().all()
+        sort_col = "scope_numeric" if use_numeric else "scope_value"
+        sub_df = sub_df.sort_values(sort_col)
+        x_vals = sub_df["scope_numeric"] if use_numeric else sub_df["scope_value"]
+
+        ax.plot(x_vals, sub_df["mean"], marker="o", linewidth=2.0, label=label)
+        if use_numeric and sub_df["count"].max() > 1:
+            y_low = sub_df["mean"] - sub_df["std"].fillna(0)
+            y_high = sub_df["mean"] + sub_df["std"].fillna(0)
+            ax.fill_between(x_vals, y_low, y_high, alpha=0.15)
+
+    scope_label = metrics_df["scope"].iloc[0] if not metrics_df.empty else "scope"
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_xlabel(scope_label.replace("_", " ").title(), fontweight="bold")
+    ax.set_ylabel("Score", fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(title="Series", frameon=False)
+
+
+def _plot_metric_dumbbell(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+    """Render pairwise method deltas per metric."""
+    method_means = metrics_df.pivot_table(
+        index="metric", columns="method", values="value", aggfunc="mean"
+    )
+    if method_means.shape[1] != 2:
+        raise ValueError("Dumbbell plots require exactly two methods.")
+
+    left_method, right_method = method_means.columns.tolist()
+    y_positions = np.arange(len(method_means.index))
+
+    ax.hlines(
+        y=y_positions,
+        xmin=method_means[left_method],
+        xmax=method_means[right_method],
+        color="#BBBBBB",
+        linewidth=2,
+    )
+    ax.scatter(method_means[left_method], y_positions, color="#1f77b4", s=60)
+    ax.scatter(method_means[right_method], y_positions, color="#ff7f0e", s=60)
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(method_means.index)
+    ax.set_xlabel("Score", fontweight="bold")
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.legend([left_method, right_method], frameon=False)
+
+
 def plot_metrics(
-    scores: Dict[str, Any],
+    scores: Any,
     title: str = "Quality Metrics",
     figsize: Tuple[int, int] = (8, 6),
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    plot_type: str = "auto",
+    metric: Optional[str] = None,
+    scope: Optional[str] = None,
+    method: Optional[Union[str, Sequence[str]]] = None,
 ) -> Union[plt.Figure, Any]:
     """
-    Plot bar chart of quality metrics with publication style.
+    Plot tidy metric observations using one shared entrypoint.
 
     Parameters
     ----------
-    scores : dict
-        Dictionary of metric names and values. Non-scalar values are ignored.
-    title : str, optional
-        Plot title, by default "Quality Metrics".
-    figsize : tuple, optional
-        Figure size, by default (8, 6).
-    ax : plt.Axes, optional
-        Existing axes to plot on.
-    interactive : bool, optional
-        If True, returns a Plotly figure.
+    scores : Any
+        Metric mapping, tidy metric frame, list of records, or object exposing
+        ``to_frame()``.
+    title : str, default="Quality Metrics"
+        Figure title.
+    figsize : tuple of int, default=(8, 6)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    plot_type : str, default="auto"
+        Plot style to use. ``"auto"`` infers an appropriate view from the
+        filtered metric records.
+    metric : str, optional
+        Restrict plotting to one metric.
+    scope : str, optional
+        Restrict plotting to one scope.
+    method : str or sequence of str, optional
+        Restrict plotting to one or more methods.
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
 
     Raises
     ------
     ValueError
-        If no scalar metrics are found in `scores`.
+        If no metrics remain after filtering.
+
+    See Also
+    --------
+    plotly_utils.plot_metric_details
+    prepare_metrics_frame
+    infer_metric_plot_type
     """
     if interactive:
-        import pandas as pd
+        return plotly_utils.plot_metric_details(
+            scores,
+            title=title,
+            plot_type=plot_type,
+            metric=metric,
+            scope=scope,
+            method=method,
+        )
 
-        # Convert simple dict to single-row DF for plot_metric_details
-        df = pd.DataFrame([scores], index=["Method"])
-        return plotly_utils.plot_metric_details(df, title=title)
-
-    _set_style()
-    metrics = {
-        k: v
-        for k, v in scores.items()
-        if isinstance(v, (float, int)) and not isinstance(v, bool)
-    }
-    exclude_keys = {"n_iter_", "n_components"}
-    metrics = {k: v for k, v in metrics.items() if k not in exclude_keys}
-
-    if not metrics:
+    metrics_df = filter_metric_frame(
+        prepare_metrics_frame(scores),
+        metric=metric,
+        scope=scope,
+        method=method,
+    )
+    if metrics_df.empty:
         raise ValueError("No scalar metrics found to plot.")
 
-    names = list(metrics.keys())
-    values = list(metrics.values())
+    resolved_plot_type = infer_metric_plot_type(metrics_df, requested=plot_type)
+    _set_style()
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.get_figure()
 
-    sns.barplot(
-        x=names,
-        y=values,
-        hue=names,
-        legend=False,
-        ax=ax,
-        palette="viridis",
-        edgecolor="black",
-        linewidth=0.8,
-    )
-
-    # Value Labels
-    for i, v in enumerate(values):
-        ax.text(
-            i,
-            v + 0.01,
-            f"{v:.3f}",
-            ha="center",
-            va="bottom",
-            fontsize=11,
-            fontweight="bold",
-            color="#333333",
+    if resolved_plot_type in {"bar", "grouped_bar", "lollipop"}:
+        _plot_metric_bars(metrics_df, title=title, ax=ax)
+    elif resolved_plot_type in {
+        "box",
+        "boxen",
+        "violin",
+        "raincloud",
+        "strip",
+        "swarm",
+    }:
+        _plot_metric_distribution(
+            metrics_df,
+            title=title,
+            ax=ax,
+            plot_type=resolved_plot_type,
         )
-
-    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
-    ax.set_ylim([min(0, min(values) - 0.1), max(1.05, max(values) * 1.15)])
-
-    ax.set_ylabel("Score", fontweight="bold")
-    plt.xticks(rotation=45, ha="right", rotation_mode="anchor")
-    ax.yaxis.grid(True, linestyle="--", alpha=0.5)
+    elif resolved_plot_type == "heatmap":
+        _plot_metric_heatmap(metrics_df, title=title, ax=ax)
+    elif resolved_plot_type == "line":
+        _plot_metric_lines(metrics_df, title=title, ax=ax)
+    elif resolved_plot_type in {"dumbbell", "slopegraph"}:
+        _plot_metric_dumbbell(metrics_df, title=title, ax=ax)
+    else:
+        raise ValueError(f"Unsupported plot_type: {resolved_plot_type}")
 
     return fig
 
@@ -490,8 +708,13 @@ def plot_loss_history(
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plotly_utils.plot_loss_history_interactive
     """
     if interactive:
         return plotly_utils.plot_loss_history_interactive(loss_history, title=title)
@@ -552,8 +775,13 @@ def plot_eigenvalues(
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plotly_utils.plot_scree_interactive
     """
     if interactive:
         # Note: plotly util expects simple 1D array, same as here
@@ -616,6 +844,8 @@ def plot_shepard_diagram(
     title: str = "Shepard Diagram",
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
+    distances: Optional[Dict[str, np.ndarray]] = None,
 ) -> Union[plt.Figure, Any]:
     """
     Plot Shepard Diagram (Original vs Embedded Distances).
@@ -638,16 +868,32 @@ def plot_shepard_diagram(
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plotly_utils.plot_shepard_interactive
     """
     if interactive:
         return plotly_utils.plot_shepard_interactive(
-            X_orig, X_emb, sample_size=sample_size, title=title
+            X_orig,
+            X_emb,
+            sample_size=sample_size,
+            title=title,
+            random_state=random_state,
+            distances=distances,
         )
 
     _set_style()
-    dist_high, dist_low = shepard_diagram_data(X_orig, X_emb, sample_size=sample_size)
+    if isinstance(distances, dict) and {"original", "embedded"} <= set(distances):
+        dist_high = np.asarray(distances["original"])
+        dist_low = np.asarray(distances["embedded"])
+    else:
+        dist_high, dist_low = shepard_diagram_data(
+            X_orig, X_emb, sample_size=sample_size, random_state=random_state
+        )
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -675,7 +921,7 @@ def plot_shepard_diagram(
 
     ax.set_xlabel("Original Distances", fontweight="bold")
     ax.set_ylabel("Embedded Distances", fontweight="bold")
-    ax.set_title(f"{title}\nSpearman Rho: {corr:.3f}", fontsize=14, fontweight="bold")
+    ax.set_title(f"{title}\nPearson Corr: {corr:.3f}", fontsize=14, fontweight="bold")
     ax.legend(frameon=True, facecolor="white", framealpha=0.9)
 
     return fig
@@ -688,6 +934,7 @@ def plot_streamlines(
     title: str = "Velocity Streamlines",
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    random_state: Optional[int] = None,
 ) -> Union[plt.Figure, Any]:
     """
     Plot streamlines of a vector field on the embedding.
@@ -709,17 +956,26 @@ def plot_streamlines(
 
     Returns
     -------
-    plt.Figure or go.Figure
-        The figure object.
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
 
     Raises
     ------
     ValueError
         If X_emb is not 2D.
+
+    See Also
+    --------
+    plotly_utils.plot_streamlines_interactive
     """
     if interactive:
         return plotly_utils.plot_streamlines_interactive(
-            X_emb, V_emb, grid_density=grid_density, title=title
+            X_emb,
+            V_emb,
+            grid_density=grid_density,
+            title=title,
+            random_state=random_state,
         )
 
     _set_style()
@@ -781,173 +1037,525 @@ def plot_streamlines(
     return fig
 
 
-def plot_comparison(
-    comparison_manager: Any,
-    metric: str = "trustworthiness",
-    title: Optional[str] = None,
-    figsize: Tuple[int, int] = (10, 6),
-    ax: Optional[plt.Axes] = None,
-    interactive: bool = False,
-) -> Union[plt.Figure, Any]:
-    """
-    Plot metric comparison curves across different reducers.
-
-    Parameters
-    ----------
-    comparison_manager : MethodSelector
-        The manager containing results_.
-    metric : str
-        Metric column to plot (e.g. 'trustworthiness', 'lcmc', 'mrre_total').
-    title : str, optional
-        Plot title.
-    figsize : tuple
-        Figure size.
-    ax : plt.Axes, optional
-        Existing axes.
-    interactive : bool, optional
-        If True, returns a Plotly figure.
-
-    Returns
-    -------
-    plt.Figure or go.Figure
-    """
-    if interactive:
-        return plotly_utils.plot_comparison_interactive(
-            comparison_manager, metric=metric, title=title
-        )
-
-    _set_style()
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.get_figure()
-
-    if not comparison_manager.results_:
-        raise ValueError("No results found. Run comparison.run() first.")
-
-    # Plot lines
-    for name, df in comparison_manager.results_.items():
-        if metric not in df.columns:
-            continue
-
-        sns.lineplot(
-            data=df, x="k", y=metric, marker="o", label=name, ax=ax, linewidth=2.5
-        )
-
-    ax.set_xlabel("Neighborhood Size (k)", fontweight="bold")
-    ax.set_ylabel(metric.replace("_", " ").title(), fontweight="bold")
-
-    if title is None:
-        title = f"Comparison: {metric.replace('_', ' ').title()}"
-
-    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
-    ax.legend(title="Method", frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
-    ax.grid(True, linestyle="--", alpha=0.3)
-
-    plt.tight_layout()
-    return fig
-
-
 def plot_feature_importance(
-    scores: Dict[str, float],
+    scores: Any,
     title: str = "Feature Importance",
     top_n: int = 20,
     figsize: Tuple[int, int] = (8, 6),
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    analysis: Optional[str] = None,
+    method: Optional[str] = None,
+    dimension: Optional[str] = None,
 ) -> Union[plt.Figure, Any]:
     """
-    Plot feature importance bar chart.
+    Plot feature-importance scores as a horizontal bar chart.
 
     Parameters
     ----------
-    scores : dict
-        Mapping feature_name -> score.
-    title : str
-        Plot title.
-    top_n : int
-        Number of top features to show.
-    figsize : tuple
-        Figure size.
-    interactive : bool, optional
-        If True, returns a Plotly figure.
+    scores : Any
+        Raw ``feature -> score`` mapping, interpretation payload, or
+        interpretation record table.
+    title : str, default="Feature Importance"
+        Figure title.
+    top_n : int, default=20
+        Maximum number of features to show.
+    figsize : tuple of int, default=(8, 6)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    analysis : str, optional
+        Interpretation analysis to select when multiple analyses are present.
+    method : str, optional
+        Method name to select when multiple methods are present.
+    dimension : str, optional
+        Dimension label to select when the interpretation contains multiple
+        dimensions.
 
     Returns
     -------
-    plt.Figure or go.Figure
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    prepare_feature_scores
+    plot_interpretation
+    plotly_utils.plot_feature_importance_interactive
     """
     if interactive:
         return plotly_utils.plot_feature_importance_interactive(
-            scores, title=title, top_n=top_n
+            scores,
+            title=title,
+            top_n=top_n,
+            analysis=analysis,
+            method=method,
+            dimension=dimension,
         )
     _set_style()
 
-    # Sort scores
-    sorted_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    names = [x[0] for x in sorted_items]
-    values = [x[1] for x in sorted_items]
+    feature_scores = prepare_feature_scores(
+        scores,
+        analysis=analysis,
+        method=method,
+        dimension=dimension,
+    ).head(top_n)
+    names = feature_scores.index.astype(str).tolist()
+    values = feature_scores.values.tolist()
 
     if ax is None:
         fig, ax = plt.subplots(figsize=figsize)
     else:
         fig = ax.get_figure()
 
-    sns.barplot(x=values, y=names, ax=ax, palette="magma", orient="h")
-
+    sns.barplot(
+        x=values,
+        y=names,
+        ax=ax,
+        palette="magma",
+        orient="h",
+        hue=names,
+        legend=False,
+    )
     ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Importance Score", fontweight="bold")
+    ax.set_ylabel("Feature", fontweight="bold")
+    return fig
 
+
+def plot_feature_correlation_heatmap(
+    correlations: Any,
+    title: str = "Feature Correlation",
+    top_n: Optional[int] = 25,
+    figsize: Tuple[int, int] = (10, 8),
+    ax: Optional[plt.Axes] = None,
+    interactive: bool = False,
+    method: Optional[str] = None,
+) -> Union[plt.Figure, Any]:
+    """
+    Plot feature-to-dimension correlations as a heatmap.
+
+    Parameters
+    ----------
+    correlations : Any
+        Correlation interpretation payload or records.
+    title : str, default="Feature Correlation"
+        Figure title.
+    top_n : int, optional
+        Maximum number of features to show. Features are ranked by the maximum
+        absolute correlation across dimensions.
+    figsize : tuple of int, default=(10, 8)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    method : str, optional
+        Method name to select when multiple methods are present.
+
+    Returns
+    -------
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plot_interpretation
+    plotly_utils.plot_feature_correlation_heatmap_interactive
+    """
+    if interactive:
+        return plotly_utils.plot_feature_correlation_heatmap_interactive(
+            correlations,
+            title=title,
+            top_n=top_n,
+            method=method,
+        )
+
+    frame = prepare_interpretation_frame(correlations)
+    frame = frame[frame["analysis"] == "correlation"]
+    if method is not None:
+        frame = frame[frame["method"] == method]
+    elif frame["method"].dropna().nunique() > 1:
+        raise ValueError("Specify `method` when multiple methods are present.")
+    if frame.empty:
+        raise ValueError("No correlation records available to plot.")
+
+    heatmap = frame.pivot_table(
+        index="feature",
+        columns="dimension",
+        values="value",
+        aggfunc="mean",
+    ).fillna(0.0)
+    if top_n is not None and len(heatmap.index) > top_n:
+        ranking = heatmap.abs().max(axis=1).sort_values(ascending=False)
+        heatmap = heatmap.loc[ranking.head(top_n).index]
+
+    _set_style()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    sns.heatmap(
+        heatmap,
+        cmap="coolwarm",
+        center=0.0,
+        ax=ax,
+        cbar_kws={"label": "Correlation"},
+    )
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_xlabel("Dimension", fontweight="bold")
+    ax.set_ylabel("Feature", fontweight="bold")
+    return fig
+
+
+def plot_interpretation(
+    interpretation: Any,
+    *,
+    analysis: str,
+    title: Optional[str] = None,
+    figsize: Tuple[int, int] = (10, 8),
+    ax: Optional[plt.Axes] = None,
+    interactive: bool = False,
+    method: Optional[str] = None,
+    dimension: Optional[str] = None,
+    top_n: int = 20,
+) -> Union[plt.Figure, Any]:
+    """
+    Plot one interpretation analysis using an appropriate visualization.
+
+    Parameters
+    ----------
+    interpretation : Any
+        Interpretation payload or interpretation records.
+    analysis : str
+        Interpretation analysis to plot.
+    title : str, optional
+        Figure title. Defaults to a title derived from ``analysis``.
+    figsize : tuple of int, default=(10, 8)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    method : str, optional
+        Method name to select when multiple methods are present.
+    dimension : str, optional
+        Dimension label to select when the interpretation contains multiple
+        dimensions.
+    top_n : int, default=20
+        Maximum number of features to show in bar or heatmap views.
+
+    Returns
+    -------
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plot_feature_importance
+    plot_feature_correlation_heatmap
+    plotly_utils.plot_interpretation_interactive
+    """
+    if interactive:
+        return plotly_utils.plot_interpretation_interactive(
+            interpretation,
+            analysis=analysis,
+            title=title,
+            method=method,
+            dimension=dimension,
+            top_n=top_n,
+        )
+
+    if analysis == "correlation":
+        return plot_feature_correlation_heatmap(
+            interpretation,
+            title=title or "Feature Correlation",
+            top_n=top_n,
+            figsize=figsize,
+            ax=ax,
+            method=method,
+        )
+
+    matrix = extract_interpretation_matrix(interpretation, analysis=analysis)
+    if matrix is not None:
+        matrix = np.asarray(matrix)
+        if matrix.ndim == 1:
+            scores = {
+                f"Feature {i + 1}": float(value) for i, value in enumerate(matrix)
+            }
+            return plot_feature_importance(
+                scores,
+                title=title or analysis.replace("_", " ").title(),
+                top_n=top_n,
+                figsize=figsize,
+                ax=ax,
+            )
+
+        _set_style()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = ax.get_figure()
+        sns.heatmap(matrix, cmap="magma", ax=ax)
+        ax.set_title(
+            title or analysis.replace("_", " ").title(),
+            fontsize=16,
+            fontweight="bold",
+            pad=15,
+        )
+        ax.set_xlabel("Feature Index", fontweight="bold")
+        ax.set_ylabel("Feature Axis", fontweight="bold")
+        return fig
+
+    return plot_feature_importance(
+        interpretation,
+        title=title or analysis.replace("_", " ").title(),
+        top_n=top_n,
+        figsize=figsize,
+        ax=ax,
+        analysis=analysis,
+        method=method,
+        dimension=dimension,
+    )
+
+
+def plot_trajectory_metric_series(
+    series: Any,
+    *,
+    times: Optional[np.ndarray] = None,
+    labels: Optional[np.ndarray] = None,
+    title: str = "Trajectory Metric",
+    ylabel: str = "Value",
+    figsize: Tuple[int, int] = (10, 6),
+    ax: Optional[plt.Axes] = None,
+    interactive: bool = False,
+) -> Union[plt.Figure, Any]:
+    """
+    Plot evaluated trajectory metric time series.
+
+    Parameters
+    ----------
+    series : Any
+        One-dimensional series, two-dimensional ``(trajectory, time)`` array,
+        or mapping of ``name -> timecourse``.
+    times : np.ndarray, optional
+        Explicit time axis aligned with the time dimension.
+    labels : np.ndarray, optional
+        Optional trajectory labels aligned with the first axis of 2D inputs.
+    title : str, default="Trajectory Metric"
+        Figure title.
+    ylabel : str, default="Value"
+        Y-axis label.
+    figsize : tuple of int, default=(10, 6)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+
+    Returns
+    -------
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    See Also
+    --------
+    plot_trajectory
+    plotly_utils.plot_trajectory_metric_series_interactive
+    """
+    if interactive:
+        return plotly_utils.plot_trajectory_metric_series_interactive(
+            series,
+            times=times,
+            labels=labels,
+            title=title,
+            ylabel=ylabel,
+        )
+
+    _set_style()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.get_figure()
+
+    if isinstance(series, dict):
+        if not series:
+            raise ValueError("No trajectory series available to plot.")
+        lengths = {len(np.asarray(values).reshape(-1)) for values in series.values()}
+        if len(lengths) != 1:
+            raise ValueError("All trajectory series must share the same length.")
+        n_times = lengths.pop()
+        x_vals = np.arange(n_times) if times is None else np.asarray(times)
+        if len(x_vals) != n_times:
+            raise ValueError("`times` must align with the trajectory time axis.")
+        for name, values in series.items():
+            y_vals = np.asarray(values).reshape(-1)
+            ax.plot(x_vals, y_vals, label=str(name), linewidth=2.5)
+        ax.legend(title="Series", frameon=False)
+    else:
+        arr = np.asarray(series)
+        if arr.ndim == 1:
+            x_vals = np.arange(arr.shape[0]) if times is None else np.asarray(times)
+            if len(x_vals) != arr.shape[0]:
+                raise ValueError("`times` must align with the trajectory time axis.")
+            ax.plot(x_vals, arr, linewidth=2.5)
+        elif arr.ndim == 2:
+            x_vals = np.arange(arr.shape[1]) if times is None else np.asarray(times)
+            if len(x_vals) != arr.shape[1]:
+                raise ValueError("`times` must align with the trajectory time axis.")
+            if labels is not None:
+                labels = np.asarray(labels)
+                if labels.shape[0] != arr.shape[0]:
+                    raise ValueError("`labels` must align with the series axis.")
+                for label in np.unique(labels):
+                    subset = arr[labels == label]
+                    mean = subset.mean(axis=0)
+                    std = subset.std(axis=0) if subset.shape[0] > 1 else None
+                    ax.plot(x_vals, mean, linewidth=2.5, label=str(label))
+                    if std is not None:
+                        ax.fill_between(x_vals, mean - std, mean + std, alpha=0.15)
+                ax.legend(title="Label", frameon=False)
+            else:
+                mean = arr.mean(axis=0)
+                std = arr.std(axis=0) if arr.shape[0] > 1 else None
+                ax.plot(x_vals, mean, linewidth=2.5)
+                if std is not None:
+                    ax.fill_between(x_vals, mean - std, mean + std, alpha=0.15)
+        else:
+            raise ValueError("Trajectory metric series must be 1D, 2D, or a dict.")
+
+    ax.set_title(title, fontsize=16, fontweight="bold", pad=15)
+    ax.set_xlabel("Time", fontweight="bold")
+    ax.set_ylabel(ylabel, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.3)
     return fig
 
 
 def plot_trajectory(
     X: np.ndarray,
     times: Optional[np.ndarray] = None,
-    groups: Optional[np.ndarray] = None,
+    values: Optional[np.ndarray] = None,
+    labels: Optional[np.ndarray] = None,
+    smooth_window: int = 1,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     figsize: Tuple[int, int] = (10, 8),
     ax: Optional[plt.Axes] = None,
     interactive: bool = False,
+    cmap: str = "viridis",
 ) -> Union[plt.Figure, Any]:
     """
-    Plot trajectories of samples over time.
+    Plot already-prepared native trajectory tensors.
 
     Parameters
     ----------
     X : np.ndarray
-        Shape (n_samples, n_components). Coordinates.
+        Trajectory tensor with shape ``(n_trajectories, n_times, n_dimensions)``.
     times : np.ndarray, optional
-        Time points or indices for coloring.
-    groups : np.ndarray, optional
-        Group labels (e.g. trial IDs) to separate trajectories.
-        If None, all points are treated as one single trajectory.
-    title : str
-    dimensions : int
-        2 or 3.
-    figsize: tuple
-    ax: plt.Axes, optional
-    interactive: bool
-        If True, returns a Plotly figure.
+        Explicit time axis aligned with the time dimension.
+    values : np.ndarray, optional
+        Optional scalar overlay with shape ``(n_trajectories, n_times)``.
+    labels : np.ndarray, optional
+        Optional label per trajectory.
+    smooth_window : int, default=1
+        Moving-average window applied independently to each already-valid
+        trajectory when greater than 1.
+    title : str, default="Trajectory Plot"
+        Figure title.
+    dimensions : int, default=2
+        Number of embedding dimensions to display. Must be 2 or 3.
+    figsize : tuple of int, default=(10, 8)
+        Matplotlib figure size for static plots.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on.
+    interactive : bool, default=False
+        If ``True``, return the Plotly equivalent.
+    cmap : str, default="viridis"
+        Colormap used for scalar overlays.
 
     Returns
     -------
-    plt.Figure or go.Figure
+    matplotlib.figure.Figure or Any
+        Matplotlib figure for static plots or the Plotly figure returned by the
+        interactive backend.
+
+    Raises
+    ------
+    ValueError
+        If the input is not a native 3D trajectory tensor or if aligned arrays
+        do not match the trajectory/time axes.
+
+    See Also
+    --------
+    plot_trajectory_metric_series
+    plotly_utils.plot_trajectory_interactive
     """
     if interactive:
         return plotly_utils.plot_trajectory_interactive(
-            X, times=times, groups=groups, title=title, dimensions=dimensions
+            X,
+            times=times,
+            labels=labels,
+            values=values,
+            title=title,
+            dimensions=dimensions,
+            smooth_window=smooth_window,
         )
 
     _set_style()
+    trajectories = np.asarray(X)
+    if trajectories.ndim != 3:
+        raise ValueError(
+            "`X` must be a 3D trajectory tensor with shape "
+            "(n_trajectories, n_times, n_dimensions)."
+        )
     if dimensions not in [2, 3]:
         raise ValueError("Dimensions must be 2 or 3.")
 
-    n_samples = X.shape[0]
-    if groups is None:
-        groups = np.zeros(n_samples, dtype=int)
+    if trajectories.shape[2] < dimensions:
+        msg = (
+            f"`X` has only {trajectories.shape[2]} dimensions; "
+            f"cannot plot {dimensions}."
+        )
+        raise ValueError(msg)
 
-    unique_groups = np.unique(groups)
+    n_trajectories, n_times, _ = trajectories.shape
+    times = np.arange(n_times) if times is None else np.asarray(times)
+    if len(times) != n_times:
+        raise ValueError("`times` must align with the trajectory time axis.")
+    if labels is not None:
+        labels = np.asarray(labels)
+        if labels.shape[0] != n_trajectories:
+            raise ValueError("`labels` must align with the trajectory axis.")
+    if values is not None:
+        values = np.asarray(values)
+        if values.shape != (n_trajectories, n_times):
+            raise ValueError("`values` must have shape (n_trajectories, n_times).")
+
+    if smooth_window > 1 and n_times >= smooth_window:
+        trajectories = np.asarray(
+            [
+                np.stack(
+                    [
+                        moving_average(traj[:, dim], smooth_window)
+                        for dim in range(traj.shape[1])
+                    ],
+                    axis=1,
+                )
+                for traj in trajectories
+            ]
+        )
+        times = moving_average(times, smooth_window)
+        if values is not None:
+            values = np.asarray(
+                [moving_average(traj_values, smooth_window) for traj_values in values]
+            )
 
     if ax is None:
         fig = plt.figure(figsize=figsize)
@@ -958,51 +1566,89 @@ def plot_trajectory(
     else:
         fig = ax.get_figure()
 
-    # Iterate groups
+    palette = sns.color_palette("deep", n_trajectories)
+    label_map = None
+    if labels is not None:
+        unique_labels = list(dict.fromkeys(labels.tolist()))
+        colors = sns.color_palette("deep", len(unique_labels))
+        label_map = {label: color for label, color in zip(unique_labels, colors)}
 
-    # Setup colors
-    cmap = plt.get_cmap("viridis")
+    color_values = values if values is not None else None
+    if color_values is not None:
+        vmin = float(np.nanmin(color_values))
+        vmax = float(np.nanmax(color_values))
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    else:
+        norm = None
 
-    for grp in unique_groups:
-        mask = groups == grp
-        X_g = X[mask]
+    colorbar_added = False
+    for idx, traj in enumerate(trajectories[:, :, :dimensions]):
+        line_label = str(labels[idx]) if labels is not None else None
+        line_color = (
+            label_map[labels[idx]]
+            if label_map is not None
+            else palette[idx % len(palette)]
+        )
 
-        if times is not None:
-            t_g = times[mask]
-            # Use LineCollection for gradient line if 2D
+        if color_values is not None:
+            c_vals = color_values[idx]
             if dimensions == 2:
                 from matplotlib.collections import LineCollection
 
-                points = X_g[:, :2].reshape(-1, 1, 2)
+                points = traj[:, :2].reshape(-1, 1, 2)
                 segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-                # Normalize time for color mapping
-                norm = plt.Normalize(t_g.min(), t_g.max())
                 lc = LineCollection(segments, cmap=cmap, norm=norm)
-                lc.set_array(t_g[:-1])  # color by start time of segment
-                lc.set_linewidth(2)
-                lc.set_alpha(0.8)
+                lc.set_array(c_vals[:-1])
+                lc.set_linewidth(2.5)
+                lc.set_alpha(0.85)
                 ax.add_collection(lc)
-
-                # Add markers at start/end or all?
-                # Let's add markers for all points colored by time
-                sc = ax.scatter(X_g[:, 0], X_g[:, 1], c=t_g, cmap=cmap, s=20, zorder=10)
-                if grp == unique_groups[0]:
-                    plt.colorbar(sc, ax=ax, label="Time")
+                scatter = ax.scatter(
+                    traj[:, 0],
+                    traj[:, 1],
+                    c=c_vals,
+                    cmap=cmap,
+                    norm=norm,
+                    s=18,
+                    zorder=10,
+                )
+                if not colorbar_added:
+                    plt.colorbar(scatter, ax=ax, label="Value")
+                    colorbar_added = True
             else:
-                # 3D: simple plot + scatter
-                ax.plot(X_g[:, 0], X_g[:, 1], X_g[:, 2], color="grey", alpha=0.5)
-                sc = ax.scatter(X_g[:, 0], X_g[:, 1], X_g[:, 2], c=t_g, cmap=cmap, s=20)
-                if grp == unique_groups[0]:
-                    plt.colorbar(sc, ax=ax, label="Time", pad=0.1)
-
+                ax.plot(traj[:, 0], traj[:, 1], traj[:, 2], color="#999999", alpha=0.45)
+                scatter = ax.scatter(
+                    traj[:, 0],
+                    traj[:, 1],
+                    traj[:, 2],
+                    c=c_vals,
+                    cmap=cmap,
+                    norm=norm,
+                    s=18,
+                )
+                if not colorbar_added:
+                    plt.colorbar(scatter, ax=ax, label="Value", pad=0.1)
+                    colorbar_added = True
         else:
-            # Color by group (Cycle colors)
             if dimensions == 2:
-                ax.plot(X_g[:, 0], X_g[:, 1], marker="o", label=f"Group {grp}")
+                ax.plot(
+                    traj[:, 0],
+                    traj[:, 1],
+                    marker="o",
+                    linewidth=2.5,
+                    alpha=0.85,
+                    color=line_color,
+                    label=line_label,
+                )
             else:
                 ax.plot(
-                    X_g[:, 0], X_g[:, 1], X_g[:, 2], marker="o", label=f"Group {grp}"
+                    traj[:, 0],
+                    traj[:, 1],
+                    traj[:, 2],
+                    marker="o",
+                    linewidth=2.5,
+                    alpha=0.85,
+                    color=line_color,
+                    label=line_label,
                 )
 
     ax.set_title(title, fontsize=16, fontweight="bold")
@@ -1011,9 +1657,17 @@ def plot_trajectory(
     if dimensions == 3:
         ax.set_zlabel("Dimension 3", fontweight="bold")
 
-    if groups is not None and len(unique_groups) > 1 and times is None:
-        ax.legend()
+    if labels is not None and color_values is None and len(np.unique(labels)) > 1:
+        handles, legend_labels = ax.get_legend_handles_labels()
+        if handles:
+            dedup = dict(zip(legend_labels, handles))
+            ax.legend(dedup.values(), dedup.keys(), title="Label", frameon=False)
 
+    if color_values is None and labels is None:
+        ax.legend().remove() if ax.get_legend() else None
+
+    if color_values is not None and dimensions == 2:
+        ax.autoscale_view()
     return fig
 
 
@@ -1040,6 +1694,11 @@ def plot_local_metrics(
 
     Returns
     -------
-    plt.Figure
+    matplotlib.figure.Figure
+        Static figure colored by the provided local scores.
+
+    See Also
+    --------
+    plot_embedding
     """
     return plot_embedding(X_emb, labels=local_scores, title=title, cmap=cmap, ax=ax)

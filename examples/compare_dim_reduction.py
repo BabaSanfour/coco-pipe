@@ -3,9 +3,10 @@
 Compare different dimension reduction methods on MNIST and Fashion-MNIST datasets.
 
 This script creates grid visualizations comparing different dimension reduction methods
-(PCA, t-SNE, UMAP, and PaCMAP) with different parameter settings for MNIST and
+(PCA, t-SNE, UMAP, and Pacmap) with different parameter settings for MNIST and
 Fashion-MNIST.
 """
+
 import logging
 import time
 import warnings
@@ -88,7 +89,7 @@ def apply_dim_reduction(X, method, n_components=2, **kwargs):
 
     Args:
         X (np.ndarray): Input data
-        method (str): Dimension reduction method (PCA, TSNE, UMAP, PACMAP)
+        method (str): Dimension reduction method (PCA, TSNE, UMAP, Pacmap)
         n_components (int): Number of components in the reduced space
         **kwargs: Additional keyword arguments for the reducer
 
@@ -101,12 +102,7 @@ def apply_dim_reduction(X, method, n_components=2, **kwargs):
     )
 
     # Initialize DimReduction
-    reducer = DimReduction(
-        method=method,
-        n_components=n_components,
-        save_path=None,  # Don't save the reducer
-        **kwargs,
-    )
+    reducer = DimReduction(method=method, n_components=n_components, **kwargs)
 
     # Apply dimension reduction with timing
     start_time = time.time()
@@ -279,12 +275,12 @@ def main():
                 "n_neighbors=40",
             ),
         ],
-        "PACMAP": [
+        "Pacmap": [
             ({"n_neighbors": 10, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=10"),
             ({"n_neighbors": 20, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=20"),
             ({"n_neighbors": 40, "MN_ratio": 0.5, "FP_ratio": 2.0}, "n_neighbors=40"),
         ],
-        "TRIMAP": [
+        "Trimap": [
             ({"n_inliers": 10, "n_outliers": 5, "n_random": 5}, "n_inliers=10"),
             ({"n_inliers": 20, "n_outliers": 5, "n_random": 5}, "n_inliers=20"),
             ({"n_inliers": 40, "n_outliers": 5, "n_random": 5}, "n_inliers=40"),

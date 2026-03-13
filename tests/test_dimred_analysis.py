@@ -5,9 +5,9 @@ import numpy as np
 import pytest
 
 from coco_pipe.dim_reduction.analysis import (
-    compute_feature_importance,
     correlate_features,
     gradient_importance,
+    interpret_features,
     perturbation_importance,
 )
 
@@ -26,11 +26,11 @@ def test_correlate_features():
     corrs = correlate_features(X, X_emb, feature_names=feat_names)
 
     # Check structure
-    assert "Component 1" in corrs
-    assert "Component 2" in corrs
+    assert "Dimension 1" in corrs
+    assert "Dimension 2" in corrs
 
     # Check content
-    comp1_res = corrs["Component 1"]
+    comp1_res = corrs["Dimension 1"]
     # Feature 0 should be top correlated
     top_feat = list(comp1_res.keys())[0]
     assert top_feat == "F0"
@@ -47,23 +47,12 @@ def test_perturbation_importance():
 
     model = PCA(n_components=2).fit(X)
 
-    scores = perturbation_importance(
-        model, X, feature_names=[f"F{i}" for i in range(5)]
-    )
+    # PCA.transform(X) returns a 2D array (n_samples, n_components)
+    X_emb = model.transform(X)
+    scores = perturbation_importance(model, X, [f"F{i}" for i in range(5)], X_emb)
 
     assert scores["F0"] > scores["F1"]
     assert np.isclose(sum(scores.values()), 1.0)
-
-
-def test_compute_feature_importance_wrapper():
-    """Test the main wrapper function."""
-    from sklearn.decomposition import PCA
-
-    X = np.random.randn(10, 3)
-    model = PCA(n_components=2).fit(X)
-
-    scores = compute_feature_importance(model, X, method="perturbation")
-    assert len(scores) == 3
 
 
 def test_correlate_features_defaults():
@@ -71,23 +60,11 @@ def test_correlate_features_defaults():
     X = np.random.randn(10, 3)
     X_emb = np.random.randn(10, 2)
 
-    corrs = correlate_features(X, X_emb, feature_names=None)
-
-    assert "Component 1" in corrs
-    # Check default naming "Feature 0", "Feature 1"...
-    assert "Feature 0" in corrs["Component 1"]
-    assert len(corrs["Component 1"]) == 3
-
-
-def test_perturbation_importance_errors():
-    """Test error when model has no transform."""
-
-    class BadModel:
-        pass
-
-    X = np.random.randn(10, 2)
-    with pytest.raises(ValueError, match="must have a transform method"):
-        perturbation_importance(BadModel(), X)
+    feat_names = ["F0", "F1", "F2"]
+    corrs = correlate_features(X, X_emb, feature_names=feat_names)
+    assert "Dimension 1" in corrs
+    assert "F0" in corrs["Dimension 1"]
+    assert len(corrs["Dimension 1"]) == 3
 
 
 def test_perturbation_importance_defaults():
@@ -99,40 +76,10 @@ def test_perturbation_importance_defaults():
             return X[:, :2] + np.random.randn(X.shape[0], 2) * 0.1
 
     X = np.random.randn(10, 3)
-    # feature names = None
-    scores = perturbation_importance(MockModel(), X, feature_names=None)
+    feat_names = [f"Feature {i}" for i in range(3)]
+    scores = perturbation_importance(MockModel(), X, feat_names, X[:, :2])
     assert "Feature 0" in scores
     assert np.isclose(sum(scores.values()), 1.0)
-
-
-def test_compute_feature_importance_dispatch():
-    """Test dispatch logic."""
-
-    class MockModel:
-        def transform(self, X):
-            return X
-
-    X = np.zeros((5, 2))
-
-    # 1. Default (perturbation)
-    s1 = compute_feature_importance(MockModel(), X)
-    assert len(s1) == 2
-
-    # 3. Unknown method
-    with pytest.raises(ValueError, match="Unknown method"):
-        compute_feature_importance(MockModel(), X, method="magic_wand")
-
-
-def test_compute_feature_importance_gradient_check():
-    """Test that gradient method checks for torch attributes."""
-
-    class SimpleModel:
-        def transform(self, X):
-            return X
-
-    X = np.zeros((5, 2))
-    with pytest.raises(NotImplementedError, match="Gradient method requires"):
-        compute_feature_importance(SimpleModel(), X, method="gradient")
 
 
 def test_gradient_importance_mocked():
@@ -169,9 +116,12 @@ def test_gradient_importance_mocked():
 
         # Mock Wrapper and Model
         wrapper = MagicMock()
-        wrapper.model.encoder = MagicMock()
+        wrapper.get_pytorch_module.return_value = MagicMock()
+        model = wrapper.get_pytorch_module.return_value
+        model.encoder = MagicMock()
+        model.parameters.return_value = iter([])  # Handle empty parameters case
         mock_z = MagicMock()
-        wrapper.model.encoder.return_value = mock_z
+        model.encoder.return_value = mock_z
 
         # Run
         X = np.zeros((10, 3))
@@ -182,7 +132,7 @@ def test_gradient_importance_mocked():
 
         # Verify torch calls
         torch.tensor.assert_called()
-        wrapper.model.encoder.assert_called()
+        model.encoder.assert_called()
         mock_z.sum.return_value.backward.assert_called()
 
 
@@ -205,3 +155,211 @@ def test_gradient_importance_complex_shape():
 
         assert "importance_matrix" in res
         assert res["importance_matrix"].shape == (5, 10)
+
+
+def test_reproducibility_perturbation():
+    """Verify that random_state ensures reproducible perturbation importance."""
+    from sklearn.decomposition import PCA
+
+    X = np.random.randn(20, 10)
+    model = PCA(n_components=2).fit(X)
+
+    # Run twice with same seed
+    X_emb = model.transform(X)
+    s1 = perturbation_importance(
+        model, X, [f"F{i}" for i in range(10)], X_emb, random_state=42
+    )
+    s2 = perturbation_importance(
+        model, X, [f"F{i}" for i in range(10)], X_emb, random_state=42
+    )
+
+    # Run with different seed
+    s3 = perturbation_importance(
+        model, X, [f"F{i}" for i in range(10)], X_emb, random_state=43
+    )
+
+    for k in s1:
+        assert np.isclose(s1[k], s2[k])
+
+    # S3 should be different (stochastically, but highly likely for 10 features)
+    diffs = [abs(s1[k] - s3[k]) for k in s1]
+    assert np.any(np.array(diffs) > 1e-10)
+
+
+def test_interpret_features_standard():
+    """Test the main entry point for interpret_features."""
+    from sklearn.decomposition import PCA
+
+    X = np.random.randn(20, 5)
+    model = PCA(n_components=2).fit(X)
+    X_emb = model.transform(X)
+    feature_names = [f"F{i}" for i in range(5)]
+
+    results = interpret_features(
+        X,
+        X_emb=X_emb,
+        model=model,
+        feature_names=feature_names,
+        analyses=["correlation", "perturbation"],
+    )
+
+    assert "analysis" in results
+    assert "records" in results
+    assert "correlation" in results["analysis"]
+    assert "perturbation" in results["analysis"]
+    assert len(results["analysis"]["perturbation"]) == 5
+    assert "Dimension 1" in results["analysis"]["correlation"]
+
+
+def test_interpret_features_errors():
+    """Test error handling in interpret_features."""
+    # Missing X_emb for correlation
+    with pytest.raises(
+        ValueError, match="`X_emb` is required for correlation analysis"
+    ):
+        interpret_features(
+            np.zeros((10, 5)), analyses=["correlation"], feature_names=["A"]
+        )
+
+    # Missing model for perturbation
+    with pytest.raises(
+        ValueError, match="`model` is required for perturbation importance"
+    ):
+        interpret_features(
+            np.zeros((10, 5)),
+            X_emb=np.zeros((10, 2)),
+            feature_names=["A"],
+            analyses=["perturbation"],
+        )
+
+    # Unknown method
+    with pytest.raises(ValueError, match="Unknown analysis selector"):
+        interpret_features(np.zeros((10, 5)), analyses=["unknown"])
+
+
+def test_correlate_features_errors():
+    """Test error handling in correlate_features."""
+    X = np.random.randn(10, 3)
+    X_emb = np.random.randn(10, 2)
+    names = ["A", "B", "C"]
+
+    # ndim checks
+    with pytest.raises(ValueError, match="`X_orig` must be a 2D array"):
+        correlate_features(np.zeros(10), X_emb, names)
+    with pytest.raises(ValueError, match="`X_emb` must be a 2D array"):
+        correlate_features(X, np.zeros(10), names)
+
+    # Sample match
+    with pytest.raises(ValueError, match="matching sample counts"):
+        correlate_features(np.zeros((5, 3)), X_emb, names)
+
+    # Name length
+    with pytest.raises(ValueError, match="Length of `feature_names`"):
+        correlate_features(X, X_emb, ["A", "B"])
+
+    # Finite rho check (constant data)
+    res = correlate_features(np.zeros((10, 3)), np.zeros((10, 2)), names)
+    assert res["Dimension 1"]["A"] == 0.0
+
+
+def test_perturbation_importance_errors_extended():
+    """Test additional error paths in perturbation_importance."""
+    model = MagicMock()
+    model.transform.return_value = np.zeros((10, 2))
+    X = np.random.randn(10, 3)
+    X_emb = np.zeros((10, 2))
+    names = ["A", "B", "C"]
+
+    # ndim
+    with pytest.raises(ValueError, match="`X` must be a 2D array"):
+        perturbation_importance(model, np.zeros(10), names, X_emb)
+
+    # samples
+    with pytest.raises(ValueError, match="same number of samples"):
+        perturbation_importance(model, np.zeros((5, 3)), names, X_emb)
+
+    # length
+    with pytest.raises(ValueError, match="match the number of input features"):
+        perturbation_importance(model, X, ["A"], X_emb)
+
+    # total sum zero
+    res = perturbation_importance(model, X, names, X_emb, n_repeats=1)
+    assert res["A"] == 0.0
+
+
+def test_gradient_importance_errors_extended():
+    """Test additional error paths in gradient_importance."""
+    wrapper = MagicMock()
+
+    # X ndim
+    with pytest.raises(ValueError, match="must have at least 2 dimensions"):
+        gradient_importance(wrapper, np.zeros(10))
+
+    # Mocked torch for sum zero and shape mismatch
+    with patch.dict(sys.modules, {"torch": MagicMock()}):
+        import torch
+
+        mock_res = torch.mean.return_value.detach.return_value.cpu.return_value
+        mock_res.numpy.return_value = np.zeros(3)
+
+        # total sum zero
+        res = gradient_importance(wrapper, np.zeros((2, 3)))
+        assert res["importance_matrix"][0] == 0.0
+
+        # ndim != 1 for named
+        mock_res = torch.mean.return_value.detach.return_value.cpu.return_value
+        mock_res.numpy.return_value = np.zeros((2, 2))
+        with pytest.raises(ValueError, match="one-dimensional"):
+            gradient_importance(wrapper, np.zeros((2, 3)), feature_names=["A", "B"])
+
+        # name length mismatch
+        mock_res = torch.mean.return_value.detach.return_value.cpu.return_value
+        mock_res.numpy.return_value = np.zeros(3)
+        with pytest.raises(ValueError, match="match the number of reduced features"):
+            gradient_importance(wrapper, np.zeros((2, 3)), feature_names=["A"])
+
+
+def test_interpret_features_extended():
+    """Cover remaining branches in interpret_features."""
+    X = np.random.randn(10, 3)
+    X_emb = np.random.randn(10, 2)
+    names = ["A", "B", "C"]
+
+    # missing names for correlation
+    with pytest.raises(ValueError, match="`feature_names` is required for correlation"):
+        interpret_features(X, X_emb=X_emb, analyses=["correlation"])
+
+    # missing names for perturbation
+    with pytest.raises(
+        ValueError, match="`feature_names` is required for perturbation"
+    ):
+        interpret_features(X, X_emb=X_emb, model=MagicMock(), analyses=["perturbation"])
+
+    # missing X_emb for perturbation
+    with pytest.raises(ValueError, match="`X_emb` is required for perturbation"):
+        interpret_features(
+            X, model=MagicMock(), analyses=["perturbation"], feature_names=names
+        )
+
+    # missing model for gradient
+    with pytest.raises(ValueError, match="`model` is required for gradient"):
+        interpret_features(X, analyses=["gradient"], feature_names=names)
+
+    # Gradient branch
+    with patch.dict(sys.modules, {"torch": MagicMock()}):
+        import torch
+
+        # mock returns 1D scores
+        mock_scores = np.array([0.1, 0.2, 0.7])
+        mock_res = torch.mean.return_value.detach.return_value.cpu.return_value
+        mock_res.numpy.return_value = mock_scores
+
+        wrapper = MagicMock()
+        wrapper.get_pytorch_module.return_value = MagicMock()
+
+        res = interpret_features(
+            X, model=wrapper, analyses=["gradient"], feature_names=names
+        )
+        assert "gradient" in res["analysis"]
+        assert len(res["records"]) == 3
+        assert res["records"][0]["analysis"] == "gradient"

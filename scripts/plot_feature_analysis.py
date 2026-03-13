@@ -302,7 +302,7 @@ def main():
             cmap="magma",
         )
         out_path = os.path.join(
-            args.out_dir, f"topomap_{re.sub(r'[^A-Za-z0-9_.-]+','_', disp_name)}.png"
+            args.out_dir, f"topomap_{re.sub(r'[^A-Za-z0-9_.-]+', '_', disp_name)}.png"
         )
         fig.savefig(out_path, dpi=150)
         plt.close(fig)

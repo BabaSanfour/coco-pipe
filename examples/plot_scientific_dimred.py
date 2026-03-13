@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from coco_pipe.dim_reduction import DimReduction
+from coco_pipe.viz.dim_reduction import plot_embedding
 
 ###############################################################################
 # 1. Generate Synthetic Oscillatory Data
@@ -63,7 +64,7 @@ print(f"Data shape: {X_full.shape}")
 dr_pca = DimReduction("PCA", n_components=2)
 X_pca = dr_pca.fit_transform(X_full)
 
-dr_pca.plot(y=labels, title="PCA: Variance Dependent")
+plot_embedding(X_pca, labels=labels, title="PCA: Variance Dependent")
 
 ###############################################################################
 # 3. Generic Reduction: UMAP
@@ -74,7 +75,7 @@ dr_pca.plot(y=labels, title="PCA: Variance Dependent")
 dr_umap = DimReduction("UMAP", n_components=2, n_neighbors=30)
 X_umap = dr_umap.fit_transform(X_full)
 
-dr_umap.plot(y=labels, title="UMAP: Topology Dependent")
+plot_embedding(X_umap, labels=labels, title="UMAP: Topology Dependent")
 
 ###############################################################################
 # 4. Scientific Reduction: TRCA (Simulated)
@@ -135,7 +136,7 @@ try:
     X_dmd = dr_dmd.fit_transform(X_full)
 
     # DMD modes often reveal the frequency content
-    dr_dmd.plot(y=labels, title="DMD: Dynamics Dependent")
+    plot_embedding(X_dmd, labels=labels, title="DMD: Dynamics Dependent")
 
 except Exception as e:
     print(f"DMD Visualization skipped: {e}")

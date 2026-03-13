@@ -10,6 +10,7 @@ Minimal plotting helpers:
 Both functions are data-agnostic: pass any metric (e.g., accuracy, importance)
 for any analysis unit (sensors, features, regions).
 """
+
 from __future__ import annotations
 
 import math

@@ -25,26 +25,9 @@ dependencies = [
     "pyyaml",
     "pydantic",
     "hydra-core",
-    "umap-learn[plot]",
-    "trimap",
-    "phate",
-    "mne>=1.9.0",
-    "mne-bids>=0.10.0",
     "requests",
     "openpyxl",
-    "meegkit",
-    "pydmd",
-    "gudhi",
-    "tensorflow",
-    "keras",
-    "torch",
-    "skorch",
-    "dask[array]",
-    "dask-ml",
     "joblib",
-    "annoy>=1.17.3",
-    "pacmap",
-    "ivis @ git+https://github.com/beringresearch/ivis.git",
     "plotly",
 ]
 
@@ -64,6 +47,10 @@ dev = [
     "sphinx-autoapi",
     "myst-parser",
 ]
+test = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
 docs = [
     "sphinx>=4.0.0",
     "insegel",
@@ -73,6 +60,80 @@ docs = [
     "sphinxcontrib-mermaid",
     "sphinx-autoapi",
     "myst-parser",
+]
+dask = [
+    "dask[array]",
+    "dask-ml",
+]
+neighbor = [
+    "umap-learn[plot]",
+    "trimap",
+    "phate",
+    "pacmap",
+    "faiss-cpu",
+]
+parametric-umap = [
+    "umap-learn[plot]",
+    "tensorflow",
+    "keras",
+]
+ivis = [
+    "annoy>=1.17.3",
+    "tensorflow",
+    "keras",
+    "ivis @ git+https://github.com/beringresearch/ivis.git",
+]
+topology = [
+    "torch",
+    "skorch",
+    "gudhi",
+]
+spatiotemporal = [
+    "pydmd",
+    "meegkit",
+]
+eeg = [
+    "mne>=1.9.0",
+    "mne-bids>=0.10.0",
+    "meegkit",
+]
+dim-red = [
+    "dask[array]",
+    "dask-ml",
+    "umap-learn[plot]",
+    "trimap",
+    "phate",
+    "pacmap",
+    "faiss-cpu",
+    "tensorflow",
+    "keras",
+    "annoy>=1.17.3",
+    "ivis @ git+https://github.com/beringresearch/ivis.git",
+    "torch",
+    "skorch",
+    "gudhi",
+    "pydmd",
+    "meegkit",
+]
+full = [
+    "dask[array]",
+    "dask-ml",
+    "umap-learn[plot]",
+    "trimap",
+    "phate",
+    "pacmap",
+    "faiss-cpu",
+    "tensorflow",
+    "keras",
+    "annoy>=1.17.3",
+    "ivis @ git+https://github.com/beringresearch/ivis.git",
+    "torch",
+    "skorch",
+    "gudhi",
+    "pydmd",
+    "meegkit",
+    "mne>=1.9.0",
+    "mne-bids>=0.10.0",
 ]
 
 [project.urls]
@@ -92,19 +153,29 @@ include = ["coco_pipe*", "scripts*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q"
+addopts = "-ra -q --ignore-glob=tests/test_ml_*.py"
 testpaths = [
     "tests",
 ]
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
-[tool.black]
-line-length = 88
-target-version = ['py39']
+[tool.ruff.lint]
+select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I",
+]
+ignore = []
 
-[tool.isort]
-profile = "black"
-line_length = 88
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

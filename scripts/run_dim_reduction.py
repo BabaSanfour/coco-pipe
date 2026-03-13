@@ -12,14 +12,17 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 from joblib import Parallel, delayed
 
-from coco_pipe.dim_reduction import DimReductionPipeline
+from coco_pipe.dim_reduction import DimReduction
+from coco_pipe.io import load_data
 from coco_pipe.viz.dim_reduction import plot_embedding
 
 # Configure logging
@@ -27,6 +30,39 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def _infer_mode(config_type):
+    if config_type in {"eeg", "bids"}:
+        return "bids"
+    if config_type in {"tabular", "embedding"}:
+        return config_type
+    return "auto"
+
+
+def _coerce_input(X, reducer):
+    X_arr = np.asarray(X)
+    expected_ndim = reducer.capabilities.get("input_ndim", 2)
+    if X_arr.ndim == expected_ndim:
+        return X_arr
+    if expected_ndim == 2 and X_arr.ndim > 2:
+        return X_arr.reshape(X_arr.shape[0], -1)
+    raise ValueError(
+        f"Cannot coerce input with shape {X_arr.shape} to reducer ndim={expected_ndim}."
+    )
+
+
+def _metadata_from_container(container):
+    return dict(getattr(container, "coords", {}) or {})
+
+
+def _build_output_path(config):
+    output_dir = Path(config.get("output_dir", "outputs/dim_reduction"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_name = config.get("output_name") or f"{config['method'].lower()}_reduction"
+    if not str(output_name).endswith(".npz"):
+        output_name = f"{output_name}.npz"
+    return output_dir / output_name
 
 
 def run_pipeline(config, benchmark=False, plot=False):
@@ -43,77 +79,71 @@ def run_pipeline(config, benchmark=False, plot=False):
         Whether to generate plots.
     """
     try:
-        pipeline = DimReductionPipeline(**config)
-        output_path = pipeline.execute()
+        mode = _infer_mode(config.get("type"))
+        load_kwargs = dict(config)
+        method = load_kwargs.pop("method")
+        n_components = load_kwargs.pop("n_components", 2)
+        params = load_kwargs.pop("params", {})
+        output_path = _build_output_path(config)
+        load_kwargs.pop("output_dir", None)
+        load_kwargs.pop("output_name", None)
+        load_kwargs.pop("type", None)
+        load_kwargs.pop("benchmark", None)
+        load_kwargs.pop("report", None)
+        score_k = load_kwargs.pop("score_k", 5)
+        data_path = load_kwargs.pop("data_path")
+        if (
+            mode == "bids"
+            and "loading_mode" not in load_kwargs
+            and "mode" in load_kwargs
+        ):
+            load_kwargs["loading_mode"] = load_kwargs.pop("mode")
 
-        # Determine output directory from the result path
-        output_dir = Path(output_path).parent
+        container = load_data(data_path, mode=mode, **load_kwargs)
+        reducer = DimReduction(method, n_components=n_components, params=params)
+        metadata = _metadata_from_container(container)
 
-        # Load the result (pipeline returns path to saved npz)
-        import numpy as np
-
-        data = np.load(output_path)
-
-        # Check if we have original data to compute metrics (requires
-        # refitting/loading?)
-        # For benchmarking, we need both X (high-D) and X_emb (low-D).
-        # The pipeline 'execute' fits and saves.
-        # To verify quality, we need access to the data pipeline loaded.
-        # This is a bit inefficient (re-loading). Ideally pipeline should return
-        # data or objects.
-
-        # But for CLI, let's reload if benchmarking is requested.
-        # Or better: modify DimReductionPipeline to return more info/objects if needed?
-        # For now, let's load data using the pipeline logic if feasible, or just
-        # skip if too complex.
-
-        # Assuming we can't easily get X_orig without modifying pipeline heavily,
-        # we might skip 'trustworthiness' on the full dataset if it wasn't saved.
-        # However, advanced usage implies we want to check it.
-        # Let's see if we can instantiate the loader from config.
-
-        # Modification: Doing benchmarking inside this script requires loading data.
-        # The pipeline handles data loading.
-
-        # Let's perform a lightweight load if possible.
-        X_emb = data["reduced"]
-        config.get("type")
+        X_input = _coerce_input(container.X, reducer)
+        X_emb = reducer.fit_transform(X_input, y=getattr(container, "y", None))
+        score_payload = {}
 
         if benchmark:
             logger.info("Running benchmarks...")
-            # We need X_orig. This is expensive for large datasets.
-            # Only support for 'tabular' or 'embeddings' easily?
-            # For 'eeg', X is huge (epochs/timepoints).
-
-            # Simple benchmark: Just plot implies no metrics needed?
-            # If benchmark=True, we warn if we can't load X easily.
-            pass
-
-            # TODO: Integrate benchmarking properly by accessing pipeline internals or
-            # modifying pipeline to return data.
-            # For now, we note the limitation.
-            logger.warning(
-                "Benchmarking skipped in CLI (requires original data access refactor)."
+            score_payload = reducer.score(
+                X_emb,
+                X=X_input,
+                n_neighbors=score_k,
+                labels=getattr(container, "y", None),
+                times=metadata.get("time"),
             )
+
+        save_payload = {
+            "reduced": X_emb,
+            "ids": getattr(container, "ids", None),
+            "labels": getattr(container, "y", None),
+            "method": np.array([method]),
+            "metrics_json": np.array([json.dumps(score_payload, default=str)]),
+        }
+        coords = metadata or {}
+        for key in ("subject", "subjects", "sub"):
+            if key in coords:
+                save_payload["subjects"] = np.asarray(coords[key])
+                break
+        for key in ("time", "times", "time_segment", "time_segments"):
+            if key in coords:
+                save_payload["time_segments"] = np.asarray(coords[key])
+                break
+        np.savez_compressed(output_path, **save_payload)
+        output_dir = output_path.parent
 
         if plot:
             logger.info("Generating plots...")
             # 2D Scatter
             if X_emb.shape[1] in [2, 3]:
-                # Try to get labels from loaded data
-                labels = None
-                if "subjects" in data:
-                    # Map subjects to integers for coloring
-                    subs = data["subjects"]
-                    # Simple encoding
-                    unique_subs = np.unique(subs)
-                    mapping = {s: i for i, s in enumerate(unique_subs)}
-                    labels = np.array([mapping[s] for s in subs])
-
                 plot_embedding(
                     X_emb,
-                    labels=labels,
-                    title=f"{config.get('method')} Embedding",
+                    labels=getattr(container, "y", None),
+                    title=f"{method} Embedding",
                     save_path=output_dir / "embedding_plot.png",
                 )
                 logger.info(f"Saved embedding plot to {output_dir}/embedding_plot.png")

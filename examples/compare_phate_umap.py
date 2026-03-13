@@ -6,6 +6,7 @@ This script creates visualizations comparing PHATE and UMAP with different
 parameter settings,
 showing how they perform on the same datasets.
 """
+
 import logging
 import time
 import warnings
