@@ -92,7 +92,7 @@ torch = [
     "torch",
 ]
 braindecode = [
-    "braindecode",
+    "braindecode>=1.4.0,<1.6",
 ]
 hf = [
     "transformers",

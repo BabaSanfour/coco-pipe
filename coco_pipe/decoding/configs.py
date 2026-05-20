@@ -629,15 +629,13 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     """Configuration for pretrained feature extraction backbones."""
 
     kind: Literal["foundation_embedding"] = "foundation_embedding"
-    provider: Literal["dummy", "braindecode", "huggingface", "reve"] = "dummy"
-    model_name: str = "dummy"
-    input_kind: Literal["tabular", "temporal", "epoched", "embeddings", "tokens"] = (
-        "epoched"
-    )
-    pooling: Literal["mean", "flatten", "last"] = "mean"
+    model_key: str = "dummy"
+    backend: str = "auto"
+    n_outputs: Optional[int] = None
+    train_mode: Literal["frozen", "full", "lora", "qlora"] = "frozen"
+    pooling: Literal["mean", "flatten"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
-    embedding_dim: Optional[int] = None
 
 
 class LoRAConfig(BaseModel):
@@ -715,8 +713,8 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     """Configuration for end-to-end neural fine-tuning."""
 
     kind: Literal["neural_finetune"] = "neural_finetune"
-    provider: Literal["dummy", "braindecode", "huggingface"] = "dummy"
-    model_name: str = "dummy"
+    model_key: str = "dummy"
+    backend: str = "auto"
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
     optimizer: Dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
