@@ -172,6 +172,10 @@ def fit_and_score_fold(
     predict_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
         warnings.simplefilter("always")
+        # Custom: Attach test groups to scaler if present
+        if hasattr(estimator, "named_steps") and "scaler" in estimator.named_steps:
+            estimator.named_steps["scaler"]._temp_groups = groups[test_idx] if groups is not None else None
+
         y_pred = estimator.predict(X_test)
     predict_time = time.perf_counter() - predict_start
     captured_warnings.extend(warning_records_to_dict("predict", warning_records))
@@ -343,15 +347,17 @@ def fit_estimator(
         ):
             cal_cv = get_cv_splitter(calibration_config.cv, require_groups=False)
             estimator.cv = _CVWithGroups(cal_cv, groups_train)
-
-        if search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)):
-            fit_params["groups"] = groups_train
-
         if sfs is not None and _config_uses_group_cv(
             getattr(feature_selection_config, "cv", None)
         ):
             fit_params["fs__groups"] = groups_train
 
+        # Custom Scaler Routing
+        if isinstance(pipeline, Pipeline) and "scaler" in pipeline.named_steps:
+            scaler_step = pipeline.named_steps["scaler"]
+            import inspect
+            if "groups" in inspect.signature(scaler_step.fit).parameters:
+                fit_params["scaler__groups"] = groups_train
     estimator.fit(X_train, y_train, **fit_params)
 
 
