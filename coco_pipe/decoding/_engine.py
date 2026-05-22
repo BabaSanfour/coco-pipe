@@ -7,6 +7,7 @@ This module provides the core execution logic for cross-validation folds.
 It is designed for high-performance, parallel execution.
 """
 
+import inspect
 import logging
 import time
 import warnings
@@ -16,6 +17,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Union
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn import config_context
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import SequentialFeatureSelector
 from sklearn.pipeline import Pipeline
@@ -25,6 +27,7 @@ from ._constants import GROUP_CV_STRATEGIES
 from ._metrics import get_metric_spec
 from ._splitters import _CVWithGroups, cv_uses_groups, get_cv_splitter
 from .interfaces import NeuralTrainable
+from .scalers import SubjectStandardScaler
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +146,12 @@ def fit_and_score_fold(
     y_train, y_test = y[train_idx], y[test_idx]
 
     groups_train = groups[train_idx] if groups is not None else None
+    test_groups = groups[test_idx] if groups is not None else None
+    _needs_group_routing = (
+        test_groups is not None
+        and hasattr(estimator, "named_steps")
+        and isinstance(estimator.named_steps.get("scaler"), SubjectStandardScaler)
+    )
     captured_warnings = []
     fit_time = np.nan
     predict_time = np.nan
@@ -172,14 +181,13 @@ def fit_and_score_fold(
     predict_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
         warnings.simplefilter("always")
-        # Custom: Attach test groups to scaler if present
-        if hasattr(estimator, "named_steps") and "scaler" in estimator.named_steps:
-            estimator.named_steps["scaler"]._temp_groups = groups[test_idx] if groups is not None else None
-
-        y_pred = estimator.predict(X_test)
+        if _needs_group_routing:
+            with config_context(enable_metadata_routing=True):
+                y_pred = estimator.predict(X_test, groups=test_groups)
+        else:
+            y_pred = estimator.predict(X_test)
     predict_time = time.perf_counter() - predict_start
     captured_warnings.extend(warning_records_to_dict("predict", warning_records))
-    test_groups = groups[test_idx] if groups is not None else None
 
     fold_data = {
         "sample_index": test_idx,
@@ -194,7 +202,11 @@ def fit_and_score_fold(
     if spec.supports_proba:
         with warnings.catch_warnings(record=True) as warning_records:
             warnings.simplefilter("always")
-            fold_data["y_proba"] = estimator.predict_proba(X_test)
+            if _needs_group_routing:
+                with config_context(enable_metadata_routing=True):
+                    fold_data["y_proba"] = estimator.predict_proba(X_test, groups=test_groups)
+            else:
+                fold_data["y_proba"] = estimator.predict_proba(X_test)
         captured_warnings.extend(
             warning_records_to_dict("predict_proba", warning_records)
         )
@@ -202,7 +214,11 @@ def fit_and_score_fold(
     if "y_proba" not in fold_data and spec.supports_decision_function:
         with warnings.catch_warnings(record=True) as warning_records:
             warnings.simplefilter("always")
-            fold_data["y_score"] = estimator.decision_function(X_test)
+            if _needs_group_routing:
+                with config_context(enable_metadata_routing=True):
+                    fold_data["y_score"] = estimator.decision_function(X_test, groups=test_groups)
+            else:
+                fold_data["y_score"] = estimator.decision_function(X_test)
         captured_warnings.extend(
             warning_records_to_dict("decision_function", warning_records)
         )
@@ -347,15 +363,16 @@ def fit_estimator(
         ):
             cal_cv = get_cv_splitter(calibration_config.cv, require_groups=False)
             estimator.cv = _CVWithGroups(cal_cv, groups_train)
+        if search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)):
+            fit_params["groups"] = groups_train
+
         if sfs is not None and _config_uses_group_cv(
             getattr(feature_selection_config, "cv", None)
         ):
             fit_params["fs__groups"] = groups_train
 
-        # Custom Scaler Routing
         if isinstance(pipeline, Pipeline) and "scaler" in pipeline.named_steps:
             scaler_step = pipeline.named_steps["scaler"]
-            import inspect
             if "groups" in inspect.signature(scaler_step.fit).parameters:
                 fit_params["scaler__groups"] = groups_train
     estimator.fit(X_train, y_train, **fit_params)
