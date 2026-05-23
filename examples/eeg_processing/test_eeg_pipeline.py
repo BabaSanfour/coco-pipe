@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 #!/usr/bin/env python3
 """
 Test script for coco_pipe EEG processing capabilities.

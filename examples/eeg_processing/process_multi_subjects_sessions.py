@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 #!/usr/bin/env python
 """
 Run dimensionality reduction on multiple subjects and sessions from the EEG
