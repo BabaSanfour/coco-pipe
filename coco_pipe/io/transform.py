@@ -65,7 +65,7 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
 
     >>> # Create formatted data (100 obs, 10 features)
     >>> X = np.random.randn(100, 10)
-    >>> container = DataContainer(X, dims=('obs', 'feature'))
+    >>> container = DataContainer(X, dims=("obs", "feature"))
 
     >>> # Wrap a Scaler
     >>> scaler = SklearnWrapper(RobustScaler())
@@ -159,11 +159,11 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     --------
     >>> # Whitening EEG epochs (100 epochs, 64 channels, 500 times)
     >>> container = DataContainer(
-    ...     np.random.randn(100, 64, 500), dims=('obs', 'channel', 'time')
+    ...     np.random.randn(100, 64, 500), dims=("obs", "channel", "time")
     ... )
 
     >>> # Use Shrinkage for robust covariance
-    >>> whitener = SpatialWhitener(method='shrinkage')
+    >>> whitener = SpatialWhitener(method="shrinkage")
     >>> white_data = whitener.fit_transform(container)
 
     >>> # Project back to sensor space for plotting

@@ -99,7 +99,7 @@ epoch's feature vector. Multiple epochs from the same subject share a subject ID
 
    # Per-fold scores
    scores = result.get_detailed_scores()
-   print(scores.groupby(["Model", "Metric"])["Score"].agg(["mean", "std"]))
+   print(scores.groupby(["Model", "Metric"])["Value"].agg(["mean", "std"]))
 
    # Confusion matrices
    cm = result.get_confusion_matrices(normalize=True)

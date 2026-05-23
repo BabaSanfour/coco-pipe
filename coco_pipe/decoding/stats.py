@@ -83,13 +83,15 @@ def aggregate_predictions_for_inference(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.decoding.stats import aggregate_predictions_for_inference
-    >>> df = pd.DataFrame({
-    ...     'Subject': ['S1', 'S1'], 'y_true': [1, 1], 'y_pred': [1, 0],
-    ...     'SampleID': [0, 1]
-    ... })
-    >>> res = aggregate_predictions_for_inference(
-    ...     df, 'accuracy', unit_of_inference='Subject'
+    >>> df = pd.DataFrame(
+    ...     {"Subject": ["S1",
+    ...                           "S1"],
+    ...                           "y_true": [1, 1],
+    ...                           "y_pred": [1, 0],
+    ...                           "SampleID": [0, 1]}
     ... )
+    >>> res = aggregate_predictions_for_inference(df,
+    ...                           "accuracy", unit_of_inference="Subject")
 
     See Also
     --------
@@ -208,7 +210,7 @@ def binomial_accuracy_test(
     --------
     >>> from coco_pipe.decoding.stats import binomial_accuracy_test
     >>> res = binomial_accuracy_test([1, 0, 1], [1, 1, 1], p0=0.5)
-    >>> print(res['p_value'])
+    >>> print(res["p_value"])
 
     See Also
     --------

@@ -23,10 +23,10 @@ any statistical testing:
 .. code-block:: python
 
    scores = result.get_detailed_scores()
-   print(scores[["Model", "Fold", "Metric", "Score"]])
+   print(scores[["Model", "Fold", "Metric", "Value"]])
 
    # Per-model summary: mean ± std across folds
-   summary = scores.groupby(["Model", "Metric"])["Score"].agg(["mean", "std"])
+   summary = scores.groupby(["Model", "Metric"])["Value"].agg(["mean", "std"])
 
 This is the correct starting point for all decoding reports. Always report
 fold-level variability alongside the mean.

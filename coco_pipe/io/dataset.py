@@ -80,7 +80,7 @@ class TabularDataset(BaseDataset):
 
     >>> # Load and reshape wide data (e.g. time series in columns)
     >>> # Columns: T0_F1, T0_F2, T1_F1... -> dims=('time', 'freq')
-    >>> ds = TabularDataset("wide.csv", columns_to_dims=['time', 'freq'], col_sep='_')
+    >>> ds = TabularDataset("wide.csv", columns_to_dims=["time", "freq"], col_sep="_")
     """
 
     def __init__(
@@ -376,7 +376,7 @@ class EmbeddingDataset(BaseDataset):
     Examples
     --------
     >>> # Load loose numpy files
-    >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=('feature',))
+    >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=("feature",))
     >>> container = ds.load()
     """
 

@@ -328,8 +328,10 @@ def gradient_importance(
     >>> class MockModule:
     ...     def __init__(self):
     ...         self.encoder = Encoder()
+    ...
     ...     def eval(self):
     ...         return None
+    ...
     ...     def parameters(self):
     ...         return iter(())
     >>> class MockWrapper:

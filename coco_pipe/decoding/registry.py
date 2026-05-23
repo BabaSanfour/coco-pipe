@@ -150,7 +150,7 @@ def get_estimator_cls(name: str) -> Type:
     Examples
     --------
     >>> from coco_pipe.decoding.registry import get_estimator_cls
-    >>> cls = get_estimator_cls('LogisticRegression')
+    >>> cls = get_estimator_cls("LogisticRegression")
 
     See Also
     --------

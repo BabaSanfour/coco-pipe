@@ -50,6 +50,7 @@ dev = [
 test = [
     "pytest>=7.0",
     "pytest-cov",
+    "beautifulsoup4",
 ]
 docs = [
     "sphinx>=4.0.0",

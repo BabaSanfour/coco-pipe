@@ -5,7 +5,7 @@ High-level API for generating Reports from various sources.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -14,12 +14,17 @@ if TYPE_CHECKING:
 
     from .core import Report
 
+SectionSelection = list[str] | Literal["default"]
+
 
 def from_container(
     container: "DataContainer",
     title: str = "Analysis Report",
-    config: Optional[Dict] = None,
+    config: dict[str, Any] | None = None,
     raw_preview: bool = True,
+    theme: str = "paper",
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
 ) -> Report:
     """
     Create a standard report from a DataContainer.
@@ -34,6 +39,12 @@ def from_container(
         Configuration/provenance info.
     raw_preview : bool
         If True, adds an interactive raw data scroller. Default True.
+    theme : str
+        Report theme preset.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
 
     Returns
     -------
@@ -49,16 +60,26 @@ def from_container(
     """
     from .core import Report
 
-    report = Report(title=title, config=config)
+    report = Report(title=title, config=config, theme=theme, asset_urls=asset_urls)
     report.add_container(container)
 
     if raw_preview:
         report.add_raw_preview(container)
+    if output_path is not None:
+        report.save(output_path)
 
     return report
 
 
-def from_bids(root: Union[str, Path], task: Optional[str] = None, **kwargs) -> Report:
+def from_bids(
+    root: str | Path,
+    task: str | None = None,
+    theme: str = "paper",
+    raw_preview: bool = True,
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
+    **kwargs,
+) -> Report:
     """
     Auto-generate a report from a BIDS dataset.
 
@@ -68,6 +89,14 @@ def from_bids(root: Union[str, Path], task: Optional[str] = None, **kwargs) -> R
         BIDS root directory.
     task : str, optional
         Task name.
+    theme : str
+        Report theme preset.
+    raw_preview : bool
+        If True, adds an interactive raw data scroller.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
     **kwargs
         Additional arguments passed to BIDSDataset (e.g., session, subjects).
 
@@ -86,19 +115,30 @@ def from_bids(root: Union[str, Path], task: Optional[str] = None, **kwargs) -> R
     ds = BIDSDataset(root=root, task=task, **kwargs)
     container = ds.load()
     title = f"BIDS Report: {task}" if task else "BIDS Dataset Report"
-
-    # Auto-Provenance
-    # We construct a dict that matches ReportConfig structure slightly better
-    # or just pass as run_params
     config = {
         "title": title,
         "run_params": {"source": "BIDS", "root": str(root), "task": task, **kwargs},
     }
 
-    return from_container(container, title=title, config=config)
+    return from_container(
+        container,
+        title=title,
+        config=config,
+        raw_preview=raw_preview,
+        theme=theme,
+        asset_urls=asset_urls,
+        output_path=output_path,
+    )
 
 
-def from_tabular(path: Union[str, Path], **kwargs) -> Report:
+def from_tabular(
+    path: str | Path,
+    theme: str = "paper",
+    raw_preview: bool = True,
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
+    **kwargs,
+) -> Report:
     """
     Auto-generate a report from a tabular file (CSV/Excel).
 
@@ -106,6 +146,14 @@ def from_tabular(path: Union[str, Path], **kwargs) -> Report:
     ----------
     path : str or Path
         Path to file.
+    theme : str
+        Report theme preset.
+    raw_preview : bool
+        If True, adds an interactive raw data scroller.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
     **kwargs
         Additional arguments passed to TabularDataset (e.g., target_col, clean).
 
@@ -117,19 +165,31 @@ def from_tabular(path: Union[str, Path], **kwargs) -> Report:
 
     ds = TabularDataset(path=path, **kwargs)
     container = ds.load()
-
-    # Auto-Provenance
+    title = f"Tabular Report: {Path(path).name}"
     config = {
-        "title": f"Tabular Report: {Path(path).name}",
+        "title": title,
         "run_params": {"source": "Tabular", "path": str(path), **kwargs},
     }
 
     return from_container(
-        container, title=f"Tabular Report: {Path(path).name}", config=config
+        container,
+        title=title,
+        config=config,
+        raw_preview=raw_preview,
+        theme=theme,
+        asset_urls=asset_urls,
+        output_path=output_path,
     )
 
 
-def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
+def from_embeddings(
+    path: str | Path,
+    theme: str = "paper",
+    raw_preview: bool = True,
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
+    **kwargs,
+) -> Report:
     """
     Auto-generate a report from a directory of embeddings.
 
@@ -137,6 +197,14 @@ def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
     ----------
     path : str or Path
         Directory containing embedding files.
+    theme : str
+        Report theme preset.
+    raw_preview : bool
+        If True, adds an interactive raw data scroller.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
     **kwargs
         Additional arguments passed to EmbeddingDataset.
 
@@ -153,27 +221,37 @@ def from_embeddings(path: Union[str, Path], **kwargs) -> Report:
 
     ds = EmbeddingDataset(path=path, **kwargs)
     container = ds.load()
-
-    # Auto-Provenance
+    title = f"Embedding Report: {Path(path).name}"
     config = {
-        "title": f"Embedding Report: {Path(path).name}",
+        "title": title,
         "run_params": {"source": "Embeddings", "path": str(path), **kwargs},
     }
 
     return from_container(
-        container, title=f"Embedding Report: {Path(path).name}", config=config
+        container,
+        title=title,
+        config=config,
+        raw_preview=raw_preview,
+        theme=theme,
+        asset_urls=asset_urls,
+        output_path=output_path,
     )
 
 
 def from_reductions(
-    reductions: List[Any],
-    container: Optional["DataContainer"] = None,
-    embeddings: Optional[List[np.ndarray]] = None,
-    labels: Optional[np.ndarray] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    times: Optional[np.ndarray] = None,
+    reductions: list[Any],
+    container: "DataContainer" | None = None,
+    embeddings: list[np.ndarray] | None = None,
+    labels: np.ndarray | None = None,
+    metadata: dict[str, Any] | None = None,
+    times: np.ndarray | None = None,
     title: str = "DimReduction Comparison",
-    config: Optional[Dict] = None,
+    config: dict[str, Any] | None = None,
+    sections: SectionSelection = "default",
+    theme: str = "paper",
+    raw_preview: bool = False,
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
 ) -> Report:
     """
     Create a comparative report from multiple dimensionality reduction results.
@@ -194,6 +272,18 @@ def from_reductions(
         Optional time axis aligned with 3D trajectory embeddings.
     title : str
         Report title.
+    config : dict, optional
+        Extra configuration metadata stored in the report header.
+    sections : list of str or ``"default"``
+        Ordered list of reduction sections to include.
+    theme : str
+        Report theme preset.
+    raw_preview : bool
+        If True and *container* is provided, add an interactive raw data scroller.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
 
     Returns
     -------
@@ -211,41 +301,150 @@ def from_reductions(
     >>> report = from_reductions([pca, tsne], embeddings=[pca_emb, tsne_emb])
     >>> report.save("report.html")
     """
-    from .core import Report
+    from .dim_reduction import make_reduction_report
 
-    report = Report(title=title, config=config)
-
-    if container:
+    factory_output_path = None if container is not None else output_path
+    report = make_reduction_report(
+        reductions,
+        embeddings=embeddings,
+        labels=labels,
+        metadata=metadata,
+        times=times,
+        sections=sections,
+        theme=theme,
+        title=title,
+        config=config,
+        asset_urls=asset_urls,
+        output_path=factory_output_path,
+    )
+    if container is not None:
         report.add_container(container)
-
-    if embeddings is not None and len(embeddings) != len(reductions):
-        raise ValueError("`embeddings` must align with `reductions`.")
-
-    for i, red in enumerate(reductions):
-        # Try to guess a name
-        name = None
-
-        # Priority 1: method attribute
-        if hasattr(red, "method"):
-            candidate = getattr(red, "method")
-            if isinstance(candidate, str):
-                name = candidate
-
-        # Priority 2: Class Name
-        if name is None and hasattr(red, "__class__"):
-            name = red.__class__.__name__
-
-        # Fallback
-        if name is None or not isinstance(name, str):
-            name = f"Method {i + 1}"
-
-        report.add_reduction(
-            red,
-            name=name,
-            X_emb=None if embeddings is None else embeddings[i],
-            labels=labels,
-            metadata=metadata,
-            times=times,
-        )
-
+        if raw_preview:
+            report.add_raw_preview(container)
+        if output_path is not None:
+            report.save(output_path)
     return report
+
+
+def from_experiment_result(
+    result: Any,
+    *,
+    feature_metadata=None,
+    info=None,
+    sections: SectionSelection = "default",
+    interactive: bool = False,
+    theme: str = "paper",
+    title: str = "Decoding Report",
+    config: dict | None = None,
+    asset_urls: dict[str, str] | None = None,
+    output_path: str | Path | None = None,
+) -> "Report":
+    """Build a decoding report from an ``ExperimentResult``.
+
+    Parameters
+    ----------
+    result : Any
+        Decoding result object (e.g. ``ExperimentResult``).
+    feature_metadata : pd.DataFrame, optional
+        Feature-level metadata for sensor map sections.
+    info : mne.Info, optional
+        MNE Info for topomap rendering.
+    sections : list of str or ``"default"``
+        Ordered list of section keys to include.
+    interactive : bool
+        Reserved for future use. Currently ignored.
+    theme : str
+        Matplotlib theme preset (``"paper"`` | ``"notebook"`` | ``"poster"``).
+    title : str
+        Report title.
+    config : dict, optional
+        Extra configuration metadata stored in the report header.
+    asset_urls : dict, optional
+        Override JavaScript asset URLs used by the report shell.
+    output_path : path-like, optional
+        If given, save the rendered report to this path.
+
+    Returns
+    -------
+    Report
+        Fully populated decoding report.
+
+    See Also
+    --------
+    coco_pipe.report.decoding.make_decoding_report : Lower-level factory.
+    merge_reports : Combine multiple reports for cross-run comparison.
+
+    Examples
+    --------
+    >>> report = from_experiment_result(result, title="EEG Decoding")
+    >>> report.save("decoding.html")
+    """
+    from .decoding import make_decoding_report
+
+    report = make_decoding_report(
+        result,
+        feature_metadata=feature_metadata,
+        info=info,
+        sections=sections,
+        interactive=interactive,
+        theme=theme,
+        title=title,
+        config=config,
+        asset_urls=asset_urls,
+        output_path=output_path,
+    )
+    return report
+
+
+def merge_reports(*reports: "Report", title: str = "Comparison Report") -> "Report":
+    """Merge multiple reports into a single comparison report.
+
+    Each source report's sections are copied, prefixed with its own title, and
+    appended to the merged output in the order supplied.
+
+    Parameters
+    ----------
+    *reports : Report
+        Two or more reports to merge.
+    title : str
+        Title for the merged report.
+
+    Returns
+    -------
+    Report
+        A new report whose sections interleave the source reports' content.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two reports are supplied.
+
+    See Also
+    --------
+    from_experiment_result : Build a single decoding report.
+    from_reductions : Build a single reduction report.
+
+    Examples
+    --------
+    >>> r1 = make_decoding_report(result_cohort_a)
+    >>> r2 = make_decoding_report(result_cohort_b)
+    >>> merged = merge_reports(r1, r2, title="Cross-Cohort Comparison")
+    >>> merged.save("comparison.html")
+    """
+    from copy import deepcopy
+
+    from .core import Report, _slugify
+
+    if len(reports) < 2:
+        raise ValueError("merge_reports() requires at least two Report objects.")
+
+    merged = Report(title=title)
+    for source in reports:
+        prefix = getattr(source, "title", "Report") or "Report"
+        for section in getattr(source, "children", []):
+            copied = deepcopy(section)
+            original_title = getattr(section, "title", "")
+            copied.title = f"{prefix} — {original_title}" if original_title else prefix
+            copied.id = _slugify(copied.title)
+            merged.add_section(copied)
+    return merged

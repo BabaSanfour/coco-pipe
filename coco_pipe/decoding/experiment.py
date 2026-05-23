@@ -25,7 +25,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.multiclass import type_of_target
 
-from ..report.provenance import get_environment_info
+from coco_pipe.utils import get_environment_info
+
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
 from ._engine import GroupedSequentialFeatureSelector, fit_and_score_fold
 from ._metrics import get_metric_spec

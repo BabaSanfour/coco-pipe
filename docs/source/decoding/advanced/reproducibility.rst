@@ -97,8 +97,8 @@ Every ``ExperimentResult`` stores reproducibility metadata in
    #   "timestamp": "2026-05-14T04:30:00Z",
    # }
 
-This provenance is captured by ``get_environment_info()`` from
-``coco_pipe.report.provenance`` at the time of ``Experiment.run``.
+This provenance is captured by ``get_environment_info()`` from ``coco_pipe`` at
+the time of ``Experiment.run``.
 
 ---
 

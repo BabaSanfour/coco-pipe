@@ -696,3 +696,33 @@ def test_experiment_calibration_run():
     )
     res = Experiment(config).run(X, y)
     assert "lr" in res.raw
+
+
+def test_experiment_provenance_metadata_integration():
+    """Verify that decoded results contain the dynamic version."""
+    import numpy as np
+    import pandas as pd
+
+    from coco_pipe.decoding.configs import (
+        ClassicalModelConfig,
+        CVConfig,
+        ExperimentConfig,
+    )
+    from coco_pipe.decoding.experiment import Experiment
+
+    config = ExperimentConfig(
+        task="classification",
+        models={"lr": ClassicalModelConfig(estimator="LogisticRegression")},
+        metrics=["accuracy"],
+        cv=CVConfig(strategy="kfold", n_splits=2),
+        tag="test_meta",
+    )
+
+    exp = Experiment(config)
+    exp._observation_level = "epoch"
+    exp._inferential_unit = "sample"
+    exp._sample_metadata = pd.DataFrame()
+
+    meta = exp._build_result_meta(np.zeros((10, 5)), None)
+    assert "coco_pipe_version" in meta
+    assert isinstance(meta["coco_pipe_version"], str)
