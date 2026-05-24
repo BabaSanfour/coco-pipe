@@ -1059,6 +1059,26 @@ class DataContainer:
 
         new_dims_final = (new_dim,) + tuple(preserved)
 
+        n_obs_orig = (
+            self.X.shape[self.dims.index("obs")] if "obs" in self.dims else None
+        )
+        snapshot_coords: Dict[str, np.ndarray] = {
+            d: np.asarray(self.coords[d]).copy() for d in dims if d in self.coords
+        }
+        for coord_name, values in self.coords.items():
+            if coord_name in dims or coord_name in self.dims:
+                continue
+            arr = np.asarray(values)
+            if n_obs_orig is not None and arr.shape[0] == n_obs_orig:
+                snapshot_coords.setdefault(coord_name, arr.copy())
+
+        snapshot = {
+            "y": (None if self.y is None else np.asarray(self.y).copy()),
+            "ids": (None if self.ids is None else np.asarray(self.ids).copy()),
+            "coords": snapshot_coords,
+            "original_dims": tuple(self.dims),
+        }
+
         return replace(
             self,
             X=X_new,
@@ -1070,6 +1090,7 @@ class DataContainer:
                 **self.meta,
                 "stacked_from": dims,
                 "stacked_shapes": tuple(stack_shape),
+                "_stacked_snapshot": snapshot,
             },
         )
 
@@ -1161,6 +1182,27 @@ class DataContainer:
             self.ids if (self.ids is None or len(self.ids) != current_len) else None
         )
 
+        snapshot = self.meta.get("_stacked_snapshot")
+        if snapshot is not None:
+            if snapshot.get("y") is not None:
+                new_y = snapshot["y"]
+            if snapshot.get("ids") is not None:
+                new_ids = snapshot["ids"]
+            for coord_name, values in snapshot.get("coords", {}).items():
+                new_coords[coord_name] = values
+
+            original_dims = snapshot.get("original_dims")
+            if original_dims is not None and set(original_dims) == set(final_dims):
+                # Restore the original dim order by transposing.
+                current_dims = tuple(final_dims)
+                permutation = [current_dims.index(d) for d in original_dims]
+                X_final = np.transpose(X_final, permutation)
+                final_dims = list(original_dims)
+
+        # Drop the snapshot once consumed so downstream stacks don't carry it.
+        new_meta = {k: v for k, v in self.meta.items() if k != "_stacked_snapshot"}
+        new_meta["unstacked_from"] = dim
+
         return replace(
             self,
             X=X_final,
@@ -1168,7 +1210,113 @@ class DataContainer:
             y=new_y,
             ids=new_ids,
             coords=new_coords,
-            meta={**self.meta, "unstacked_from": dim},
+            meta=new_meta,
+        )
+
+    def with_features(
+        self,
+        X: np.ndarray,
+        names: Optional[Sequence[str]] = None,
+        feature_dim: Optional[str] = None,
+        new_dim_name: str = "component",
+    ) -> "DataContainer":
+        """
+        Return a new container with the feature axis replaced.
+
+        Typical use: re-attach reduced-dimensionality scores (e.g. PCA
+        components) to a container, so downstream operations (``unstack``,
+        ``aggregate``, plotting) keep working with proper coordinates.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            New data array. The leading axes must match the container's
+            non-feature axes; the trailing axis is the new feature axis.
+        names : sequence of str, optional
+            Coordinate labels for the new feature axis. When ``None``,
+            integer indices are used. Must have length ``X.shape[-1]``.
+        feature_dim : str, optional
+            Name of the dimension being replaced. Defaults to the last
+            dimension of the container.
+        new_dim_name : str, default='component'
+            Dimension name to assign to the replaced axis when
+            ``feature_dim`` is not present in ``self.dims`` (e.g., when
+            replacing ``channel`` with ``component`` after PCA).
+
+        Returns
+        -------
+        DataContainer
+            New container with ``X`` replaced and the feature-axis coord
+            updated. All other dims, coords, ``y``, ``ids``, and meta are
+            preserved.
+
+        Raises
+        ------
+        ValueError
+            If ``X``'s leading shape doesn't match the container, or if
+            ``names`` has the wrong length.
+
+        Examples
+        --------
+        >>> # After fitting PCA on stacked data:
+        >>> scores = reducer.fit_transform(c_stacked.X)  # (n_obs, 3)
+        >>> c_pc = c_stacked.with_features(
+        ...     scores,
+        ...     names=["PC1", "PC2", "PC3"],
+        ...     new_dim_name="component",
+        ... )
+        >>> c_pc.dims
+        ('obs', 'component')
+        """
+        X = np.asarray(X)
+        if X.ndim != self.X.ndim:
+            raise ValueError(
+                f"`X` must have the same number of dimensions as the container "
+                f"({self.X.ndim}); got {X.ndim}."
+            )
+        if X.shape[:-1] != self.X.shape[:-1]:
+            raise ValueError(
+                f"`X`'s leading axes {X.shape[:-1]} must match the container's "
+                f"non-feature axes {self.X.shape[:-1]}."
+            )
+
+        if feature_dim is None:
+            feature_dim = self.dims[-1]
+
+        # The output axis is renamed to ``new_dim_name`` unconditionally.
+        # When the caller wants to keep the original dim name, they pass
+        # ``new_dim_name=feature_dim`` (or rely on the same name).
+        new_dim = new_dim_name
+
+        n_features_new = X.shape[-1]
+        if names is not None:
+            names_arr = np.asarray(names)
+            if names_arr.shape[0] != n_features_new:
+                raise ValueError(
+                    f"`names` length {names_arr.shape[0]} does not match new "
+                    f"feature count {n_features_new}."
+                )
+        else:
+            names_arr = np.arange(n_features_new)
+
+        # Build new dims tuple, swapping feature_dim → new_dim if changed
+        new_dims = tuple(new_dim if d == self.dims[-1] else d for d in self.dims)
+
+        # Build new coords: drop the old feature coord (if present) and set
+        # the new one
+        new_coords = {k: v for k, v in self.coords.items() if k != self.dims[-1]}
+        new_coords[new_dim] = names_arr
+
+        return replace(
+            self,
+            X=X,
+            dims=new_dims,
+            coords=new_coords,
+            meta={
+                **self.meta,
+                "with_features_from": self.dims[-1],
+                "with_features_to": new_dim,
+            },
         )
 
     def center(self, dim: str = "time", inplace: bool = False) -> "DataContainer":

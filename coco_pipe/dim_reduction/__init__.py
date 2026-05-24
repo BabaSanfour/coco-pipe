@@ -2,16 +2,31 @@ from .analysis import interpret_features
 from .config import METHODS
 from .core import DimReduction
 from .evaluation.geometry import (
+    moving_average,
+    trajectory_acceleration,
     trajectory_auc_speed,
     trajectory_cohesion,
     trajectory_curvature,
+    trajectory_dispersion,
+    trajectory_displacement,
     trajectory_distance_from_center,
     trajectory_intra_spread,
+    trajectory_path_length,
     trajectory_separation,
     trajectory_speed,
+    trajectory_tortuosity,
+    trajectory_turning_angle,
 )
-from .evaluation.metrics import continuity, lcmc, shepard_diagram_data, trustworthiness
+from .evaluation.metrics import (
+    compute_coranking_matrix,
+    compute_mrre,
+    continuity,
+    lcmc,
+    shepard_diagram_data,
+    trustworthiness,
+)
 from .evaluation.stats import grouped_condition_stats, paired_condition_stats
+from .evaluation.velocity import compute_velocity_fields
 from .preprocessing import apply_pca_score_baseline, flip_pc_scores_for_consistency
 from .reducers import (
     BaseReducer,
@@ -32,12 +47,22 @@ __all__ = [
     "trustworthiness",
     "continuity",
     "lcmc",
+    "compute_coranking_matrix",
+    "compute_mrre",
+    "compute_velocity_fields",
     "shepard_diagram_data",
+    "moving_average",
     "trajectory_speed",
+    "trajectory_acceleration",
     "trajectory_curvature",
+    "trajectory_path_length",
+    "trajectory_displacement",
+    "trajectory_tortuosity",
+    "trajectory_turning_angle",
     "trajectory_separation",
     "trajectory_distance_from_center",
     "trajectory_cohesion",
+    "trajectory_dispersion",
     "trajectory_intra_spread",
     "trajectory_auc_speed",
     "paired_condition_stats",

@@ -1,14 +1,21 @@
 """Interactive (Plotly) visualization helpers for coco_pipe.
 
-Organized into two sub-modules:
+Organized into sub-modules:
 
+- :mod:`coco_pipe.viz.interactive.base` — general-purpose plots (bar,
+  distribution groups, heatmap) mirroring :mod:`coco_pipe.viz.base`.
 - :mod:`coco_pipe.viz.interactive.dim_reduction` — embedding, metrics, trajectory,
   feature-importance, and co-ranking plots.
 - :mod:`coco_pipe.viz.interactive.decoding` — confusion matrix, ROC/PR/calibration
   curves, temporal analysis, and feature diagnostics plots.
 """
 
-from . import decoding, dim_reduction
+from . import base, decoding, dim_reduction
+from .base import (
+    plot_bar,
+    plot_distribution_groups,
+    plot_heatmap,
+)
 from .decoding import (
     plot_calibration_curve,
     plot_confusion_matrix,
@@ -51,8 +58,13 @@ from .dim_reduction import (
 )
 
 __all__ = [
+    "base",
     "decoding",
     "dim_reduction",
+    # base (general)
+    "plot_bar",
+    "plot_distribution_groups",
+    "plot_heatmap",
     # dim_reduction
     "plot_channel_traces",
     "plot_coranking_matrix",

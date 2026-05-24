@@ -149,6 +149,7 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     assert container.meta["sfreq"] == 100.0
     assert container.meta["sfreq"] == 100.0
     assert container.coords["age"].tolist() == [30, 30]
+    assert container.coords["subject"].tolist() == ["01", "01"]
 
 
 def test_tabular_dataset_cleaning(tmp_path):

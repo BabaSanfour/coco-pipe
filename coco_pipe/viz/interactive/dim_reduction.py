@@ -1320,15 +1320,99 @@ def plot_trajectory_metric_series(
     return fig
 
 
+def _sem_envelope_traces(
+    traj: np.ndarray,
+    sem: np.ndarray,
+    color: str,
+    name: str,
+    dimensions: int,
+    sem_alpha: float,
+    sem_n_steps: int,
+) -> list[Any]:
+    """Build translucent uncertainty envelope traces for one trajectory.
+
+    Returns a list of Plotly traces (Scatter or Scatter3d). For 2D, each
+    sampled timepoint produces a small ellipse polygon outlined by the
+    per-PC SEM. For 3D, each sampled timepoint produces a small marker
+    sized by the joint SEM magnitude.
+    """
+    n_times = traj.shape[0]
+    if n_times == 0:
+        return []
+    step = max(1, n_times // max(1, sem_n_steps))
+    sample_idx = np.arange(0, n_times, step)
+
+    # Parse the hex color into an rgba string with `sem_alpha`.
+    if color.startswith("#") and len(color) == 7:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        fill_rgba = f"rgba({r},{g},{b},{sem_alpha:.3f})"
+    else:
+        fill_rgba = color
+
+    traces: list[Any] = []
+    if dimensions == 2:
+        theta = np.linspace(0.0, 2.0 * np.pi, 28)
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        for t in sample_idx:
+            sx = float(sem[t, 0]) if np.isfinite(sem[t, 0]) else 0.0
+            sy = float(sem[t, 1]) if np.isfinite(sem[t, 1]) else 0.0
+            if sx <= 0 and sy <= 0:
+                continue
+            cx = float(traj[t, 0])
+            cy = float(traj[t, 1])
+            traces.append(
+                go.Scatter(
+                    x=(cx + sx * cos_t).tolist(),
+                    y=(cy + sy * sin_t).tolist(),
+                    mode="lines",
+                    fill="toself",
+                    fillcolor=fill_rgba,
+                    line=dict(color="rgba(0,0,0,0)"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup=name,
+                )
+            )
+    else:
+        for t in sample_idx:
+            joint = float(np.sqrt(np.nansum(sem[t, :3] ** 2)))
+            if joint <= 0 or not np.isfinite(joint):
+                continue
+            traces.append(
+                go.Scatter3d(
+                    x=[float(traj[t, 0])],
+                    y=[float(traj[t, 1])],
+                    z=[float(traj[t, 2])],
+                    mode="markers",
+                    marker=dict(
+                        size=max(6.0, 14.0 * joint / max(joint, 1e-12)),
+                        color=fill_rgba,
+                        opacity=sem_alpha,
+                        line=dict(width=0),
+                    ),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup=name,
+                )
+            )
+    return traces
+
+
 def plot_trajectory(
     X: np.ndarray,
     times: Optional[np.ndarray] = None,
     labels: Optional[np.ndarray] = None,
     values: Optional[np.ndarray] = None,
+    sem: Optional[np.ndarray] = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     smooth_window: Optional[int] = None,
     downsample: int = 1,
+    sem_alpha: float = 0.18,
+    sem_n_steps: int = 8,
 ) -> go.Figure:
     """
     Plot native trajectory tensors interactively.
@@ -1343,6 +1427,13 @@ def plot_trajectory(
         Optional label per trajectory.
     values : np.ndarray, optional
         Optional scalar overlay with shape ``(n_trajectories, n_times)``.
+    sem : np.ndarray, optional
+        Per-trajectory, per-time, per-dimension uncertainty (typically the
+        across-trial SEM of the trajectory). Shape ``(n_trajectories,
+        n_times, n_dimensions)``. When provided, a translucent uncertainty
+        envelope is drawn around each trajectory: in 2D as small ellipses
+        with semi-axes equal to ``sem`` along each PC; in 3D as small
+        translucent markers sized by the joint SEM magnitude.
     title : str, default="Trajectory Plot"
         Figure title.
     dimensions : int, default=2
@@ -1351,6 +1442,12 @@ def plot_trajectory(
         Moving-average window applied to each trajectory when greater than 1.
     downsample : int, default=1
         Keep every ``downsample``-th time point after smoothing.
+    sem_alpha : float, default=0.18
+        Opacity of the uncertainty envelope when ``sem`` is provided.
+    sem_n_steps : int, default=8
+        Approximate number of timepoints sampled for the uncertainty
+        envelope. Lower values declutter dense trajectories; the line
+        itself is still drawn at full resolution.
 
     Returns
     -------
@@ -1370,7 +1467,10 @@ def plot_trajectory(
     >>> from coco_pipe.viz.interactive import dim_reduction as viz
     >>> X = np.random.default_rng(42).normal(size=(3, 20, 2))
     >>> fig = viz.plot_trajectory(X)
+    >>> sem = np.full_like(X, 0.3)
+    >>> fig = viz.plot_trajectory(X, sem=sem)
     """
+    sem_input = sem
     trajectories, _, labels, values, dimensions = prepare_trajectory_data(
         X,
         times=times,
@@ -1380,6 +1480,27 @@ def plot_trajectory(
         smooth_window=smooth_window,
         downsample=downsample,
     )
+    # Align sem with the (possibly downsampled / smoothed) trajectories.
+    if sem_input is not None:
+        sem_arr = np.asarray(sem_input, dtype=float)
+        x_shape = np.asarray(X).shape
+        if sem_arr.shape != x_shape:
+            raise ValueError(
+                f"`sem` must match `X` shape; got sem {sem_arr.shape} vs X {x_shape}."
+            )
+        sem_arr = sem_arr[:, ::downsample, :dimensions]
+        n_times_traj = trajectories.shape[1]
+        if sem_arr.shape[1] >= n_times_traj:
+            sem_arr = sem_arr[:, :n_times_traj]
+        else:
+            pad = n_times_traj - sem_arr.shape[1]
+            sem_arr = np.concatenate(
+                [sem_arr, np.full((sem_arr.shape[0], pad, dimensions), np.nan)],
+                axis=1,
+            )
+    else:
+        sem_arr = None
+
     fig = go.Figure()
     if values is not None:
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
@@ -1458,6 +1579,18 @@ def plot_trajectory(
             )
             name = str(labels[idx]) if labels is not None else f"Trajectory {idx + 1}"
             show = name not in {trace.name for trace in fig.data if trace.name}
+            # SEM envelope first so it draws underneath the trajectory line
+            if sem_arr is not None:
+                for env_trace in _sem_envelope_traces(
+                    traj,
+                    sem_arr[idx],
+                    color=color,
+                    name=name,
+                    dimensions=dimensions,
+                    sem_alpha=sem_alpha,
+                    sem_n_steps=sem_n_steps,
+                ):
+                    fig.add_trace(env_trace)
             if dimensions == 3:
                 fig.add_trace(
                     go.Scatter3d(

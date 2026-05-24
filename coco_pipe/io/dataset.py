@@ -629,6 +629,12 @@ class BIDSDataset(BaseDataset):
 
         data_list = []
         ids_list = []
+        # Per-trial BIDS path components — exposed as obs-aligned coords so
+        # downstream callers can group by subject/session/run without
+        # parsing the composite ``ids`` strings.
+        subject_per_trial: list[str] = []
+        session_per_trial: list[str] = []
+        run_per_trial: list[str] = []
         meta_columns = (
             {k: [] for k in next(iter(meta_lookup.values())).keys()}
             if meta_lookup
@@ -775,6 +781,11 @@ class BIDSDataset(BaseDataset):
                         new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
                         ids_list.extend(new_ids)
 
+                        # BIDS path components, one entry per epoch
+                        subject_per_trial.extend([str(sub)] * n_epochs)
+                        session_per_trial.extend([str(ses) if ses else ""] * n_epochs)
+                        run_per_trial.extend([str(run) if run else ""] * n_epochs)
+
                         # Repeatedly append subject metadata for each epoch
                         for k, v in sub_meta.items():
                             meta_columns.setdefault(k, []).extend([v] * n_epochs)
@@ -802,6 +813,16 @@ class BIDSDataset(BaseDataset):
             coords["time"] = times
         if ids_list:
             coords["obs"] = np.array(ids_list)
+
+        # BIDS path coords (subject / session / run) — populated from
+        # the loop above so downstream code can ``container.coords['subject']``
+        # directly rather than parsing ``container.ids``.
+        if subject_per_trial:
+            coords["subject"] = np.array(subject_per_trial)
+        if session_per_trial and any(s for s in session_per_trial):
+            coords["session"] = np.array(session_per_trial)
+        if run_per_trial and any(r for r in run_per_trial):
+            coords["run"] = np.array(run_per_trial)
 
         # Add metadata coords
         for k, v in meta_columns.items():

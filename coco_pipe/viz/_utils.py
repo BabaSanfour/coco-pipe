@@ -1075,6 +1075,29 @@ def prepare_fold_score_data(
     return _scalar_decoding_scores(frame, "get_detailed_scores")
 
 
+def _auto_select_single_model(
+    summary: pd.DataFrame,
+    model: str | None,
+) -> str | None:
+    """Auto-pick the single model when ``model`` is None and there is only one.
+
+    Returns the selected model name (or the input ``model`` unchanged when
+    an explicit value was provided). When multiple models are present and
+    no explicit model was requested, returns ``None`` so downstream
+    ``select_rows`` does not filter by model — the caller is expected to
+    handle the multi-model case (e.g. plot one trace per model) or raise
+    its own clearer error later.
+    """
+    if model is not None:
+        return model
+    if "Model" not in summary.columns:
+        return None
+    unique_models = summary["Model"].dropna().unique()
+    if len(unique_models) == 1:
+        return str(unique_models[0])
+    return None
+
+
 def prepare_temporal_score_curve_frame(
     result_or_scores: Any,
     model: str | None = None,
@@ -1089,6 +1112,7 @@ def prepare_temporal_score_curve_frame(
         ["Model", "Metric", "Time", "Mean"],
         context="get_temporal_score_summary",
     )
+    model = _auto_select_single_model(summary, model)
     summary = select_rows(summary, model=model, metric=metric)
     return require_non_empty(
         summary[summary["Time"].notna()].copy(), "temporal score curve"
@@ -1109,6 +1133,7 @@ def prepare_temporal_generalization_matrix(
         ["Model", "Metric", "TrainTime", "TestTime", "Mean"],
         context="get_temporal_score_summary",
     )
+    model = _auto_select_single_model(summary, model)
     summary = select_rows(summary, model=model, metric=metric)
     matrix_data = summary[
         summary["TrainTime"].notna() & summary["TestTime"].notna()
@@ -1137,6 +1162,7 @@ def prepare_temporal_statistical_frame(
         ["Model", "Metric", "Observed", "Time"],
         context="get_statistical_assessment",
     )
+    model = _auto_select_single_model(frame, model)
     frame = select_rows(frame, model=model, metric=metric)
     frame = frame[frame["Time"].notna()].copy()
     require_non_empty(frame, "temporal statistical assessment")
