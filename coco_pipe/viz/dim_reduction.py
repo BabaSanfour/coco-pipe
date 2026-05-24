@@ -1403,3 +1403,97 @@ def plot_component_loadings(
             ),
         )
         return fig, ax
+
+
+def plot_phase_portrait(
+    X: np.ndarray,
+    times: np.ndarray,
+    labels: Sequence,
+    component_idx: int = 0,
+    title: str = "Phase Portrait",
+    figsize: tuple[float, float] | None = (8, 6),
+    ax: plt.Axes | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot a phase portrait (amplitude vs velocity) for condition-mean trajectories.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Trajectory array with shape ``(n_conditions, n_times, n_components)``.
+    times : np.ndarray
+        One-dimensional time axis aligned with the time dimension of ``X``.
+    labels : sequence
+        Condition labels, one per trajectory (first axis of ``X``).
+    component_idx : int, default=0
+        Index of the component to extract for the portrait.
+    title : str, default="Phase Portrait"
+        Axes title.
+    figsize : tuple[float, float], optional
+        Figure size used when creating new axes.
+    ax : matplotlib.axes.Axes, optional
+        Existing Matplotlib axes to draw into.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]
+        The created or reused figure and axes.
+
+    See Also
+    --------
+    coco_pipe.viz.interactive.dim_reduction.plot_phase_portrait :
+        Interactive Plotly version.
+    plot_trajectory : Full trajectory geometry in 2D or 3D space.
+    plot_trajectory_metric_series : Scalar metric timecourses per trajectory.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from coco_pipe.viz import dim_reduction as viz
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(3, 20, 5))
+    >>> times = np.linspace(0, 1, 20)
+    >>> fig, ax = viz.plot_phase_portrait(X, times, labels=["A", "B", "C"])
+    """
+    X = np.asarray(X)
+    if X.ndim != 3:
+        raise ValueError(
+            f"`X` must be 3D with shape (n_conditions, n_times, n_components). "
+            f"Got {X.shape}."
+        )
+    times = np.asarray(times, dtype=float)
+    if len(times) != X.shape[1]:
+        raise ValueError(
+            f"`times` length ({len(times)}) must match n_times ({X.shape[1]})."
+        )
+    if component_idx < 0 or component_idx >= X.shape[2]:
+        raise ValueError(
+            f"`component_idx` {component_idx} out of bounds "
+            f"for n_components={X.shape[2]}."
+        )
+
+    dt = np.diff(times).mean() if len(times) > 1 else 1.0
+    amplitude = X[:, :, component_idx]
+    velocity = np.gradient(amplitude, axis=1) / dt
+
+    with coco_theme():
+        fig, cur_ax = get_figure(ax, figsize, (8, 6))
+        palette = sns.color_palette("deep", len(labels))
+        for idx, label in enumerate(labels):
+            cur_ax.plot(
+                amplitude[idx],
+                velocity[idx],
+                marker="o",
+                markersize=4,
+                linewidth=2,
+                color=palette[idx % len(palette)],
+                label=str(label),
+            )
+        finalize_axes(
+            cur_ax,
+            title=title,
+            xlabel=f"PC{component_idx + 1} Amplitude",
+            ylabel=f"PC{component_idx + 1} Velocity",
+            legend=True,
+            legend_title="Condition",
+        )
+        return fig, cur_ax

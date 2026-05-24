@@ -68,3 +68,49 @@ def test_interactive_module_returns_plotly():
     X_emb = np.random.rand(10, 2)
     fig_interactive = viz_interactive.plot_embedding(X_emb)
     assert isinstance(fig_interactive, go.Figure)
+
+
+def test_plot_phase_portrait_returns_figure():
+    go = pytest.importorskip("plotly.graph_objects")
+    rng = np.random.default_rng(42)
+    X = rng.normal(size=(3, 20, 5))
+    times = np.linspace(0.0, 1.0, 20)
+    labels = ["CondA", "CondB", "CondC"]
+
+    fig = viz_interactive.plot_phase_portrait(X, times, labels)
+
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 3
+    for trace, label in zip(fig.data, labels):
+        assert trace.name == label
+        assert len(trace.x) == 20
+        assert len(trace.y) == 20
+
+
+def test_plot_phase_portrait_component_idx():
+    go = pytest.importorskip("plotly.graph_objects")
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(2, 15, 4))
+    times = np.arange(15, dtype=float)
+    fig = viz_interactive.plot_phase_portrait(
+        X, times, labels=["X", "Y"], component_idx=2
+    )
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2
+
+
+def test_plot_phase_portrait_invalid_inputs():
+    rng = np.random.default_rng(1)
+    times = np.linspace(0, 1, 10)
+
+    with pytest.raises(ValueError, match="3D"):
+        viz_interactive.plot_phase_portrait(
+            rng.normal(size=(3, 10)), times, ["A", "B", "C"]
+        )
+
+    X = rng.normal(size=(2, 10, 3))
+    with pytest.raises(ValueError, match="times"):
+        viz_interactive.plot_phase_portrait(X, np.linspace(0, 1, 5), ["A", "B"])
+
+    with pytest.raises(ValueError, match="component_idx"):
+        viz_interactive.plot_phase_portrait(X, times, ["A", "B"], component_idx=10)

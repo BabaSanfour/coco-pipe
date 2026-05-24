@@ -38,6 +38,7 @@ __all__ = [
     "plot_feature_importance",
     "plot_loss_history",
     "plot_metrics",
+    "plot_phase_portrait",
     "plot_radar_comparison",
     "plot_raw_preview",
     "plot_shepard_diagram",
@@ -1747,6 +1748,94 @@ def plot_trajectory_separation(
         xaxis_title="Time",
         yaxis_title="Separation",
         height=420,
+    )
+    return fig
+
+
+def plot_phase_portrait(
+    X: np.ndarray,
+    times: np.ndarray,
+    labels: Sequence[str],
+    component_idx: int = 0,
+    title: str = "Phase Portrait",
+) -> go.Figure:
+    """
+    Plot a phase portrait (amplitude vs velocity) for condition-mean trajectories.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Trajectory array with shape ``(n_conditions, n_times, n_components)``.
+    times : np.ndarray
+        One-dimensional time axis aligned with the time dimension of ``X``.
+    labels : sequence of str
+        Condition labels, one per trajectory (first axis of ``X``).
+    component_idx : int, default=0
+        Index of the component to extract for the portrait.
+    title : str, default="Phase Portrait"
+        Figure title.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive phase portrait figure.
+
+    See Also
+    --------
+    plot_trajectory : Full trajectory geometry in 2D or 3D space.
+    plot_trajectory_metric_series : Scalar metric timecourses per trajectory.
+    coco_pipe.viz.dim_reduction.plot_phase_portrait : Static Matplotlib version.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from coco_pipe.viz.interactive import dim_reduction as viz
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(3, 20, 5))
+    >>> times = np.linspace(0, 1, 20)
+    >>> fig = viz.plot_phase_portrait(X, times, labels=["A", "B", "C"])
+    """
+    X = np.asarray(X)
+    if X.ndim != 3:
+        raise ValueError(
+            f"`X` must be 3D with shape (n_conditions, n_times, n_components). "
+            f"Got {X.shape}."
+        )
+    times = np.asarray(times, dtype=float)
+    if len(times) != X.shape[1]:
+        raise ValueError(
+            f"`times` length ({len(times)}) must match n_times ({X.shape[1]})."
+        )
+    if component_idx < 0 or component_idx >= X.shape[2]:
+        raise ValueError(
+            f"`component_idx` {component_idx} out of bounds "
+            f"for n_components={X.shape[2]}."
+        )
+
+    dt = np.diff(times).mean() if len(times) > 1 else 1.0
+    amplitude = X[:, :, component_idx]
+    velocity = np.gradient(amplitude, axis=1) / dt
+
+    palette = list(_COLORBLIND_COLORS)
+    fig = go.Figure()
+    for idx, label in enumerate(labels):
+        color = palette[idx % len(palette)]
+        fig.add_trace(
+            go.Scatter(
+                x=amplitude[idx],
+                y=velocity[idx],
+                mode="lines+markers",
+                name=str(label),
+                line=dict(color=color, width=2),
+                marker=dict(size=5, color=color),
+            )
+        )
+    _apply_layout(
+        fig,
+        title=title,
+        xaxis_title=f"PC{component_idx + 1} Amplitude",
+        yaxis_title=f"PC{component_idx + 1} Velocity",
+        height=450,
     )
     return fig
 
