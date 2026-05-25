@@ -995,10 +995,12 @@ def plot_trajectory(
     times: np.ndarray | None = None,
     values: np.ndarray | None = None,
     labels: np.ndarray | None = None,
+    color_map: dict[str, str] | None = None,
     smooth_window: int = 1,
     downsample: int = 1,
     speed_mode: Literal["linecollection", "alpha"] = "linecollection",
     add_start_end_markers: bool = False,
+    show_markers: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     linewidth: float = 2.5,
@@ -1021,6 +1023,8 @@ def plot_trajectory(
         Per-point scalar values (e.g. speed) used for colour encoding.
     labels : array-like of length n_trajectories, optional
         Label per trajectory used for colouring and legend.
+    color_map : dict[str, str], optional
+        Optional mapping of label to hex color string.
     smooth_window : int, default=1
         Moving-average window applied before plotting.
     downsample : int, default=1
@@ -1032,6 +1036,9 @@ def plot_trajectory(
     add_start_end_markers : bool, default=False
         Draw a circle (●) at the start and a cross (✕) at the end of each
         trajectory instead of a marker on every point.
+    show_markers : bool, default=True
+        If True, draws markers at each sampled time point unless
+        ``add_start_end_markers`` is True.
     xlim, ylim : tuple[float, float], optional
         Fixed axis limits.  Auto-scaled when ``None``.
     linewidth : float, default=2.5
@@ -1079,9 +1086,12 @@ def plot_trajectory(
         palette = sns.color_palette("deep", n_trajectories)
         label_colors = None
         if labels is not None:
-            unique = list(dict.fromkeys(np.asarray(labels).tolist()))
-            colors = sns.color_palette("deep", len(unique))
-            label_colors = dict(zip(unique, colors))
+            if color_map is not None:
+                label_colors = color_map
+            else:
+                unique = list(dict.fromkeys(np.asarray(labels).tolist()))
+                colors = sns.color_palette("deep", len(unique))
+                label_colors = dict(zip(unique, colors))
 
         norm = None
         colorbar_added = False
@@ -1094,7 +1104,7 @@ def plot_trajectory(
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
             line_label = str(labels[idx]) if labels is not None else None
             line_color = (
-                label_colors[labels[idx]]
+                label_colors.get(labels[idx], palette[idx % len(palette)])
                 if label_colors is not None
                 else palette[idx % len(palette)]
             )
@@ -1145,7 +1155,7 @@ def plot_trajectory(
                 ax.plot(
                     traj[:, 0],
                     traj[:, 1],
-                    marker=None if add_start_end_markers else "o",
+                    marker="o" if show_markers and not add_start_end_markers else None,
                     linewidth=linewidth,
                     color=line_color,
                     label=line_label,
@@ -1155,7 +1165,7 @@ def plot_trajectory(
                     traj[:, 0],
                     traj[:, 1],
                     traj[:, 2],
-                    marker=None if add_start_end_markers else "o",
+                    marker="o" if show_markers and not add_start_end_markers else None,
                     linewidth=linewidth,
                     color=line_color,
                     label=line_label,

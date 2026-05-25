@@ -48,6 +48,7 @@ __all__ = [
 _LINEAR_DIAGNOSTIC_ATTRS = (
     "explained_variance_ratio_",
     "singular_values_",
+    "participation_ratio_",
 )
 
 
@@ -231,6 +232,26 @@ class PCAReducer(BaseReducer):
         if self.model is None:
             raise RuntimeError("Model is not fitted yet.")
         return self.model.explained_variance_ratio_
+
+    @property
+    def participation_ratio_(self) -> float:
+        """
+        Effective dimensionality computed as the Participation Ratio.
+
+        Returns
+        -------
+        float
+            Participation ratio of the retained components.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        evr = self.explained_variance_ratio_
+        if evr.sum() == 0:
+            return 0.0
+        return float((evr.sum() ** 2) / (evr**2).sum())
 
     @property
     def components_(self) -> np.ndarray:
@@ -447,6 +468,62 @@ class IncrementalPCAReducer(BaseReducer):
         self._require_fitted()
         return self.model.transform(X)
 
+    @property
+    def explained_variance_ratio_(self) -> np.ndarray:
+        """
+        Percentage of variance explained by each selected component.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components,)
+            Explained variance ratio for each retained component.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted yet.")
+        return self.model.explained_variance_ratio_
+
+    @property
+    def participation_ratio_(self) -> float:
+        """
+        Effective dimensionality computed as the Participation Ratio.
+
+        Returns
+        -------
+        float
+            Participation ratio of the retained components.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        evr = self.explained_variance_ratio_
+        if evr.sum() == 0:
+            return 0.0
+        return float((evr.sum() ** 2) / (evr**2).sum())
+
+    @property
+    def components_(self) -> np.ndarray:
+        """
+        Principal axes in feature space.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components, n_features)
+            Principal component loading matrix.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        return _get_components(self.model)
+
     def get_components(self) -> np.ndarray:
         """
         Return the incremental PCA component loading matrix.
@@ -619,6 +696,62 @@ class DaskPCAReducer(BaseReducer):
         """
         self._require_fitted()
         return self.model.transform(X)
+
+    @property
+    def explained_variance_ratio_(self) -> np.ndarray:
+        """
+        Percentage of variance explained by each selected component.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components,)
+            Explained variance ratio for each retained component.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted yet.")
+        return self.model.explained_variance_ratio_
+
+    @property
+    def participation_ratio_(self) -> float:
+        """
+        Effective dimensionality computed as the Participation Ratio.
+
+        Returns
+        -------
+        float
+            Participation ratio of the retained components.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        evr = self.explained_variance_ratio_
+        if evr.sum() == 0:
+            return 0.0
+        return float((evr.sum() ** 2) / (evr**2).sum())
+
+    @property
+    def components_(self) -> np.ndarray:
+        """
+        Principal axes in feature space.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components, n_features)
+            Principal component loading matrix.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        return _get_components(self.model)
 
     def get_components(self) -> np.ndarray:
         """
@@ -798,6 +931,62 @@ class DaskTruncatedSVDReducer(BaseReducer):
         """
         self._require_fitted()
         return self.model.transform(X)
+
+    @property
+    def explained_variance_ratio_(self) -> np.ndarray:
+        """
+        Percentage of variance explained by each selected component.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components,)
+            Explained variance ratio for each retained component.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        if self.model is None:
+            raise RuntimeError("Model is not fitted yet.")
+        return self.model.explained_variance_ratio_
+
+    @property
+    def participation_ratio_(self) -> float:
+        """
+        Effective dimensionality computed as the Participation Ratio.
+
+        Returns
+        -------
+        float
+            Participation ratio of the retained components.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        evr = self.explained_variance_ratio_
+        if evr.sum() == 0:
+            return 0.0
+        return float((evr.sum() ** 2) / (evr**2).sum())
+
+    @property
+    def components_(self) -> np.ndarray:
+        """
+        Principal axes in feature space.
+
+        Returns
+        -------
+        np.ndarray of shape (n_components, n_features)
+            Principal component loading matrix.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        """
+        return _get_components(self.model)
 
     def get_components(self) -> np.ndarray:
         """

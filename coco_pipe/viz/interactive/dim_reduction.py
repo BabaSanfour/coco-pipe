@@ -1408,12 +1408,14 @@ def plot_trajectory(
     labels: Optional[np.ndarray] = None,
     values: Optional[np.ndarray] = None,
     sem: Optional[np.ndarray] = None,
+    color_map: Optional[dict[str, str]] = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     smooth_window: Optional[int] = None,
     downsample: int = 1,
     sem_alpha: float = 0.18,
     sem_n_steps: int = 8,
+    show_markers: bool = True,
 ) -> go.Figure:
     """
     Plot native trajectory tensors interactively.
@@ -1435,6 +1437,8 @@ def plot_trajectory(
         envelope is drawn around each trajectory: in 2D as small ellipses
         with semi-axes equal to ``sem`` along each PC; in 3D as small
         translucent markers sized by the joint SEM magnitude.
+    color_map : dict[str, str], optional
+        Optional mapping of label to hex color string.
     title : str, default="Trajectory Plot"
         Figure title.
     dimensions : int, default=2
@@ -1449,6 +1453,8 @@ def plot_trajectory(
         Approximate number of timepoints sampled for the uncertainty
         envelope. Lower values declutter dense trajectories; the line
         itself is still drawn at full resolution.
+    show_markers : bool, default=True
+        If True, draws markers at each sampled time point.
 
     Returns
     -------
@@ -1567,14 +1573,17 @@ def plot_trajectory(
         palette = list(_COLORBLIND_COLORS)
         label_color_map = None
         if labels is not None:
-            unique_labels = list(dict.fromkeys(labels.tolist()))
-            label_color_map = {
-                label: palette[idx % len(palette)]
-                for idx, label in enumerate(unique_labels)
-            }
+            if color_map is not None:
+                label_color_map = color_map
+            else:
+                unique_labels = list(dict.fromkeys(labels.tolist()))
+                label_color_map = {
+                    label: palette[idx % len(palette)]
+                    for idx, label in enumerate(unique_labels)
+                }
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
             color = (
-                label_color_map[labels[idx]]
+                label_color_map.get(labels[idx], palette[idx % len(palette)])
                 if label_color_map is not None
                 else palette[idx % len(palette)]
             )
@@ -1598,7 +1607,7 @@ def plot_trajectory(
                         x=traj[:, 0],
                         y=traj[:, 1],
                         z=traj[:, 2],
-                        mode="lines+markers",
+                        mode="lines+markers" if show_markers else "lines",
                         line=dict(color=color, width=4),
                         marker=dict(size=4, color=color),
                         name=name,
@@ -1611,7 +1620,7 @@ def plot_trajectory(
                     go.Scatter(
                         x=traj[:, 0],
                         y=traj[:, 1],
-                        mode="lines+markers",
+                        mode="lines+markers" if show_markers else "lines",
                         line=dict(color=color, width=3),
                         marker=dict(size=6, color=color),
                         name=name,
