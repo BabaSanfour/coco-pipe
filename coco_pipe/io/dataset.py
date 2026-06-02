@@ -570,6 +570,7 @@ class BIDSDataset(BaseDataset):
         tmin: float = -0.2,
         tmax: float = 0.5,
         baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
+        drop_short_epochs: bool = True,
     ):
         self.root = Path(root)
         self.task = task
@@ -588,6 +589,7 @@ class BIDSDataset(BaseDataset):
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
+        self.drop_short_epochs = drop_short_epochs
 
     def load(self) -> DataContainer:
         """
@@ -796,6 +798,69 @@ class BIDSDataset(BaseDataset):
 
         if not data_list:
             raise RuntimeError(f"No valid data found in {self.root}")
+
+        # --- HANDLE VARIABLE EPOCH LENGTHS ---
+        # Some recordings have edge epochs shorter than the requested window
+        # (event placed too close to end-of-file).  Build a per-epoch boolean
+        # mask so we can filter the flat id/coord lists consistently.
+        t_lengths = [d.shape[2] for d in data_list]
+        t_expected = max(t_lengths)
+        if min(t_lengths) < t_expected:
+            import warnings as _warnings
+
+            short_set = {i for i, t in enumerate(t_lengths) if t < t_expected}
+            n_short = sum(data_list[i].shape[0] for i in short_set)
+
+            # Build epoch-level keep mask aligned with ids_list / *_per_trial lists
+            epoch_keep = []
+            for i, d in enumerate(data_list):
+                epoch_keep.extend([i not in short_set] * d.shape[0])
+            epoch_keep = np.asarray(epoch_keep, dtype=bool)
+
+            if self.drop_short_epochs:
+                _warnings.warn(
+                    f"Dropping {n_short} epoch(s) from {len(short_set)} batch(es) "
+                    f"with fewer than {t_expected} time samples "
+                    f"(pass drop_short_epochs=False to crop to shortest instead).",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                data_list = [
+                    data_list[i] for i in range(len(data_list)) if i not in short_set
+                ]
+                labels_list = (
+                    [
+                        labels_list[i]
+                        for i in range(len(labels_list))
+                        if i not in short_set
+                    ]
+                    if labels_list
+                    else labels_list
+                )
+                ids_list = [v for v, k in zip(ids_list, epoch_keep) if k]
+                subject_per_trial = [
+                    v for v, k in zip(subject_per_trial, epoch_keep) if k
+                ]
+                session_per_trial = [
+                    v for v, k in zip(session_per_trial, epoch_keep) if k
+                ]
+                run_per_trial = [v for v, k in zip(run_per_trial, epoch_keep) if k]
+                for col in meta_columns:
+                    meta_columns[col] = [
+                        v for v, k in zip(meta_columns[col], epoch_keep) if k
+                    ]
+            else:
+                t_min = min(t_lengths)
+                _warnings.warn(
+                    f"Variable epoch lengths detected ({t_min}–{t_expected} samples). "
+                    f"Cropping all epochs to {t_min} samples "
+                    f"(pass drop_short_epochs=True to drop short epochs instead).",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                data_list = [d[:, :, :t_min] for d in data_list]
+                if times is not None:
+                    times = times[:t_min]
 
         # --- CONCATENATE ---
         try:

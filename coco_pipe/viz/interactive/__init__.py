@@ -15,6 +15,7 @@ from .base import (
     plot_bar,
     plot_distribution_groups,
     plot_heatmap,
+    plot_timecourses,
 )
 from .decoding import (
     plot_calibration_curve,
@@ -39,10 +40,8 @@ from .decoding import (
     plot_training_history,
 )
 from .dim_reduction import (
-    plot_channel_traces,
     plot_component_loadings,
     plot_coranking_matrix,
-    plot_eigenvalues,
     plot_embedding,
     plot_feature_correlation_heatmap,
     plot_feature_importance,
@@ -51,6 +50,7 @@ from .dim_reduction import (
     plot_phase_portrait,
     plot_radar_comparison,
     plot_raw_preview,
+    plot_scree,
     plot_shepard_diagram,
     plot_streamlines,
     plot_trajectory,
@@ -66,11 +66,11 @@ __all__ = [
     "plot_bar",
     "plot_distribution_groups",
     "plot_heatmap",
+    "plot_timecourses",
     # dim_reduction
-    "plot_channel_traces",
     "plot_coranking_matrix",
     "plot_component_loadings",
-    "plot_eigenvalues",
+    "plot_scree",
     "plot_embedding",
     "plot_feature_correlation_heatmap",
     "plot_feature_importance",

@@ -10,16 +10,17 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import TwoSlopeNorm
 
 from ._utils import _coerce_series, coerce_sensor_layout, finalize_axes
-from .theme import DIVERGING, QUALITATIVE, SEQUENTIAL, figure_size
+from .theme import DIVERGING, QUALITATIVE, SEQUENTIAL, coco_theme, figure_size
 
 
 def _colored_line_collection(
     x: np.ndarray,
     y: np.ndarray,
     values: np.ndarray,
-    cmap_name: str,
-    linewidth: float,
-    norm=None,
+    cmap: str,
+    linewidth: float = 2.5,
+    linestyle: str = "-",
+    norm: plt.Normalize | None = None,
 ) -> LineCollection:
     """Build a 2D line collection whose segment color encodes values."""
     n = min(len(x), len(y), len(values))
@@ -31,9 +32,10 @@ def _colored_line_collection(
 
     points = np.column_stack([x, y]).reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    lc = LineCollection(segments, cmap=plt.get_cmap(cmap_name), norm=norm)
+    lc = LineCollection(segments, cmap=plt.get_cmap(cmap), norm=norm)
     lc.set_array(values[:-1])
     lc.set_linewidth(linewidth)
+    lc.set_linestyle(linestyle)
     lc.set_joinstyle("round")
     lc.set_capstyle("round")
     return lc
@@ -47,6 +49,7 @@ def _plot_alpha_encoded_line(
     base_color: Any,
     label: str | None = None,
     linewidth: float = 3.2,
+    linestyle: str = "-",
     alpha_min: float = 0.20,
     alpha_max: float = 1.00,
 ) -> None:
@@ -88,7 +91,12 @@ def _plot_alpha_encoded_line(
         segment_colors.append((*rgb, alpha))
 
     lc = LineCollection(
-        segments, colors=segment_colors, linewidths=linewidth, capstyle="round"
+        segments,
+        colors=segment_colors,
+        linewidths=linewidth,
+        linestyles=linestyle,
+        capstyle="round",
+        joinstyle="round",
     )
     ax.add_collection(lc)
     if label is not None:
@@ -1326,3 +1334,330 @@ def plot_topomap(
         if cbar_label:
             cb.set_label(cbar_label)
     return fig, ax
+
+
+def plot_timecourses(
+    data: np.ndarray | pd.DataFrame,
+    times: np.ndarray,
+    channel_names: Sequence[str] | None = None,
+    rois: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
+    group_labels: Sequence[Any] | None = None,
+    group_name_map: Mapping[Any, str] | None = None,
+    palette: Mapping[Any, Any] | Sequence[Any] | None = None,
+    linestyle_map: Mapping[Any, str] | None = None,
+    n_cols: int | None = None,
+    error_style: str = "band",
+    xlabel: str = "Time",
+    ylabel: str = "Amplitude",
+    title: str | None = None,
+    figsize: tuple[float, float] | None = None,
+    sharey: bool = True,
+    sharex: bool = True,
+    add_zero: bool = False,
+    axes_kws: dict | None = None,
+    **kwargs: Any,
+) -> tuple[plt.Figure, np.ndarray]:
+    """Plot timecourses (ERPs, ERFs, source activations) across channels or ROIs.
+
+    Parameters
+    ----------
+    data
+        Shape ``(n_trials, n_channels, n_times)`` or ``(n_channels, n_times)``.
+    times
+        Time axis values, shape ``(n_times,)``.
+    channel_names
+        Names of the channels in ``data``. Required if ``rois`` specifies channel names.
+        If ``data`` is ``(n_channels, n_times)`` and ``channel_names`` is omitted,
+        channels are numbered.
+    rois
+        Mapping of ``{roi_name: [channel_names]}`` to average over. If a sequence
+        of strings is provided, each string is treated as a single-channel ROI.
+        If None, all channels are plotted individually.
+    group_labels
+        Shape ``(n_trials,)`` assigning each trial to a group. If None, all trials are
+        averaged together.
+    group_name_map
+        Mapping to rename groups for the legend.
+    palette
+        Color mapping for groups. Can be a dictionary or a list of colors.
+    linestyle_map
+        Linestyle mapping for groups.
+    n_cols
+        Maximum number of columns for the subplot grid.
+    error_style
+        "band" (shaded SEM) or "bar" (errorbars). Passed to `plot_line`.
+    xlabel
+        X-axis label.
+    ylabel
+        Y-axis label.
+    title
+        Figure title.
+    figsize
+        Custom figure size.
+    sharey, sharex
+        Whether to share axes across subplots.
+    add_zero
+        Whether to add reference lines at Time=0 and Amplitude=0.
+    axes_kws
+        Dictionary of keyword arguments passed to `finalize_axes` (e.g. `grid=False`).
+    kwargs
+        Additional arguments passed to `plot_line`.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, np.ndarray]
+        Figure and axes array.
+    """
+    if isinstance(data, pd.DataFrame):
+        data = data.to_numpy()
+
+    data = np.asarray(data, dtype=float)
+    if data.ndim == 2:
+        data = data[np.newaxis, :, :]  # (1, n_channels, n_times)
+    elif data.ndim != 3:
+        raise ValueError(
+            "data must be 2D (channels, times) or 3D (trials, channels, times)."
+        )
+
+    n_trials, n_channels, n_times = data.shape
+    if len(times) != n_times:
+        raise ValueError("Length of times must match the last dimension of data.")
+
+    if channel_names is None:
+        channel_names = [f"Ch{i}" for i in range(n_channels)]
+    elif len(channel_names) != n_channels:
+        raise ValueError(
+            "Length of channel_names must match the second dimension of data."
+        )
+
+    # Resolve ROIs
+    if rois is None:
+        roi_dict = {ch: [ch] for ch in channel_names}
+    elif isinstance(rois, Mapping):
+        roi_dict = dict(rois)
+    else:
+        roi_dict = {ch: [ch] for ch in rois}
+
+    # Resolve groups
+    if group_labels is None:
+        group_labels = np.zeros(n_trials, dtype=int)
+        unique_groups = [0]
+    else:
+        group_labels = np.asarray(group_labels)
+        if len(group_labels) != n_trials:
+            raise ValueError(
+                "Length of group_labels must match the first dimension of data."
+            )
+        unique_groups = []
+        for g in group_labels:
+            if g not in unique_groups:
+                unique_groups.append(g)
+
+    # Setup grid
+    n_plots = len(roi_dict)
+    if n_cols is None:
+        n_cols = min(n_plots, 4)
+    n_cols = min(n_cols, n_plots)
+    n_rows = int(np.ceil(n_plots / n_cols))
+
+    if figsize is None:
+        figsize = (4 * n_cols, 3 * n_rows)
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=figsize,
+        sharex=sharex,
+        sharey=sharey,
+        constrained_layout=True,
+    )
+    if n_plots == 1:
+        axes_flat = [axes]
+    else:
+        axes_flat = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+
+    if title:
+        fig.suptitle(title, fontsize=14)
+
+    with coco_theme():
+        for idx, (roi_name, roi_channels) in enumerate(roi_dict.items()):
+            ax = axes_flat[idx]
+            ch_idx = [j for j, ch in enumerate(channel_names) if ch in roi_channels]
+
+            if not ch_idx:
+                finalize_axes(ax, title=f"{roi_name} (No channels)", **(axes_kws or {}))
+                continue
+
+            # Average over channels in this ROI
+            data_roi = np.nanmean(
+                data[:, ch_idx, :], axis=1
+            )  # shape: (n_trials, n_times)
+
+            for g_idx, grp in enumerate(unique_groups):
+                grp_mask = group_labels == grp
+                grp_data = data_roi[grp_mask, :]
+
+                if grp_data.shape[0] == 0:
+                    continue
+
+                mean_erp = np.nanmean(grp_data, axis=0)
+                if grp_data.shape[0] > 1:
+                    sem_erp = np.nanstd(grp_data, axis=0) / np.sqrt(grp_data.shape[0])
+                else:
+                    sem_erp = None
+
+                # Styling
+                color = None
+                if isinstance(palette, Mapping):
+                    color = palette.get(grp, palette.get(str(grp)))
+                elif isinstance(palette, Sequence):
+                    color = palette[g_idx % len(palette)]
+
+                linestyle = None
+                if linestyle_map:
+                    linestyle = linestyle_map.get(
+                        grp, linestyle_map.get(str(grp), "solid")
+                    )
+                    if linestyle == "dash":
+                        linestyle = "dashed"
+
+                label = None
+                if group_name_map:
+                    label = group_name_map.get(
+                        grp, group_name_map.get(str(grp), str(grp))
+                    )
+                else:
+                    label = str(grp) if len(unique_groups) > 1 else None
+
+                # Only add legend to the first ax if not None
+                if idx > 0 and label is not None:
+                    label = "_nolegend_"
+
+                # Use plot_line helper
+                plot_line(
+                    x=times,
+                    y=mean_erp,
+                    yerr=sem_erp,
+                    error_style=error_style,
+                    label=label,
+                    color=color,
+                    linestyle=linestyle,
+                    ax=ax,
+                    title=None,
+                    xlabel=None,
+                    ylabel=None,
+                    legend=False,
+                    **kwargs,
+                )
+
+            show_ylabel = (idx % n_cols == 0) or not sharey
+            show_xlabel = (idx >= n_plots - n_cols) or not sharex
+            finalize_axes(
+                ax,
+                title=roi_name,
+                xlabel=xlabel if show_xlabel else None,
+                ylabel=ylabel if show_ylabel else None,
+                legend=(idx == 0 and len(unique_groups) > 1),
+                **(axes_kws or {}),
+            )
+
+            # Add reference lines for time = 0 and amplitude = 0 since the grid is off
+            if add_zero:
+                ax.axvline(0, color="black", linestyle="--", alpha=0.3, zorder=0)
+                ax.axhline(0, color="black", linestyle="--", alpha=0.3, zorder=0)
+
+        # Hide any unused subplots
+        for idx in range(n_plots, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+
+    return fig, axes_flat
+
+
+def plot_roi_sensors(
+    container: Any,
+    rois: Mapping[str, Sequence[str]],
+    palette: Sequence[Any] | None = None,
+    montage: str | Any = "standard_1005",
+    figsize: tuple[float, float] | None = None,
+    axes_kws: dict | None = None,
+) -> tuple[plt.Figure, np.ndarray]:
+    """Plot scalp topomaps highlighting specific Regions of Interest (ROIs).
+
+    Parameters
+    ----------
+    container
+        The DataContainer containing the channel coordinates.
+    rois
+        A dictionary mapping ROI names to lists of channel names.
+    palette
+        A list of colors to use for highlighting each ROI. If None, uses the
+        default colorblind palette.
+    montage
+        The MNE montage to use for plotting sensors. Can be a string name of a
+        standard montage (e.g. 'standard_1005') or an mne.channels.DigMontage object.
+    figsize
+        Figure size. If None, automatically scaled based on the number of ROIs.
+    axes_kws
+        Additional keyword arguments passed to `finalize_axes`.
+
+    Returns
+    -------
+    fig, axes
+        The matplotlib Figure and Axes array.
+    """
+    from itertools import cycle
+
+    import matplotlib.pyplot as plt
+    import mne
+
+    ch_names = list(np.asarray(container.coords["channel"]).astype(str))
+    info = mne.create_info(ch_names=ch_names, sfreq=160, ch_types="eeg")
+    info.set_montage(
+        mne.channels.make_standard_montage(montage)
+        if isinstance(montage, str)
+        else montage
+    )
+
+    n_rois = len(rois)
+    if palette is None:
+        palette = [f"C{i % 10}" for i in range(n_rois)]
+
+    fig, axes = plt.subplots(
+        1, n_rois, figsize=figsize or (5 * n_rois, 5), squeeze=False
+    )
+    fig.patch.set_facecolor("white")
+
+    for ax, (region_name, region_chs), color in zip(
+        axes.flat, rois.items(), cycle(palette)
+    ):
+        # Plot the base MNE Topomap head (without names so it's clean)
+        mne.viz.plot_sensors(
+            info, kind="topomap", show_names=False, axes=ax, show=False
+        )
+
+        # Find the MNE scatter object and update its colors to highlight the region
+        for collection in ax.collections:
+            if len(collection.get_offsets()) == len(ch_names):
+                # Default everything to a faint background dot
+                face_colors = np.array(["#eeeeee"] * len(ch_names), dtype="object")
+                edge_colors = np.array(["white"] * len(ch_names), dtype="object")
+                sizes = np.full(len(ch_names), 40)
+
+                # Find the index of the sensors in our ROI
+                idx = [ch_names.index(ch) for ch in region_chs if ch in ch_names]
+
+                # Highlight the ROI sensors!
+                if idx:
+                    face_colors[idx] = color
+                    edge_colors[idx] = "black"
+                    sizes[idx] = 120
+
+                collection.set_facecolors(face_colors)
+                collection.set_edgecolors(edge_colors)
+                collection.set_sizes(sizes)
+                break
+
+        finalize_axes(ax, title=f"{region_name} ROI", **(axes_kws or {}))
+
+    plt.subplots_adjust(wspace=0.1)
+    return fig, axes.flatten()

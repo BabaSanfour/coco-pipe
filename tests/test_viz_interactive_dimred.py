@@ -26,7 +26,7 @@ def test_interactive_dimred_plots_return_figure():
         lambda: viz_interactive.plot_embedding(X_emb, labels=np.arange(len(X_emb))),
         lambda: viz_interactive.plot_metrics(metric_df),
         lambda: viz_interactive.plot_loss_history([1.0, 0.7, 0.4]),
-        lambda: viz_interactive.plot_eigenvalues({"cond": np.array([0.5, 0.3, 0.1])}),
+        lambda: viz_interactive.plot_scree(np.array([0.5, 0.3, 0.1])),
         lambda: viz_interactive.plot_shepard_diagram(X_orig, X_emb),
         lambda: viz_interactive.plot_streamlines(X_emb, V_emb),
         lambda: viz_interactive.plot_feature_importance({"F1": 0.6, "F2": 0.4}),
@@ -54,7 +54,7 @@ def test_interactive_dimred_plots_args():
     viz_interactive.plot_metrics(metric_df, plot_type="line")
 
     data = rng.normal(size=(2, 4, 50))
-    viz_interactive.plot_channel_traces(data)
+    viz_interactive.plot_timecourses(data)
 
     import pandas as pd
 

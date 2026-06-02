@@ -24,7 +24,12 @@ from .metrics import (
     shepard_diagram_data,
     trustworthiness,
 )
-from .stats import grouped_condition_stats, paired_condition_stats
+from .result import EmbeddingQualityResult, TrajectoryResult, VelocityResult
+from .stats import (
+    grouped_condition_stats,
+    paired_condition_stats,
+    permutation_null_separation_auc,
+)
 from .velocity import compute_velocity_fields
 
 __all__ = [
@@ -53,4 +58,8 @@ __all__ = [
     "trajectory_turning_angle",
     "paired_condition_stats",
     "grouped_condition_stats",
+    "permutation_null_separation_auc",
+    "EmbeddingQualityResult",
+    "TrajectoryResult",
+    "VelocityResult",
 ]

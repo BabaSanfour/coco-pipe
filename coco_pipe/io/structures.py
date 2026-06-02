@@ -1319,7 +1319,9 @@ class DataContainer:
             },
         )
 
-    def center(self, dim: str = "time", inplace: bool = False) -> "DataContainer":
+    def center(
+        self, dim: Union[str, Sequence[str]] = "time", inplace: bool = False
+    ) -> "DataContainer":
         """
         Remove mean along a specified dimension (Centering/Baseline Correction).
 
@@ -1329,8 +1331,9 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str, default='time'
-            Dimension name to center over (e.g., 'time', 'channel', 'obs').
+        dim : str or sequence of str, default='time'
+            Dimension name(s) to center over (e.g., 'time', 'channel', 'obs',
+            or ('obs', 'time')).
         inplace : bool, default=False
             If True, modifies X in-place to save memory.
             Returns self.
@@ -1345,13 +1348,15 @@ class DataContainer:
         >>> # Baseline correction over time
         >>> container.center(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
         X -= mean
 
         if inplace:
@@ -1360,7 +1365,10 @@ class DataContainer:
             return replace(self, X=X)
 
     def zscore(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: Union[str, Sequence[str]] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Standardize (Z-score) along a specified dimension.
@@ -1370,8 +1378,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to standardize.
+        dim : str or sequence of str
+            Dimension(s) to standardize.
         eps : float
             Stability epsilon to avoid division by zero.
         inplace : bool
@@ -1385,14 +1393,16 @@ class DataContainer:
         >>> # Standardize each channel's timecourse
         >>> container.zscore(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
-        std = np.nanstd(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
+        std = np.nanstd(X, axis=axes, keepdims=True)
 
         X -= mean
         X /= std + eps
@@ -1403,7 +1413,10 @@ class DataContainer:
             return replace(self, X=X)
 
     def rms_scale(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: Union[str, Sequence[str]] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Scale by Root Mean Square (RMS) amplitude along a dimension.
@@ -1413,8 +1426,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to scale.
+        dim : str or sequence of str
+            Dimension(s) to scale.
         eps : float
             Stability epsilon.
         inplace : bool
@@ -1423,13 +1436,15 @@ class DataContainer:
         -------
         DataContainer
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean_sq = np.nanmean(X**2, axis=axis, keepdims=True)
+        mean_sq = np.nanmean(X**2, axis=axes, keepdims=True)
         rms = np.sqrt(mean_sq)
 
         X /= rms + eps
@@ -1440,7 +1455,7 @@ class DataContainer:
             return replace(self, X=X)
 
     def baseline_correction(
-        self, dim: str = "time", inplace: bool = False
+        self, dim: Union[str, Sequence[str]] = "time", inplace: bool = False
     ) -> "DataContainer":
         """Alias for center(). Common in EEG."""
         return self.center(dim=dim, inplace=inplace)

@@ -45,30 +45,81 @@ def finalize_axes(
     xtick_rotation: float | None = None,
     xtick_ha: str | None = None,
     tick_nbins: int | None = None,
+    title_fontsize: int | float | str | None = None,
+    title_fontweight: str | None = None,
+    title_pad: int | float | None = None,
+    label_fontsize: int | float | str | None = None,
+    label_pad: int | float | None = None,
+    tick_labelsize: int | float | str | None = None,
+    tick_length: int | float | None = None,
+    grid: bool | None = False,
+    show_spines: Sequence[str] | str | None = None,
 ) -> plt.Axes:
     """Apply common axis labels, title, legend, and tick formatting."""
-    if xlabel:
-        ax.set_xlabel(xlabel)
-    if ylabel:
-        ax.set_ylabel(ylabel)
-    if zlabel and hasattr(ax, "set_zlabel"):
-        ax.set_zlabel(zlabel)
-    if title:
-        ax.set_title(title)
+
+    # Titles
+    if title is not None:
+        title_kws: dict[str, Any] = {}
+        if title_fontsize is not None:
+            title_kws["fontsize"] = title_fontsize
+        if title_fontweight is not None:
+            title_kws["fontweight"] = title_fontweight
+        if title_pad is not None:
+            title_kws["pad"] = title_pad
+        ax.set_title(title, **title_kws)
+
+    # Labels
+    label_kws: dict[str, Any] = {}
+    if label_fontsize is not None:
+        label_kws["fontsize"] = label_fontsize
+    if label_pad is not None:
+        label_kws["labelpad"] = label_pad
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel, **label_kws)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel, **label_kws)
+    if zlabel is not None and hasattr(ax, "set_zlabel"):
+        ax.set_zlabel(zlabel, **label_kws)
+
+    # Ticks
+    tick_kws: dict[str, Any] = {}
+    if tick_labelsize is not None:
+        tick_kws["labelsize"] = tick_labelsize
+    if tick_length is not None:
+        tick_kws["length"] = tick_length
+    if tick_kws:
+        ax.tick_params(axis="both", **tick_kws)
+
     if tick_nbins is not None:
         locator = ticker.MaxNLocator(nbins=tick_nbins)
         ax.xaxis.set_major_locator(locator)
         ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=tick_nbins))
         if hasattr(ax, "zaxis"):
             ax.zaxis.set_major_locator(ticker.MaxNLocator(nbins=tick_nbins))
+
     if xtick_rotation is not None:
         for tick in ax.get_xticklabels():
             tick.set_rotation(xtick_rotation)
     if xtick_ha is not None:
         for tick in ax.get_xticklabels():
             tick.set_ha(xtick_ha)
+
+    # Legend
     if legend:
         ax.legend(title=legend_title, frameon=False)
+
+    # Grid
+    if grid is not None:
+        ax.grid(grid)
+
+    # Spines
+    if show_spines is not None:
+        spines = [show_spines] if isinstance(show_spines, str) else show_spines
+        for spine_name in ["top", "right", "bottom", "left"]:
+            if spine_name in ax.spines:
+                ax.spines[spine_name].set_visible(spine_name in spines)
+
     return ax
 
 
@@ -1114,9 +1165,26 @@ def prepare_temporal_score_curve_frame(
     )
     model = _auto_select_single_model(summary, model)
     summary = select_rows(summary, model=model, metric=metric)
-    return require_non_empty(
-        summary[summary["Time"].notna()].copy(), "temporal score curve"
-    )
+    temporal = summary[summary["Time"].notna()].copy()
+    if temporal.empty:
+        n_train_test = (
+            int(summary[["TrainTime", "TestTime"]].notna().all(axis=1).sum())
+            if {"TrainTime", "TestTime"}.issubset(summary.columns)
+            else 0
+        )
+        hint = (
+            " The data appears to contain generalisation-matrix rows "
+            "(TrainTime/TestTime set, Time=NaN) — use "
+            "plot_temporal_generalization_matrix instead."
+            if n_train_test > 0
+            else " The results may be from a non-temporal experiment (scalar "
+            "folds). Re-run the experiment with a TemporalDecoderConfig "
+            "and re-execute the results cell before plotting."
+        )
+        raise ValueError(
+            f"No rows available for temporal score curve after filtering.{hint}"
+        )
+    return temporal
 
 
 def prepare_temporal_generalization_matrix(

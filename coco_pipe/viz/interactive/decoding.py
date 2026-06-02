@@ -126,11 +126,19 @@ def plot_confusion_matrix(
     return fig
 
 
+def _hex_to_rgba(hex_color: str, alpha: float = 0.15) -> str:
+    """Convert a hex color string to an rgba() CSS string."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def _add_curve_band(
     fig: go.Figure,
     x: np.ndarray,
     y: np.ndarray,
     yerr: np.ndarray,
+    fillcolor: str = "rgba(68,68,68,0.12)",
 ) -> None:
     """Add a shaded std-deviation band around a mean curve."""
     upper = y + yerr
@@ -140,7 +148,7 @@ def _add_curve_band(
             x=np.concatenate([x, x[::-1]]),
             y=np.concatenate([upper, lower[::-1]]),
             fill="toself",
-            fillcolor="rgba(68,68,68,0.12)",
+            fillcolor=fillcolor,
             line=dict(color="rgba(255,255,255,0)"),
             showlegend=False,
             hoverinfo="skip",
@@ -479,6 +487,8 @@ def plot_temporal_score_curve(
     metric: Optional[str] = None,
     model: Optional[str] = None,
     title: Optional[str] = None,
+    colors: Optional[dict] = None,
+    smooth_window: Optional[int] = None,
 ) -> go.Figure:
     """
     Plot mean temporal decoding score curves interactively.
@@ -494,6 +504,11 @@ def plot_temporal_score_curve(
         Optional model name used to filter temporal scores.
     title
         Optional figure title. Defaults to ``"Temporal Decoding Value"``.
+    colors
+        Optional dict mapping model names to CSS color strings.
+    smooth_window
+        Optional integer window size for smoothing the curves using a centered
+        moving average.
 
     Returns
     -------
@@ -531,23 +546,38 @@ def plot_temporal_score_curve(
     for (model_name, metric_name), group in curve_data.groupby(["Model", "Metric"]):
         numeric = pd.to_numeric(group["Time"], errors="coerce")
         x_vals = numeric.to_numpy() if numeric.notna().all() else np.arange(len(group))
-        y_vals = group["Mean"].astype(float).to_numpy()
+
+        y_vals_s = group["Mean"].astype(float)
         has_std = "Std" in group.columns
-        std_vals = group["Std"].fillna(0).astype(float).to_numpy() if has_std else None
+        std_vals_s = group["Std"].fillna(0).astype(float) if has_std else None
+
+        if smooth_window is not None and smooth_window > 1:
+            y_vals_s = y_vals_s.rolling(
+                smooth_window, center=True, min_periods=1
+            ).mean()
+            if std_vals_s is not None:
+                std_vals_s = std_vals_s.rolling(
+                    smooth_window, center=True, min_periods=1
+                ).mean()
+
+        y_vals = y_vals_s.to_numpy()
+        std_vals = std_vals_s.to_numpy() if std_vals_s is not None else None
+
+        line_color = (colors or {}).get(model_name)
         fig.add_trace(
             go.Scatter(
                 x=x_vals,
                 y=y_vals,
                 mode="lines",
                 name=f"{model_name} / {metric_name}",
-                line=dict(width=2),
-                error_y=dict(type="data", array=std_vals)
-                if std_vals is not None
-                else None,
+                line=dict(width=2, color=line_color),
             )
         )
         if std_vals is not None:
-            _add_curve_band(fig, x_vals, y_vals, std_vals)
+            fillcolor = (
+                _hex_to_rgba(line_color, 0.15) if line_color else "rgba(68,68,68,0.12)"
+            )
+            _add_curve_band(fig, x_vals, y_vals, std_vals, fillcolor=fillcolor)
     _apply_layout(
         fig,
         title=title or "Temporal Decoding Value",

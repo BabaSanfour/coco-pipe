@@ -318,6 +318,8 @@ def run_statistical_assessment(
     stats_config = experiment_config.statistical_assessment
     unit = inferential_unit
     metrics = experiment_config.get_all_evaluation_metrics()
+    if stats_config.metrics:
+        metrics = [m for m in metrics if m in stats_config.metrics]
     rows: list[dict[str, Any]] = []
     nulls: dict[str, dict[str, Any]] = {}
 
