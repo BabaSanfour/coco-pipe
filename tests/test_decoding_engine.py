@@ -322,3 +322,142 @@ def test_compact_search_results_missing_keys():
     est = SimpleNamespace(cv_results_={"params": [{"C": 1}]})
     res = compact_search_results(est)
     assert res == [{"candidate": 0, "params": {"C": 1}}]
+
+
+# --- sample_weight tests ---
+
+
+class _WeightCapturingClassifier(BaseEstimator, ClassifierMixin):
+    """Records the sample_weight passed to fit(); predict always returns zeros."""
+
+    _estimator_type = "classifier"
+    classes_ = np.array([0, 1])
+
+    def fit(self, X, y, sample_weight=None):
+        self.recorded_weight_ = sample_weight
+        self.classes_ = np.array([0, 1])
+        return self
+
+    def predict(self, X):
+        return np.zeros(len(X), dtype=int)
+
+    def predict_proba(self, X):
+        return np.column_stack([np.ones(len(X)), np.zeros(len(X))])
+
+
+def _make_spec(**overrides):
+    base = dict(
+        supports_proba=False,
+        supports_decision_function=False,
+        importance=("unavailable",),
+        supports_groups=False,
+        grouped_metadata="none",
+        is_sparse_capable=False,
+        family="linear",
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_fit_estimator_routes_sample_weight():
+    """fit_estimator forwards sample_weight to clf step inside a Pipeline."""
+    from sklearn.linear_model import LogisticRegression
+
+    clf = _WeightCapturingClassifier()
+    pipe = Pipeline([("clf", clf)])
+    sw = np.array([1.0, 2.0, 3.0])
+
+    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
+                  MockConfig(), MockConfig(), sample_weight=sw)
+
+    assert np.allclose(clf.recorded_weight_, sw)
+
+
+def test_fit_estimator_no_sample_weight_when_none():
+    """fit_estimator passes None → clf.recorded_weight_ is None."""
+    clf = _WeightCapturingClassifier()
+    pipe = Pipeline([("clf", clf)])
+
+    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
+                  MockConfig(), MockConfig(), sample_weight=None)
+
+    assert clf.recorded_weight_ is None
+
+
+def test_fit_estimator_skips_unsupported_clf():
+    """fit_estimator does NOT crash when clf.fit lacks sample_weight param."""
+
+    class NoWeightClf(BaseEstimator, ClassifierMixin):
+        _estimator_type = "classifier"
+        classes_ = np.array([0, 1])
+
+        def fit(self, X, y):
+            return self
+
+        def predict(self, X):
+            return np.zeros(len(X), dtype=int)
+
+    pipe = Pipeline([("clf", NoWeightClf())])
+    sw = np.array([1.0, 2.0, 3.0])
+    # should not raise
+    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
+                  MockConfig(), MockConfig(), sample_weight=sw)
+
+
+def test_fit_and_score_fold_sample_weight_train_only():
+    """Only the training-fold slice of sample_weight reaches the classifier."""
+    import coco_pipe.decoding._engine as engine
+    from coco_pipe.decoding._metrics import MetricSpec
+
+    clf = _WeightCapturingClassifier()
+    pipe = Pipeline([("clf", clf)])
+    X = np.zeros((6, 2))
+    y = np.array([0, 0, 0, 1, 1, 1])
+    ids = np.arange(6).astype(str)
+    sw = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    train_idx = np.array([0, 1, 3, 4])
+    test_idx = np.array([2, 5])
+
+    old_get = engine.get_metric_spec
+    try:
+        engine.get_metric_spec = lambda m: MetricSpec(
+            m, "classification", lambda yt, yp: float(yp.mean()), "predict"
+        )
+        fit_and_score_fold(
+            pipe, X, y, None, ids, None,
+            train_idx=train_idx, test_idx=test_idx,
+            metrics=["acc"],
+            feature_selection_config=MockConfig(),
+            calibration_config=MockConfig(),
+            spec=_make_spec(),
+            sample_weight=sw,
+        )
+    finally:
+        engine.get_metric_spec = old_get
+
+    # Only train-fold weights should have been forwarded
+    expected = sw[train_idx]
+    assert np.allclose(clf.recorded_weight_, expected), (
+        f"Expected {expected}, got {clf.recorded_weight_}"
+    )
+
+
+def test_experiment_run_rejects_length_mismatch():
+    """Experiment.run raises ValueError when sample_weight length != len(X)."""
+    import pytest
+    from coco_pipe.decoding import Experiment, ExperimentConfig
+    from coco_pipe.decoding.configs import CVConfig, LogisticRegressionConfig
+
+    config = ExperimentConfig(
+        task="classification",
+        models={"lr": LogisticRegressionConfig()},
+        cv=CVConfig(strategy="stratified", n_splits=2),
+        n_jobs=1,
+        verbose=False,
+    )
+    X = np.zeros((10, 2))
+    y = np.zeros(10, dtype=int)
+    y[5:] = 1
+
+    with pytest.raises(ValueError, match="sample_weight length"):
+        Experiment(config).run(X, y, sample_weight=np.ones(5))

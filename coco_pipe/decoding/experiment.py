@@ -399,6 +399,7 @@ class Experiment:
         observation_level: str = "sample",
         inferential_unit: Optional[str] = None,
         time_axis: Optional[Sequence[Any]] = None,
+        sample_weight: Optional[np.ndarray] = None,
     ) -> ExperimentResult:
         """
         Execute the complete decoding experiment pipeline.
@@ -462,6 +463,12 @@ class Experiment:
             raise ValueError("X is empty.")
         if len(y) != len(X):
             raise ValueError("Length mismatch between X and y.")
+        if sample_weight is not None:
+            sample_weight = np.asarray(sample_weight, dtype=float)
+            if len(sample_weight) != len(X):
+                raise ValueError(
+                    f"sample_weight length {len(sample_weight)} != X length {len(X)}."
+                )
 
         # 1. Scientific Guard: Double-Normalization Warning
         if self.config.use_scaler and X.ndim == 2:
@@ -569,6 +576,7 @@ class Experiment:
                     n_jobs=model_n_jobs,
                     spec=spec,
                     model_name=name,
+                    sample_weight=sample_weight,
                 )
             except Exception as e:
                 logger.error(f"Failed model '{name}': {e}", exc_info=True)
@@ -619,6 +627,7 @@ class Experiment:
         n_jobs: int = 1,
         spec: Optional[Any] = None,
         model_name: Optional[str] = None,
+        sample_weight: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """Perform parallel cross-validation for a single estimator."""
         cv = get_cv_splitter(self.config.cv, groups=groups, y=y)
@@ -659,6 +668,7 @@ class Experiment:
                     and model_name in self.config.grids
                 ),
                 force_serial=(n_jobs == 1),
+                sample_weight=sample_weight,
             )
             for train_idx, test_idx in splits
         )
