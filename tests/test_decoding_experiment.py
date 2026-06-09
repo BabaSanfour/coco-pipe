@@ -380,12 +380,12 @@ def test_random_state_propagation_none():
 
 
 def test_instantiate_foundation_model_mock():
-    # Use a dictionary to bypass Pydantic literal restrictions for the mock
+    from coco_pipe.decoding.foundation_models._base import BackendBase
+
     mock_model = {
         "kind": "foundation_embedding",
-        "provider": "reve",
-        "model_name": "dummy",
-        "checkpoint": None,
+        "model_key": "reve",
+        "backend": "dummy",
     }
 
     config = ExperimentConfig.model_construct(
@@ -401,14 +401,10 @@ def test_instantiate_foundation_model_mock():
     )
     exp = Experiment(config)
 
-    pytest.importorskip("torch")
-    from coco_pipe.decoding.fm_hub import REVEModel
-
     with patch(
         "coco_pipe.decoding.experiment.Experiment._instantiate_model"
     ) as mock_inst:
-        mock_inst.return_value = MagicMock(spec=REVEModel)
-        # Should NOT raise spec error anymore
+        mock_inst.return_value = MagicMock(spec=BackendBase)
         est = exp._prepare_estimator("reve", mock_model)
         assert est is not None
 
@@ -669,9 +665,8 @@ def test_capability_payload_with_fs_enabled():
 
 
 def test_instantiate_foundation_model_fm_hub():
-    # Use valid config object to avoid pydantic issues
     fm_config = FoundationEmbeddingModelConfig(
-        kind="foundation_embedding", provider="reve", model_name="dummy"
+        kind="foundation_embedding", model_key="reve", backend="dummy"
     )
     exp = Experiment(
         ExperimentConfig.model_construct(
@@ -681,9 +676,9 @@ def test_instantiate_foundation_model_fm_hub():
             cv=CVConfig(),
         )
     )
-    with patch("coco_pipe.decoding.fm_hub.build_foundation_model") as mock_build:
+    with patch("coco_pipe.decoding.foundation_models.load") as mock_load:
         exp._instantiate_model("fm", fm_config)
-        mock_build.assert_called_once()
+        mock_load.assert_called_once()
 
 
 def test_experiment_calibration_run():
