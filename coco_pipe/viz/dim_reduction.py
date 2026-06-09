@@ -1460,18 +1460,34 @@ def plot_trajectory_separation(
     with coco_theme():
         fig, ax = get_figure(ax, figsize, (10, 5))
 
-        plot_kws = {}
-        if color_map:
-            plot_kws["palette"] = color_map
-        if linestyle_map:
-            plot_kws["style"] = "label"
-            plot_kws["dashes"] = linestyle_map
+        _style_mapper = {"dash": "--", "solid": "-", "dot": ":", "dashdot": "-."}
 
-        _plot_metric_lines(
-            items,
+        for item in items:
+            name = item["label"]
+            rank = item["rank"]
+
+            color = color_map.get(name) if color_map else None
+            raw_style = linestyle_map.get(name, "-") if linestyle_map else "-"
+            line_style = _style_mapper.get(raw_style, raw_style)
+
+            label_text = f"{name} (Rank: {rank:.2f})" if np.isfinite(rank) else name
+            fig, ax = plot_line(
+                item["x"],
+                item["y"],
+                label=label_text,
+                linewidth=2,
+                color=color,
+                linestyle=line_style,
+                ax=ax,
+            )
+
+        finalize_axes(
+            ax,
             title="Trajectory Separation",
-            ax=ax,
-            axes_kws={"ylabel": "Separation", "plot_kws": plot_kws},
+            xlabel="Time",
+            ylabel="Separation",
+            legend=True,
+            legend_title="Pair",
         )
         return fig, ax
 

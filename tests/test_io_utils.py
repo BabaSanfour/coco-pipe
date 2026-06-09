@@ -70,6 +70,72 @@ def test_split_column():
     assert res_none == ("", "unit")
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("42", "0042"),
+        ("sub-42", "0042"),
+        (42, "0042"),
+        ("P001", "P001"),
+    ],
+)
+def test_normalize_subject_value(value, expected):
+    assert utils_mod.normalize_subject_value(value) == expected
+
+
+def test_read_table_csv(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text("subject;feature\nsub-1;1.5\nsub-2;2.5\n", encoding="utf-8")
+
+    table = utils_mod.read_table(path)
+
+    assert table.to_dict(orient="records") == [
+        {"subject": "sub-1", "feature": 1.5},
+        {"subject": "sub-2", "feature": 2.5},
+    ]
+
+
+def test_read_table_parquet(monkeypatch, tmp_path):
+    path = tmp_path / "features.parquet"
+    expected = pd.DataFrame({"subject": ["sub-1"], "feature": [1.5]})
+    read_parquet = MagicMock(return_value=expected)
+    monkeypatch.setattr(utils_mod.pd, "read_parquet", read_parquet)
+
+    table = utils_mod.read_table(path)
+
+    read_parquet.assert_called_once_with(path)
+    pd.testing.assert_frame_equal(table, expected)
+
+
+def test_read_table_drops_unnamed_and_empty_columns(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text(
+        "subject,feature,Unnamed: 2,empty\nsub-1,1.5,,\n",
+        encoding="utf-8",
+    )
+
+    table = utils_mod.read_table(path)
+
+    assert table.columns.tolist() == ["subject", "feature"]
+
+
+def test_read_table_explicit_separator(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text("subject|feature\nsub-1|1.5\n", encoding="utf-8")
+
+    table = utils_mod.read_table(path, sep="|")
+
+    assert table.to_dict(orient="records") == [{"subject": "sub-1", "feature": 1.5}]
+
+
+def test_read_table_unsupported_format_raises(tmp_path):
+    path = tmp_path / "features.tsv"
+    path.touch()
+
+    with pytest.raises(ValueError, match="Expected .csv or .parquet"):
+        utils_mod.read_table(path)
+
+
 def test_default_id_extractor(tmp_path):
     """Test ID extraction heuristics."""
     # BIDS-like

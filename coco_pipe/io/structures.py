@@ -170,6 +170,156 @@ class DataContainer:
 
         return obj
 
+    @classmethod
+    def concat(
+        cls,
+        containers: Sequence["DataContainer"],
+        fill_condition_from_meta: bool = True,
+    ) -> "DataContainer":
+        """Concatenate containers along their observation axis.
+
+        All containers must use matching dimensions and non-observation
+        shapes. Observation-aligned coordinates are concatenated, filling
+        missing entries with ``None`` when a coordinate is absent from a
+        container. Non-observation coordinates are copied from the first
+        container.
+
+        Parameters
+        ----------
+        containers : sequence of DataContainer
+            One or more containers to concatenate.
+        fill_condition_from_meta : bool, default=True
+            If no observation-level ``condition`` coordinate is available,
+            create one from each container's ``meta["condition"]`` value.
+
+        Returns
+        -------
+        DataContainer
+            The concatenated container.
+        """
+        containers = list(containers)
+        if not containers:
+            raise ValueError("Need at least one container to concatenate.")
+
+        base = containers[0]
+        if "obs" not in base.dims:
+            raise ValueError("Containers must include an 'obs' dimension.")
+        if any(container.dims != base.dims for container in containers[1:]):
+            raise ValueError("All containers must have matching dims.")
+
+        obs_axis = base.dims.index("obs")
+        non_obs_shape = tuple(
+            size for axis, size in enumerate(base.X.shape) if axis != obs_axis
+        )
+        for container in containers[1:]:
+            candidate_shape = tuple(
+                size for axis, size in enumerate(container.X.shape) if axis != obs_axis
+            )
+            if candidate_shape != non_obs_shape:
+                raise ValueError(
+                    "All containers must have matching non-obs dimensions."
+                )
+
+        coords: Dict[str, np.ndarray] = {}
+        base_n_obs = base.X.shape[obs_axis]
+
+        # Dimension coordinates are non-observation coordinates by definition.
+        # Auxiliary vectors are non-observation metadata when any container
+        # where they are present shows that they are not obs-aligned.
+        non_obs_coord_keys = set()
+        for key, values in base.coords.items():
+            arr = np.asarray(values)
+            if key in base.dims and key != "obs":
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+                continue
+            if arr.ndim != 1:
+                continue
+
+            present_values = [
+                (
+                    np.asarray(container.coords[key]),
+                    container.X.shape[obs_axis],
+                )
+                for container in containers
+                if key in container.coords
+            ]
+            has_non_obs_alignment = any(
+                candidate.ndim != 1 or len(candidate) != n_obs
+                for candidate, n_obs in present_values
+            )
+            if len(arr) != base_n_obs or has_non_obs_alignment:
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+
+        obs_keys = set()
+        for container in containers:
+            n_obs = container.X.shape[obs_axis]
+            for key, values in container.coords.items():
+                arr = np.asarray(values)
+                if (
+                    key not in non_obs_coord_keys
+                    and arr.ndim == 1
+                    and len(arr) == n_obs
+                ):
+                    obs_keys.add(key)
+
+        for key in sorted(obs_keys):
+            parts = []
+            for container in containers:
+                n_obs = container.X.shape[obs_axis]
+                if key not in container.coords:
+                    parts.append(np.full(n_obs, None, dtype=object))
+                    continue
+
+                arr = np.asarray(container.coords[key])
+                if arr.ndim != 1 or len(arr) != n_obs:
+                    raise ValueError(
+                        f"Observation coordinate '{key}' must be 1D and aligned "
+                        "to the 'obs' dimension in every container where present."
+                    )
+                parts.append(arr)
+            coords[key] = np.concatenate(parts)
+
+        if fill_condition_from_meta and "condition" not in coords:
+            coords["condition"] = np.concatenate(
+                [
+                    np.full(
+                        container.X.shape[obs_axis],
+                        container.meta.get("condition"),
+                        dtype=object,
+                    )
+                    for container in containers
+                ]
+            )
+
+        y = None
+        if all(container.y is not None for container in containers):
+            y = np.concatenate([np.asarray(container.y) for container in containers])
+
+        ids = None
+        if all(container.ids is not None for container in containers):
+            ids = np.concatenate(
+                [np.asarray(container.ids) for container in containers]
+            )
+
+        return cls(
+            X=np.concatenate(
+                [np.asarray(container.X) for container in containers],
+                axis=obs_axis,
+            ),
+            dims=base.dims,
+            coords=coords,
+            y=y,
+            ids=ids,
+            meta={
+                "source": "concat",
+                "conditions": [
+                    container.meta.get("condition") for container in containers
+                ],
+            },
+        )
+
     def __repr__(self) -> str:
         dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape)]
         return (

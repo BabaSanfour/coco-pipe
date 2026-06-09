@@ -946,9 +946,6 @@ def add_reduction(
     coco_pipe.viz.interactive.dim_reduction.plot_trajectory
     """
     from coco_pipe.viz.interactive.dim_reduction import (
-        plot_eigenvalues as plot_scree_interactive,
-    )
-    from coco_pipe.viz.interactive.dim_reduction import (
         plot_embedding as plot_embedding_interactive,
     )
     from coco_pipe.viz.interactive.dim_reduction import (
@@ -956,6 +953,9 @@ def add_reduction(
     )
     from coco_pipe.viz.interactive.dim_reduction import (
         plot_metrics as plot_metric_details,
+    )
+    from coco_pipe.viz.interactive.dim_reduction import (
+        plot_scree as plot_scree_interactive,
     )
     from coco_pipe.viz.interactive.dim_reduction import (
         plot_trajectory as plot_trajectory_interactive,

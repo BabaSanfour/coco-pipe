@@ -321,7 +321,7 @@ def test_report_add_reduction_coverage():
 
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory")
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_loss_history")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_eigenvalues")
+@patch("coco_pipe.viz.interactive.dim_reduction.plot_scree")
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory_metric_series")
 def test_add_reduction_advanced(mock_traj_series, mock_eig, mock_loss, mock_traj):
     mock_fig = MagicMock()

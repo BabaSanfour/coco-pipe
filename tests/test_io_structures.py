@@ -149,6 +149,222 @@ def test_save_load_roundtrip(tmp_path, sample_container):
     np.testing.assert_array_equal(loaded.y, sample_container.y)
 
 
+def test_concat_two_flat_containers():
+    first = DataContainer(
+        X=np.array([[1.0, 2.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "group": ["control"]},
+        y=np.array([0]),
+        ids=np.array(["s1"]),
+        meta={"condition": "baseline"},
+    )
+    second = DataContainer(
+        X=np.array([[3.0, 4.0], [5.0, 6.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "group": ["case", "case"]},
+        y=np.array([1, 1]),
+        ids=np.array(["s2", "s3"]),
+        meta={"condition": "active"},
+    )
+
+    combined = DataContainer.concat([first, second])
+
+    assert combined.X.shape == (3, 2)
+    assert combined.coords["feature"].tolist() == ["a", "b"]
+    assert combined.coords["group"].tolist() == ["control", "case", "case"]
+    assert combined.y.tolist() == [0, 1, 1]
+    assert combined.ids.tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_tensor_containers():
+    first = DataContainer(
+        X=np.ones((1, 2, 3)),
+        dims=("obs", "sensor", "feature"),
+        coords={
+            "sensor": ["Fz", "Cz"],
+            "feature": ["a", "b", "c"],
+            "feature_family": ["band", "band", "complexity"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((2, 2, 3)),
+        dims=first.dims,
+        coords=first.coords,
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.X.shape == (3, 2, 3)
+    assert combined.coords["sensor"].tolist() == ["Fz", "Cz"]
+    assert combined.coords["feature_family"].tolist() == [
+        "band",
+        "band",
+        "complexity",
+    ]
+
+
+def test_concat_carries_non_obs_coords_generically():
+    first = DataContainer(
+        X=np.ones((2, 3)),
+        dims=("obs", "component"),
+        coords={
+            "component": ["C1", "C2", "C3"],
+            "basis_kind": ["spatial", "temporal", "spectral"],
+            "subject": ["s1", "s2"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((1, 3)),
+        dims=("obs", "component"),
+        coords={
+            "component": ["C1", "C2", "C3"],
+            "basis_kind": ["spatial", "temporal", "spectral"],
+            "subject": ["s3"],
+        },
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["basis_kind"].tolist() == [
+        "spatial",
+        "temporal",
+        "spectral",
+    ]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_preserves_axis_coord_when_axis_length_matches_obs():
+    first = DataContainer(
+        X=np.ones((2, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s1", "s2"]},
+    )
+    second = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s3"]},
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["feature"].tolist() == ["a", "b"]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_preserves_auxiliary_coord_when_length_matches_first_obs():
+    first = DataContainer(
+        X=np.ones((2, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a", "b"],
+            "feature_kind": ["spectral", "complexity"],
+            "subject": ["s1", "s2"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a", "b"],
+            "feature_kind": ["spectral", "complexity"],
+            "subject": ["s3"],
+        },
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["feature_kind"].tolist() == [
+        "spectral",
+        "complexity",
+    ]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_partial_coord_presence_fills_none():
+    first = DataContainer(
+        X=np.ones((2, 1)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a"], "session": ["pre", "post"]},
+    )
+    second = DataContainer(
+        X=np.zeros((1, 1)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a"], "subject": ["s3"]},
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["session"].tolist() == ["pre", "post", None]
+    assert combined.coords["subject"].tolist() == [None, None, "s3"]
+
+
+def test_concat_mismatched_dims_raises():
+    flat = DataContainer(np.ones((1, 2)), dims=("obs", "feature"))
+    tensor = DataContainer(np.ones((1, 1, 2)), dims=("obs", "sensor", "feature"))
+
+    with pytest.raises(ValueError, match="matching dims"):
+        DataContainer.concat([flat, tensor])
+
+
+def test_concat_fills_condition_from_meta():
+    first = DataContainer(
+        np.ones((2, 1)),
+        dims=("obs", "feature"),
+        meta={"condition": "baseline"},
+    )
+    second = DataContainer(
+        np.ones((1, 1)),
+        dims=("obs", "feature"),
+        meta={"condition": "active"},
+    )
+
+    combined = DataContainer.concat([first, second])
+
+    assert combined.coords["condition"].tolist() == [
+        "baseline",
+        "baseline",
+        "active",
+    ]
+
+
+def test_concat_single_container_is_noop():
+    container = DataContainer(
+        X=np.arange(6).reshape(3, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["1", "2", "3"]},
+        y=np.array([0, 1, 1]),
+        ids=np.array(["a", "b", "c"]),
+    )
+
+    combined = DataContainer.concat(
+        [container],
+        fill_condition_from_meta=False,
+    )
+
+    np.testing.assert_array_equal(combined.X, container.X)
+    np.testing.assert_array_equal(combined.y, container.y)
+    np.testing.assert_array_equal(combined.ids, container.ids)
+    np.testing.assert_array_equal(
+        combined.coords["subject"],
+        container.coords["subject"],
+    )
+
+
 def test_select_advanced_operators(sample_container):
     # Test 'in' operator
     ids = ["s0"]

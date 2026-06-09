@@ -374,6 +374,72 @@ def detect_runs(
     return sorted(list(runs))
 
 
+def normalize_subject_value(value: object) -> str:
+    """Normalize a BIDS subject label to a zero-padded 4-digit string.
+
+    The ``sub-`` prefix is stripped when present, while non-numeric labels are
+    returned unchanged.
+
+    Parameters
+    ----------
+    value : object
+        Raw subject label from a metadata table or BIDS path component.
+
+    Returns
+    -------
+    str
+        Normalized subject string.
+    """
+    text = str(value).strip().replace("sub-", "")
+    numeric = pd.to_numeric(text, errors="coerce")
+    if pd.notna(numeric):
+        return f"{int(numeric):04d}"
+    return text
+
+
+def read_table(path: Path | str, sep: str | None = None) -> pd.DataFrame:
+    """Read a CSV or parquet file into a DataFrame.
+
+    CSV delimiters are auto-detected when ``sep`` is omitted. Unnamed and
+    entirely empty columns caused by trailing separators are removed.
+
+    Parameters
+    ----------
+    path : Path or str
+        Path to a ``.csv`` or ``.parquet`` file.
+    sep : str, optional
+        Explicit CSV delimiter. When omitted, pandas' Python engine detects it.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The cleaned table.
+
+    Raises
+    ------
+    ValueError
+        If the file extension is unsupported.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        df = pd.read_parquet(path)
+    elif suffix == ".csv":
+        read_kwargs: Dict[str, Any] = {"encoding": "utf-8"}
+        if sep is None:
+            read_kwargs.update({"sep": None, "engine": "python"})
+        else:
+            read_kwargs.update({"sep": sep, "low_memory": False})
+        df = pd.read_csv(path, **read_kwargs)
+    else:
+        raise ValueError(
+            f"Unsupported table format '{path.suffix}'. " "Expected .csv or .parquet."
+        )
+
+    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+    return df.dropna(axis=1, how="all")
+
+
 def smart_reader(path: Path) -> Any:
     suffix = path.suffix.lower()
     if suffix == ".pkl":
