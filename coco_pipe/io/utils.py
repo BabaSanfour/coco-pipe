@@ -1,8 +1,10 @@
-"""
-IO Utilities
-============
+"""Miscellaneous IO helpers — BIDS loading, stratified sampling, and table utilities.
 
-Helper functions for IO operations.
+This module is intentionally thin: heavy quality logic lives in
+:mod:`coco_pipe.io.quality`; data-structure definitions live in
+:mod:`coco_pipe.io.structures`.  Everything here is either a small utility
+(``read_table``, ``normalize_subject_value``) or a sampling helper
+(``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 
 import importlib
@@ -58,29 +60,6 @@ def _get_read_raw_bids():
     return read_raw_bids
 
 
-def row_quality_score(
-    df: "pd.DataFrame",
-    exclude_cols: Optional[List[str]] = None,
-    count_zero: bool = True,
-) -> "pd.Series":
-    """
-    Calculate a 'badness' score for each row (NaNs + Infs + Zeros).
-    Lower is better.
-    """
-    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
-    num = use_df.select_dtypes(include=[np.number])
-    if num.shape[1] == 0:
-        return np.zeros(len(df), dtype=int)
-
-    nan_cnt = num.isna().sum(axis=1)
-    arr = num.to_numpy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        inf_mask = np.isinf(arr)
-    inf_cnt = inf_mask.sum(axis=1)
-    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
-    return (nan_cnt + inf_cnt + zero_cnt).astype(int)
-
-
 def make_strata(
     df: "pd.DataFrame",
     covariates: List[str],
@@ -132,6 +111,8 @@ def sample_indices(
             continue
 
         if prefer_clean:
+            from .quality import row_quality_score
+
             q = row_quality_score(sub, exclude_cols=exclude)
             if not replace:
                 sub_shuf = sub.sample(frac=1.0, random_state=rng.integers(0, 1 << 32))

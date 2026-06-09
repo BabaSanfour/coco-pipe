@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
 from .elements import CodeBlockElement, TableElement
+
+if TYPE_CHECKING:
+    pass
 
 
 def _coerce_kind(value: Any, kind: type) -> Any:

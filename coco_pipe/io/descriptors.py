@@ -15,13 +15,14 @@ from .utils import normalize_subject_value, read_table
 
 logger = logging.getLogger(__name__)
 
-_DESCRIPTOR_COLUMN_RE = re.compile(r"(?P<body>.+)_(?P<scope>chgrp|ch)-(?P<sensor>.+)$")
-_KNOWN_FAMILIES = ("band", "complexity", "param")
 
-
-def parse_descriptor_feature_column(column: str) -> dict[str, str]:
-    """Parse a descriptor column name into its constituent parts."""
-    match = _DESCRIPTOR_COLUMN_RE.match(str(column))
+def parse_descriptor_feature_column(
+    column: str,
+    known_families: tuple[str, ...],
+) -> dict[str, str]:
+    """Strictly parse one descriptor column into its constituent parts."""
+    scope_re = re.compile(r"(?P<body>.+)_(?P<scope>chgrp|ch)-(?P<sensor>.+)$")
+    match = scope_re.match(str(column))
     if match is None:
         raise ValueError(
             f"Could not parse descriptor column '{column}'. "
@@ -29,31 +30,29 @@ def parse_descriptor_feature_column(column: str) -> dict[str, str]:
         )
 
     body = match.group("body")
-    family = None
-    prefix = None
-    feature = None
-    for family_name in _KNOWN_FAMILIES:
+    family = feature = None
+    for family_name in known_families:
         if body.startswith(f"{family_name}_"):
             family = family_name
-            prefix = ""
             feature = body[len(f"{family_name}_") :]
             break
         token = f"_{family_name}_"
         if token in body:
-            prefix, feature = body.split(token, 1)
+            prefix, remainder = body.split(token, 1)
             family = family_name
+            feature = f"{prefix}_{remainder}"
             break
 
     if family is None or feature is None:
         raise ValueError(
-            f"Could not parse descriptor column '{column}'. "
-            "Expected format: '{family}_{feature}_{chgrp|ch}-{sensor}'."
+            f"Column '{column}' does not contain a known family token. "
+            f"Known: {known_families}."
         )
 
     return {
         "column": str(column),
         "family": family,
-        "feature": f"{prefix}_{feature}" if prefix else feature,
+        "feature": feature,
         "scope": "sensor_group" if match.group("scope") == "chgrp" else "sensor",
         "sensor": match.group("sensor"),
     }
@@ -62,6 +61,7 @@ def parse_descriptor_feature_column(column: str) -> dict[str, str]:
 def load_descriptor_table(
     table_path: Path | str,
     feature_columns_path: Path | str,
+    known_families: tuple[str, ...] = ("band", "param", "complexity"),
     condition: str | None = None,
     target_col: str | None = None,
     subjects: Sequence[str] | None = None,
@@ -97,6 +97,7 @@ def load_descriptor_table(
 
     if df.empty:
         raise RuntimeError(f"No rows survived filtering for condition={condition!r}.")
+    n_rows_entering_qc = len(df)
 
     raw_cols = json.loads(feature_columns_path.read_text(encoding="utf-8"))
     if not isinstance(raw_cols, list) or not all(
@@ -112,7 +113,9 @@ def load_descriptor_table(
             f"Descriptor columns not found in {table_path}: {missing_columns}."
         )
 
-    parsed = [parse_descriptor_feature_column(column) for column in raw_cols]
+    parsed = [
+        parse_descriptor_feature_column(column, known_families) for column in raw_cols
+    ]
     if descriptor_families:
         allowed = {str(value).strip() for value in descriptor_families}
         parsed = [item for item in parsed if item["family"] in allowed]
@@ -126,11 +129,11 @@ def load_descriptor_table(
     feature_df = df.loc[:, feature_cols].replace([np.inf, -np.inf], np.nan)
 
     valid_mask = ~feature_df.isna().any(axis=1)
+    n_dropped_nan_inf = int((~valid_mask).sum())
     if not valid_mask.all():
-        n_dropped = int((~valid_mask).sum())
         logger.warning(
             "Dropping %d row(s) with NaN/Inf features from %s (condition=%r).",
-            n_dropped,
+            n_dropped_nan_inf,
             table_path,
             condition,
         )
@@ -185,6 +188,8 @@ def load_descriptor_table(
     coords = {column: metadata_df[column].to_numpy() for column in metadata_df.columns}
     meta_base = {
         "source": str(table_path),
+        "n_rows_entering_qc": n_rows_entering_qc,
+        "n_dropped_nan_inf": n_dropped_nan_inf,
         "descriptor_max_abs_value": descriptor_max_abs_value,
         "dropped_extreme_rows": dropped_extreme,
     }

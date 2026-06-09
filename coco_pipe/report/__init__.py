@@ -19,7 +19,7 @@ _LAZY_EXPORTS = {
     "Section": ("coco_pipe.report.core", "Section"),
     "PlotlyElement": ("coco_pipe.report.core", "PlotlyElement"),
     "TableElement": ("coco_pipe.report.core", "TableElement"),
-    "InteractiveTableElement": ("coco_pipe.report.core", "InteractiveTableElement"),
+    "InteractiveTableElement": ("coco_pipe.report.elements", "InteractiveTableElement"),
     "ImageElement": ("coco_pipe.report.core", "ImageElement"),
     "from_container": ("coco_pipe.report.api", "from_container"),
     "from_bids": ("coco_pipe.report.api", "from_bids"),

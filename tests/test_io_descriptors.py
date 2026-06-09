@@ -9,12 +9,15 @@ from coco_pipe.io.descriptors import (
     parse_descriptor_feature_column,
 )
 
+KNOWN_FAMILIES = ("band", "param", "complexity")
+
 
 def test_descriptor_utilities_exported_from_io():
     import coco_pipe.io as io
 
     assert io.load_descriptor_table is load_descriptor_table
     assert io.parse_descriptor_feature_column is parse_descriptor_feature_column
+    assert callable(io.compute_row_outlier_scores)
     assert io.normalize_subject_value("sub-9") == "0009"
     assert callable(io.read_table)
 
@@ -47,7 +50,10 @@ def descriptor_files(tmp_path):
 
 
 def test_parse_band_ch_column():
-    parsed = parse_descriptor_feature_column("band_abs_alpha_ch-Fz")
+    parsed = parse_descriptor_feature_column(
+        "band_abs_alpha_ch-Fz",
+        KNOWN_FAMILIES,
+    )
 
     assert parsed == {
         "column": "band_abs_alpha_ch-Fz",
@@ -60,7 +66,8 @@ def test_parse_band_ch_column():
 
 def test_parse_complexity_chgrp_column():
     parsed = parse_descriptor_feature_column(
-        "complexity_sample_entropy_chgrp-front_left"
+        "complexity_sample_entropy_chgrp-front_left",
+        KNOWN_FAMILIES,
     )
 
     assert parsed["family"] == "complexity"
@@ -71,7 +78,8 @@ def test_parse_complexity_chgrp_column():
 
 def test_parse_prefixed_complexity_column():
     parsed = parse_descriptor_feature_column(
-        "mean_complexity_sample_entropy_chgrp-front_left"
+        "mean_complexity_sample_entropy_chgrp-front_left",
+        KNOWN_FAMILIES,
     )
 
     assert parsed["family"] == "complexity"
@@ -80,7 +88,17 @@ def test_parse_prefixed_complexity_column():
 
 def test_parse_invalid_column_raises():
     with pytest.raises(ValueError, match="Could not parse descriptor column"):
-        parse_descriptor_feature_column("not_a_descriptor")
+        parse_descriptor_feature_column("not_a_descriptor", KNOWN_FAMILIES)
+
+
+def test_parse_uses_caller_supplied_family_tokens():
+    parsed = parse_descriptor_feature_column(
+        "custom_metric_ch-Fz",
+        ("custom",),
+    )
+
+    assert parsed["family"] == "custom"
+    assert parsed["feature"] == "metric"
 
 
 def test_load_descriptor_table_flat(descriptor_files):
@@ -169,6 +187,8 @@ def test_load_descriptor_table_drops_nan(descriptor_files):
     container = load_descriptor_table(table_path, columns_path)
 
     assert container.ids.tolist() == ["obs-1", "obs-3"]
+    assert container.meta["n_rows_entering_qc"] == 3
+    assert container.meta["n_dropped_nan_inf"] == 1
 
 
 def test_load_descriptor_table_drops_extreme(descriptor_files):
@@ -184,6 +204,8 @@ def test_load_descriptor_table_drops_extreme(descriptor_files):
     )
 
     assert container.ids.tolist() == ["obs-1", "obs-2"]
+    assert container.meta["n_rows_entering_qc"] == 3
+    assert container.meta["n_dropped_nan_inf"] == 0
     assert container.meta["dropped_extreme_rows"] == 1
 
 

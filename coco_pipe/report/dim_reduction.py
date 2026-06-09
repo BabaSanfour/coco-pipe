@@ -9,6 +9,8 @@ from typing import Any, Dict, Literal, Optional
 import numpy as np
 import pandas as pd
 
+from coco_pipe.io.quality import QCResult
+
 from ._utils import _coerce_kind, _resolve_sections
 from .core import Report, Section
 from .elements import (
@@ -19,6 +21,7 @@ from .elements import (
     TableElement,
     TabsElement,
 )
+from .qc import build_qc_section
 
 logger = logging.getLogger(__name__)
 
@@ -679,6 +682,7 @@ def make_reduction_report(
     title: str = "Dimensionality Reduction Report",
     config: dict | None = None,
     asset_urls: dict[str, str] | None = None,
+    qc_result: QCResult | None = None,
     output_path: str | None = None,
 ) -> Report:
     """Build a dimensionality-reduction report for one or more reduction objects.
@@ -708,6 +712,8 @@ def make_reduction_report(
         Extra configuration metadata stored in the report header.
     asset_urls : dict, optional
         Override JavaScript asset URLs used by the report shell.
+    qc_result : QCResult, optional
+        Structured QC drop log rendered before analysis sections.
     output_path : str, optional
         If given, save the rendered HTML to this path.
 
@@ -748,6 +754,8 @@ def make_reduction_report(
         context="reduction",
     )
     report = Report(title=title, config=config, theme=theme, asset_urls=asset_urls)
+    if qc_result is not None:
+        report.add_section(build_qc_section(qc_result))
 
     for idx, reduction in enumerate(reductions):
         prefix = _method_name(reduction, idx)

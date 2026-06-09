@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 if TYPE_CHECKING:
+    from coco_pipe.io.quality import QCResult
     from coco_pipe.io.structures import DataContainer
 
     from .core import Report
@@ -251,6 +252,7 @@ def from_reductions(
     theme: str = "paper",
     raw_preview: bool = False,
     asset_urls: dict[str, str] | None = None,
+    qc_result: "QCResult" | None = None,
     output_path: str | Path | None = None,
 ) -> Report:
     """
@@ -282,6 +284,8 @@ def from_reductions(
         If True and *container* is provided, add an interactive raw data scroller.
     asset_urls : dict, optional
         Override JavaScript asset URLs used by the report shell.
+    qc_result : QCResult, optional
+        Structured QC drop log rendered as a standard report section.
     output_path : path-like, optional
         If given, save the rendered report to this path.
 
@@ -315,6 +319,7 @@ def from_reductions(
         title=title,
         config=config,
         asset_urls=asset_urls,
+        qc_result=qc_result,
         output_path=factory_output_path,
     )
     if container is not None:
@@ -337,6 +342,7 @@ def from_experiment_result(
     title: str = "Decoding Report",
     config: dict | None = None,
     asset_urls: dict[str, str] | None = None,
+    qc_result: "QCResult" | None = None,
     output_path: str | Path | None = None,
 ) -> "Report":
     """Build a decoding report from an ``ExperimentResult``.
@@ -361,6 +367,8 @@ def from_experiment_result(
         Extra configuration metadata stored in the report header.
     asset_urls : dict, optional
         Override JavaScript asset URLs used by the report shell.
+    qc_result : QCResult, optional
+        Structured QC drop log rendered as a standard report section.
     output_path : path-like, optional
         If given, save the rendered report to this path.
 
@@ -391,6 +399,7 @@ def from_experiment_result(
         title=title,
         config=config,
         asset_urls=asset_urls,
+        qc_result=qc_result,
         output_path=output_path,
     )
     return report

@@ -7,6 +7,22 @@ from .config import (
 )
 from .descriptors import load_descriptor_table, parse_descriptor_feature_column
 from .load import load_data
+from .quality import (
+    CheckResult,
+    EpochDropRecord,
+    QCResult,
+    SubjectDropRecord,
+    compute_constant_feature_summary,
+    compute_feature_missingness,
+    compute_row_outlier_scores,
+    compute_subject_outlier_burden,
+    drop_epoch_outliers,
+    drop_subject_outliers,
+    make_qc_flag,
+    resolve_qc_status,
+    row_quality_score,
+    run_qc,
+)
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
 from .utils import normalize_subject_value, read_table
@@ -18,6 +34,20 @@ __all__ = [
     "load_data",
     "load_descriptor_table",
     "parse_descriptor_feature_column",
+    "CheckResult",
+    "EpochDropRecord",
+    "QCResult",
+    "SubjectDropRecord",
+    "compute_constant_feature_summary",
+    "compute_feature_missingness",
+    "compute_row_outlier_scores",
+    "compute_subject_outlier_burden",
+    "drop_epoch_outliers",
+    "drop_subject_outliers",
+    "make_qc_flag",
+    "resolve_qc_status",
+    "row_quality_score",
+    "run_qc",
     "normalize_subject_value",
     "read_table",
     "BIDSDataset",

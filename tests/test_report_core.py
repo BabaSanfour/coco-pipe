@@ -12,8 +12,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from coco_pipe.io.quality import CheckResult
 from coco_pipe.report.core import Report, Section
-from coco_pipe.report.data_quality import CheckResult
 from coco_pipe.report.elements import (
     ContainerElement,
     HtmlElement,

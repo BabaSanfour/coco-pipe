@@ -8,7 +8,13 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from ._utils import _config_element, _resolve_sections, _table_from_mapping
+from coco_pipe.io.quality import QCResult
+
+from ._utils import (
+    _config_element,
+    _resolve_sections,
+    _table_from_mapping,
+)
 from .core import Report, Section
 from .elements import (
     BadgeElement,
@@ -18,6 +24,7 @@ from .elements import (
     TableElement,
     TabsElement,
 )
+from .qc import build_qc_section
 
 logger = logging.getLogger(__name__)
 
@@ -935,6 +942,7 @@ def make_decoding_report(
     title: str = "Decoding Report",
     config: dict | None = None,
     asset_urls: dict[str, str] | None = None,
+    qc_result: QCResult | None = None,
     output_path: str | None = None,
 ) -> Report:
     """Build a static decoding report from an ``ExperimentResult``.
@@ -962,6 +970,8 @@ def make_decoding_report(
         Extra configuration metadata stored in the report header.
     asset_urls : dict, optional
         Override JavaScript asset URLs used by the report shell.
+    qc_result : QCResult, optional
+        Structured QC drop log rendered before analysis sections.
     output_path : str, optional
         If given, save the rendered HTML to this path.
 
@@ -996,6 +1006,8 @@ def make_decoding_report(
     )
     run_config = {"theme": theme, **(config or {})}
     report = Report(title=title, config=run_config, theme=theme, asset_urls=asset_urls)
+    if qc_result is not None:
+        report.add_section(build_qc_section(qc_result))
 
     for section in selected:
         try:

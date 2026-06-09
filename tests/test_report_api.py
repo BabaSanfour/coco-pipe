@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from coco_pipe.io.quality import QCResult
 from coco_pipe.report.api import (
     from_bids,
     from_container,
@@ -114,6 +115,21 @@ def test_from_reductions_no_container(mock_make):
 
 
 @patch("coco_pipe.report.dim_reduction.make_reduction_report")
+def test_from_reductions_forwards_qc_result(mock_make):
+    mock_make.return_value = MagicMock()
+    qc_result = QCResult(
+        n_obs_in=10,
+        n_obs_out=9,
+        n_subjects_in=5,
+        n_subjects_out=5,
+    )
+
+    from_reductions(["pca"], qc_result=qc_result)
+
+    assert mock_make.call_args.kwargs["qc_result"] is qc_result
+
+
+@patch("coco_pipe.report.dim_reduction.make_reduction_report")
 def test_from_reductions_with_container(mock_make):
     mock_report = MagicMock()
     mock_make.return_value = mock_report
@@ -137,6 +153,21 @@ def test_from_experiment_result(mock_make):
     mock_make.assert_called_once()
     assert mock_make.call_args[0][0] == "result_mock"
     assert mock_make.call_args[1]["title"] == "Dec"
+
+
+@patch("coco_pipe.report.decoding.make_decoding_report")
+def test_from_experiment_result_forwards_qc_result(mock_make):
+    mock_make.return_value = MagicMock()
+    qc_result = QCResult(
+        n_obs_in=10,
+        n_obs_out=8,
+        n_subjects_in=5,
+        n_subjects_out=4,
+    )
+
+    from_experiment_result("result_mock", qc_result=qc_result)
+
+    assert mock_make.call_args.kwargs["qc_result"] is qc_result
 
 
 def test_merge_reports_errors():

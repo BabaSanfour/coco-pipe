@@ -23,17 +23,17 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from coco_pipe.utils import get_environment_info
-
-from ._engine import render_template
-from .config import ProvenanceConfig, ReportConfig
-from .data_quality import (
+from coco_pipe.io.quality import (
     CheckResult,
     check_constant_columns,
     check_flatline,
     check_missingness,
     check_outliers_zscore,
 )
+from coco_pipe.utils import get_environment_info
+
+from ._engine import render_template
+from .config import ProvenanceConfig, ReportConfig
 from .elements import (
     ColumnsElement,
     ContainerElement,
