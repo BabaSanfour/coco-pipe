@@ -18,13 +18,15 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
 import importlib
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "METHODS",
     "get_reducer_class",
+    "DEFAULT_EVAL_GROUP_COL",
+    "parse_eval_specs",
     "BaseReducerConfig",
     "StochasticReducerConfig",
     "PCAConfig",
@@ -643,3 +645,83 @@ class EvaluationConfig(_StrictConfigModel):
                 f"Missing: {missing_tie_breakers}"
             )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Eval-spec helpers
+# ---------------------------------------------------------------------------
+
+DEFAULT_EVAL_GROUP_COL: str = "patient_group_id"
+"""Default grouping column used when building post-hoc eval specs."""
+
+_MISSING_EVAL_VALUES: frozenset[str] = frozenset(
+    {"", "nan", "none", "null", "na", "n/a", "<na>"}
+)
+"""Label/group values that are treated as missing during eval alignment."""
+
+
+def parse_eval_specs(
+    raw_specs: Union[Any, None],
+    subject_col: str,
+) -> list[dict[str, Any]]:
+    """Parse raw eval spec input into a validated list of spec dicts.
+
+    *raw_specs* may be:
+
+    - ``None`` — returns an empty list
+    - a ``list`` of spec dicts
+    - a ``dict`` with an ``"evals"`` key whose value is the list
+
+    Each spec dict must have at least ``"name"`` and ``"target_col"`` keys.
+    Optional keys: ``"group_col"`` (defaults to :data:`DEFAULT_EVAL_GROUP_COL`),
+    ``"filters"`` (list of ``{column, values}`` dicts), ``"label_map"``
+    (string→string mapping).
+
+    Parameters
+    ----------
+    raw_specs:
+        Raw YAML/JSON eval spec input.
+    subject_col:
+        Subject identifier column name (reserved for future alignment checks).
+
+    Returns
+    -------
+    list of dict
+        Normalised eval spec dicts, ready for use in
+        :func:`coco_pipe.dim_reduction.pipeline.run_eval`.
+
+    Raises
+    ------
+    ValueError
+        On structural violations (wrong type, missing required keys, …).
+    """
+    if raw_specs is None:
+        return []
+    raw_specs = raw_specs.get("evals") if isinstance(raw_specs, dict) else raw_specs
+    if not isinstance(raw_specs, list):
+        raise ValueError(
+            "Expected eval specs to be a list or a mapping with an 'evals' key."
+        )
+    specs: list[dict[str, Any]] = []
+    for idx, raw_spec in enumerate(raw_specs):
+        if not isinstance(raw_spec, dict):
+            raise ValueError(f"Eval spec #{idx} must be a dictionary.")
+        specs.append(
+            {
+                "name": str(raw_spec["name"]),
+                "target_col": str(raw_spec["target_col"]),
+                "group_col": str(raw_spec.get("group_col", DEFAULT_EVAL_GROUP_COL)),
+                "filters": [
+                    {
+                        "column": str(item["column"]),
+                        "values": [str(value) for value in item["values"]],
+                    }
+                    for item in raw_spec.get("filters", [])
+                ],
+                "label_map": {
+                    str(key): str(value)
+                    for key, value in (raw_spec.get("label_map") or {}).items()
+                },
+            }
+        )
+    return specs

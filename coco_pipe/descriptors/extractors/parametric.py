@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import ParametricDescriptorConfig
 from ._parametric_fit import _ParametricFitBatch, fit_parametric_batch
 from ._psd import compute_psd
@@ -195,7 +196,7 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
         for metric_name in metrics:
             feature, names = self._finalize_descriptor(
                 chunk_metric_arrays[metric_name],
-                family_prefix="param",
+                family_prefix=KNOWN_FAMILY_TOKENS[1],
                 metric_name=metric_name,
                 channel_names=channel_names,
             )

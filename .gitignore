@@ -51,3 +51,4 @@ PhysioNet_EEGBCI/
 outputs/
 tutorial_trajectories*
 uv.lock
+tutorial*

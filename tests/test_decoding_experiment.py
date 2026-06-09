@@ -287,7 +287,7 @@ def test_experiment_config_validation_errors():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(
         ValueError, match="is for classification but experiment task is regression"
@@ -303,7 +303,7 @@ def test_experiment_config_validation_errors():
         cv=CVConfig(strategy="kfold"),
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(
         ValueError, match="calibration is only available for classification"
@@ -319,7 +319,7 @@ def test_experiment_config_validation_errors():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(ValueError, match="invalid for regression"):
         Experiment(cfg)
@@ -346,6 +346,22 @@ def test_resolve_metadata_and_groups_mismatch():
         exp._resolve_metadata_and_groups(
             10, pd.DataFrame({"Subject": range(10), "Session": range(10)}), None
         )
+
+
+def test_resolve_metadata_auto_fills_subject_session_from_groups():
+    """When groups is provided but sample_metadata isn't, they are auto-populated."""
+    exp = Experiment(
+        ExperimentConfig(
+            task="classification", models={"lr": LogisticRegressionConfig()}
+        )
+    )
+    groups = np.array(["s1", "s2", "s1", "s2", "s1"])
+    meta, gv = exp._resolve_metadata_and_groups(5, None, groups)
+    assert "Subject" in meta.columns
+    assert "Session" in meta.columns
+    np.testing.assert_array_equal(meta["Subject"].to_numpy(), groups)
+    assert (meta["Session"] == "01").all()
+    np.testing.assert_array_equal(gv, groups)
 
 
 def test_feature_names_alignment():
@@ -380,12 +396,12 @@ def test_random_state_propagation_none():
 
 
 def test_instantiate_foundation_model_mock():
-    # Use a dictionary to bypass Pydantic literal restrictions for the mock
+    from coco_pipe.decoding.foundation_models._base import BackendBase
+
     mock_model = {
         "kind": "foundation_embedding",
-        "provider": "reve",
-        "model_name": "dummy",
-        "checkpoint": None,
+        "model_key": "reve",
+        "backend": "dummy",
     }
 
     config = ExperimentConfig.model_construct(
@@ -396,19 +412,15 @@ def test_instantiate_foundation_model_mock():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
         verbose=False,
     )
     exp = Experiment(config)
 
-    pytest.importorskip("torch")
-    from coco_pipe.decoding.fm_hub import REVEModel
-
     with patch(
         "coco_pipe.decoding.experiment.Experiment._instantiate_model"
     ) as mock_inst:
-        mock_inst.return_value = MagicMock(spec=REVEModel)
-        # Should NOT raise spec error anymore
+        mock_inst.return_value = MagicMock(spec=BackendBase)
         est = exp._prepare_estimator("reve", mock_model)
         assert est is not None
 
@@ -481,7 +493,7 @@ def test_grouped_cv_requires_at_least_two_groups():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
         verbose=False,
     )
     # The guard should raise BEFORE sklearn.
@@ -669,9 +681,8 @@ def test_capability_payload_with_fs_enabled():
 
 
 def test_instantiate_foundation_model_fm_hub():
-    # Use valid config object to avoid pydantic issues
     fm_config = FoundationEmbeddingModelConfig(
-        kind="foundation_embedding", provider="reve", model_name="dummy"
+        kind="foundation_embedding", model_key="reve", backend="dummy"
     )
     exp = Experiment(
         ExperimentConfig.model_construct(
@@ -681,9 +692,9 @@ def test_instantiate_foundation_model_fm_hub():
             cv=CVConfig(),
         )
     )
-    with patch("coco_pipe.decoding.fm_hub.build_foundation_model") as mock_build:
+    with patch("coco_pipe.decoding.foundation_models.load") as mock_load:
         exp._instantiate_model("fm", fm_config)
-        mock_build.assert_called_once()
+        mock_load.assert_called_once()
 
 
 def test_experiment_calibration_run():
@@ -696,3 +707,33 @@ def test_experiment_calibration_run():
     )
     res = Experiment(config).run(X, y)
     assert "lr" in res.raw
+
+
+def test_experiment_provenance_metadata_integration():
+    """Verify that decoded results contain the dynamic version."""
+    import numpy as np
+    import pandas as pd
+
+    from coco_pipe.decoding.configs import (
+        ClassicalModelConfig,
+        CVConfig,
+        ExperimentConfig,
+    )
+    from coco_pipe.decoding.experiment import Experiment
+
+    config = ExperimentConfig(
+        task="classification",
+        models={"lr": ClassicalModelConfig(estimator="LogisticRegression")},
+        metrics=["accuracy"],
+        cv=CVConfig(strategy="kfold", n_splits=2),
+        tag="test_meta",
+    )
+
+    exp = Experiment(config)
+    exp._observation_level = "epoch"
+    exp._inferential_unit = "sample"
+    exp._sample_metadata = pd.DataFrame()
+
+    meta = exp._build_result_meta(np.zeros((10, 5)), None)
+    assert "coco_pipe_version" in meta
+    assert isinstance(meta["coco_pipe_version"], str)

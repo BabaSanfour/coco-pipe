@@ -143,8 +143,8 @@ def test_scientific_defaults():
         models={"lr": {"kind": "classical", "method": "LogisticRegression"}},
     )
     assert cfg.cv.n_splits == 5
-    assert cfg.evaluation.chance.n_permutations == 1000
-    assert cfg.evaluation.confidence_intervals.alpha == 0.05
+    assert cfg.statistical_assessment.chance.n_permutations == 1000
+    assert cfg.statistical_assessment.confidence_intervals.alpha == 0.05
 
 
 def test_field_constraints():

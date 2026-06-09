@@ -18,21 +18,21 @@ Examples
 >>> X = np.random.randn(10, 64, 500)
 >>> container = DataContainer(
 ...     X=X,
-...     dims=('obs', 'channel', 'time'),
+...     dims=("obs", "channel", "time"),
 ...     coords={
-...         'channel': ['Fz', 'Cz', 'Pz'], # ... etc
-...         'time': np.linspace(0, 1.0, 500)
+...         "channel": ["Fz", "Cz", "Pz"],  # ... etc
+...         "time": np.linspace(0, 1.0, 500),
 ...     },
 ...     y=np.random.randint(0, 2, 10),
-...     ids=[f'sub-01_trial-{i}' for i in range(10)]
+...     ids=[f"sub-01_trial-{i}" for i in range(10)],
 ... )
 
 # 2. Creating a container for simple Tabular Features (N_subjects, N_features)
 >>> X_tab = np.random.randn(20, 5)
 >>> container_tab = DataContainer(
 ...     X=X_tab,
-...     dims=('obs', 'feature'),
-...     coords={'feature': ['age', 'IQ', 'response_time', 'power_alpha', 'power_beta']}
+...     dims=("obs", "feature"),
+...     coords={"feature": ["age", "IQ", "response_time", "power_alpha", "power_beta"]},
 ... )
 """
 
@@ -91,7 +91,7 @@ class DataContainer:
     (10, 64, 500)
 
     Accessing coordinates:
-    >>> container.coords['channel'][:3]
+    >>> container.coords["channel"][:3]
     ['Fz', 'Cz', 'Pz']
     """
 
@@ -169,6 +169,156 @@ class DataContainer:
             raise TypeError(f"Loaded object is {type(obj)}, expected {cls.__name__}")
 
         return obj
+
+    @classmethod
+    def concat(
+        cls,
+        containers: Sequence["DataContainer"],
+        fill_condition_from_meta: bool = True,
+    ) -> "DataContainer":
+        """Concatenate containers along their observation axis.
+
+        All containers must use matching dimensions and non-observation
+        shapes. Observation-aligned coordinates are concatenated, filling
+        missing entries with ``None`` when a coordinate is absent from a
+        container. Non-observation coordinates are copied from the first
+        container.
+
+        Parameters
+        ----------
+        containers : sequence of DataContainer
+            One or more containers to concatenate.
+        fill_condition_from_meta : bool, default=True
+            If no observation-level ``condition`` coordinate is available,
+            create one from each container's ``meta["condition"]`` value.
+
+        Returns
+        -------
+        DataContainer
+            The concatenated container.
+        """
+        containers = list(containers)
+        if not containers:
+            raise ValueError("Need at least one container to concatenate.")
+
+        base = containers[0]
+        if "obs" not in base.dims:
+            raise ValueError("Containers must include an 'obs' dimension.")
+        if any(container.dims != base.dims for container in containers[1:]):
+            raise ValueError("All containers must have matching dims.")
+
+        obs_axis = base.dims.index("obs")
+        non_obs_shape = tuple(
+            size for axis, size in enumerate(base.X.shape) if axis != obs_axis
+        )
+        for container in containers[1:]:
+            candidate_shape = tuple(
+                size for axis, size in enumerate(container.X.shape) if axis != obs_axis
+            )
+            if candidate_shape != non_obs_shape:
+                raise ValueError(
+                    "All containers must have matching non-obs dimensions."
+                )
+
+        coords: Dict[str, np.ndarray] = {}
+        base_n_obs = base.X.shape[obs_axis]
+
+        # Dimension coordinates are non-observation coordinates by definition.
+        # Auxiliary vectors are non-observation metadata when any container
+        # where they are present shows that they are not obs-aligned.
+        non_obs_coord_keys = set()
+        for key, values in base.coords.items():
+            arr = np.asarray(values)
+            if key in base.dims and key != "obs":
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+                continue
+            if arr.ndim != 1:
+                continue
+
+            present_values = [
+                (
+                    np.asarray(container.coords[key]),
+                    container.X.shape[obs_axis],
+                )
+                for container in containers
+                if key in container.coords
+            ]
+            has_non_obs_alignment = any(
+                candidate.ndim != 1 or len(candidate) != n_obs
+                for candidate, n_obs in present_values
+            )
+            if len(arr) != base_n_obs or has_non_obs_alignment:
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+
+        obs_keys = set()
+        for container in containers:
+            n_obs = container.X.shape[obs_axis]
+            for key, values in container.coords.items():
+                arr = np.asarray(values)
+                if (
+                    key not in non_obs_coord_keys
+                    and arr.ndim == 1
+                    and len(arr) == n_obs
+                ):
+                    obs_keys.add(key)
+
+        for key in sorted(obs_keys):
+            parts = []
+            for container in containers:
+                n_obs = container.X.shape[obs_axis]
+                if key not in container.coords:
+                    parts.append(np.full(n_obs, None, dtype=object))
+                    continue
+
+                arr = np.asarray(container.coords[key])
+                if arr.ndim != 1 or len(arr) != n_obs:
+                    raise ValueError(
+                        f"Observation coordinate '{key}' must be 1D and aligned "
+                        "to the 'obs' dimension in every container where present."
+                    )
+                parts.append(arr)
+            coords[key] = np.concatenate(parts)
+
+        if fill_condition_from_meta and "condition" not in coords:
+            coords["condition"] = np.concatenate(
+                [
+                    np.full(
+                        container.X.shape[obs_axis],
+                        container.meta.get("condition"),
+                        dtype=object,
+                    )
+                    for container in containers
+                ]
+            )
+
+        y = None
+        if all(container.y is not None for container in containers):
+            y = np.concatenate([np.asarray(container.y) for container in containers])
+
+        ids = None
+        if all(container.ids is not None for container in containers):
+            ids = np.concatenate(
+                [np.asarray(container.ids) for container in containers]
+            )
+
+        return cls(
+            X=np.concatenate(
+                [np.asarray(container.X) for container in containers],
+                axis=obs_axis,
+            ),
+            dims=base.dims,
+            coords=coords,
+            y=y,
+            ids=ids,
+            meta={
+                "source": "concat",
+                "conditions": [
+                    container.meta.get("condition") for container in containers
+                ],
+            },
+        )
 
     def __repr__(self) -> str:
         dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape)]
@@ -419,18 +569,18 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Simple Undersampling of 'y'
-        >>> balanced = container.balance(strategy='undersample')
+        >>> balanced = container.balance(strategy="undersample")
 
         >>> # 2. Balance based on a metadata column 'condition'
-        >>> balanced = container.balance(target='condition')
+        >>> balanced = container.balance(target="condition")
 
         >>> # 3. Stratified Balancing (Balance 'y' while preserving 'sex' and 'age'
         >>> #    ratios)
-        >>> balanced = container.balance(target='y', covariates=['sex', 'age'])
+        >>> balanced = container.balance(target="y", covariates=["sex", "age"])
 
         >>> # 4. Iterative Bootstrapping (Different seeds)
         >>> for seed in [1, 2, 3]:
-        ...     subset = container.balance(strategy='undersample', random_state=seed)
+        ...     subset = container.balance(strategy="undersample", random_state=seed)
         ...     # process subset...
         """
         # 1. Construct temporary DataFrame for Metadata
@@ -605,22 +755,22 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Exact Selection (Sensors)
-        >>> sub = container.select(channel=['Fz', 'Cz'])
+        >>> sub = container.select(channel=["Fz", "Cz"])
 
         >>> # 2. Wildcard Selection (All Alpha features)
-        >>> sub = container.select(feature='*alpha*')
+        >>> sub = container.select(feature="*alpha*")
 
         >>> # 3. Range Selection (Time)
-        >>> sub = container.select(time={'>=': 0.1, '<': 0.5})
+        >>> sub = container.select(time={">=": 0.1, "<": 0.5})
 
         >>> # 4. Case-Insensitive Fuzzy Matching
-        >>> sub = container.select(channel=['fz'], ignore_case=True)
+        >>> sub = container.select(channel=["fz"], ignore_case=True)
 
         >>> # 5. Filter by Target (y)
-        >>> sub = container.select(y=['Patient'])
+        >>> sub = container.select(y=["Patient"])
 
         >>> # 6. Complex Logic (Subjects 1-5 via Operator)
-        >>> sub = container.select(subject_id={'>=': 1, '<=': 5})
+        >>> sub = container.select(subject_id={">=": 1, "<=": 5})
 
         >>> # 7. Stratified Selection (First 2 epochs per subject via Callable)
         >>> def first_n(ids, n=2):
@@ -874,14 +1024,14 @@ class DataContainer:
         Examples
         --------
         >>> # Flatten (10, 64, 500) -> (10, 32000)
-        >>> flat = container.flatten(preserve='obs')
+        >>> flat = container.flatten(preserve="obs")
         >>> flat.shape
         (10, 32000)
-        >>> flat.coords['feature'][0]
+        >>> flat.coords["feature"][0]
         'Fz_0.0'
 
         >>> # Flatten spatial only, keep time (10, 64, 500) -> (10, 500, 64)
-        >>> time_resolved = container.flatten(preserve=['obs', 'time'])
+        >>> time_resolved = container.flatten(preserve=["obs", "time"])
         """
         if isinstance(preserve, str):
             preserve = [preserve]
@@ -978,7 +1128,7 @@ class DataContainer:
         --------
         >>> # Stack time into observations:
         >>> # (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
-        >>> stacked = container.stack(dims=('obs', 'time'), new_dim='obs')
+        >>> stacked = container.stack(dims=("obs", "time"), new_dim="obs")
         >>> stacked.shape
         (5000, 64)
         """
@@ -1059,6 +1209,26 @@ class DataContainer:
 
         new_dims_final = (new_dim,) + tuple(preserved)
 
+        n_obs_orig = (
+            self.X.shape[self.dims.index("obs")] if "obs" in self.dims else None
+        )
+        snapshot_coords: Dict[str, np.ndarray] = {
+            d: np.asarray(self.coords[d]).copy() for d in dims if d in self.coords
+        }
+        for coord_name, values in self.coords.items():
+            if coord_name in dims or coord_name in self.dims:
+                continue
+            arr = np.asarray(values)
+            if n_obs_orig is not None and arr.shape[0] == n_obs_orig:
+                snapshot_coords.setdefault(coord_name, arr.copy())
+
+        snapshot = {
+            "y": (None if self.y is None else np.asarray(self.y).copy()),
+            "ids": (None if self.ids is None else np.asarray(self.ids).copy()),
+            "coords": snapshot_coords,
+            "original_dims": tuple(self.dims),
+        }
+
         return replace(
             self,
             X=X_new,
@@ -1070,6 +1240,7 @@ class DataContainer:
                 **self.meta,
                 "stacked_from": dims,
                 "stacked_shapes": tuple(stack_shape),
+                "_stacked_snapshot": snapshot,
             },
         )
 
@@ -1098,9 +1269,9 @@ class DataContainer:
         Examples
         --------
         >>> # Stack 'trials' and 'time' -> 'obs'
-        >>> stacked = container.stack(('trials', 'time'), new_dim='obs')
+        >>> stacked = container.stack(("trials", "time"), new_dim="obs")
         >>> # Unstack 'obs' -> ('trials', 'time') (automatically inferred)
-        >>> unstacked = stacked.unstack('obs')
+        >>> unstacked = stacked.unstack("obs")
         """
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
@@ -1161,6 +1332,27 @@ class DataContainer:
             self.ids if (self.ids is None or len(self.ids) != current_len) else None
         )
 
+        snapshot = self.meta.get("_stacked_snapshot")
+        if snapshot is not None:
+            if snapshot.get("y") is not None:
+                new_y = snapshot["y"]
+            if snapshot.get("ids") is not None:
+                new_ids = snapshot["ids"]
+            for coord_name, values in snapshot.get("coords", {}).items():
+                new_coords[coord_name] = values
+
+            original_dims = snapshot.get("original_dims")
+            if original_dims is not None and set(original_dims) == set(final_dims):
+                # Restore the original dim order by transposing.
+                current_dims = tuple(final_dims)
+                permutation = [current_dims.index(d) for d in original_dims]
+                X_final = np.transpose(X_final, permutation)
+                final_dims = list(original_dims)
+
+        # Drop the snapshot once consumed so downstream stacks don't carry it.
+        new_meta = {k: v for k, v in self.meta.items() if k != "_stacked_snapshot"}
+        new_meta["unstacked_from"] = dim
+
         return replace(
             self,
             X=X_final,
@@ -1168,10 +1360,118 @@ class DataContainer:
             y=new_y,
             ids=new_ids,
             coords=new_coords,
-            meta={**self.meta, "unstacked_from": dim},
+            meta=new_meta,
         )
 
-    def center(self, dim: str = "time", inplace: bool = False) -> "DataContainer":
+    def with_features(
+        self,
+        X: np.ndarray,
+        names: Optional[Sequence[str]] = None,
+        feature_dim: Optional[str] = None,
+        new_dim_name: str = "component",
+    ) -> "DataContainer":
+        """
+        Return a new container with the feature axis replaced.
+
+        Typical use: re-attach reduced-dimensionality scores (e.g. PCA
+        components) to a container, so downstream operations (``unstack``,
+        ``aggregate``, plotting) keep working with proper coordinates.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            New data array. The leading axes must match the container's
+            non-feature axes; the trailing axis is the new feature axis.
+        names : sequence of str, optional
+            Coordinate labels for the new feature axis. When ``None``,
+            integer indices are used. Must have length ``X.shape[-1]``.
+        feature_dim : str, optional
+            Name of the dimension being replaced. Defaults to the last
+            dimension of the container.
+        new_dim_name : str, default='component'
+            Dimension name to assign to the replaced axis when
+            ``feature_dim`` is not present in ``self.dims`` (e.g., when
+            replacing ``channel`` with ``component`` after PCA).
+
+        Returns
+        -------
+        DataContainer
+            New container with ``X`` replaced and the feature-axis coord
+            updated. All other dims, coords, ``y``, ``ids``, and meta are
+            preserved.
+
+        Raises
+        ------
+        ValueError
+            If ``X``'s leading shape doesn't match the container, or if
+            ``names`` has the wrong length.
+
+        Examples
+        --------
+        >>> # After fitting PCA on stacked data:
+        >>> scores = reducer.fit_transform(c_stacked.X)  # (n_obs, 3)
+        >>> c_pc = c_stacked.with_features(
+        ...     scores,
+        ...     names=["PC1", "PC2", "PC3"],
+        ...     new_dim_name="component",
+        ... )
+        >>> c_pc.dims
+        ('obs', 'component')
+        """
+        X = np.asarray(X)
+        if X.ndim != self.X.ndim:
+            raise ValueError(
+                f"`X` must have the same number of dimensions as the container "
+                f"({self.X.ndim}); got {X.ndim}."
+            )
+        if X.shape[:-1] != self.X.shape[:-1]:
+            raise ValueError(
+                f"`X`'s leading axes {X.shape[:-1]} must match the container's "
+                f"non-feature axes {self.X.shape[:-1]}."
+            )
+
+        if feature_dim is None:
+            feature_dim = self.dims[-1]
+
+        # The output axis is renamed to ``new_dim_name`` unconditionally.
+        # When the caller wants to keep the original dim name, they pass
+        # ``new_dim_name=feature_dim`` (or rely on the same name).
+        new_dim = new_dim_name
+
+        n_features_new = X.shape[-1]
+        if names is not None:
+            names_arr = np.asarray(names)
+            if names_arr.shape[0] != n_features_new:
+                raise ValueError(
+                    f"`names` length {names_arr.shape[0]} does not match new "
+                    f"feature count {n_features_new}."
+                )
+        else:
+            names_arr = np.arange(n_features_new)
+
+        # Build new dims tuple, swapping feature_dim → new_dim if changed
+        new_dims = tuple(new_dim if d == self.dims[-1] else d for d in self.dims)
+
+        # Build new coords: drop the old feature coord (if present) and set
+        # the new one
+        new_coords = {k: v for k, v in self.coords.items() if k != self.dims[-1]}
+        new_coords[new_dim] = names_arr
+
+        return replace(
+            self,
+            X=X,
+            dims=new_dims,
+            coords=new_coords,
+            meta={
+                **self.meta,
+                "with_features_from": self.dims[-1],
+                "with_features_to": new_dim,
+            },
+        )
+
+    def center(
+        self, dim: Union[str, Sequence[str]] = "time", inplace: bool = False
+    ) -> "DataContainer":
         """
         Remove mean along a specified dimension (Centering/Baseline Correction).
 
@@ -1181,8 +1481,9 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str, default='time'
-            Dimension name to center over (e.g., 'time', 'channel', 'obs').
+        dim : str or sequence of str, default='time'
+            Dimension name(s) to center over (e.g., 'time', 'channel', 'obs',
+            or ('obs', 'time')).
         inplace : bool, default=False
             If True, modifies X in-place to save memory.
             Returns self.
@@ -1195,15 +1496,17 @@ class DataContainer:
         Examples
         --------
         >>> # Baseline correction over time
-        >>> container.center(dim='time')
+        >>> container.center(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
         X -= mean
 
         if inplace:
@@ -1212,7 +1515,10 @@ class DataContainer:
             return replace(self, X=X)
 
     def zscore(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: Union[str, Sequence[str]] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Standardize (Z-score) along a specified dimension.
@@ -1222,8 +1528,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to standardize.
+        dim : str or sequence of str
+            Dimension(s) to standardize.
         eps : float
             Stability epsilon to avoid division by zero.
         inplace : bool
@@ -1235,16 +1541,18 @@ class DataContainer:
         Examples
         --------
         >>> # Standardize each channel's timecourse
-        >>> container.zscore(dim='time')
+        >>> container.zscore(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
-        std = np.nanstd(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
+        std = np.nanstd(X, axis=axes, keepdims=True)
 
         X -= mean
         X /= std + eps
@@ -1255,7 +1563,10 @@ class DataContainer:
             return replace(self, X=X)
 
     def rms_scale(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: Union[str, Sequence[str]] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Scale by Root Mean Square (RMS) amplitude along a dimension.
@@ -1265,8 +1576,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to scale.
+        dim : str or sequence of str
+            Dimension(s) to scale.
         eps : float
             Stability epsilon.
         inplace : bool
@@ -1275,13 +1586,15 @@ class DataContainer:
         -------
         DataContainer
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean_sq = np.nanmean(X**2, axis=axis, keepdims=True)
+        mean_sq = np.nanmean(X**2, axis=axes, keepdims=True)
         rms = np.sqrt(mean_sq)
 
         X /= rms + eps
@@ -1292,7 +1605,7 @@ class DataContainer:
             return replace(self, X=X)
 
     def baseline_correction(
-        self, dim: str = "time", inplace: bool = False
+        self, dim: Union[str, Sequence[str]] = "time", inplace: bool = False
     ) -> "DataContainer":
         """Alias for center(). Common in EEG."""
         return self.center(dim=dim, inplace=inplace)

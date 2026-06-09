@@ -83,13 +83,15 @@ def aggregate_predictions_for_inference(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.decoding.stats import aggregate_predictions_for_inference
-    >>> df = pd.DataFrame({
-    ...     'Subject': ['S1', 'S1'], 'y_true': [1, 1], 'y_pred': [1, 0],
-    ...     'SampleID': [0, 1]
-    ... })
-    >>> res = aggregate_predictions_for_inference(
-    ...     df, 'accuracy', unit_of_inference='Subject'
+    >>> df = pd.DataFrame(
+    ...     {"Subject": ["S1",
+    ...                           "S1"],
+    ...                           "y_true": [1, 1],
+    ...                           "y_pred": [1, 0],
+    ...                           "SampleID": [0, 1]}
     ... )
+    >>> res = aggregate_predictions_for_inference(df,
+    ...                           "accuracy", unit_of_inference="Subject")
 
     See Also
     --------
@@ -208,7 +210,7 @@ def binomial_accuracy_test(
     --------
     >>> from coco_pipe.decoding.stats import binomial_accuracy_test
     >>> res = binomial_accuracy_test([1, 0, 1], [1, 1, 1], p0=0.5)
-    >>> print(res['p_value'])
+    >>> print(res["p_value"])
 
     See Also
     --------
@@ -313,11 +315,27 @@ def run_statistical_assessment(
     binomial_accuracy_test : Core analytical test.
     assess_post_hoc_permutation : Fast post-hoc alternative.
     """
-    stats_config = experiment_config.evaluation
+    stats_config = experiment_config.statistical_assessment
     unit = inferential_unit
     metrics = experiment_config.get_all_evaluation_metrics()
+    if stats_config.metrics:
+        metrics = [m for m in metrics if m in stats_config.metrics]
     rows: list[dict[str, Any]] = []
     nulls: dict[str, dict[str, Any]] = {}
+
+    predictions = observed_result.get_predictions()
+    if predictions.empty or "Model" not in predictions.columns:
+        n_groups = len(np.unique(groups)) if groups is not None else 0
+        raise ValueError(
+            "Statistical assessment cannot run because the experiment "
+            "produced no per-fold predictions. This typically means too "
+            f"few groups ({n_groups}) for the requested CV "
+            f"(``{experiment_config.cv.strategy}``, "
+            f"``n_splits={experiment_config.cv.n_splits}``) or an "
+            "earlier fold failure. Either increase the number of "
+            "subjects/groups, reduce ``cv.n_splits``, or disable "
+            "``statistical_assessment.enabled``."
+        )
 
     for model in observed_result.raw:
         if "error" in observed_result.raw[model]:

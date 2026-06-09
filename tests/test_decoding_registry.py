@@ -11,6 +11,7 @@ from coco_pipe.decoding.registry import (
     get_selector_capabilities,
     list_capabilities,
     list_estimator_specs,
+    list_foundation_models,
     register_estimator,
     register_estimator_spec,
     resolve_estimator_capabilities,
@@ -143,10 +144,10 @@ def test_resolve_estimator_spec():
     spec = resolve_estimator_spec(cfg)
     assert spec.name == "LogisticRegression"
 
-    # Foundation (reve)
+    # Foundation (reve) — kind acts as spec_name in the else branch
     cfg_f = SimpleNamespace(kind="reve", method="REVEModel")
     spec_f = resolve_estimator_spec(cfg_f)
-    assert spec_f.name == "REVEModel"
+    assert spec_f.name == "reve"
 
     # Temporal
     cfg_t = SimpleNamespace(
@@ -201,9 +202,9 @@ def test_resolve_estimator_spec_temporal_foundation_fixups():
     assert spec.supports_proba is True
 
     # 2. Foundation with dict config
-    foundation_cfg = {"kind": "foundation_embedding", "provider": "reve"}
+    foundation_cfg = {"kind": "foundation_embedding", "model_key": "reve"}
     spec = resolve_estimator_spec(foundation_cfg)
-    assert spec.name == "REVEModel"
+    assert spec.name == "reve"
 
 
 def test_resolve_estimator_spec_runtime_fixups():
@@ -254,3 +255,45 @@ def test_get_estimator_cls_not_found_with_matches():
     expected = re.escape("Did you mean: ['LogisticRegression']")
     with pytest.raises(Exception, match=expected):
         get_estimator_cls("LogisticRegres")
+
+
+def test_registry_all_keys_have_positive_embedding_dim():
+    for m in list_foundation_models():
+        assert m["embedding_dim"] > 0, f"{m['name']} has non-positive embedding_dim"
+
+
+def test_registry_all_keys_have_hub_repo():
+    for m in list_foundation_models():
+        assert m["hub_repo"], f"{m['name']} has empty hub_repo"
+
+
+def test_list_foundation_models_contains_expected_keys():
+    keys = {m["name"] for m in list_foundation_models()}
+    assert {"reve", "cbramod", "biot", "labram", "eegpt", "signaljepa", "bendr"} <= keys
+
+
+def test_get_metadata_known_key():
+    m = get_estimator_spec("reve")
+    assert m.name == "reve"
+    assert m.embedding_dim == 1024
+    assert m.preferred_backend == "hugging_face"
+
+
+def test_get_metadata_cbramod():
+    m = get_estimator_spec("cbramod")
+    assert m.name == "cbramod"
+    assert m.embedding_dim == 200
+    assert m.preferred_backend == "braindecode"
+
+
+def test_get_metadata_unknown_raises_with_hint():
+    from coco_pipe.decoding import get_foundation_model_spec
+
+    with pytest.raises(KeyError, match="Available"):
+        get_foundation_model_spec("not_a_model")
+
+
+def test_metadata_is_frozen():
+    m = get_estimator_spec("reve")
+    with pytest.raises(Exception):
+        m.embedding_dim = 999  # type: ignore[misc]

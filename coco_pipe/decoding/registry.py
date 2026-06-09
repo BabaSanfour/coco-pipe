@@ -22,6 +22,7 @@ from ._specs import (
     SELECTOR_CAPABILITIES,
     EstimatorCapabilities,
     EstimatorSpec,
+    FoundationModelSpec,
     SelectorCapabilities,
     canonical_estimator_name,
 )
@@ -150,7 +151,7 @@ def get_estimator_cls(name: str) -> Type:
     Examples
     --------
     >>> from coco_pipe.decoding.registry import get_estimator_cls
-    >>> cls = get_estimator_cls('LogisticRegression')
+    >>> cls = get_estimator_cls("LogisticRegression")
 
     See Also
     --------
@@ -277,6 +278,38 @@ def list_estimator_specs() -> Dict[str, EstimatorSpec]:
     return dict(ESTIMATOR_SPECS)
 
 
+def get_foundation_model_spec(model_key: str) -> FoundationModelSpec:
+    """Return the FoundationModelSpec for a registered foundation model.
+
+    Raises
+    ------
+    KeyError
+        If ``model_key`` is not a registered foundation model.
+    """
+    spec = ESTIMATOR_SPECS.get(model_key)
+    if not isinstance(spec, FoundationModelSpec):
+        available = sorted(
+            k for k, v in ESTIMATOR_SPECS.items() if isinstance(v, FoundationModelSpec)
+        )
+        raise KeyError(
+            f"Unknown foundation model '{model_key}'. "
+            f"Available: {available}. "
+            f"Call list_foundation_models() for details."
+        )
+    return spec
+
+
+def list_foundation_models() -> list[dict]:
+    """Return a list of dicts describing all registered foundation models."""
+    import dataclasses
+
+    return [
+        dataclasses.asdict(spec)
+        for spec in ESTIMATOR_SPECS.values()
+        if isinstance(spec, FoundationModelSpec)
+    ]
+
+
 def _get_val(obj: Any, key: str, default: Any = None) -> Any:
     """
     Retrieve a value from a configuration object or dictionary.
@@ -357,7 +390,12 @@ def resolve_estimator_spec(config: Any) -> EstimatorSpec:
             name_val = _get_val(config, "estimator")
         spec_name = canonical_estimator_name(name_val or str(config))
     elif kind == "foundation_embedding":
-        spec_name = _get_val(config, "provider", kind)
+        spec_name = _get_val(config, "model_key")
+        if not spec_name:
+            raise ValueError(
+                "FoundationEmbeddingModelConfig requires a 'model_key' "
+                f"(e.g. 'reve', 'cbramod'). Available: {list_foundation_models()}"
+            )
     else:
         spec_name = kind
 

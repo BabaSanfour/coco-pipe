@@ -149,6 +149,7 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     assert container.meta["sfreq"] == 100.0
     assert container.meta["sfreq"] == 100.0
     assert container.coords["age"].tolist() == [30, 30]
+    assert container.coords["subject"].tolist() == ["01", "01"]
 
 
 def test_tabular_dataset_cleaning(tmp_path):
@@ -499,7 +500,7 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
         ds.load()
 
 
-def test_bids_time_warning(monkeypatch, tmp_path, caplog):
+def test_bids_time_warning(monkeypatch, tmp_path):
     """Test warning for time length mismatch."""
     monkeypatch.setattr(dataset_mod, "detect_subjects", lambda r: ["01", "02"])
     monkeypatch.setattr(dataset_mod, "detect_sessions", lambda r, s: [None])
@@ -527,7 +528,5 @@ def test_bids_time_warning(monkeypatch, tmp_path, caplog):
 
     ds = dataset_mod.BIDSDataset(tmp_path)
 
-    with pytest.raises(ValueError):
+    with pytest.warns(RuntimeWarning, match="Dropping 1 epoch"):
         ds.load()
-
-    assert "Time length mismatch" in caplog.text

@@ -1,0 +1,55 @@
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        .sidebar-link.active {
+            @apply bg-brand-50 text-brand-700 border-r-4 border-brand-500 dark:bg-brand-900/30 dark:text-brand-100;
+        }
+
+        .sidebar-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .sidebar-scroll::-webkit-scrollbar-thumb {
+            @apply bg-gray-300 rounded dark:bg-gray-700;
+        }
+
+        @media print {
+            #sidebar,
+            #info-drawer,
+            #back-to-top,
+            header button,
+            .report-controls,
+            .no-print {
+                display: none !important;
+            }
+
+            main {
+                margin-left: 0 !important;
+                padding: 0 !important;
+            }
+
+            body,
+            html {
+                background: white !important;
+                color: black !important;
+            }
+
+            section {
+                page-break-inside: avoid;
+                border: 1px solid #e5e7eb;
+                margin-bottom: 1rem;
+                box-shadow: none !important;
+            }
+
+            .lazy-plot {
+                min-height: 360px !important;
+                page-break-inside: avoid;
+            }
+
+            a[href]::after {
+                content: none !important;
+            }
+        }
+    </style>

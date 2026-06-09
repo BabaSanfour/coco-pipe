@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Minimal descriptors example with explicit NumPy inputs.
 """

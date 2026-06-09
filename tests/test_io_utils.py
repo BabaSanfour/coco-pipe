@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import coco_pipe.io.utils as utils_mod
+from coco_pipe.io.quality import row_quality_score
 
 # --- DataFrame Utilities ---
 
@@ -18,11 +19,34 @@ def test_row_quality_score():
     # Row 2: a=0 -> score 1 (if count_zero=True)
     # Row 3: a=Inf -> score 1
 
-    scores = utils_mod.row_quality_score(df, count_zero=True)
+    scores = row_quality_score(df, count_zero=True)
     assert np.array_equal(scores, [0, 1, 1, 1])
 
-    scores_nz = utils_mod.row_quality_score(df, count_zero=False)
+    scores_nz = row_quality_score(df, count_zero=False)
     assert np.array_equal(scores_nz, [0, 1, 0, 1])
+
+
+def test_row_quality_score_normalized():
+    df = pd.DataFrame(
+        {
+            "a": [0.0, np.nan, 1.0],
+            "b": [1.0, np.inf, 2.0],
+            "label": ["x", "y", "z"],
+        },
+        index=[10, 20, 30],
+    )
+
+    scores = row_quality_score(df, normalize=True)
+
+    assert scores.index.tolist() == [10, 20, 30]
+    assert scores.tolist() == [0.5, 1.0, 0.0]
+
+    no_numeric = row_quality_score(
+        df[["label"]],
+        normalize=True,
+    )
+    assert no_numeric.tolist() == [0.0, 0.0, 0.0]
+    assert no_numeric.dtype == float
 
 
 def test_make_strata():
@@ -68,6 +92,72 @@ def test_split_column():
     # No sep
     res_none = utils_mod.split_column("unit", "_", False)
     assert res_none == ("", "unit")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("42", "0042"),
+        ("sub-42", "0042"),
+        (42, "0042"),
+        ("P001", "P001"),
+    ],
+)
+def test_normalize_subject_value(value, expected):
+    assert utils_mod.normalize_subject_value(value) == expected
+
+
+def test_read_table_csv(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text("subject;feature\nsub-1;1.5\nsub-2;2.5\n", encoding="utf-8")
+
+    table = utils_mod.read_table(path)
+
+    assert table.to_dict(orient="records") == [
+        {"subject": "sub-1", "feature": 1.5},
+        {"subject": "sub-2", "feature": 2.5},
+    ]
+
+
+def test_read_table_parquet(monkeypatch, tmp_path):
+    path = tmp_path / "features.parquet"
+    expected = pd.DataFrame({"subject": ["sub-1"], "feature": [1.5]})
+    read_parquet = MagicMock(return_value=expected)
+    monkeypatch.setattr(utils_mod.pd, "read_parquet", read_parquet)
+
+    table = utils_mod.read_table(path)
+
+    read_parquet.assert_called_once_with(path)
+    pd.testing.assert_frame_equal(table, expected)
+
+
+def test_read_table_drops_unnamed_and_empty_columns(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text(
+        "subject,feature,Unnamed: 2,empty\nsub-1,1.5,,\n",
+        encoding="utf-8",
+    )
+
+    table = utils_mod.read_table(path)
+
+    assert table.columns.tolist() == ["subject", "feature"]
+
+
+def test_read_table_explicit_separator(tmp_path):
+    path = tmp_path / "features.csv"
+    path.write_text("subject|feature\nsub-1|1.5\n", encoding="utf-8")
+
+    table = utils_mod.read_table(path, sep="|")
+
+    assert table.to_dict(orient="records") == [{"subject": "sub-1", "feature": 1.5}]
+
+
+def test_read_table_unsupported_format_raises(tmp_path):
+    path = tmp_path / "features.tsv"
+    path.touch()
+
+    with pytest.raises(ValueError, match="Expected .csv or .parquet"):
+        utils_mod.read_table(path)
 
 
 def test_default_id_extractor(tmp_path):

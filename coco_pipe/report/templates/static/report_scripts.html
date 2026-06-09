@@ -1,0 +1,648 @@
+    <script>
+        // --- Global Data Store ---
+        let REPORT_DATA = {};
+
+        // Decompress Payload on Load
+        (function initPayload() {
+            const payloadEl = document.getElementById('report-payload');
+            if (payloadEl && payloadEl.textContent) {
+                try {
+                    const b64 = payloadEl.textContent.trim();
+                    if (b64) {
+                        // Base64 -> Uint8Array
+                        const binaryString = atob(b64);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        // Decompress (Gzip -> String)
+                        const decompressed = pako.inflate(bytes, { to: 'string' });
+                        // Parse JSON
+                        REPORT_DATA = JSON.parse(decompressed);
+                        console.log(`[Report] Loaded ${Object.keys(REPORT_DATA).length} items from compressed payload.`);
+                    }
+                } catch (e) {
+                    console.error("[Report] Failed to decompress payload:", e);
+                }
+            }
+        })();
+
+        // --- 1. Dark Mode ---
+        function setThemeIcon(isDark) {
+            const moon = document.getElementById('theme-icon-moon');
+            const sun = document.getElementById('theme-icon-sun');
+            if (!moon || !sun) return;
+            moon.classList.toggle('hidden', isDark);
+            sun.classList.toggle('hidden', !isDark);
+        }
+
+        function applyPlotlyTheme(isDark) {
+            const template = isDark ? 'plotly_dark' : 'coco';
+            document.querySelectorAll('.js-plotly-plot').forEach(plot => {
+                if (window.Plotly) {
+                    Plotly.relayout(plot, {
+                        template,
+                        paper_bgcolor: isDark ? '#111827' : '#ffffff',
+                        plot_bgcolor: isDark ? '#111827' : '#ffffff',
+                        font: { color: isDark ? '#f3f4f6' : '#1f2937' }
+                    });
+                }
+            });
+        }
+
+        function toggleDarkMode() {
+            document.documentElement.classList.toggle('dark');
+            const isDark = document.documentElement.classList.contains('dark');
+            localStorage.setItem('color-theme', isDark ? 'dark' : 'light');
+            setThemeIcon(isDark);
+            applyPlotlyTheme(isDark);
+
+            // Trigger Plotly redraw if needed (hack to refresh layouts)
+            window.dispatchEvent(new Event('resize'));
+        }
+
+        if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+        setThemeIcon(document.documentElement.classList.contains('dark'));
+
+        // Drawer controls
+        const infoDrawer = document.getElementById('info-drawer');
+        function openInfoDrawer() {
+            if (!infoDrawer) return;
+            infoDrawer.classList.remove('translate-x-full');
+            infoDrawer.setAttribute('aria-hidden', 'false');
+            const close = infoDrawer.querySelector('[data-drawer-close]');
+            if (close) close.focus();
+        }
+        function closeInfoDrawer() {
+            if (!infoDrawer) return;
+            infoDrawer.classList.add('translate-x-full');
+            infoDrawer.setAttribute('aria-hidden', 'true');
+        }
+        document.querySelectorAll('[data-drawer-open]').forEach(button => {
+            button.addEventListener('click', openInfoDrawer);
+        });
+        document.querySelectorAll('[data-drawer-close]').forEach(button => {
+            button.addEventListener('click', closeInfoDrawer);
+        });
+
+        // --- 1b. Delegated action handlers (data-action) ---
+        // One global click listener resolves all UI buttons by their data-action
+        // attribute. This replaces inline onclick= handlers for CSP-friendliness
+        // and to keep behavior centralized.
+        function openCodeModal(sectionId) {
+            const modal = document.getElementById(`code-modal-${sectionId}`);
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.setAttribute('aria-hidden', 'false');
+            const closer = modal.querySelector('[data-modal-close]');
+            if (closer) closer.focus();
+        }
+        function closeCodeModal(sectionId) {
+            const modal = document.getElementById(`code-modal-${sectionId}`);
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.setAttribute('aria-hidden', 'true');
+            document.getElementById(`btn-source-${sectionId}`)?.focus();
+        }
+        function copyWithFeedback(text, button, labelSelector) {
+            navigator.clipboard.writeText(text).then(() => {
+                const label = labelSelector ? button.querySelector(labelSelector) : button;
+                if (!label) return;
+                const old = label.textContent;
+                label.textContent = 'Copied';
+                setTimeout(() => { label.textContent = old; }, 1400);
+            });
+        }
+        document.addEventListener('click', (event) => {
+            // Modal backdrop click closes the modal (target === currentTarget check
+            // via [data-modal] attribute filter — content has data-modal-content)
+            const backdrop = event.target.closest('[data-modal]');
+            if (backdrop && event.target === backdrop) {
+                closeCodeModal(backdrop.getAttribute('data-section-id'));
+                return;
+            }
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+            const action = trigger.getAttribute('data-action');
+            const sectionId = trigger.getAttribute('data-section-id');
+            switch (action) {
+                case 'theme-toggle':
+                    toggleDarkMode();
+                    break;
+                case 'sidebar-toggle':
+                    document.getElementById('sidebar')?.classList.toggle('-translate-x-full');
+                    break;
+                case 'sidebar-close':
+                    document.getElementById('sidebar')?.classList.add('-translate-x-full');
+                    break;
+                case 'back-to-top':
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    break;
+                case 'copy-section-link': {
+                    event.stopPropagation();
+                    const url = window.location.href.split('#')[0] + `#${sectionId}`;
+                    copyWithFeedback(url, trigger, '[data-label]');
+                    break;
+                }
+                case 'open-code-modal':
+                    event.stopPropagation();
+                    openCodeModal(sectionId);
+                    break;
+                case 'close-code-modal':
+                    closeCodeModal(sectionId);
+                    break;
+                case 'copy-code': {
+                    const source = document.getElementById(`code-source-${sectionId}`);
+                    const text = source ? source.value : '';
+                    copyWithFeedback(text, trigger);
+                    break;
+                }
+            }
+        });
+        // Escape key closes the topmost open modal
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            const openModals = document.querySelectorAll('[data-modal]:not(.hidden)');
+            if (openModals.length === 0) return;
+            const topMost = openModals[openModals.length - 1];
+            closeCodeModal(topMost.getAttribute('data-section-id'));
+        });
+
+        // --- 2. Search & Filter ---
+        const searchInput = document.getElementById('search-input');
+        const sections = document.querySelectorAll('section[id]');
+        const tocLinks = document.querySelectorAll('.toc-link');
+        const hideFilteredSections = document.getElementById('hide-filtered-sections');
+        let activeFilter = 'all';
+
+        // Section collapse state
+        function setSectionExpanded(toggle, expanded, persist = true) {
+            const sectionId = toggle.getAttribute('data-section-id');
+            const body = document.getElementById(`section-body-${sectionId}`);
+            const label = document.querySelector(`#${sectionId} [data-collapse-label]`);
+            const icon = toggle.querySelector('[data-chevron]');
+            const storageKey = `coco-report-section-${sectionId}`;
+            if (body) body.classList.toggle('hidden', !expanded);
+            toggle.setAttribute('aria-expanded', String(expanded));
+            if (icon) icon.classList.toggle('rotate-180', expanded);
+            if (label) label.textContent = expanded ? 'Collapse' : 'Expand';
+            if (persist) {
+                try {
+                    localStorage.setItem(storageKey, expanded ? 'expanded' : 'collapsed');
+                } catch (_) { }
+            }
+        }
+
+        document.querySelectorAll('[data-section-toggle]').forEach(toggle => {
+            const sectionId = toggle.getAttribute('data-section-id');
+            const storageKey = `coco-report-section-${sectionId}`;
+            let saved = null;
+            try { saved = localStorage.getItem(storageKey); } catch (_) { }
+            if (saved === 'collapsed') setSectionExpanded(toggle, false, false);
+
+            toggle.addEventListener('click', () => {
+                setSectionExpanded(toggle, toggle.getAttribute('aria-expanded') !== 'true');
+            });
+        });
+
+        function applyReportFilters() {
+            const query = (searchInput ? searchInput.value : '').toLowerCase();
+            const hideMain = hideFilteredSections && hideFilteredSections.checked;
+            tocLinks.forEach(link => {
+                const title = link.getAttribute('data-title') || '';
+                const status = link.getAttribute('data-status') || 'ok';
+                const matchesText = title.includes(query);
+                const matchesStatus = activeFilter === 'all' || status === activeFilter;
+                const visible = matchesText && matchesStatus;
+                link.classList.toggle('hidden', !visible);
+                const id = link.getAttribute('href')?.replace('#', '');
+                const section = id ? document.getElementById(id) : null;
+                if (section && hideMain) section.classList.toggle('hidden', !visible);
+                if (section && !hideMain) section.classList.remove('hidden');
+            });
+        }
+
+        searchInput.addEventListener('input', applyReportFilters);
+        if (hideFilteredSections) hideFilteredSections.addEventListener('change', applyReportFilters);
+
+        document.querySelectorAll('.filter-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                activeFilter = button.getAttribute('data-filter') || 'all';
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                    btn.classList.remove('bg-brand-100', 'text-brand-800', 'dark:bg-brand-900/40', 'dark:text-brand-100');
+                });
+                button.classList.add('bg-brand-100', 'text-brand-800', 'dark:bg-brand-900/40', 'dark:text-brand-100');
+                applyReportFilters();
+            });
+        });
+
+        document.querySelector('[data-expand-all]')?.addEventListener('click', () => {
+            document.querySelectorAll('[data-section-toggle]').forEach(toggle => setSectionExpanded(toggle, true));
+        });
+        document.querySelector('[data-collapse-all]')?.addEventListener('click', () => {
+            document.querySelectorAll('[data-section-toggle]').forEach(toggle => setSectionExpanded(toggle, false));
+        });
+
+        document.addEventListener('keydown', event => {
+            if (event.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+                event.preventDefault();
+                searchInput?.focus();
+            }
+            if (event.key === 'Escape') {
+                closeInfoDrawer();
+                document.querySelectorAll('[role="dialog"]:not(.hidden)').forEach(dialog => {
+                    dialog.classList.add('hidden');
+                    dialog.setAttribute('aria-hidden', 'true');
+                });
+                document.getElementById('sidebar')?.classList.add('-translate-x-full');
+            }
+        });
+
+        // --- 3. ScrollSpy ---
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    // Remove active from all
+                    tocLinks.forEach(l => {
+                        l.classList.remove('active', 'bg-brand-50', 'text-brand-600', 'border-r-4', 'border-brand-500', 'dark:bg-brand-900/20', 'dark:text-brand-100');
+                        l.removeAttribute('aria-current');
+                    });
+
+                    // Add to current
+                    const id = entry.target.id;
+                    const activeLink = document.querySelector(`.toc-link[href="#${id}"]`);
+                    if (activeLink) {
+                        activeLink.classList.add('active', 'bg-brand-50', 'text-brand-600', 'border-r-4', 'border-brand-500', 'dark:bg-brand-900/20', 'dark:text-brand-100');
+                        activeLink.setAttribute('aria-current', 'location');
+                        const tocList = document.getElementById('toc-list');
+                        if (tocList) {
+                            const linkTop = activeLink.offsetTop;
+                            const listHeight = tocList.clientHeight;
+                            const listScroll = tocList.scrollTop;
+                            if (linkTop < listScroll || linkTop > (listScroll + listHeight)) {
+                                tocList.scrollTo({ top: linkTop - (listHeight / 2), behavior: 'smooth' });
+                            }
+                        }
+                    }
+                }
+            });
+        }, { rootMargin: '-20% 0px -60% 0px' }); // Trigger when section is near top
+
+        sections.forEach(sec => observer.observe(sec));
+
+        // --- 4. Lazy Loading (Plotly) ---
+        // Updated for Phase D: Architecture
+        // Logic:
+        // 1. If data-figure exists (legacy/fallback), use inline JSON.
+        // 2. If data-id exists, lookup in REPORT_DATA.
+        const plotObserver = new IntersectionObserver((entries, obs) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const target = entry.target;
+
+                    let figureData = null;
+
+                    // A. Try Global Store (Phase D)
+                    const dataId = target.getAttribute('data-id');
+
+                    if (dataId) {
+                        if (REPORT_DATA && REPORT_DATA[dataId]) {
+                            figureData = REPORT_DATA[dataId];
+                        } else {
+                            console.warn(`[Report] Data ID ${dataId} not found in REPORT_DATA. Keys: ${Object.keys(REPORT_DATA).length}`);
+                        }
+                    }
+
+                    // B. Try Inline JSON (Legacy/Fallback)
+                    else if (target.hasAttribute('data-figure')) {
+                        figureData = JSON.parse(target.getAttribute('data-figure'));
+                    }
+
+                    if (figureData) {
+                        const isDark = document.documentElement.classList.contains('dark');
+                        figureData.layout = figureData.layout || {};
+                        figureData.layout.template = isDark ? 'plotly_dark' : (figureData.layout.template || 'coco');
+                        if (isDark) {
+                            figureData.layout.paper_bgcolor = '#111827';
+                            figureData.layout.plot_bgcolor = '#111827';
+                            figureData.layout.font = Object.assign({}, figureData.layout.font || {}, { color: '#f3f4f6' });
+                        }
+                        Plotly.newPlot(target, figureData.data, figureData.layout, {
+                            responsive: true,
+                            displaylogo: false,
+                            modeBarButtonsToAdd: ['toImage']
+                        });
+
+                        target.classList.remove('animate-pulse', 'flex', 'items-center', 'justify-center', 'text-gray-400', 'bg-gray-50', 'border');
+                        target.removeAttribute('data-figure'); // Memory cleanup
+                        // Don't remove data-id, might need for debug?
+                        obs.unobserve(target);
+                    } else {
+                        if (REPORT_DATA && Object.keys(REPORT_DATA).length > 0) {
+                            console.warn("[Report] No data found for plot:", dataId || "inline");
+                            target.innerHTML = `
+                                <div class="flex h-full min-h-[220px] items-center justify-center rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+                                    Plot data is missing${dataId ? ` for ${dataId}` : ''}.
+                                </div>`;
+                            target.classList.remove('animate-pulse');
+                            obs.unobserve(target);
+                        }
+                    }
+                }
+            });
+        }, { rootMargin: '200px' });
+
+        document.querySelectorAll('.lazy-plot').forEach(p => plotObserver.observe(p));
+
+        // --- 5. Interactive Tables + CSV Export ---
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function exportRowsToCSV(columns, rows, title) {
+            const csv = [];
+            csv.push(columns.map(col => `"${String(col).replace(/"/g, '""')}"`).join(","));
+            rows.forEach(row => {
+                const values = columns.map(col => {
+                    const value = row[col];
+                    const text = value == null ? '' : String(value);
+                    return `"${text.replace(/"/g, '""')}"`;
+                });
+                csv.push(values.join(","));
+            });
+
+            const csvFile = new Blob([csv.join("\n")], { type: "text/csv;charset=utf-8;" });
+            const link = document.createElement("a");
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(csvFile);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `${title || "export"}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        function exportTableToCSV(tableId, title) {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+
+            const columns = [];
+            const headerRow = table.querySelector('thead tr');
+            if (headerRow) {
+                Array.from(headerRow.querySelectorAll('th')).forEach(th => {
+                    columns.push(th.innerText);
+                });
+            }
+
+            const rows = [];
+            table.querySelectorAll('tbody tr').forEach(row => {
+                const values = Array.from(row.querySelectorAll('td')).map(td => td.innerText);
+                const record = {};
+                columns.forEach((column, idx) => {
+                    record[column] = values[idx] ?? '';
+                });
+                rows.push(record);
+            });
+            exportRowsToCSV(columns, rows, title);
+        }
+
+        function initInteractiveTables() {
+            document.querySelectorAll('.interactive-table').forEach(container => {
+                const dataId = container.getAttribute('data-id');
+                const payload = REPORT_DATA[dataId];
+                if (!payload) {
+                    container.innerHTML = '<div class="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">Error: interactive table payload missing.</div>';
+                    return;
+                }
+
+                const config = JSON.parse(container.getAttribute('data-config') || '{}');
+                const columns = Array.isArray(payload.columns) ? payload.columns : [];
+                const allRows = Array.isArray(payload.rows) ? payload.rows : [];
+                const selectorColumns = Array.isArray(config.selector_columns) ? config.selector_columns.filter(column => columns.includes(column)) : [];
+                const state = {
+                    search: '',
+                    sortColumn: config.default_sort && columns.includes(config.default_sort.column) ? config.default_sort.column : null,
+                    sortDirection: config.default_sort && config.default_sort.direction === 'desc' ? 'desc' : 'asc',
+                    pageSize: Math.max(1, Number(config.page_size || 50)),
+                    page: 1,
+                    selectorFilters: {},
+                };
+
+                function applyFilters() {
+                    let rows = allRows.slice();
+
+                    selectorColumns.forEach(column => {
+                        const value = state.selectorFilters[column];
+                        if (value) {
+                            rows = rows.filter(row => String(row[column] ?? '') === value);
+                        }
+                    });
+
+                    if (state.search) {
+                        const query = state.search.toLowerCase();
+                        rows = rows.filter(row =>
+                            columns.some(column => String(row[column] ?? '').toLowerCase().includes(query))
+                        );
+                    }
+
+                    if (state.sortColumn) {
+                        rows.sort((left, right) => {
+                            const a = left[state.sortColumn];
+                            const b = right[state.sortColumn];
+                            const aNum = Number(a);
+                            const bNum = Number(b);
+                            let cmp = 0;
+                            if (!Number.isNaN(aNum) && !Number.isNaN(bNum) && a !== '' && b !== '') {
+                                cmp = aNum - bNum;
+                            } else {
+                                cmp = String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+                            }
+                            return state.sortDirection === 'asc' ? cmp : -cmp;
+                        });
+                    }
+                    return rows;
+                }
+
+                function render() {
+                    const filteredRows = applyFilters();
+                    const totalPages = Math.max(1, Math.ceil(filteredRows.length / state.pageSize));
+                    state.page = Math.min(state.page, totalPages);
+                    const start = (state.page - 1) * state.pageSize;
+                    const visibleRows = filteredRows.slice(start, start + state.pageSize);
+
+                    const selectorHtml = selectorColumns.map(column => {
+                        const options = Array.from(new Set(allRows.map(row => String(row[column] ?? '')).filter(value => value !== ''))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                        const optionsHtml = ['<option value="">All</option>', ...options.map(option => `<option value="${escapeHtml(option)}" ${state.selectorFilters[column] === option ? 'selected' : ''}>${escapeHtml(option)}</option>`)].join('');
+                        return `
+                            <label class="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
+                                <span>${escapeHtml(column)}</span>
+                                <select data-selector-column="${escapeHtml(column)}"
+                                        class="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-sm text-gray-700 dark:text-gray-200">
+                                    ${optionsHtml}
+                                </select>
+                            </label>
+                        `;
+                    }).join('');
+
+                    const headerHtml = columns.map(column => {
+                        const active = state.sortColumn === column;
+                        const indicator = active ? (state.sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+                        return `
+                            <th data-sort-column="${escapeHtml(column)}"
+                                class="cursor-pointer px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider select-none">
+                                ${escapeHtml(column)}${indicator}
+                            </th>
+                        `;
+                    }).join('');
+
+                    const bodyHtml = visibleRows.length > 0
+                        ? visibleRows.map(row => `
+                            <tr>
+                                ${columns.map(column => `<td class="px-4 py-3 whitespace-nowrap text-gray-700 dark:text-gray-300">${escapeHtml(row[column] ?? '')}</td>`).join('')}
+                            </tr>
+                        `).join('')
+                        : `<tr><td colspan="${columns.length}" class="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No rows match the current filters.</td></tr>`;
+
+                    container.innerHTML = `
+                        <div class="overflow-x-auto group relative rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+                            <div class="flex flex-col gap-3 border-b border-gray-200 dark:border-gray-700 p-4">
+                                <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                                    <label class="flex min-w-[220px] flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
+                                        <span>Search</span>
+                                        <input type="text" value="${escapeHtml(state.search)}"
+                                               placeholder="Search all columns..."
+                                               data-table-search
+                                               class="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
+                                    </label>
+                                    <div class="flex flex-wrap items-end gap-3">
+                                        ${selectorHtml}
+                                        <label class="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
+                                            <span>Rows</span>
+                                            <select data-page-size
+                                                    class="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-2 text-sm text-gray-700 dark:text-gray-200">
+                                                ${[10, 25, 50, 100].map(size => `<option value="${size}" ${state.pageSize === size ? 'selected' : ''}>${size}</option>`).join('')}
+                                            </select>
+                                        </label>
+                                        <button data-export-table
+                                                class="inline-flex items-center gap-1.5 rounded bg-gray-100 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"></path>
+                                            </svg>
+                                            CSV
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <table class="min-w-full divide-y divide-gray-200 border-t dark:divide-gray-700 dark:border-gray-700 text-sm">
+                                <thead class="bg-gray-50 dark:bg-gray-800"><tr>${headerHtml}</tr></thead>
+                                <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">${bodyHtml}</tbody>
+                            </table>
+                            <div class="flex items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700 px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
+                                <div>Showing ${filteredRows.length === 0 ? 0 : start + 1}-${Math.min(start + state.pageSize, filteredRows.length)} of ${filteredRows.length} rows</div>
+                                <div class="flex items-center gap-2">
+                                    <button data-page-action="prev"
+                                            class="rounded border border-gray-200 px-2 py-1 disabled:opacity-50 dark:border-gray-700"
+                                            ${state.page <= 1 ? 'disabled' : ''}>
+                                        Prev
+                                    </button>
+                                    <span>Page ${state.page} / ${totalPages}</span>
+                                    <button data-page-action="next"
+                                            class="rounded border border-gray-200 px-2 py-1 disabled:opacity-50 dark:border-gray-700"
+                                            ${state.page >= totalPages ? 'disabled' : ''}>
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                }
+
+                // --- Event Delegation ---
+                container.addEventListener('input', event => {
+                    const target = event.target;
+                    if (target.matches('[data-table-search]')) {
+                        state.search = target.value;
+                        state.page = 1;
+                        render();
+                    }
+                });
+
+                container.addEventListener('change', event => {
+                    const target = event.target;
+                    if (target.matches('[data-selector-column]')) {
+                        state.selectorFilters[target.getAttribute('data-selector-column')] = target.value;
+                        state.page = 1;
+                        render();
+                    } else if (target.matches('[data-page-size]')) {
+                        state.pageSize = Math.max(1, Number(target.value));
+                        state.page = 1;
+                        render();
+                    }
+                });
+
+                container.addEventListener('click', event => {
+                    const target = event.target;
+
+                    const sortHeader = target.closest('[data-sort-column]');
+                    if (sortHeader) {
+                        const column = sortHeader.getAttribute('data-sort-column');
+                        if (state.sortColumn === column) {
+                            state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+                        } else {
+                            state.sortColumn = column;
+                            state.sortDirection = 'asc';
+                        }
+                        render();
+                        return;
+                    }
+
+                    const exportBtn = target.closest('[data-export-table]');
+                    if (exportBtn) {
+                        exportRowsToCSV(columns, applyFilters(), config.title || 'interactive-table');
+                        return;
+                    }
+
+                    const pageBtn = target.closest('[data-page-action]');
+                    if (pageBtn) {
+                        const action = pageBtn.getAttribute('data-page-action');
+                        const filteredRows = applyFilters();
+                        const totalPages = Math.max(1, Math.ceil(filteredRows.length / state.pageSize));
+                        if (action === 'prev' && state.page > 1) {
+                            state.page -= 1;
+                        } else if (action === 'next' && state.page < totalPages) {
+                            state.page += 1;
+                        }
+                        render();
+                        return;
+                    }
+                });
+
+                render();
+            });
+        }
+
+        initInteractiveTables();
+
+        // --- 6. Back to Top ---
+        (function () {
+            const btn = document.getElementById('back-to-top');
+            if (!btn) return;
+            window.addEventListener('scroll', () => {
+                if (window.scrollY > 400) {
+                    btn.classList.remove('hidden');
+                } else {
+                    btn.classList.add('hidden');
+                }
+            }, { passive: true });
+        })();
+    </script>

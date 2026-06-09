@@ -1,25 +1,24 @@
-import sys
-from unittest.mock import MagicMock
+"""Tests for Section and Report container behavior in coco_pipe.report.core.
+
+Individual Element tests live in tests/test_report_elements.py.
+Dim-reduction-specific Report.add_* tests live in tests/test_report_dimred.py.
+"""
+
+import base64
+import gzip
+import json
+from unittest.mock import patch
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from coco_pipe.report.core import (
+from coco_pipe.io.quality import CheckResult
+from coco_pipe.report.core import Report, Section
+from coco_pipe.report.elements import (
     ContainerElement,
     HtmlElement,
-    ImageElement,
-    InteractiveTableElement,
-    MetricsTableElement,
     PlotlyElement,
-    Report,
-    Section,
-    TableElement,
-    _get_reducer_summary,
-    _metrics_summary_table,
-    _trajectory_times,
 )
-from coco_pipe.report.quality import CheckResult
 
 
 @pytest.fixture
@@ -27,186 +26,65 @@ def tmp_report_file(tmp_path):
     return tmp_path / "test_report.html"
 
 
-def test_element_rendering():
-    el = HtmlElement("<p>Test</p>")
-    assert el.render() == "<p>Test</p>"
+# ----- Section ---------------------------------------------------------------
 
 
 def test_section_rendering():
-    sec = Section(title="My Section", icon="📊")
+    sec = Section(title="My Section", icon="C")
     sec.add_element("<p>Content</p>")
     html = sec.render()
     assert "My Section" in html
-    assert "📊" in html
+    assert "C" in html
     assert "<p>Content</p>" in html
-    # Check for Tailwind class (was bg-white in previous versions,
-    # now might be different but let's check title)
-    assert "My Section" in html
 
 
-def test_get_reducer_summary_edge_cases():
-    # 1. Missing get_summary
-    with pytest.raises(TypeError, match="must implement get_summary"):
-        _get_reducer_summary(object())
-
-    # 2. get_summary returns non-dict
-    mock = MagicMock()
-    mock.get_summary.return_value = "not a dict"
-    with pytest.raises(TypeError, match="must return a dictionary"):
-        _get_reducer_summary(mock)
-
-    # 3. Partial summary (fills defaults)
-    mock.get_summary.return_value = {"method": "PCA"}
-    summary = _get_reducer_summary(mock)
-    assert summary["method"] == "PCA"
-    assert summary["metrics"] == {}
-    assert summary["metric_records"] == []
+def test_section_status_upgrades_on_findings():
+    sec = Section("Test")
+    sec.add_finding(CheckResult("c1", "WARN", "w", 4))
+    assert sec.status == "WARN"
+    sec.add_finding(CheckResult("c2", "FAIL", "f", 9))
+    assert sec.status == "FAIL"
+    sec.add_finding(CheckResult("c3", "WARN", "w2", 4))
+    # FAIL is sticky
+    assert sec.status == "FAIL"
 
 
-def test_image_element_sources(tmp_path):
-    # 1. Bytes
-    img_bytes = b"fake-image-data"
-    el_bytes = ImageElement(img_bytes)
-    # base64.b64encode(b"fake-image-data") -> ZmFrZS1pbWFnZS1kYXRh
-    assert "ZmFrZS1pbWFnZS1kYXRh" in el_bytes.render()
-
-    # 2. Path
-    img_file = tmp_path / "test.png"
-    img_file.write_bytes(img_bytes)
-    el_path = ImageElement(img_file)
-    assert "ZmFrZS1pbWFnZS1kYXRh" in el_path.render()
-
-    # 3. Matplotlib (tested in integration, but check savefig call)
-    fig_mock = MagicMock()
-    el_fig = ImageElement(fig_mock)
-    el_fig.render()
-    assert fig_mock.savefig.called
-
-    # 4. Unsupported source
-    with pytest.raises(ValueError, match="Unsupported image source type"):
-        ImageElement(123).render()
-
-
-def test_plotly_element_binary_decoding():
-    # Mock a plotly figure that would have binary encoded arrays in its JSON
-    # This simulates Plotly's performance optimization for large arrays
-    import base64 as b64
-
-    fig_mock = MagicMock()
-    # Create valid float32 binary data for [1.0, 2.0]
-    data_bytes = np.array([1.0, 2.0], dtype="float32").tobytes()
-    b64_data = b64.b64encode(data_bytes).decode()
-
-    fig_mock.to_json.return_value = f"""
-    {{
-        "data": [{{
-            "x": {{"dtype": "float32", "bdata": "{b64_data}"}},
-            "y": [3, 4]
-        }}]
-    }}
-    """
-    el = PlotlyElement(fig_mock)
-    registry = {}
-    el.collect_payload(registry)
-
-    payload = list(registry.values())[0]
-    assert np.allclose(payload["data"][0]["x"], [1.0, 2.0])
-
-
-def test_table_element_dict_inputs():
-    # 1. Scalar dict -> 1 row table
-    el_scalar = TableElement({"A": 1, "B": 2})
-    assert "A" in el_scalar.render()
-    assert "1" in el_scalar.render()
-
-    # 2. List of dicts
-    el_list = TableElement([{"A": 1}, {"A": 2}])
-    assert "A" in el_list.render()
-    assert "1" in el_list.render()
-    assert "2" in el_list.render()
-
-    # 3. Non-scalar dict (e.g. dict of lists)
-    el_non_scalar = TableElement({"A": [1, 2], "B": [3, 4]})
-    assert "A" in el_non_scalar.render()
-    assert "2" in el_non_scalar.render()
-
-
-def test_interactive_table_element_payload_and_render(tmp_report_file):
-    df = pd.DataFrame(
-        {
-            "eval_name": ["epilepsy", "adhd"],
-            "reducer": ["PCA", "UMAP"],
-            "score": [0.71, 0.82],
-        }
-    )
-    element = InteractiveTableElement(
-        df,
-        title="Interactive Metrics",
-        selector_columns=["eval_name", "reducer"],
-        default_sort={"column": "score", "direction": "desc"},
-        page_size=25,
-    )
-
-    registry = {}
-    element.collect_payload(registry)
-    assert len(registry) == 1
-    payload = next(iter(registry.values()))
-    assert payload["columns"] == ["eval_name", "reducer", "score"]
-    assert len(payload["rows"]) == 2
-
-    html = element.render()
-    assert 'class="interactive-table"' in html
-    assert 'data-id="' in html
-    assert 'data-config="' in html
-
-    report = Report(title="Interactive Table Report")
-    report.add_element(element)
-    report.save(str(tmp_report_file))
-    content = tmp_report_file.read_text(encoding="utf-8")
-    assert "interactive-table" in content
-    assert "initInteractiveTables" in content
-    assert "data-table-search" in content
-    assert "data-sort-column" in content
-    assert "data-selector-column" in content
-    assert "data-export-table" in content
-    assert "data-page-size" in content
-
-
-def test_metrics_table_highlighting():
-    df = pd.DataFrame(
-        {"method": ["A", "B"], "acc": [0.8, 0.9], "loss": [0.2, 0.1]}
-    )  # B is better in both
-
-    # Highlight higher acc, lower loss
-    el = MetricsTableElement(
-        df, highlight_cols=["acc", "loss"], higher_is_better=["acc"]
-    )
-    html = el.render()
-    assert "font-bold text-green-600" in html
-
-    # Missing highlight col
-    el_miss = MetricsTableElement(df, highlight_cols=["nonexistent"])
-    assert el_miss.render()
+# ----- Report construction / config -----------------------------------------
 
 
 def test_report_config_and_metadata():
-    # 1. Title override via dict
     from coco_pipe.report.config import ReportConfig
 
+    # Title override via dict
     rep = Report(title="Old", config={"title": "New", "x": 1})
     assert rep.title == "New"
-    # Note: Pydantic V2 extra fields are in model_extra
     if rep.config.model_extra is not None:
         assert rep.config.model_extra["x"] == 1
 
-    # 2. Pass ReportConfig object
+    # Pass a ReportConfig object
     cfg = ReportConfig(title="Object")
     rep_obj = Report(config=cfg)
     assert rep_obj.title == "Object"
 
-    # 3. Fallback for broken config dict
+    # Fallback for a broken config dict
     rep_fallback = Report("Fallback", config={"unexpected": object()})
     assert rep_fallback.title == "Fallback"
+
+
+def test_report_config_coercion_keeps_extra_fields():
+    rep = Report(title="T", config={"some_param": 1})
+    assert rep.title == "T"
+    # Pydantic 2 allows extras via the model config
+    assert getattr(rep.config, "some_param") == 1
+
+
+def test_container_element_markdown_fallback():
+    cont = ContainerElement()
+    cont.add_markdown("# Title")
+    assert "Title" in cont.render()
+
+
+# ----- Report aggregation behaviour ------------------------------------------
 
 
 def test_report_add_container_functionality():
@@ -222,110 +100,79 @@ def test_report_add_container_functionality():
     assert "Dimensions" in rep.children[0].render()
     assert "Coordinates" in rep.children[0].render()
 
-    # 2. Case with NaNs (triggers missingness finding)
+    # NaNs trigger a missingness finding
     X_nan = X.copy()
     X_nan[0, 0] = np.nan
     c_nan = DataContainer(X_nan, dims=("obs", "feature"))
     rep.add_container(c_nan)
     assert any("Missingness" in str(f) for f in rep.children[-1].findings)
 
-    # 3. Large data (sampling logic)
+    # Large data exercises the sampling branch
     X_large = np.random.randn(6000, 1)
     c_large = DataContainer(X_large, dims=("obs", "feature"))
     rep.add_container(c_large)
     assert rep.children[-1].render()
 
-    # 4. Exception path (trigger warning)
+    # Exception path emits a warning instead of raising
     with pytest.warns(UserWarning, match="Failed to add container"):
         rep.add_container(None)
 
 
-def test_markdown_fallback(monkeypatch):
-    # Simulate missing markdown package
-    monkeypatch.setitem(sys.modules, "markdown", None)
-    rep = Report()
-    rep.add_markdown("# Fallback")
-    assert "whitespace-pre-wrap" in rep.render()
-
-
-def test_internal_helpers_coverage():
-    # 1. _metrics_summary_table
-    assert _metrics_summary_table({}).empty
-
-    # 2. _trajectory_times
-    assert _trajectory_times({}, np.array([1, 2, 3])) is not None
-    assert _trajectory_times({}, np.array([])) is None
-    assert _trajectory_times({"trajectory_times_": [1, 2]}, None) is not None
-    assert _trajectory_times({"trajectory_times_": []}, None) is None
-
-
-def test_report_creation_and_save(tmp_report_file):
-    rep = Report(title="Unit Test Report")
-
-    # Add simple HTML
-    rep.add_element(HtmlElement("<p>Hello World</p>"))
-
-    # Add a section
-    sec = Section("Analysis")
-    sec.add_element("<b>Bold Content</b>")
-    rep.add_section(sec)
-
-    # Add markdown
-    rep.add_markdown("# Markdown Header\n* Item 1")
-    assert "Markdown Header" in rep.render()
-
-    # Save
-    rep.save(str(tmp_report_file))
-
-    assert tmp_report_file.exists()
-    content = tmp_report_file.read_text(encoding="utf-8")
-
-    # Verify Content
-    assert "<!DOCTYPE html>" in content
-    assert "Unit Test Report" in content
-    assert "Hello World" in content
-    assert "Analysis" in content
-    assert "Bold Content" in content
-    assert "Markdown Header" in content
-
-
-def test_report_add_reduction_coverage():
+def test_add_container_plot_branches():
     from coco_pipe.io.structures import DataContainer
 
     rep = Report()
 
-    # Mock reducer with diagnostics
-    mock_reducer = MagicMock()
-    mock_reducer.get_summary.return_value = {
-        "method": "MockDR",
-        "metrics": {"trust": 0.9},
-        "metric_records": [{"method": "MockDR", "metric": "trust", "value": 0.9}],
-        "diagnostics": {
-            "embedding_": np.random.randn(10, 2),
-            "reconstruction_": np.random.randn(10, 5),
-        },
-        "quality_metadata": {},
-    }
+    # y provided -> target label distribution
+    c_y = DataContainer(
+        X=np.random.randn(10, 2),
+        dims=("obs", "feature"),
+        y=np.array([0, 1] * 5),
+    )
+    rep.add_container(c_y)
+    html = rep.render()
+    assert "Target label distribution." in html
+
+    # Flat X without y, >5000 elements triggers downsampling
+    c_large = DataContainer(X=np.random.randn(6000, 1), dims=("obs", "feature"))
+    rep.add_container(c_large)
+    html = rep.render()
+    assert "Histogram of data values." in html
+
+
+def test_add_figure_shortcut():
+    import matplotlib.pyplot as plt
+
+    rep = Report("Fig Test")
+    fig, _ax = plt.subplots()
+    rep.add_figure(fig, caption="Shortcut")
+
+    html = rep.render()
+    assert "Shortcut" in html
+    plt.close(fig)
+
+
+def test_add_raw_preview():
+    from coco_pipe.io.structures import DataContainer
 
     X = np.random.randn(10, 5)
-    _ = DataContainer(X, dims=("obs", "feature"))
+    sample_container = DataContainer(X=X, dims=("obs", "feature"))
 
-    # 1. Basic add
-    rep.add_reduction(mock_reducer, name="Mock Reduction")
-    assert "Mock Reduction" in rep.children[-1].render()
+    rep = Report("Raw Test")
+    rep.add_raw_preview(sample_container.X, name="My Raw Data")
 
-    # 2. Add with explicit embedding and labels
-    X_emb = np.random.randn(10, 2)
-    labels = np.array([0, 1] * 5)
-    metadata = {"feat": np.random.randn(10)}
-    rep.add_reduction(
-        mock_reducer,
-        name="With Embedding",
-        X_emb=X_emb,
-        labels=labels,
-        metadata=metadata,
-    )
-    assert "With Embedding" in rep.children[-1].render()
+    html = rep.render()
+    assert "My Raw Data" in html
+    assert "lazy-plot" in html
+
+
+def test_report_section_ids_are_unique():
+    rep = Report("Duplicate Sections")
+    rep.add_section(Section("Repeated"))
+    rep.add_section(Section("Repeated"))
+
+    ids = [section.id for section in rep.children]
+    assert ids == ["repeated", "repeated-2"]
 
 
 def test_fluent_interface_structure():
@@ -334,63 +181,173 @@ def test_fluent_interface_structure():
     assert len(rep.children) == 3
 
 
-def test_report_elements_hardening(tmp_path):
-    # ImageElement
-    img_data = b"fake-image-data"
-    elem = ImageElement(img_data)
-    assert "data:image/png;base64" in elem.render()
+def test_report_creation_and_save(tmp_report_file):
+    rep = Report(title="Unit Test Report")
+    rep.add_element(HtmlElement("<p>Hello World</p>"))
 
-    p = tmp_path / "test.png"
-    p.write_bytes(img_data)
-    elem_p = ImageElement(p)
-    assert "data:image/png;base64" in elem_p.render()
+    sec = Section("Analysis")
+    sec.add_element("<b>Bold Content</b>")
+    rep.add_section(sec)
 
-    with pytest.raises(ValueError, match="Unsupported image source type"):
-        ImageElement(123)._encode_image()
+    rep.add_markdown("# Markdown Header\n* Item 1")
+    assert "Markdown Header" in rep.render()
 
-    # PlotlyElement binary decoding
-    class MockFig:
-        def to_json(self):
-            return '{"data": [{"y": {"dtype": "f8", "bdata": "AAAAAAAAAAA="}}]}'
+    rep.save(str(tmp_report_file))
+    assert tmp_report_file.exists()
+    content = tmp_report_file.read_text(encoding="utf-8")
 
-        def to_dict(self):
-            return {"data": []}
+    assert "<!DOCTYPE html>" in content
+    assert "Unit Test Report" in content
+    assert "Hello World" in content
+    assert "Analysis" in content
+    assert "Bold Content" in content
+    assert "Markdown Header" in content
 
-    elem_plotly = PlotlyElement(MockFig())
-    registry = {}
-    elem_plotly.collect_payload(registry)
-    assert elem_plotly.registry_id in registry
 
-    # TableElement normalization
-    assert isinstance(TableElement._to_frame({"a": 1, "b": 2}), pd.DataFrame)
+# ----- Payload registry round-trip (Report.render contract) -------------------
 
-    # MetricsTableElement directions
-    df = pd.DataFrame({"m": ["a", "b"], "score": [0.8, 0.9], "error": [0.1, 0.05]})
-    elem_metrics = MetricsTableElement(
-        df, higher_is_better=["score"], highlight_cols=["score", "error"]
-    )
-    assert elem_metrics.best_vals["score"] == 0.9
 
-    elem_metrics_low = MetricsTableElement(df, higher_is_better=False)
-    assert elem_metrics_low.best_vals["score"] == 0.8
+def test_global_data_store_payload():
+    import plotly.graph_objects as go
 
-    # ContainerElement markdown fallback
-    cont = ContainerElement()
-    cont.add_markdown("# Title")
-    assert "Title" in cont.render()
+    rep = Report("Payload Test")
+    fig = go.Figure(data=[go.Scatter(x=[1, 2], y=[3, 4])])
+    rep.add_element(PlotlyElement(fig))
 
-    # Section status upgrades
-    sec = Section("Test")
-    sec.add_finding(CheckResult("c1", "WARN", "w", 4))
-    assert sec.status == "WARN"
-    sec.add_finding(CheckResult("c2", "FAIL", "f", 9))
-    assert sec.status == "FAIL"
-    sec.add_finding(CheckResult("c3", "WARN", "w2", 4))
-    assert sec.status == "FAIL"
+    html = rep.render()
 
-    # Report config coercion
-    rep = Report(title="T", config={"some_param": 1})
-    assert rep.title == "T"
-    # In Pydantic 2, extra fields are allowed but might be on the object
-    # if extra='allow'
-    assert getattr(rep.config, "some_param") == 1
+    # Payload script tag exists
+    assert 'id="report-payload"' in html
+    # Inline data-figure is *not* used; the lazy plot looks up by data-id
+    assert 'data-id="' in html
+
+    # Extract + decompress and verify the registered figure round-trips
+    start_tag = 'id="report-payload">'
+    end_tag = "</script>"
+
+    start_idx = html.find(start_tag) + len(start_tag)
+    end_idx = html.find(end_tag, start_idx)
+
+    payload_b64 = html[start_idx:end_idx].strip()
+    assert len(payload_b64) > 0
+
+    compressed = base64.b64decode(payload_b64)
+    json_bytes = gzip.decompress(compressed)
+    data_registry = json.loads(json_bytes)
+
+    id_start = html.find('data-id="') + 9
+    id_end = html.find('"', id_start)
+    uuid_str = html[id_start:id_end]
+
+    assert uuid_str in data_registry
+    assert "data" in data_registry[uuid_str]
+    assert data_registry[uuid_str]["data"][0]["y"] == [3, 4]
+
+
+# ----- Bound-method API surface (regression: monkey-patch binding) -----------
+
+
+def test_fluent_stubs():
+    """Verify every add_decoding_* / add_reduction_* method is bound to Report."""
+    rep = Report()
+    method_names = [
+        "add_decoding_overview",
+        "add_decoding_temporal",
+        "add_decoding_summary",
+        "add_decoding_diagnostics",
+        "add_decoding_statistical_assessment",
+        "add_decoding_neural_artifacts",
+        "add_decoding_performance",
+        "add_decoding_features",
+        "add_decoding_topomaps",
+        "add_reduction",
+        "add_comparison",
+        "add_reduction_overview",
+        "add_reduction_embedding",
+        "add_reduction_metrics",
+        "add_reduction_diagnostics",
+        "add_reduction_interpretation",
+        "add_reduction_coranking",
+        "add_reduction_components",
+        "add_reduction_trajectory",
+        "add_reduction_trajectory_separation",
+    ]
+    for name in method_names:
+        with patch.object(Report, name) as m:
+            m.return_value = rep
+            getattr(rep, name)(None)
+            m.assert_called()
+
+
+# ----- Asset modes (CDN / custom / inline) -----------------------------------
+
+
+def test_asset_mode_defaults_to_cdn():
+    rep = Report(title="Default")
+    assert rep.asset_mode == "cdn"
+    assert "cdn.plot.ly" in rep.asset_urls["plotly"]
+
+
+def test_asset_mode_custom_override():
+    rep = Report(title="Custom", asset_urls={"plotly": "/static/plotly.js"})
+    assert rep.asset_mode == "custom"
+    assert rep.asset_urls["plotly"] == "/static/plotly.js"
+    # Other slots fall back to CDN defaults
+    assert "tailwindcss" in rep.asset_urls["tailwind"]
+
+
+def test_asset_mode_inline_round_trip(monkeypatch, tmp_path):
+    """`asset_urls="inline"` inlines the bundle bytes in <script> tags."""
+    monkeypatch.setenv("COCO_PIPE_REPORT_ASSET_CACHE", str(tmp_path))
+    fake_bundles = {
+        "plotly": b"/* fake plotly bundle */ console.log('plotly');",
+        "tailwind": b"/* fake tailwind bundle */ console.log('tailwind');",
+        "pako": b"/* fake pako bundle */ console.log('pako');",
+    }
+
+    class FakeResp:
+        def __init__(self, data):
+            self._data = data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self._data
+
+    def fake_urlopen(url_or_request, timeout=None):
+        # ``_download_to`` now wraps the URL in a ``urllib.request.Request``
+        # object so it can pass a User-Agent header. Accept either a bare
+        # string URL or a Request, match by filename stem.
+        url = (
+            url_or_request.full_url
+            if hasattr(url_or_request, "full_url")
+            else url_or_request
+        )
+        for name, data in fake_bundles.items():
+            if name in url:
+                return FakeResp(data)
+        raise AssertionError(f"unexpected url: {url}")
+
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    rep = Report(title="Inline", asset_urls="inline")
+    assert rep.asset_mode == "inline"
+    assert rep.asset_urls["plotly"].startswith("/* fake plotly bundle")
+
+    html = rep.render()
+    # Inlined contents appear in the output; src= references do not.
+    assert "/* fake plotly bundle */" in html
+    assert "/* fake tailwind bundle */" in html
+    assert "/* fake pako bundle */" in html
+    assert 'src="https://cdn.plot.ly' not in html
+
+
+def test_asset_mode_invalid_value_raises():
+    with pytest.raises(TypeError):
+        Report(title="Bad", asset_urls=42)

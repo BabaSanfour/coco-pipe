@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Benchmark Dimensionality Reduction Methods
 ==========================================

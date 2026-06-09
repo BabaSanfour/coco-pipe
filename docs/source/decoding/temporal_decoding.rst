@@ -82,7 +82,7 @@ channel-space snapshot, and training a model on it.
 
    # Score curve: one score per timepoint per fold
    scores = result.get_detailed_scores()
-   # columns: Model, Fold, Metric, Score, Time
+   # columns: Model, Fold, Metric, Value, Time
 
    # Summary over folds: mean ± std per timepoint
    temporal = result.get_temporal_score_summary()

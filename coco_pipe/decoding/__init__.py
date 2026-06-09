@@ -7,8 +7,10 @@ electrophysiological and behavioral data.
 """
 
 from .configs import (
+    ChanceAssessmentConfig,
     CheckpointConfig,
     ClassicalModelConfig,
+    CVConfig,
     DeviceConfig,
     ExperimentConfig,
     FoundationEmbeddingModelConfig,
@@ -25,7 +27,9 @@ from .experiment import Experiment
 from .registry import (
     EstimatorCapabilities,
     get_capabilities,
+    get_foundation_model_spec,
     list_capabilities,
+    list_foundation_models,
     register_estimator,
     register_estimator_spec,
 )
@@ -51,6 +55,8 @@ __all__ = [
     "TrainerConfig",
     "TrainStageConfig",
     "StatisticalAssessmentConfig",
+    "CVConfig",
+    "ChanceAssessmentConfig",
     # Execution
     "Experiment",
     "ExperimentResult",
@@ -58,7 +64,9 @@ __all__ = [
     "register_estimator",
     "register_estimator_spec",
     "get_capabilities",
+    "get_foundation_model_spec",
     "list_capabilities",
+    "list_foundation_models",
     "EstimatorCapabilities",
     # Stats Utilities
     "run_statistical_assessment",

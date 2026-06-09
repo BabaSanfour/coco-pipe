@@ -203,7 +203,7 @@ def _evaluate_trajectory_metrics(
     metrics = (
         ("trajectory_speed", trajectory_speed, "peak", False, 2),
         ("trajectory_acceleration", trajectory_acceleration, "peak", False, 3),
-        ("trajectory_curvature", trajectory_curvature, "peak", False, 2),
+        ("trajectory_curvature", trajectory_curvature, "peak", False, 3),
         ("trajectory_turning_angle", trajectory_turning_angle, "peak", False, 3),
         ("trajectory_dispersion", trajectory_dispersion, "peak", False, 1),
         (
@@ -920,9 +920,13 @@ class MethodSelector:
         >>> reducer = reducers[0]
         >>> embedding = reducer.fit_transform(X)
         >>> reducer.score(embedding, X=X, k_values=[5])
-        >>> ranked = MethodSelector(reducers).collect().rank_methods(
-        ...     "trustworthiness",
-        ...     selection_k=5,
+        >>> ranked = (
+        ...     MethodSelector(reducers)
+        ...     .collect()
+        ...     .rank_methods(
+        ...         "trustworthiness",
+        ...         selection_k=5,
+        ...     )
         ... )
         >>> ranked.iloc[0]["method"] == reducer.method
         True

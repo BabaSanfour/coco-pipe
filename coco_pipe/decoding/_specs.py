@@ -26,6 +26,17 @@ from ._constants import (
 )
 
 
+@dataclass
+class SignalMetadata:
+    """Per-session signal properties bound at fit() time.
+
+    Validated against model expectations in ``transform`` and ``predict``.
+    """
+
+    sfreq: float
+    ch_names: list[str]
+
+
 @dataclass(frozen=True)
 class EstimatorCapabilities:
     """Machine-readable capabilities for a decoding estimator."""
@@ -237,6 +248,43 @@ _COEF = ("coefficients",)
 _TREE_IMPORTANCE = ("feature_importances",)
 
 
+@dataclass(frozen=True, kw_only=True)
+class FoundationModelSpec(EstimatorSpec):
+    """Registry entry for an EEG/MEG foundation model estimator.
+
+    Extends EstimatorSpec with model-loading metadata (hub repo, embedding
+    dimensions, pretrained signal properties, backend routing).
+    """
+
+    hub_repo: str
+    embedding_dim: int
+    pretrained_sfreq: float
+    preferred_backend: str
+    display_name: str = ""
+    pretrained_n_chans: int | None = None
+    pretrained_ch_names: list[str] | None = None
+    supports_channel_interpolation: bool = False
+    supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
+    fallback_backends: tuple[str, ...] = ()
+    paper_url: str | None = None
+    model_notes: str = ""
+
+
+_FM_DEFAULTS: dict[str, Any] = dict(
+    import_path="coco_pipe.decoding.foundation_models:BackendBase",
+    family="foundation",
+    task=("classification", "regression"),
+    input_kinds=("epoched",),
+    supports_calibration=False,
+    fit_smoke_required=False,
+    feature_selection=("disabled",),
+)
+
+
+def _fm_spec(name: str, **kwargs: Any) -> FoundationModelSpec:
+    return FoundationModelSpec(name=name, **_FM_DEFAULTS, **kwargs)
+
+
 def _spec(
     name: str,
     import_path: str,
@@ -244,7 +292,6 @@ def _spec(
     task: tuple[MetricTask, ...],
     **kwargs: Any,
 ) -> EstimatorSpec:
-    """Helper to create an EstimatorSpec directly."""
     return EstimatorSpec(
         name=name, import_path=import_path, family=family, task=task, **kwargs
     )
@@ -580,16 +627,101 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         temporal="generalizing",
     ),
     # --- Foundation Models ---
-    "reve": _spec(
-        "REVEModel",
-        "coco_pipe.decoding.fm_hub:REVEModel",
-        "foundation",
-        _BOTH_TASKS,
-        input_kinds=("epoched",),
-        supports_calibration=False,
-        fit_smoke_required=False,
-        feature_selection=("disabled",),
-        dependency_extra="torch",
+    "reve": _fm_spec(
+        "reve",
+        display_name="REVE",
+        hub_repo="brain-bzh/reve-large",
+        embedding_dim=1024,
+        pretrained_sfreq=200.0,
+        preferred_backend="hugging_face",
+        supported_train_modes=("frozen", "full", "lora", "qlora"),
+        dependency_extra="transformers",
+        model_notes="Requires ch_names in SignalMetadata for positional encoding.",
+    ),
+    "cbramod": _fm_spec(
+        "cbramod",
+        display_name="CBraMod",
+        hub_repo="braindecode/cbramod-pretrained",
+        embedding_dim=200,
+        pretrained_sfreq=200.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        paper_url="https://arxiv.org/abs/2412.07236",
+        model_notes=(
+            "Pretrained at 200 Hz. Time dimension must be divisible by "
+            "patch_size (default 200 samples = 1 s at 200 Hz)."
+        ),
+    ),
+    "biot": _fm_spec(
+        "biot",
+        display_name="BIOT",
+        hub_repo="braindecode/biot-pretrained-prest-16chs",
+        embedding_dim=256,
+        pretrained_sfreq=200.0,
+        pretrained_n_chans=16,
+        supports_channel_interpolation=True,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        model_notes=(
+            "16-channel pretrained. "
+            "Channel interpolation available with braindecode>=1.5."
+        ),
+    ),
+    "labram": _fm_spec(
+        "labram",
+        display_name="LaBraM",
+        hub_repo="braindecode/labram-pretrained",
+        embedding_dim=200,
+        pretrained_sfreq=200.0,
+        pretrained_n_chans=128,
+        supports_channel_interpolation=True,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        model_notes=(
+            "Requires 128 channels in LABRAM_CHANNEL_ORDER. "
+            "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets."
+        ),
+    ),
+    "eegpt": _fm_spec(
+        "eegpt",
+        display_name="EEGPT",
+        hub_repo="braindecode/eegpt-pretrained",
+        embedding_dim=512,
+        pretrained_sfreq=250.0,
+        pretrained_n_chans=62,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        model_notes="Pretrained on 62-channel 250 Hz data.",
+    ),
+    "signaljepa": _fm_spec(
+        "signaljepa",
+        display_name="SignalJEPA",
+        hub_repo="braindecode/signaljepa-pretrained",
+        embedding_dim=256,
+        pretrained_sfreq=200.0,
+        pretrained_n_chans=62,
+        supports_channel_interpolation=True,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        model_notes=(
+            "62-channel pretrained. "
+            "Channel interpolation available with braindecode>=1.5."
+        ),
+    ),
+    "bendr": _fm_spec(
+        "bendr",
+        display_name="BENDR",
+        hub_repo="braindecode/braindecode-bendr",
+        embedding_dim=512,
+        pretrained_sfreq=256.0,
+        pretrained_n_chans=20,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        model_notes=(
+            "20-channel 256 Hz pretrained. "
+            "API changed in braindecode>=1.5; "
+            "pin braindecode>=1.4,<1.6 if BENDR breaks."
+        ),
     ),
 }
 

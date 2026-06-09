@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from _dimred_example_utils import execute_reduction
 
 output_path = execute_reduction(
