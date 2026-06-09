@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from matplotlib import colors as mcolors
 
 from .._utils import (
     filter_metric_frame,
@@ -26,18 +26,18 @@ from .._utils import (
     prepare_trajectory_separation_series,
 )
 from ..theme import _COLORBLIND_COLORS, DIVERGING, SEQUENTIAL, ColorKind
-from ._utils import COCO_TEMPLATE, _apply_layout, _marker_payload
+from ._utils import _apply_layout, _marker_payload
 
 __all__ = [
-    "plot_channel_traces",
     "plot_coranking_matrix",
     "plot_component_loadings",
-    "plot_eigenvalues",
+    "plot_scree",
     "plot_embedding",
     "plot_feature_correlation_heatmap",
     "plot_feature_importance",
     "plot_loss_history",
     "plot_metrics",
+    "plot_phase_portrait",
     "plot_radar_comparison",
     "plot_raw_preview",
     "plot_shepard_diagram",
@@ -46,195 +46,6 @@ __all__ = [
     "plot_trajectory_metric_series",
     "plot_trajectory_separation",
 ]
-
-
-def plot_channel_traces(
-    data: np.ndarray,
-    times: Optional[np.ndarray] = None,
-    group_labels: Optional[np.ndarray] = None,
-    channel_names: Optional[Sequence[str] | np.ndarray] = None,
-    selected_channels: Optional[Sequence[int] | Sequence[str]] = None,
-    group_name_map: Optional[dict[Any, str]] = None,
-    color_map: Optional[dict[Any, str]] = None,
-    title: str = "Grouped Channel Time Series",
-    xaxis_title: str = "Time",
-    yaxis_title: str = "Amplitude",
-    template: str = COCO_TEMPLATE,
-    shared_xaxes: bool = True,
-    vertical_spacing: float = 0.05,
-    line_width: float = 2.0,
-    opacity: float = 1.0,
-    base_height: int = 300,
-    row_height: int = 220,
-    showlegend: bool = True,
-) -> go.Figure:
-    """
-    Plot grouped channel traces as stacked interactive subplots.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        Three-dimensional array with shape ``(n_groups, n_channels, n_times)``.
-    times : np.ndarray, optional
-        Explicit time axis aligned with the last dimension of ``data``.
-    group_labels : np.ndarray, optional
-        Labels aligned with the first axis of ``data``.
-    channel_names : sequence of str or np.ndarray, optional
-        Channel names aligned with the channel axis.
-    selected_channels : sequence of int or sequence of str, optional
-        Channel indices or names to plot. When omitted, all channels are shown.
-    group_name_map : dict, optional
-        Optional mapping from raw group labels to display names.
-    color_map : dict, optional
-        Optional mapping from raw group labels to trace colors.
-    title : str, default="Grouped Channel Time Series"
-        Figure title.
-    xaxis_title : str, default="Time"
-        X-axis label for the final row.
-    yaxis_title : str, default="Amplitude"
-        Y-axis label per subplot row.
-    template : str, default="coco"
-        Plotly layout template. Defaults to the registered CoCo template.
-    shared_xaxes : bool, default=True
-        Whether subplot rows share the same x-axis.
-    vertical_spacing : float, default=0.05
-        Vertical spacing between subplot rows.
-    line_width : float, default=2.0
-        Trace line width.
-    opacity : float, default=1.0
-        Trace opacity.
-    base_height : int, default=300
-        Base figure height before row scaling.
-    row_height : int, default=220
-        Additional height per plotted row.
-    showlegend : bool, default=True
-        Whether to show the legend.
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
-        Interactive multi-row channel trace figure.
-
-    See Also
-    --------
-    plot_raw_preview : Scrollable preview of multichannel raw traces.
-    plot_radar_comparison : Radar chart comparing methods across scalar metrics.
-    plot_embedding : Interactive 2D or 3D scatter plot of an embedding.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> from coco_pipe.viz.interactive import dim_reduction as viz
-    >>> data = np.random.default_rng(42).normal(size=(2, 4, 50))
-    >>> fig = viz.plot_channel_traces(data)
-    """
-    arr = np.asarray(data)
-    if arr.ndim != 3:
-        raise ValueError(
-            "`data` must be 3D with shape "
-            f"(n_groups, n_channels, n_times). Got {arr.shape}."
-        )
-    n_groups, n_channels, n_times = arr.shape
-
-    x_values = np.arange(n_times) if times is None else np.asarray(times)
-    if len(x_values) != n_times:
-        raise ValueError(
-            f"`times` length ({len(x_values)}) must match n_times ({n_times})."
-        )
-
-    groups = np.arange(n_groups) if group_labels is None else np.asarray(group_labels)
-    if len(groups) != n_groups:
-        raise ValueError(
-            f"`group_labels` length ({len(groups)}) must match n_groups ({n_groups})."
-        )
-
-    ch_names = None
-    if channel_names is not None:
-        ch_names = np.asarray(channel_names).astype(str)
-        if len(ch_names) != n_channels:
-            raise ValueError(
-                f"`channel_names` length ({len(ch_names)}) must match "
-                f"n_channels ({n_channels})."
-            )
-
-    if selected_channels is None:
-        ch_indices = list(range(n_channels))
-    else:
-        ch_indices = []
-        for ch in selected_channels:
-            if isinstance(ch, (int, np.integer)):
-                idx = int(ch)
-            elif isinstance(ch, str):
-                if ch_names is None:
-                    raise ValueError(
-                        "String-based `selected_channels` requires `channel_names`."
-                    )
-                matches = np.where(ch_names == ch)[0]
-                if len(matches) == 0:
-                    raise ValueError(f"Channel '{ch}' not found in `channel_names`.")
-                idx = int(matches[0])
-            else:
-                raise TypeError(
-                    "`selected_channels` entries must be int indices or str names."
-                )
-            if idx < 0 or idx >= n_channels:
-                raise ValueError(
-                    f"Channel index {idx} out of bounds for n_channels={n_channels}."
-                )
-            ch_indices.append(idx)
-
-    if len(ch_indices) == 0:
-        raise ValueError("No channels selected for plotting.")
-
-    subplot_titles = [
-        f"Channel: {ch_names[idx]}" if ch_names is not None else f"Channel: {idx}"
-        for idx in ch_indices
-    ]
-    fig = make_subplots(
-        rows=len(ch_indices),
-        cols=1,
-        shared_xaxes=shared_xaxes,
-        vertical_spacing=vertical_spacing,
-        subplot_titles=subplot_titles,
-    )
-    for row_idx, ch_idx in enumerate(ch_indices, start=1):
-        for grp_idx, grp in enumerate(groups):
-            display_name = (
-                group_name_map.get(grp, str(grp))
-                if group_name_map is not None
-                else str(grp)
-            )
-            color = (
-                color_map[grp]
-                if color_map is not None and grp in color_map
-                else _COLORBLIND_COLORS[grp_idx % len(_COLORBLIND_COLORS)]
-            )
-            line_dict: dict[str, Any] = {"color": color, "width": line_width}
-            fig.add_trace(
-                go.Scatter(
-                    x=x_values,
-                    y=arr[grp_idx, ch_idx, :],
-                    mode="lines",
-                    name=display_name,
-                    legendgroup=str(grp),
-                    line=line_dict,
-                    opacity=opacity,
-                    showlegend=showlegend and row_idx == 1,
-                ),
-                row=row_idx,
-                col=1,
-            )
-        fig.update_yaxes(title_text=yaxis_title, row=row_idx, col=1)
-    fig.update_xaxes(title_text=xaxis_title, row=len(ch_indices), col=1)
-    _apply_layout(
-        fig,
-        title=title,
-        template=template,
-        height=base_height + row_height * len(ch_indices),
-        legend_horizontal=True,
-    )
-    fig.update_layout(margin=dict(l=60, r=40, b=60, t=70))
-    return fig
 
 
 def plot_embedding(
@@ -408,7 +219,7 @@ def plot_loss_history(
     See Also
     --------
     coco_pipe.viz.dim_reduction.plot_loss_history : Static Matplotlib version.
-    plot_eigenvalues : Scree plot of explained variance ratios.
+    plot_scree : Scree plot of explained variance ratios.
     plot_metrics : Metric bar chart for post-fit quality evaluation.
 
     Examples
@@ -479,7 +290,7 @@ def plot_metrics(
     See Also
     --------
     coco_pipe.viz.dim_reduction.plot_metrics : Static Matplotlib version.
-    plot_eigenvalues : Scree plot complementing variance-based metrics.
+    plot_scree : Scree plot complementing variance-based metrics.
     plot_shepard_diagram : Distance-preservation diagnostic.
     plot_coranking_matrix : Rank-based quality matrix.
 
@@ -655,7 +466,7 @@ def plot_metrics(
     return fig
 
 
-def plot_eigenvalues(
+def plot_scree(
     explained_variance_ratio: np.ndarray,
 ) -> go.Figure:
     """
@@ -673,7 +484,7 @@ def plot_eigenvalues(
 
     See Also
     --------
-    coco_pipe.viz.dim_reduction.plot_eigenvalues : Static Matplotlib version.
+    coco_pipe.viz.dim_reduction.plot_scree : Static Matplotlib version.
     plot_loss_history : Training loss curve for iterative methods.
     plot_metrics : Broader metric quality summary.
     plot_component_loadings : Component loading heatmap for linear reducers.
@@ -682,16 +493,23 @@ def plot_eigenvalues(
     --------
     >>> import numpy as np
     >>> from coco_pipe.viz.interactive import dim_reduction as viz
-    >>> fig = viz.plot_eigenvalues(np.array([0.5, 0.3, 0.2]))
+    >>> fig = viz.plot_scree(np.array([0.5, 0.3, 0.2]))
     """
     curve = prepare_eigenvalue_curves(explained_variance_ratio)[0]
+
+    # Modern monochrome theme from static version
+    bar_color = "#e0e0e0"  # Pale Silver/Light Gray
+    bar_edge_color = "#9e9e9e"  # Medium Gray border
+    line_color = "#000000"  # Pitch Black
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
             x=curve["components"],
             y=curve["mean"],
             name="Individual",
-            opacity=0.7,
+            marker=dict(color=bar_color, line=dict(color=bar_edge_color, width=1.5)),
+            opacity=0.8,
         )
     )
     fig.add_trace(
@@ -700,19 +518,52 @@ def plot_eigenvalues(
             y=curve["cumulative"],
             mode="lines+markers",
             name="Cumulative",
+            line=dict(color=line_color, width=4),
+            marker=dict(color=line_color, size=8),
             yaxis="y2",
         )
     )
     fig.update_layout(
-        title="Scree Plot",
-        xaxis_title="Principal Component",
-        yaxis_title="Explained Variance Ratio",
-        yaxis2=dict(
-            title="Cumulative Variance", overlaying="y", side="right", range=[0, 1.1]
+        title=dict(text="Scree Plot", font=dict(size=20), pad=dict(b=20)),
+        xaxis=dict(
+            title="Principal Component",
+            title_font=dict(size=22),
+            tickfont=dict(size=20),
+            showline=True,
+            linewidth=1,
+            linecolor="black",
         ),
-        legend=dict(x=0.5, y=1.1, orientation="h"),
-        margin=dict(l=50, r=50, b=50, t=55),
-        height=350,
+        yaxis=dict(
+            title="Explained Variance",
+            title_font=dict(size=22),
+            tickfont=dict(size=20),
+            showline=True,
+            linewidth=1,
+            linecolor="black",
+        ),
+        yaxis2=dict(
+            title="Cumulative Explained Variance",
+            title_font=dict(size=22),
+            tickfont=dict(size=16),
+            overlaying="y",
+            side="right",
+            showline=True,
+            linewidth=1,
+            linecolor="black",
+            showgrid=False,
+        ),
+        legend=dict(
+            x=0.99,
+            y=0.99,
+            xanchor="right",
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="rgba(0,0,0,0.1)",
+            borderwidth=1,
+        ),
+        margin=dict(l=80, r=80, b=80, t=80),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
         template="coco",
     )
     return fig
@@ -1262,8 +1113,12 @@ def plot_trajectory_metric_series(
     *,
     times: Optional[np.ndarray] = None,
     labels: Optional[np.ndarray] = None,
+    color_map: Optional[dict[str, str]] = None,
+    linestyle_map: Optional[dict[str, str]] = None,
+    smooth_window: int = 1,
     title: str = "Trajectory Metric",
     ylabel: str = "Value",
+    **layout_kwargs: Any,
 ) -> go.Figure:
     """
     Plot evaluated trajectory metric time series interactively.
@@ -1277,6 +1132,8 @@ def plot_trajectory_metric_series(
         Explicit time axis aligned with the time dimension.
     labels : np.ndarray, optional
         Optional trajectory labels aligned with the first axis of 2D inputs.
+    color_map : dict[str, str], optional
+    linestyle_map : dict[str, str], optional
     title : str, default="Trajectory Metric"
         Figure title.
     ylabel : str, default="Value"
@@ -1304,20 +1161,185 @@ def plot_trajectory_metric_series(
     frame = prepare_trajectory_metric_series(series, times=times, labels=labels)
     fig = go.Figure()
     groups = list(frame.groupby("Series", sort=False))
-    for name, group in groups:
-        errors = group["Error"].to_numpy(dtype=float)
-        error_y = None if np.isnan(errors).all() else {"type": "data", "array": errors}
+    for name, df_grp in groups:
+        errors = df_grp["Error"].to_numpy(dtype=float)
+        y_vals = df_grp["Value"].to_numpy(dtype=float)
+
+        if smooth_window > 1:
+            import pandas as pd
+
+            y_vals = (
+                pd.Series(y_vals)
+                .rolling(window=smooth_window, min_periods=1, center=True)
+                .mean()
+                .values
+            )
+            if not np.isnan(errors).all():
+                errors = (
+                    pd.Series(errors)
+                    .rolling(window=smooth_window, min_periods=1, center=True)
+                    .mean()
+                    .values
+                )
+
+        has_error = not np.isnan(errors).all()
+
+        color = None
+        dash = None
+        if color_map is not None:
+            color = color_map.get(name) or color_map.get(str(name))
+        if linestyle_map is not None:
+            raw_dash = linestyle_map.get(name) or linestyle_map.get(str(name))
+            _plotly_style_mapper = {
+                "--": "dash",
+                "-": "solid",
+                ":": "dot",
+                "-.": "dashdot",
+            }
+            dash = _plotly_style_mapper.get(raw_dash, raw_dash) if raw_dash else None
+
+        line_dict = {}
+        if color:
+            line_dict["color"] = color
+        if dash:
+            line_dict["dash"] = dash
+
+        if has_error:
+            upper = y_vals + errors
+            lower = y_vals - errors
+
+            try:
+                import matplotlib.colors as mcolors
+
+                if color:
+                    rgb = mcolors.to_rgb(color)
+                    r, g, b = int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)
+                    fillcolor = f"rgba({r}, {g}, {b}, 0.2)"
+                else:
+                    fillcolor = "rgba(128, 128, 128, 0.2)"
+            except Exception:
+                fillcolor = "rgba(128, 128, 128, 0.2)"
+
+            # Upper bound
+            fig.add_trace(
+                go.Scatter(
+                    x=df_grp["Time"],
+                    y=upper,
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+            # Lower bound with fill
+            fig.add_trace(
+                go.Scatter(
+                    x=df_grp["Time"],
+                    y=lower,
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor=fillcolor,
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+
+        # Main line trace
         fig.add_trace(
             go.Scatter(
-                x=group["Time"],
-                y=group["Value"],
-                error_y=error_y,
+                x=df_grp["Time"],
+                y=y_vals,
                 mode="lines",
+                line=line_dict if line_dict else None,
                 name=str(name) if len(groups) > 1 else ylabel,
             )
         )
     _apply_layout(fig, title=title, xaxis_title="Time", yaxis_title=ylabel)
+    if layout_kwargs:
+        fig.update_layout(**layout_kwargs)
     return fig
+
+
+def _sem_envelope_traces(
+    traj: np.ndarray,
+    sem: np.ndarray,
+    color: str,
+    name: str,
+    dimensions: int,
+    sem_alpha: float,
+    sem_n_steps: int,
+) -> list[Any]:
+    """Build translucent uncertainty envelope traces for one trajectory.
+
+    Returns a list of Plotly traces (Scatter or Scatter3d). For 2D, each
+    sampled timepoint produces a small ellipse polygon outlined by the
+    per-PC SEM. For 3D, each sampled timepoint produces a small marker
+    sized by the joint SEM magnitude.
+    """
+    n_times = traj.shape[0]
+    if n_times == 0:
+        return []
+    step = max(1, n_times // max(1, sem_n_steps))
+    sample_idx = np.arange(0, n_times, step)
+
+    # Parse the hex color into an rgba string with `sem_alpha`.
+    if color.startswith("#") and len(color) == 7:
+        r = int(color[1:3], 16)
+        g = int(color[3:5], 16)
+        b = int(color[5:7], 16)
+        fill_rgba = f"rgba({r},{g},{b},{sem_alpha:.3f})"
+    else:
+        fill_rgba = color
+
+    traces: list[Any] = []
+    if dimensions == 2:
+        theta = np.linspace(0.0, 2.0 * np.pi, 28)
+        cos_t = np.cos(theta)
+        sin_t = np.sin(theta)
+        for t in sample_idx:
+            sx = float(sem[t, 0]) if np.isfinite(sem[t, 0]) else 0.0
+            sy = float(sem[t, 1]) if np.isfinite(sem[t, 1]) else 0.0
+            if sx <= 0 and sy <= 0:
+                continue
+            cx = float(traj[t, 0])
+            cy = float(traj[t, 1])
+            traces.append(
+                go.Scatter(
+                    x=(cx + sx * cos_t).tolist(),
+                    y=(cy + sy * sin_t).tolist(),
+                    mode="lines",
+                    fill="toself",
+                    fillcolor=fill_rgba,
+                    line=dict(color="rgba(0,0,0,0)"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup=name,
+                )
+            )
+    else:
+        for t in sample_idx:
+            joint = float(np.sqrt(np.nansum(sem[t, :3] ** 2)))
+            if joint <= 0 or not np.isfinite(joint):
+                continue
+            traces.append(
+                go.Scatter3d(
+                    x=[float(traj[t, 0])],
+                    y=[float(traj[t, 1])],
+                    z=[float(traj[t, 2])],
+                    mode="markers",
+                    marker=dict(
+                        size=max(6.0, 14.0 * joint / max(joint, 1e-12)),
+                        color=fill_rgba,
+                        opacity=sem_alpha,
+                        line=dict(width=0),
+                    ),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    legendgroup=name,
+                )
+            )
+    return traces
 
 
 def plot_trajectory(
@@ -1325,10 +1347,22 @@ def plot_trajectory(
     times: Optional[np.ndarray] = None,
     labels: Optional[np.ndarray] = None,
     values: Optional[np.ndarray] = None,
+    sem: Optional[np.ndarray] = None,
+    color_map: Optional[dict[str, str]] = None,
+    linestyle_map: Optional[dict[str, str]] = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
     smooth_window: Optional[int] = None,
     downsample: int = 1,
+    sem_alpha: float = 0.18,
+    sem_n_steps: int = 8,
+    show_markers: bool = True,
+    add_start_end_markers: bool = False,
+    linewidth: float = 4.0,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    axis_labels: Optional[list[str]] = None,
+    layout_kws: Optional[dict] = None,
 ) -> go.Figure:
     """
     Plot native trajectory tensors interactively.
@@ -1343,6 +1377,17 @@ def plot_trajectory(
         Optional label per trajectory.
     values : np.ndarray, optional
         Optional scalar overlay with shape ``(n_trajectories, n_times)``.
+    sem : np.ndarray, optional
+        Per-trajectory, per-time, per-dimension uncertainty (typically the
+        across-trial SEM of the trajectory). Shape ``(n_trajectories,
+        n_times, n_dimensions)``. When provided, a translucent uncertainty
+        envelope is drawn around each trajectory: in 2D as small ellipses
+        with semi-axes equal to ``sem`` along each PC; in 3D as small
+        translucent markers sized by the joint SEM magnitude.
+    color_map : dict[str, str], optional
+        Optional mapping of label to hex color string.
+    linestyle_map : dict[str, str], optional
+        Optional mapping of label to dash style string.
     title : str, default="Trajectory Plot"
         Figure title.
     dimensions : int, default=2
@@ -1351,6 +1396,14 @@ def plot_trajectory(
         Moving-average window applied to each trajectory when greater than 1.
     downsample : int, default=1
         Keep every ``downsample``-th time point after smoothing.
+    sem_alpha : float, default=0.18
+        Opacity of the uncertainty envelope when ``sem`` is provided.
+    sem_n_steps : int, default=8
+        Approximate number of timepoints sampled for the uncertainty
+        envelope. Lower values declutter dense trajectories; the line
+        itself is still drawn at full resolution.
+    show_markers : bool, default=True
+        If True, draws markers at each sampled time point.
 
     Returns
     -------
@@ -1370,7 +1423,10 @@ def plot_trajectory(
     >>> from coco_pipe.viz.interactive import dim_reduction as viz
     >>> X = np.random.default_rng(42).normal(size=(3, 20, 2))
     >>> fig = viz.plot_trajectory(X)
+    >>> sem = np.full_like(X, 0.3)
+    >>> fig = viz.plot_trajectory(X, sem=sem)
     """
+    sem_input = sem
     trajectories, _, labels, values, dimensions = prepare_trajectory_data(
         X,
         times=times,
@@ -1380,6 +1436,27 @@ def plot_trajectory(
         smooth_window=smooth_window,
         downsample=downsample,
     )
+    # Align sem with the (possibly downsampled / smoothed) trajectories.
+    if sem_input is not None:
+        sem_arr = np.asarray(sem_input, dtype=float)
+        x_shape = np.asarray(X).shape
+        if sem_arr.shape != x_shape:
+            raise ValueError(
+                f"`sem` must match `X` shape; got sem {sem_arr.shape} vs X {x_shape}."
+            )
+        sem_arr = sem_arr[:, ::downsample, :dimensions]
+        n_times_traj = trajectories.shape[1]
+        if sem_arr.shape[1] >= n_times_traj:
+            sem_arr = sem_arr[:, :n_times_traj]
+        else:
+            pad = n_times_traj - sem_arr.shape[1]
+            sem_arr = np.concatenate(
+                [sem_arr, np.full((sem_arr.shape[0], pad, dimensions), np.nan)],
+                axis=1,
+            )
+    else:
+        sem_arr = None
+
     fig = go.Figure()
     if values is not None:
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
@@ -1390,7 +1467,7 @@ def plot_trajectory(
                         y=traj[:, 1],
                         z=traj[:, 2],
                         mode="lines",
-                        line=dict(color="rgba(150,150,150,0.35)", width=4),
+                        line=dict(color="rgba(150,150,150,0.35)", width=linewidth),
                         showlegend=False,
                         hoverinfo="skip",
                     )
@@ -1445,27 +1522,55 @@ def plot_trajectory(
         palette = list(_COLORBLIND_COLORS)
         label_color_map = None
         if labels is not None:
-            unique_labels = list(dict.fromkeys(labels.tolist()))
-            label_color_map = {
-                label: palette[idx % len(palette)]
-                for idx, label in enumerate(unique_labels)
-            }
+            if color_map is not None:
+                label_color_map = color_map
+            else:
+                unique_labels = list(dict.fromkeys(labels.tolist()))
+                label_color_map = {
+                    label: palette[idx % len(palette)]
+                    for idx, label in enumerate(unique_labels)
+                }
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
-            color = (
-                label_color_map[labels[idx]]
-                if label_color_map is not None
+            lbl = labels[idx] if labels is not None else None
+
+            raw_color = (
+                label_color_map.get(lbl, palette[idx % len(palette)])
+                if label_color_map is not None and lbl is not None
                 else palette[idx % len(palette)]
             )
-            name = str(labels[idx]) if labels is not None else f"Trajectory {idx + 1}"
+
+            try:
+                color = mcolors.to_hex(raw_color)
+            except ValueError:
+                color = raw_color
+            dash = (
+                linestyle_map.get(lbl, "solid")
+                if linestyle_map is not None and lbl is not None
+                else "solid"
+            )
+
+            name = str(lbl) if lbl is not None else f"Trajectory {idx + 1}"
             show = name not in {trace.name for trace in fig.data if trace.name}
+            # SEM envelope first so it draws underneath the trajectory line
+            if sem_arr is not None:
+                for env_trace in _sem_envelope_traces(
+                    traj,
+                    sem_arr[idx],
+                    color=color,
+                    name=name,
+                    dimensions=dimensions,
+                    sem_alpha=sem_alpha,
+                    sem_n_steps=sem_n_steps,
+                ):
+                    fig.add_trace(env_trace)
             if dimensions == 3:
                 fig.add_trace(
                     go.Scatter3d(
                         x=traj[:, 0],
                         y=traj[:, 1],
                         z=traj[:, 2],
-                        mode="lines+markers",
-                        line=dict(color=color, width=4),
+                        mode="lines+markers" if show_markers else "lines",
+                        line=dict(color=color, width=linewidth, dash=dash),
                         marker=dict(size=4, color=color),
                         name=name,
                         legendgroup=name,
@@ -1477,25 +1582,60 @@ def plot_trajectory(
                     go.Scatter(
                         x=traj[:, 0],
                         y=traj[:, 1],
-                        mode="lines+markers",
-                        line=dict(color=color, width=3),
+                        mode="lines+markers" if show_markers else "lines",
+                        line=dict(color=color, width=linewidth, dash=dash),
                         marker=dict(size=6, color=color),
                         name=name,
                         legendgroup=name,
                         showlegend=show,
                     )
                 )
-    _apply_layout(fig, title=title)
+    if title:
+        _apply_layout(fig, title=title)
+
+    ax_labels = (
+        axis_labels if axis_labels else [f"Dimension {i+1}" for i in range(dimensions)]
+    )
+
     if dimensions == 2:
-        fig.update_layout(xaxis_title="Dimension 1", yaxis_title="Dimension 2")
+        fig.update_layout(xaxis_title=ax_labels[0], yaxis_title=ax_labels[1])
     else:
         fig.update_layout(
             scene=dict(
-                xaxis_title="Dimension 1",
-                yaxis_title="Dimension 2",
-                zaxis_title="Dimension 3",
+                xaxis_title=ax_labels[0],
+                yaxis_title=ax_labels[1],
+                zaxis_title=ax_labels[2],
             )
         )
+
+        # Add the mean Start marker if requested
+        if (
+            add_start_end_markers
+            and len(trajectories) > 0
+            and trajectories.shape[1] > 0
+        ):
+            start_x = np.nanmean(trajectories[:, 0, 0])
+            start_y = np.nanmean(trajectories[:, 0, 1])
+            start_z = np.nanmean(trajectories[:, 0, 2])
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[start_x],
+                    y=[start_y],
+                    z=[start_z],
+                    mode="markers",
+                    marker=dict(size=12, color="black"),
+                    showlegend=False,
+                    name="Start",
+                    hoverinfo="skip",
+                )
+            )
+
+    if width is not None or height is not None:
+        fig.update_layout(width=width, height=height)
+
+    if layout_kws:
+        fig.update_layout(**layout_kws)
+
     return fig
 
 
@@ -1561,9 +1701,14 @@ def plot_coranking_matrix(
 
 def plot_trajectory_separation(
     separation: dict,
+    *,
     times: Optional[np.ndarray] = None,
     top_n: Optional[int] = None,
+    color_map: Optional[dict[tuple, str]] = None,
+    linestyle_map: Optional[dict[tuple, str]] = None,
+    smooth_window: int = 1,
     title: str = "Trajectory Separation",
+    **layout_kwargs: Any,
 ) -> go.Figure:
     """
     Plot pairwise label-separation timecourses interactively.
@@ -1577,6 +1722,8 @@ def plot_trajectory_separation(
         Explicit time axis aligned with the separation arrays.
     top_n
         Keep only the ``top_n`` pairs ranked by peak separation.
+    color_map : dict[tuple, str], optional
+    linestyle_map : dict[tuple, str], optional
     title
         Figure title.
 
@@ -1603,10 +1750,48 @@ def plot_trajectory_separation(
         times=times,
         top_n=top_n,
     )
+    if smooth_window > 1:
+        import pandas as pd
+
+        for item in items:
+            item["y"] = (
+                pd.Series(item["y"])
+                .rolling(window=smooth_window, min_periods=1, center=True)
+                .mean()
+                .values
+            )
+
     fig = go.Figure()
     for item in items:
+        label = item["label"]
+        color = None
+        dash = None
+        if color_map is not None:
+            color = color_map.get(label) or color_map.get(str(label))
+        if linestyle_map is not None:
+            raw_dash = linestyle_map.get(label) or linestyle_map.get(str(label))
+            _plotly_style_mapper = {
+                "--": "dash",
+                "-": "solid",
+                ":": "dot",
+                "-.": "dashdot",
+            }
+            dash = _plotly_style_mapper.get(raw_dash, raw_dash) if raw_dash else None
+
+        line_dict = {}
+        if color:
+            line_dict["color"] = color
+        if dash:
+            line_dict["dash"] = dash
+
         fig.add_trace(
-            go.Scatter(x=item["x"], y=item["y"], mode="lines", name=item["label"])
+            go.Scatter(
+                x=item["x"],
+                y=item["y"],
+                mode="lines",
+                line=line_dict if line_dict else None,
+                name=str(label),
+            )
         )
     _apply_layout(
         fig,
@@ -1614,6 +1799,96 @@ def plot_trajectory_separation(
         xaxis_title="Time",
         yaxis_title="Separation",
         height=420,
+    )
+    if layout_kwargs:
+        fig.update_layout(**layout_kwargs)
+    return fig
+
+
+def plot_phase_portrait(
+    X: np.ndarray,
+    times: np.ndarray,
+    labels: Sequence[str],
+    component_idx: int = 0,
+    title: str = "Phase Portrait",
+) -> go.Figure:
+    """
+    Plot a phase portrait (amplitude vs velocity) for condition-mean trajectories.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Trajectory array with shape ``(n_conditions, n_times, n_components)``.
+    times : np.ndarray
+        One-dimensional time axis aligned with the time dimension of ``X``.
+    labels : sequence of str
+        Condition labels, one per trajectory (first axis of ``X``).
+    component_idx : int, default=0
+        Index of the component to extract for the portrait.
+    title : str, default="Phase Portrait"
+        Figure title.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive phase portrait figure.
+
+    See Also
+    --------
+    plot_trajectory : Full trajectory geometry in 2D or 3D space.
+    plot_trajectory_metric_series : Scalar metric timecourses per trajectory.
+    coco_pipe.viz.dim_reduction.plot_phase_portrait : Static Matplotlib version.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from coco_pipe.viz.interactive import dim_reduction as viz
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(3, 20, 5))
+    >>> times = np.linspace(0, 1, 20)
+    >>> fig = viz.plot_phase_portrait(X, times, labels=["A", "B", "C"])
+    """
+    X = np.asarray(X)
+    if X.ndim != 3:
+        raise ValueError(
+            f"`X` must be 3D with shape (n_conditions, n_times, n_components). "
+            f"Got {X.shape}."
+        )
+    times = np.asarray(times, dtype=float)
+    if len(times) != X.shape[1]:
+        raise ValueError(
+            f"`times` length ({len(times)}) must match n_times ({X.shape[1]})."
+        )
+    if component_idx < 0 or component_idx >= X.shape[2]:
+        raise ValueError(
+            f"`component_idx` {component_idx} out of bounds "
+            f"for n_components={X.shape[2]}."
+        )
+
+    dt = np.diff(times).mean() if len(times) > 1 else 1.0
+    amplitude = X[:, :, component_idx]
+    velocity = np.gradient(amplitude, axis=1) / dt
+
+    palette = list(_COLORBLIND_COLORS)
+    fig = go.Figure()
+    for idx, label in enumerate(labels):
+        color = palette[idx % len(palette)]
+        fig.add_trace(
+            go.Scatter(
+                x=amplitude[idx],
+                y=velocity[idx],
+                mode="lines+markers",
+                name=str(label),
+                line=dict(color=color, width=2),
+                marker=dict(size=5, color=color),
+            )
+        )
+    _apply_layout(
+        fig,
+        title=title,
+        xaxis_title=f"PC{component_idx + 1} Amplitude",
+        yaxis_title=f"PC{component_idx + 1} Velocity",
+        height=450,
     )
     return fig
 
@@ -1648,7 +1923,7 @@ def plot_component_loadings(
     coco_pipe.viz.dim_reduction.plot_component_loadings : Static Matplotlib version.
     plot_feature_importance : Feature importance bar chart.
     plot_feature_correlation_heatmap : Feature-to-dimension correlation heatmap.
-    plot_eigenvalues : Scree plot of explained variance per component.
+    plot_scree : Scree plot of explained variance per component.
 
     Examples
     --------

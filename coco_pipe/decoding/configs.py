@@ -982,7 +982,7 @@ class ExperimentConfig(BaseModel):
     feature selection, and statistical inference.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     task: MetricTask = "classification"
     output_dir: Optional[Path] = None
@@ -1007,8 +1007,12 @@ class ExperimentConfig(BaseModel):
         default_factory=FeatureSelectionConfig
     )
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
-    evaluation: StatisticalAssessmentConfig = Field(
-        default_factory=StatisticalAssessmentConfig
+    statistical_assessment: StatisticalAssessmentConfig = Field(
+        default_factory=StatisticalAssessmentConfig,
+        description=(
+            "Statistical-assessment settings (chance-level tests, "
+            "confidence intervals, bootstrap)."
+        ),
     )
 
     metrics: List[str] = Field(
@@ -1025,7 +1029,7 @@ class ExperimentConfig(BaseModel):
     def get_all_evaluation_metrics(self) -> list[str]:
         """Union of primary experiment metrics and stats-specific metrics."""
         primary = list(self.metrics)
-        eval_metrics = self.evaluation.metrics or []
+        eval_metrics = self.statistical_assessment.metrics or []
         return sorted(set(primary + list(eval_metrics)))
 
     @model_validator(mode="after")

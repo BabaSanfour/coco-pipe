@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
 
+from coco_pipe.io.quality import QCResult
 from coco_pipe.report.api import from_experiment_result
 from coco_pipe.report.core import Report
 from coco_pipe.report.decoding import (
@@ -37,6 +38,25 @@ def test_decoding_report_builder_renders_html(tmp_path):
     path = tmp_path / "report.html"
     report.save(str(path))
     BeautifulSoup(path.read_text(), "html.parser")
+
+
+def test_decoding_report_renders_qc_result():
+    result = make_synthetic_result()
+    qc_result = QCResult(
+        n_obs_in=10,
+        n_obs_out=8,
+        n_subjects_in=5,
+        n_subjects_out=4,
+    )
+
+    html = make_decoding_report(
+        result,
+        sections=["overview"],
+        qc_result=qc_result,
+    ).render()
+
+    assert "Data Quality (QC)" in html
+    assert "QC Funnel Summary" in html
 
 
 def test_all_decoding_report_methods_run():

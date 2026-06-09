@@ -40,11 +40,20 @@ def _cache_dir() -> Path:
     return Path.home() / ".cache" / "coco-pipe" / "report-assets"
 
 
+_USER_AGENT = "coco-pipe/asset-vendor " "(+https://github.com/BabaSanfour/coco-pipe)"
+
+
 def _download_to(path: Path, url: str, timeout: float = 30.0) -> None:
-    """Fetch ``url`` into ``path`` atomically."""
+    """Fetch ``url`` into ``path`` atomically.
+
+    Sends a generic User-Agent header because some CDNs (notably
+    ``cdn.tailwindcss.com``) return HTTP 403 to requests with the default
+    ``Python-urllib/...`` UA.
+    """
     tmp = path.with_suffix(path.suffix + ".part")
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
             tmp.write_bytes(resp.read())
         tmp.replace(path)
     finally:

@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
+from coco_pipe.io.quality import QCResult
 from coco_pipe.report.core import Report
 from coco_pipe.report.dim_reduction import (
     _get_reducer_summary,
@@ -106,6 +107,27 @@ def test_plot_metric_details():
     fig = plot_metric_details(records)
     assert isinstance(fig, go.Figure)
     assert len(fig.data) > 0
+
+
+def test_reduction_report_renders_qc_result():
+    qc_result = QCResult(
+        n_rows_entering_qc=12,
+        n_dropped_nan_inf=1,
+        n_dropped_extreme=1,
+        n_obs_in=10,
+        n_obs_out=9,
+        n_subjects_in=10,
+        n_subjects_out=9,
+        family_qc=pd.DataFrame({"family": ["band"], "n_features": [4]}),
+    )
+
+    report = make_reduction_report([], qc_result=qc_result)
+    html = report.render()
+
+    assert "Data Quality (QC)" in html
+    assert "QC Funnel Summary" in html
+    assert "Family-Level Quality Summary" in html
+    assert "N Rows Entering Qc" in html
 
 
 def test_report_add_reduction_logic():
@@ -321,7 +343,7 @@ def test_report_add_reduction_coverage():
 
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory")
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_loss_history")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_eigenvalues")
+@patch("coco_pipe.viz.interactive.dim_reduction.plot_scree")
 @patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory_metric_series")
 def test_add_reduction_advanced(mock_traj_series, mock_eig, mock_loss, mock_traj):
     mock_fig = MagicMock()

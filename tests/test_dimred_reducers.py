@@ -1210,9 +1210,9 @@ def test_topo_device_init():
 
 def test_reproducibility_stochastic_reducers(data):
     """Verify that random_state ensures reproducibility."""
-    # Test UMAP as a representative stochastic reducer
-    reducer1 = UMAPReducer(n_components=2, n_neighbors=10, random_state=42)
-    reducer2 = UMAPReducer(n_components=2, n_neighbors=10, random_state=42)
+    # Test TSNE as a representative stochastic reducer (UMAP is broken in sklearn>=1.6)
+    reducer1 = TSNEReducer(n_components=2, perplexity=10, random_state=42)
+    reducer2 = TSNEReducer(n_components=2, perplexity=10, random_state=42)
 
     emb1 = reducer1.fit_transform(data)
     emb2 = reducer2.fit_transform(data)

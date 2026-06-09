@@ -72,6 +72,60 @@ def test_flatten_and_stack(sample_container):
     assert stacked.coords["group"].tolist() == ["control"] * 4 + ["patient"] * 4
 
 
+def test_stack_unstack_round_trip_restores_metadata(sample_container):
+    """unstack() must restore y, ids, and the stacked dim's coord."""
+    stacked = sample_container.stack(dims=("obs", "time"), new_dim="obs")
+    restored = stacked.unstack("obs")
+    assert restored.X.shape == sample_container.X.shape
+    assert restored.dims == sample_container.dims
+    np.testing.assert_array_equal(restored.y, sample_container.y)
+    np.testing.assert_array_equal(restored.ids, sample_container.ids)
+    np.testing.assert_array_equal(
+        restored.coords["time"], sample_container.coords["time"]
+    )
+    # The internal snapshot key is dropped after consumption
+    assert "_stacked_snapshot" not in restored.meta
+
+
+def test_with_features_replaces_feature_axis(sample_container):
+    # Stack so we have (obs, feature_axis) shape; then re-attach a 3-D embedding
+    stacked = sample_container.stack(dims=("obs", "time"), new_dim="obs")
+    n_obs = stacked.X.shape[0]
+    new_X = np.random.randn(n_obs, 3)
+    out = stacked.with_features(
+        new_X, names=["PC1", "PC2", "PC3"], new_dim_name="component"
+    )
+    assert out.X.shape == (n_obs, 3)
+    assert out.dims == ("obs", "component")
+    assert list(out.coords["component"]) == ["PC1", "PC2", "PC3"]
+    # y, ids, and unrelated coords survive
+    assert out.y is not None and out.y.shape == stacked.y.shape
+    assert out.ids is not None and out.ids.shape == stacked.ids.shape
+    assert "channel" not in out.coords  # old feature coord dropped
+
+
+def test_with_features_default_names_and_same_dim(sample_container):
+    new_X = np.random.randn(*sample_container.X.shape[:-1], 2)
+    out = sample_container.with_features(new_X, feature_dim="time", new_dim_name="time")
+    assert out.X.shape == sample_container.X.shape[:-1] + (2,)
+    assert out.dims == sample_container.dims
+    assert list(out.coords["time"]) == [0, 1]  # default integer names
+
+
+def test_with_features_validates_shape_and_names(sample_container):
+    # Wrong leading axes (matching ndim but mismatched obs/channel)
+    with pytest.raises(ValueError, match="leading axes"):
+        sample_container.with_features(np.random.randn(99, 3, 3), names=["a", "b", "c"])
+    # Wrong number of dimensions
+    with pytest.raises(ValueError, match="number of dimensions"):
+        sample_container.with_features(np.random.randn(99, 3), names=["a", "b", "c"])
+    # Wrong number of names
+    with pytest.raises(ValueError, match="names"):
+        sample_container.with_features(
+            np.random.randn(*sample_container.X.shape[:-1], 3), names=["a", "b"]
+        )
+
+
 def test_balance_undersample(data_container_cls):
     X = np.arange(6 * 2).reshape(6, 2)
     y = np.array([0, 0, 0, 0, 1, 1])
@@ -93,6 +147,222 @@ def test_save_load_roundtrip(tmp_path, sample_container):
     assert loaded.dims == sample_container.dims
     np.testing.assert_array_equal(loaded.X, sample_container.X)
     np.testing.assert_array_equal(loaded.y, sample_container.y)
+
+
+def test_concat_two_flat_containers():
+    first = DataContainer(
+        X=np.array([[1.0, 2.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "group": ["control"]},
+        y=np.array([0]),
+        ids=np.array(["s1"]),
+        meta={"condition": "baseline"},
+    )
+    second = DataContainer(
+        X=np.array([[3.0, 4.0], [5.0, 6.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "group": ["case", "case"]},
+        y=np.array([1, 1]),
+        ids=np.array(["s2", "s3"]),
+        meta={"condition": "active"},
+    )
+
+    combined = DataContainer.concat([first, second])
+
+    assert combined.X.shape == (3, 2)
+    assert combined.coords["feature"].tolist() == ["a", "b"]
+    assert combined.coords["group"].tolist() == ["control", "case", "case"]
+    assert combined.y.tolist() == [0, 1, 1]
+    assert combined.ids.tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_tensor_containers():
+    first = DataContainer(
+        X=np.ones((1, 2, 3)),
+        dims=("obs", "sensor", "feature"),
+        coords={
+            "sensor": ["Fz", "Cz"],
+            "feature": ["a", "b", "c"],
+            "feature_family": ["band", "band", "complexity"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((2, 2, 3)),
+        dims=first.dims,
+        coords=first.coords,
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.X.shape == (3, 2, 3)
+    assert combined.coords["sensor"].tolist() == ["Fz", "Cz"]
+    assert combined.coords["feature_family"].tolist() == [
+        "band",
+        "band",
+        "complexity",
+    ]
+
+
+def test_concat_carries_non_obs_coords_generically():
+    first = DataContainer(
+        X=np.ones((2, 3)),
+        dims=("obs", "component"),
+        coords={
+            "component": ["C1", "C2", "C3"],
+            "basis_kind": ["spatial", "temporal", "spectral"],
+            "subject": ["s1", "s2"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((1, 3)),
+        dims=("obs", "component"),
+        coords={
+            "component": ["C1", "C2", "C3"],
+            "basis_kind": ["spatial", "temporal", "spectral"],
+            "subject": ["s3"],
+        },
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["basis_kind"].tolist() == [
+        "spatial",
+        "temporal",
+        "spectral",
+    ]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_preserves_axis_coord_when_axis_length_matches_obs():
+    first = DataContainer(
+        X=np.ones((2, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s1", "s2"]},
+    )
+    second = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s3"]},
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["feature"].tolist() == ["a", "b"]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_preserves_auxiliary_coord_when_length_matches_first_obs():
+    first = DataContainer(
+        X=np.ones((2, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a", "b"],
+            "feature_kind": ["spectral", "complexity"],
+            "subject": ["s1", "s2"],
+        },
+    )
+    second = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a", "b"],
+            "feature_kind": ["spectral", "complexity"],
+            "subject": ["s3"],
+        },
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["feature_kind"].tolist() == [
+        "spectral",
+        "complexity",
+    ]
+    assert combined.coords["subject"].tolist() == ["s1", "s2", "s3"]
+
+
+def test_concat_partial_coord_presence_fills_none():
+    first = DataContainer(
+        X=np.ones((2, 1)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a"], "session": ["pre", "post"]},
+    )
+    second = DataContainer(
+        X=np.zeros((1, 1)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a"], "subject": ["s3"]},
+    )
+
+    combined = DataContainer.concat(
+        [first, second],
+        fill_condition_from_meta=False,
+    )
+
+    assert combined.coords["session"].tolist() == ["pre", "post", None]
+    assert combined.coords["subject"].tolist() == [None, None, "s3"]
+
+
+def test_concat_mismatched_dims_raises():
+    flat = DataContainer(np.ones((1, 2)), dims=("obs", "feature"))
+    tensor = DataContainer(np.ones((1, 1, 2)), dims=("obs", "sensor", "feature"))
+
+    with pytest.raises(ValueError, match="matching dims"):
+        DataContainer.concat([flat, tensor])
+
+
+def test_concat_fills_condition_from_meta():
+    first = DataContainer(
+        np.ones((2, 1)),
+        dims=("obs", "feature"),
+        meta={"condition": "baseline"},
+    )
+    second = DataContainer(
+        np.ones((1, 1)),
+        dims=("obs", "feature"),
+        meta={"condition": "active"},
+    )
+
+    combined = DataContainer.concat([first, second])
+
+    assert combined.coords["condition"].tolist() == [
+        "baseline",
+        "baseline",
+        "active",
+    ]
+
+
+def test_concat_single_container_is_noop():
+    container = DataContainer(
+        X=np.arange(6).reshape(3, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["1", "2", "3"]},
+        y=np.array([0, 1, 1]),
+        ids=np.array(["a", "b", "c"]),
+    )
+
+    combined = DataContainer.concat(
+        [container],
+        fill_condition_from_meta=False,
+    )
+
+    np.testing.assert_array_equal(combined.X, container.X)
+    np.testing.assert_array_equal(combined.y, container.y)
+    np.testing.assert_array_equal(combined.ids, container.ids)
+    np.testing.assert_array_equal(
+        combined.coords["subject"],
+        container.coords["subject"],
+    )
 
 
 def test_select_advanced_operators(sample_container):
@@ -795,13 +1065,11 @@ def test_unstack_preserves_order():
     stacked = container.stack(dims=("trials", "time"), new_dim="obs")
     assert stacked.shape == (5000, 32)
 
-    # Unstack 'obs' -> ('trials', 'time').
+    # Unstack 'obs' -> ('trials', 'time'). stack() snapshots the original
+    # dim ordering, so the round-trip restores it exactly.
     unstacked = stacked.unstack("obs")
-
-    # Checks
-    assert unstacked.dims == ("trials", "time", "channels")
-    X_restored = np.transpose(unstacked.X, (2, 0, 1))
-    np.testing.assert_array_equal(X_restored, X)
+    assert unstacked.dims == ("channels", "trials", "time")
+    np.testing.assert_array_equal(unstacked.X, X)
 
 
 def test_unstack_updates_metadata():

@@ -584,7 +584,7 @@ class Experiment:
             meta=self._build_result_meta(X, self._time_axis),
         )
 
-        if self.config.evaluation.enabled:
+        if self.config.statistical_assessment.enabled:
             from .stats import run_statistical_assessment
 
             assessment = run_statistical_assessment(
@@ -730,7 +730,8 @@ class Experiment:
     ) -> tuple[pd.DataFrame, Optional[np.ndarray]]:
         """Validate metadata and extract cross-validation groups if required."""
         # 1. Standardize Metadata to DataFrame
-        if meta_in is None:
+        meta_was_provided = meta_in is not None
+        if not meta_was_provided:
             meta = pd.DataFrame(index=range(n))
         else:
             meta = pd.DataFrame(meta_in).reset_index(drop=True)
@@ -741,12 +742,25 @@ class Experiment:
         # 2. Scientific Guard: Metadata Requirements
         # We must track subject and session to ensure independent validation
         # and prevent pseudoreplication, especially for epoch-level data.
-        if meta_in is not None:
+        #
+        # Convenience: when the caller passes ``groups`` but *no*
+        # ``sample_metadata`` at all, treat ``groups`` as ``Subject`` and
+        # synthesise a default ``Session`` ("01"). This is the common case
+        # for group-k-fold over subjects. If the caller explicitly passed
+        # ``sample_metadata``, we still require it to be complete —
+        # silently filling in Session would mask user mistakes.
+        if not meta_was_provided and groups_in is not None:
+            meta["Subject"] = np.asarray(groups_in)
+            meta["Session"] = "01"
+
+        if meta_was_provided:
             missing = [c for c in ["Subject", "Session"] if c not in meta.columns]
             if missing:
                 raise ValueError(
                     f"sample_metadata must include Subject and Session for "
-                    f"proper independence tracking. Missing: {missing}"
+                    f"proper independence tracking. Missing: {missing}. "
+                    "Tip: omit ``sample_metadata`` entirely and pass ``groups=`` "
+                    "to ``run()`` — Subject and Session will be auto-populated."
                 )
 
         # 2. Resolve Groups

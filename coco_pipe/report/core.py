@@ -15,6 +15,7 @@ import html
 import json
 import logging
 import re
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -22,17 +23,17 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from coco_pipe.utils import get_environment_info
-
-from ._engine import render_template
-from .config import ProvenanceConfig, ReportConfig
-from .data_quality import (
+from coco_pipe.io.quality import (
     CheckResult,
     check_constant_columns,
     check_flatline,
     check_missingness,
     check_outliers_zscore,
 )
+from coco_pipe.utils import get_environment_info
+
+from ._engine import render_template
+from .config import ProvenanceConfig, ReportConfig
 from .elements import (
     ColumnsElement,
     ContainerElement,
@@ -51,6 +52,34 @@ def _slugify(value: str) -> str:
     """Return a stable HTML id slug for a human-readable label."""
     slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
     return slug or "section"
+
+
+def _replace_non_finite(value: Any) -> Any:
+    """Recursively replace ``NaN``/``±Inf`` floats with ``None``.
+
+    The browser uses ``JSON.parse`` to read the gzip-compressed report
+    payload. Python's ``json.dumps(allow_nan=True)`` default emits
+    bare ``NaN`` and ``Infinity`` tokens, which JSON.parse rejects with
+    ``SyntaxError: Unexpected token 'N'``. The error breaks the whole
+    payload, so *every* figure / table in the report fails to render
+    — not just the one carrying the NaN.
+
+    We walk dicts, lists, tuples, and numpy/pandas containers, swap each
+    non-finite scalar for ``None`` (which serialises to ``null``), and
+    leave everything else untouched.
+    """
+    if isinstance(value, dict):
+        return {k: _replace_non_finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        cleaned = [_replace_non_finite(v) for v in value]
+        return cleaned if isinstance(value, list) else tuple(cleaned)
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind == "f":
+            return np.where(np.isfinite(value), value, None).tolist()
+        return value.tolist()
+    if isinstance(value, (float, np.floating)):
+        return value if np.isfinite(value) else None
+    return value
 
 
 class Section(ContainerElement):
@@ -456,7 +485,7 @@ class Report(ContainerElement):
         self.collect_payload(data_registry)
 
         # 2. Compress Payload (JSON -> Gzip -> Base64)
-        payload_json = json.dumps(data_registry).encode("utf-8")
+        payload_json = json.dumps(_replace_non_finite(data_registry)).encode("utf-8")
         compressed = gzip.compress(payload_json)
         payload_b64 = base64.b64encode(compressed).decode("utf-8")
         plot_count = sum(
@@ -618,7 +647,28 @@ class Report(ContainerElement):
         ----------
         filename : str or Path
             Path to save the HTML file.
+
+        Notes
+        -----
+        Emits a ``UserWarning`` when the report still depends on three
+        external CDN scripts (Plotly, Tailwind, pako). A CDN-backed
+        report renders as grey placeholders if opened without a network
+        connection (e.g. ``file://`` viewing, offline archives, restrictive
+        corporate firewalls, air-gapped machines). Pass
+        ``asset_urls="inline"`` to :class:`Report` to bundle the
+        JavaScript directly into the HTML.
         """
+        if self.asset_mode == "cdn":
+            warnings.warn(
+                f"Report saved to {filename} references three external "
+                "CDN scripts (Plotly, Tailwind, pako). It will appear as "
+                "grey placeholder boxes if opened without a network "
+                "connection (file:// viewing, offline machines, "
+                "restrictive firewalls). Pass `asset_urls='inline'` to "
+                "Report(...) for a fully self-contained HTML.",
+                UserWarning,
+                stacklevel=2,
+            )
         full_html = self.render()
         Path(filename).write_text(full_html, encoding="utf-8")
 

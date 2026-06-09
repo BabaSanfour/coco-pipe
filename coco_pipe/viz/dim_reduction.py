@@ -43,7 +43,7 @@ from .base import (
     plot_scatter3d,
     plot_streamfield,
 )
-from .theme import DIVERGING, QUALITATIVE, SEQUENTIAL, ColorKind, coco_theme
+from .theme import DIVERGING, SEQUENTIAL, ColorKind, coco_theme
 
 
 def _embedding_metric_text(metrics: dict[str, Any] | None, metric_name: str) -> str:
@@ -209,6 +209,7 @@ def _plot_metric_bars(
     ax: plt.Axes,
     palette: str = SEQUENTIAL,
     annotate: bool = True,
+    axes_kws: dict | None = None,
 ) -> None:
     x_col, hue_col = _metric_x_hue_columns(metrics_df)
     sns.barplot(
@@ -240,13 +241,18 @@ def _plot_metric_bars(
         xlabel=x_col.replace("_", " ").title(),
         ylabel="Score",
         xtick_rotation=35,
+        **(axes_kws or {}),
     )
     if hue_col is not None and ax.legend_ is not None:
         ax.legend(title="Method", frameon=False)
 
 
 def _plot_metric_distribution(
-    metrics_df: pd.DataFrame, title: str, ax: plt.Axes, plot_type: str
+    metrics_df: pd.DataFrame,
+    title: str,
+    ax: plt.Axes,
+    plot_type: str,
+    axes_kws: dict | None = None,
 ) -> None:
     x_col, hue_col = _metric_x_hue_columns(metrics_df)
     if plot_type == "box":
@@ -279,10 +285,13 @@ def _plot_metric_distribution(
         xlabel=x_col.replace("_", " ").title(),
         ylabel="Score",
         xtick_rotation=35,
+        **(axes_kws or {}),
     )
 
 
-def _plot_metric_heatmap(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+def _plot_metric_heatmap(
+    metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
+) -> None:
     has_scope_axis = metrics_df["ScopeValue"].astype(str).nunique() > 1
     has_single_metric = metrics_df["Metric"].nunique() == 1
     if has_scope_axis and has_single_metric:
@@ -305,10 +314,13 @@ def _plot_metric_heatmap(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> 
         xlabel=x_label,
         ylabel="Method",
         ax=ax,
+        **(axes_kws or {}),
     )
 
 
-def _plot_metric_lines(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+def _plot_metric_lines(
+    metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
+) -> None:
     group_cols = ["Method"] + (["Metric"] if metrics_df["Metric"].nunique() > 1 else [])
     summary = (
         metrics_df.groupby(group_cols + ["Scope", "ScopeValue"], dropna=False)["Value"]
@@ -343,10 +355,13 @@ def _plot_metric_lines(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> No
         ylabel="Score",
         legend=True,
         legend_title="Series",
+        **(axes_kws or {}),
     )
 
 
-def _plot_metric_dumbbell(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) -> None:
+def _plot_metric_dumbbell(
+    metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
+) -> None:
     method_means = metrics_df.pivot_table(
         index="Metric", columns="Method", values="Value", aggfunc="mean"
     )
@@ -359,7 +374,7 @@ def _plot_metric_dumbbell(metrics_df: pd.DataFrame, title: str, ax: plt.Axes) ->
     right_points = ax.scatter(method_means[right], y_pos, color="#ff7f0e", s=60)
     ax.set_yticks(y_pos)
     ax.set_yticklabels(method_means.index)
-    finalize_axes(ax, title=title, xlabel="Score")
+    finalize_axes(ax, title=title, xlabel="Score", **(axes_kws or {}))
     ax.legend([left_points, right_points], [str(left), str(right)], frameon=False)
 
 
@@ -386,6 +401,7 @@ def plot_metrics(
     metric: str | None = None,
     scope: str | None = None,
     method: str | Sequence[str] | None = None,
+    axes_kws: dict | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot tidy metric observations using one shared entrypoint.
 
@@ -451,15 +467,17 @@ def plot_metrics(
 
         fig, ax = get_figure(ax, figsize, (8, 6))
         if plot_type in {"bar", "grouped_bar", "lollipop"}:
-            _plot_metric_bars(metrics_df, title, ax)
+            _plot_metric_bars(metrics_df, title, ax, axes_kws=axes_kws)
         elif plot_type in {"box", "boxen", "violin", "raincloud", "strip", "swarm"}:
-            _plot_metric_distribution(metrics_df, title, ax, plot_type)
+            _plot_metric_distribution(
+                metrics_df, title, ax, plot_type, axes_kws=axes_kws
+            )
         elif plot_type == "heatmap":
-            _plot_metric_heatmap(metrics_df, title, ax)
+            _plot_metric_heatmap(metrics_df, title, ax, axes_kws=axes_kws)
         elif plot_type == "line":
-            _plot_metric_lines(metrics_df, title, ax)
+            _plot_metric_lines(metrics_df, title, ax, axes_kws=axes_kws)
         elif plot_type in {"dumbbell", "slopegraph"}:
-            _plot_metric_dumbbell(metrics_df, title, ax)
+            _plot_metric_dumbbell(metrics_df, title, ax, axes_kws=axes_kws)
         else:
             raise ValueError(f"Unsupported plot_type: {plot_type}")
         return fig, ax
@@ -471,6 +489,7 @@ def plot_loss_history(
     figsize: tuple[float, float] | None = (8, 5),
     ax: plt.Axes | None = None,
     scope: str | None = None,
+    axes_kws: dict | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot reducer loss history. Linear reducers usually do not expose this.
 
@@ -525,6 +544,7 @@ def plot_loss_history(
             title=title,
             ax=ax,
             figsize=figsize or (8, 5),
+            **(axes_kws or {}),
         )
         return fig, ax
 
@@ -537,6 +557,7 @@ def plot_eigenvalues(
     ax: plt.Axes | None = None,
     max_components: int | None = None,
     condition_colors: dict[str, str] | None = None,
+    axes_kws: dict | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot explained variance curves from linear reducers (PCA, TruncatedSVD).
@@ -591,7 +612,12 @@ def plot_eigenvalues(
                 ax=cur_ax,
             )
         finalize_axes(
-            cur_ax, title=title, xlabel="Component", ylabel=ylabel, legend=True
+            cur_ax,
+            title=title,
+            xlabel="Component",
+            ylabel=ylabel,
+            legend=True,
+            **(axes_kws or {}),
         )
         return fig, cur_ax
 
@@ -917,6 +943,9 @@ def plot_trajectory_metric_series(
     series: Any,
     times: np.ndarray | None = None,
     labels: np.ndarray | None = None,
+    color_map: dict[str, str] | None = None,
+    linestyle_map: dict[str, str] | None = None,
+    smooth_window: int = 1,
     title: str = "Trajectory Metric",
     ylabel: str = "Value",
     figsize: tuple[float, float] | None = (10, 6),
@@ -970,12 +999,38 @@ def plot_trajectory_metric_series(
         for name, group in groups:
             errors = group["Error"].to_numpy(dtype=float)
             yerr = None if np.isnan(errors).all() else errors
+            y_vals = group["Value"].to_numpy(dtype=float)
+
+            if smooth_window > 1:
+                import pandas as pd
+
+                y_vals = (
+                    pd.Series(y_vals)
+                    .rolling(window=smooth_window, min_periods=1, center=True)
+                    .mean()
+                    .values
+                )
+                if yerr is not None:
+                    yerr = (
+                        pd.Series(yerr)
+                        .rolling(window=smooth_window, min_periods=1, center=True)
+                        .mean()
+                        .values
+                    )
+
+            color = color_map.get(name) if color_map else None
+            raw_style = linestyle_map.get(name, "-") if linestyle_map else "-"
+            _style_mapper = {"dash": "--", "solid": "-", "dot": ":", "dashdot": "-."}
+            line_style = _style_mapper.get(raw_style, raw_style)
+
             fig, ax = plot_line(
                 group["Time"].to_numpy(),
-                group["Value"].to_numpy(dtype=float),
+                y_vals,
                 yerr=yerr,
                 label=str(name) if len(groups) > 1 else None,
                 linewidth=2,
+                color=color,
+                linestyle=line_style,
                 ax=ax,
             )
         legend_title = "Series" if isinstance(series, Mapping) else "Label"
@@ -995,10 +1050,13 @@ def plot_trajectory(
     times: np.ndarray | None = None,
     values: np.ndarray | None = None,
     labels: np.ndarray | None = None,
+    color_map: dict[str, str] | None = None,
+    linestyle_map: dict[str, str] | None = None,
     smooth_window: int = 1,
     downsample: int = 1,
     speed_mode: Literal["linecollection", "alpha"] = "linecollection",
     add_start_end_markers: bool = False,
+    show_markers: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     linewidth: float = 2.5,
@@ -1007,6 +1065,9 @@ def plot_trajectory(
     figsize: tuple[float, float] | None = (10, 8),
     ax: plt.Axes | None = None,
     cmap: str | None = None,
+    axis_labels: list[str] | None = None,
+    axes_kws: dict | None = None,
+    showlegend: bool = True,
 ) -> tuple[plt.Figure, plt.Axes]:
     """Plot prepared trajectory tensors of shape ``trajectory x time x dim``.
 
@@ -1021,6 +1082,10 @@ def plot_trajectory(
         Per-point scalar values (e.g. speed) used for colour encoding.
     labels : array-like of length n_trajectories, optional
         Label per trajectory used for colouring and legend.
+    color_map : dict[str, str], optional
+        Optional mapping of label to hex color string.
+    linestyle_map : dict[str, str], optional
+        Optional mapping of label to Matplotlib linestyle string.
     smooth_window : int, default=1
         Moving-average window applied before plotting.
     downsample : int, default=1
@@ -1032,6 +1097,9 @@ def plot_trajectory(
     add_start_end_markers : bool, default=False
         Draw a circle (●) at the start and a cross (✕) at the end of each
         trajectory instead of a marker on every point.
+    show_markers : bool, default=True
+        If True, draws markers at each sampled time point unless
+        ``add_start_end_markers`` is True.
     xlim, ylim : tuple[float, float], optional
         Fixed axis limits.  Auto-scaled when ``None``.
     linewidth : float, default=2.5
@@ -1042,6 +1110,12 @@ def plot_trajectory(
     ax : matplotlib.axes.Axes, optional
     cmap : str, optional
         Colormap name for value encoding.  Defaults to the theme sequential map.
+    axis_labels : list[str], optional
+        Custom axis labels (e.g. ``["PC1", "PC2"]``).
+    axes_kws : dict, optional
+        Additional kwargs passed to ``ax.set()``.
+    showlegend : bool, default=True
+        Whether to draw the legend.
 
     See Also
     --------
@@ -1079,9 +1153,12 @@ def plot_trajectory(
         palette = sns.color_palette("deep", n_trajectories)
         label_colors = None
         if labels is not None:
-            unique = list(dict.fromkeys(np.asarray(labels).tolist()))
-            colors = sns.color_palette("deep", len(unique))
-            label_colors = dict(zip(unique, colors))
+            if color_map is not None:
+                label_colors = color_map
+            else:
+                unique = list(dict.fromkeys(np.asarray(labels).tolist()))
+                colors = sns.color_palette("deep", len(unique))
+                label_colors = dict(zip(unique, colors))
 
         norm = None
         colorbar_added = False
@@ -1094,10 +1171,19 @@ def plot_trajectory(
         for idx, traj in enumerate(trajectories[:, :, :dimensions]):
             line_label = str(labels[idx]) if labels is not None else None
             line_color = (
-                label_colors[labels[idx]]
+                label_colors.get(labels[idx], palette[idx % len(palette)])
                 if label_colors is not None
                 else palette[idx % len(palette)]
             )
+            raw_style = (
+                linestyle_map.get(labels[idx], "-")
+                if linestyle_map is not None and labels is not None
+                else "-"
+            )
+
+            # Map Plotly string styles to Matplotlib line styles seamlessly
+            _style_mapper = {"dash": "--", "solid": "-", "dot": ":", "dashdot": "-."}
+            line_style = _style_mapper.get(raw_style, raw_style)
 
             if values is not None:
                 c_vals = values[idx]
@@ -1111,10 +1197,17 @@ def plot_trajectory(
                             base_color=line_color,
                             label=line_label,
                             linewidth=linewidth,
+                            linestyle=line_style,
                         )
                     else:
                         lc = _colored_line_collection(
-                            traj[:, 0], traj[:, 1], c_vals, cmap, linewidth, norm=norm
+                            traj[:, 0],
+                            traj[:, 1],
+                            c_vals,
+                            cmap,
+                            linewidth,
+                            norm=norm,
+                            linestyle=line_style,
                         )
                         ax.add_collection(lc)
                         ax.plot(
@@ -1122,13 +1215,21 @@ def plot_trajectory(
                             [],
                             color=line_color,
                             linewidth=linewidth,
+                            linestyle=line_style,
                             label=line_label,
                         )
                         if not colorbar_added:
                             fig.colorbar(lc, ax=ax, label="Value", pad=0.02)
                             colorbar_added = True
                 else:
-                    ax.plot(traj[:, 0], traj[:, 1], traj[:, 2], color="0.6", alpha=0.45)
+                    ax.plot(
+                        traj[:, 0],
+                        traj[:, 1],
+                        traj[:, 2],
+                        color="0.6",
+                        alpha=0.45,
+                        linestyle=line_style,
+                    )
                     scatter = ax.scatter(
                         traj[:, 0],
                         traj[:, 1],
@@ -1145,9 +1246,10 @@ def plot_trajectory(
                 ax.plot(
                     traj[:, 0],
                     traj[:, 1],
-                    marker=None if add_start_end_markers else "o",
+                    marker="o" if show_markers and not add_start_end_markers else None,
                     linewidth=linewidth,
                     color=line_color,
+                    linestyle=line_style,
                     label=line_label,
                 )
             else:
@@ -1155,9 +1257,10 @@ def plot_trajectory(
                     traj[:, 0],
                     traj[:, 1],
                     traj[:, 2],
-                    marker=None if add_start_end_markers else "o",
+                    marker="o" if show_markers and not add_start_end_markers else None,
                     linewidth=linewidth,
                     color=line_color,
+                    linestyle=line_style,
                     label=line_label,
                 )
 
@@ -1181,14 +1284,37 @@ def plot_trajectory(
         if values is not None and dimensions == 2 and xlim is None:
             ax.autoscale_view()
 
+        ax_labels = (
+            axis_labels
+            if axis_labels
+            else [f"Dimension {i+1}" for i in range(dimensions)]
+        )
+
         finalize_axes(
             ax,
             title=title,
-            xlabel="Dimension 1",
-            ylabel="Dimension 2",
-            zlabel="Dimension 3" if dimensions == 3 else None,
+            xlabel=ax_labels[0],
+            ylabel=ax_labels[1],
+            zlabel=ax_labels[2] if dimensions == 3 else None,
         )
-        if labels is not None:
+        if axes_kws:
+            kws = axes_kws.copy()
+            tick_params = kws.pop("tick_params", None)
+            locator_params = kws.pop("locator_params", None)
+            labelsize = kws.pop("labelsize", None)
+
+            ax.set(**kws)
+
+            if tick_params:
+                ax.tick_params(**tick_params)
+            if locator_params:
+                ax.locator_params(**locator_params)
+            if labelsize:
+                ax.xaxis.label.set_size(labelsize)
+                ax.yaxis.label.set_size(labelsize)
+                if dimensions == 3 and hasattr(ax, "zaxis"):
+                    ax.zaxis.label.set_size(labelsize)
+        if showlegend and labels is not None:
             handles, legend_labels = ax.get_legend_handles_labels()
             if handles:
                 dedup = dict(zip(legend_labels, handles))
@@ -1266,6 +1392,9 @@ def plot_trajectory_separation(
     separation: dict,
     times: np.ndarray | None = None,
     top_n: int | None = None,
+    color_map: dict[tuple, str] | None = None,
+    linestyle_map: dict[tuple, str] | None = None,
+    smooth_window: int = 1,
     ax: plt.Axes | None = None,
     figsize: tuple[float, float] | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
@@ -1281,6 +1410,10 @@ def plot_trajectory_separation(
         Explicit time axis aligned with the separation arrays.
     top_n
         Keep only the ``top_n`` pairs ranked by peak separation.
+    color_map
+        Optional mapping of pair key to color.
+    linestyle_map
+        Optional mapping of pair key to linestyle.
     ax
         Existing Matplotlib axes to draw into.
     figsize
@@ -1313,24 +1446,48 @@ def plot_trajectory_separation(
         top_n=top_n,
     )
 
+    if smooth_window > 1:
+        import pandas as pd
+
+        for item in items:
+            item["y"] = (
+                pd.Series(item["y"])
+                .rolling(window=smooth_window, min_periods=1, center=True)
+                .mean()
+                .values
+            )
+
     with coco_theme():
         fig, ax = get_figure(ax, figsize, (10, 5))
-        cmap = plt.get_cmap(QUALITATIVE)
-        for idx, item in enumerate(items):
+
+        _style_mapper = {"dash": "--", "solid": "-", "dot": ":", "dashdot": "-."}
+
+        for item in items:
+            name = item["label"]
+            rank = item["rank"]
+
+            color = color_map.get(name) if color_map else None
+            raw_style = linestyle_map.get(name, "-") if linestyle_map else "-"
+            line_style = _style_mapper.get(raw_style, raw_style)
+
+            label_text = f"{name} (Rank: {rank:.2f})" if np.isfinite(rank) else name
             fig, ax = plot_line(
                 item["x"],
                 item["y"],
-                label=item["label"],
-                color=cmap(idx % 10),
+                label=label_text,
                 linewidth=2,
+                color=color,
+                linestyle=line_style,
                 ax=ax,
             )
+
         finalize_axes(
             ax,
             title="Trajectory Separation",
             xlabel="Time",
             ylabel="Separation",
             legend=True,
+            legend_title="Pair",
         )
         return fig, ax
 
@@ -1403,3 +1560,184 @@ def plot_component_loadings(
             ),
         )
         return fig, ax
+
+
+def plot_phase_portrait(
+    X: np.ndarray,
+    times: np.ndarray,
+    labels: Sequence,
+    component_idx: int = 0,
+    title: str = "Phase Portrait",
+    figsize: tuple[float, float] | None = (8, 10),
+    ax: plt.Axes | None = None,
+    axes_kws: dict | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot a phase portrait (amplitude vs velocity) for condition-mean trajectories.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Trajectory array with shape ``(n_conditions, n_times, n_components)``.
+    times : np.ndarray
+        One-dimensional time axis aligned with the time dimension of ``X``.
+    labels : sequence
+        Condition labels, one per trajectory (first axis of ``X``).
+    component_idx : int, default=0
+        Index of the component to extract for the portrait.
+    title : str, default="Phase Portrait"
+        Axes title.
+    figsize : tuple[float, float], optional
+        Figure size used when creating new axes.
+    ax : matplotlib.axes.Axes, optional
+        Existing Matplotlib axes to draw into.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]
+        The created or reused figure and axes.
+
+    See Also
+    --------
+    coco_pipe.viz.interactive.dim_reduction.plot_phase_portrait :
+        Interactive Plotly version.
+    plot_trajectory : Full trajectory geometry in 2D or 3D space.
+    plot_trajectory_metric_series : Scalar metric timecourses per trajectory.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from coco_pipe.viz import dim_reduction as viz
+    >>> rng = np.random.default_rng(42)
+    >>> X = rng.normal(size=(3, 20, 5))
+    >>> times = np.linspace(0, 1, 20)
+    >>> fig, ax = viz.plot_phase_portrait(X, times, labels=["A", "B", "C"])
+    """
+    X = np.asarray(X)
+    if X.ndim != 3:
+        raise ValueError(
+            f"`X` must be 3D with shape (n_conditions, n_times, n_components). "
+            f"Got {X.shape}."
+        )
+    times = np.asarray(times, dtype=float)
+    if len(times) != X.shape[1]:
+        raise ValueError(
+            f"`times` length ({len(times)}) must match n_times ({X.shape[1]})."
+        )
+    if component_idx < 0 or component_idx >= X.shape[2]:
+        raise ValueError(
+            f"`component_idx` {component_idx} out of bounds "
+            f"for n_components={X.shape[2]}."
+        )
+
+    dt = np.diff(times).mean() if len(times) > 1 else 1.0
+    amplitude = X[:, :, component_idx]
+    velocity = np.gradient(amplitude, axis=1) / dt
+
+    with coco_theme():
+        fig, cur_ax = get_figure(ax, figsize, (8, 6))
+        palette = sns.color_palette("deep", len(labels))
+        for idx, label in enumerate(labels):
+            cur_ax.plot(
+                amplitude[idx],
+                velocity[idx],
+                marker="o",
+                markersize=4,
+                linewidth=2,
+                color=palette[idx % len(palette)],
+                label=str(label),
+            )
+        finalize_axes(
+            cur_ax,
+            title=title,
+            xlabel=f"PC{component_idx + 1} Amplitude",
+            ylabel=f"PC{component_idx + 1} Velocity",
+            legend=True,
+            legend_title="Condition",
+        )
+        return fig, cur_ax
+
+
+def plot_scree(
+    evr: np.ndarray,
+    title: str | None = "Scree Plot",
+    figsize: tuple[float, float] | None = (8, 10),
+    ax: plt.Axes | None = None,
+    axes_kws: dict | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Creates a scree plot.
+    Plots individual explained variance as bars and cumulative variance as a line.
+    """
+    from matplotlib.ticker import MultipleLocator
+
+    # Modern monochrome theme
+    bar_color = "#e0e0e0"  # Pale Silver/Light Gray
+    bar_edge_color = "#9e9e9e"  # Medium Gray border
+    line_color = "#000000"  # Pitch Black
+
+    with coco_theme():
+        fig, ax1 = get_figure(ax, figsize, (8, 10))
+
+        components = np.arange(1, len(evr) + 1)
+        cumulative = np.cumsum(evr)
+
+        ax1.bar(
+            components,
+            evr,
+            width=0.8,
+            alpha=0.8,
+            color=bar_color,
+            edgecolor=bar_edge_color,
+            linewidth=1.5,
+            label="Individual",
+        )
+
+        ax2 = ax1.twinx()
+        plot_line(
+            components,
+            cumulative,
+            marker="o",
+            color=line_color,
+            linewidth=4,
+            markersize=8,
+            label="Cumulative",
+            ax=ax2,
+        )
+
+        finalize_axes(
+            ax1,
+            xlabel="Principal Component",
+            ylabel="Explained Variance Ratio",
+            **(axes_kws or {}),
+        )
+        finalize_axes(ax2, ylabel="Cumulative Explained Variance", **(axes_kws or {}))
+
+        # Override styling
+        ax1.set_xlabel("Principal Component", fontsize=22, labelpad=10)
+        ax1.set_ylabel("Explained Variance Ratio", fontsize=22, labelpad=10)
+        ax2.set_ylabel("Cumulative Explained Variance", fontsize=22, labelpad=10)
+        ax1.tick_params(axis="both", labelsize=20, length=0)
+        ax2.tick_params(axis="y", labelsize=16, length=0)
+
+        ax1.set_xticks(components)
+
+        # Spines
+        ax1.spines["top"].set_visible(False)
+        ax2.spines["top"].set_visible(True)
+        ax1.spines["right"].set_visible(False)
+        ax2.spines["left"].set_visible(False)
+        ax2.spines["right"].set_visible(True)
+
+        # Tick locators
+        ax1.yaxis.set_major_locator(MultipleLocator(0.1))
+        ax2.yaxis.set_major_locator(plt.MaxNLocator(5))
+
+        if title:
+            ax1.set_title(title, fontsize=20, fontweight="bold", pad=20)
+
+        # Combine legends
+        lines_1, labels_1 = ax1.get_legend_handles_labels()
+        lines_2, labels_2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper right")
+
+        return fig, ax1

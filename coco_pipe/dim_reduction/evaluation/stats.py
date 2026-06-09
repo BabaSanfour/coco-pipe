@@ -11,8 +11,15 @@ grouped_condition_stats
 
 from __future__ import annotations
 
-from itertools import combinations
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from .result import TrajectoryResult
+
+from itertools import combinations
+from typing import Optional, Sequence, Tuple
+
+import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
 from statsmodels.stats.multitest import multipletests
@@ -20,6 +27,7 @@ from statsmodels.stats.multitest import multipletests
 __all__ = [
     "paired_condition_stats",
     "grouped_condition_stats",
+    "permutation_null_separation_auc",
 ]
 
 
@@ -200,3 +208,62 @@ def grouped_condition_stats(
     _, p_fdr, _, _ = multipletests(out["p_uncorrected"].fillna(1.0), method="fdr_bh")
     out["p_fdr"] = p_fdr
     return out
+
+
+def permutation_null_separation_auc(
+    result: "TrajectoryResult",
+    group_a: Sequence[int],
+    group_b: Sequence[int],
+    n_perm: int = 200,
+    rng: Optional[np.random.Generator] = None,
+    method: str = "centroid",
+    window: Optional[Tuple[float, float]] = None,
+) -> Tuple[float, np.ndarray]:
+    """Label-shuffle null on between-group centroid separation AUC.
+
+    Parameters
+    ----------
+    result : TrajectoryResult
+        The TrajectoryResult container holding trajectories and metadata.
+    group_a, group_b : Sequence[int]
+        The condition labels to compare.
+    n_perm : int, default=200
+    rng : np.random.Generator, optional
+    method : str, default="centroid"
+    window : tuple of float, optional
+        Time window (tmin, tmax) to restrict the AUC calculation.
+
+    Returns
+    -------
+    observed_auc : float
+    null_aucs : np.ndarray
+        AUC values under ``n_perm`` random label shuffles.
+    """
+    if rng is None:
+        rng = np.random.default_rng(0)
+
+    group_a_arr = np.asarray(group_a).astype(int)
+    group_b_arr = np.asarray(group_b).astype(int)
+
+    if window is None:
+        mask = np.ones_like(result.times, dtype=bool)
+    else:
+        mask = (result.times >= window[0]) & (result.times <= window[1])
+
+    def _auc(labels_array: np.ndarray) -> float:
+        ma = np.isin(labels_array, group_a_arr)
+        mb = np.isin(labels_array, group_b_arr)
+        if not ma.any() or not mb.any():
+            return float("nan")
+        ca = result.trajectories[ma].mean(axis=0)
+        cb = result.trajectories[mb].mean(axis=0)
+        d = np.linalg.norm(ca - cb, axis=-1)
+        return float(np.trapezoid(d[mask], result.times[mask]))
+
+    observed = _auc(result.conditions)
+    null = np.full(n_perm, np.nan, dtype=float)
+    for i in range(n_perm):
+        shuffled = rng.permutation(result.conditions)
+        null[i] = _auc(shuffled)
+    null = null[np.isfinite(null)]
+    return observed, null

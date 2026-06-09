@@ -1,8 +1,10 @@
-"""
-IO Utilities
-============
+"""Miscellaneous IO helpers — BIDS loading, stratified sampling, and table utilities.
 
-Helper functions for IO operations.
+This module is intentionally thin: heavy quality logic lives in
+:mod:`coco_pipe.io.quality`; data-structure definitions live in
+:mod:`coco_pipe.io.structures`.  Everything here is either a small utility
+(``read_table``, ``normalize_subject_value``) or a sampling helper
+(``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 
 import importlib
@@ -58,29 +60,6 @@ def _get_read_raw_bids():
     return read_raw_bids
 
 
-def row_quality_score(
-    df: "pd.DataFrame",
-    exclude_cols: Optional[List[str]] = None,
-    count_zero: bool = True,
-) -> "pd.Series":
-    """
-    Calculate a 'badness' score for each row (NaNs + Infs + Zeros).
-    Lower is better.
-    """
-    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
-    num = use_df.select_dtypes(include=[np.number])
-    if num.shape[1] == 0:
-        return np.zeros(len(df), dtype=int)
-
-    nan_cnt = num.isna().sum(axis=1)
-    arr = num.to_numpy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        inf_mask = np.isinf(arr)
-    inf_cnt = inf_mask.sum(axis=1)
-    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
-    return (nan_cnt + inf_cnt + zero_cnt).astype(int)
-
-
 def make_strata(
     df: "pd.DataFrame",
     covariates: List[str],
@@ -132,6 +111,8 @@ def sample_indices(
             continue
 
         if prefer_clean:
+            from .quality import row_quality_score
+
             q = row_quality_score(sub, exclude_cols=exclude)
             if not replace:
                 sub_shuf = sub.sample(frac=1.0, random_state=rng.integers(0, 1 << 32))
@@ -372,6 +353,72 @@ def detect_runs(
         if m.run is not None:
             runs.add(m.run)
     return sorted(list(runs))
+
+
+def normalize_subject_value(value: object) -> str:
+    """Normalize a BIDS subject label to a zero-padded 4-digit string.
+
+    The ``sub-`` prefix is stripped when present, while non-numeric labels are
+    returned unchanged.
+
+    Parameters
+    ----------
+    value : object
+        Raw subject label from a metadata table or BIDS path component.
+
+    Returns
+    -------
+    str
+        Normalized subject string.
+    """
+    text = str(value).strip().replace("sub-", "")
+    numeric = pd.to_numeric(text, errors="coerce")
+    if pd.notna(numeric):
+        return f"{int(numeric):04d}"
+    return text
+
+
+def read_table(path: Path | str, sep: str | None = None) -> pd.DataFrame:
+    """Read a CSV or parquet file into a DataFrame.
+
+    CSV delimiters are auto-detected when ``sep`` is omitted. Unnamed and
+    entirely empty columns caused by trailing separators are removed.
+
+    Parameters
+    ----------
+    path : Path or str
+        Path to a ``.csv`` or ``.parquet`` file.
+    sep : str, optional
+        Explicit CSV delimiter. When omitted, pandas' Python engine detects it.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The cleaned table.
+
+    Raises
+    ------
+    ValueError
+        If the file extension is unsupported.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        df = pd.read_parquet(path)
+    elif suffix == ".csv":
+        read_kwargs: Dict[str, Any] = {"encoding": "utf-8"}
+        if sep is None:
+            read_kwargs.update({"sep": None, "engine": "python"})
+        else:
+            read_kwargs.update({"sep": sep, "low_memory": False})
+        df = pd.read_csv(path, **read_kwargs)
+    else:
+        raise ValueError(
+            f"Unsupported table format '{path.suffix}'. " "Expected .csv or .parquet."
+        )
+
+    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+    return df.dropna(axis=1, how="all")
 
 
 def smart_reader(path: Path) -> Any:

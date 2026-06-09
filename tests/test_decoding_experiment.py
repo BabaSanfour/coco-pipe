@@ -287,7 +287,7 @@ def test_experiment_config_validation_errors():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(
         ValueError, match="is for classification but experiment task is regression"
@@ -303,7 +303,7 @@ def test_experiment_config_validation_errors():
         cv=CVConfig(strategy="kfold"),
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(
         ValueError, match="calibration is only available for classification"
@@ -319,7 +319,7 @@ def test_experiment_config_validation_errors():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
     )
     with pytest.raises(ValueError, match="invalid for regression"):
         Experiment(cfg)
@@ -346,6 +346,22 @@ def test_resolve_metadata_and_groups_mismatch():
         exp._resolve_metadata_and_groups(
             10, pd.DataFrame({"Subject": range(10), "Session": range(10)}), None
         )
+
+
+def test_resolve_metadata_auto_fills_subject_session_from_groups():
+    """When groups is provided but sample_metadata isn't, they are auto-populated."""
+    exp = Experiment(
+        ExperimentConfig(
+            task="classification", models={"lr": LogisticRegressionConfig()}
+        )
+    )
+    groups = np.array(["s1", "s2", "s1", "s2", "s1"])
+    meta, gv = exp._resolve_metadata_and_groups(5, None, groups)
+    assert "Subject" in meta.columns
+    assert "Session" in meta.columns
+    np.testing.assert_array_equal(meta["Subject"].to_numpy(), groups)
+    assert (meta["Session"] == "01").all()
+    np.testing.assert_array_equal(gv, groups)
 
 
 def test_feature_names_alignment():
@@ -396,7 +412,7 @@ def test_instantiate_foundation_model_mock():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
         verbose=False,
     )
     exp = Experiment(config)
@@ -477,7 +493,7 @@ def test_grouped_cv_requires_at_least_two_groups():
         tuning=TuningConfig(),
         feature_selection=FeatureSelectionConfig(),
         calibration=CalibrationConfig(),
-        evaluation=StatisticalAssessmentConfig(),
+        statistical_assessment=StatisticalAssessmentConfig(),
         verbose=False,
     )
     # The guard should raise BEFORE sklearn.

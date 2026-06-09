@@ -315,11 +315,27 @@ def run_statistical_assessment(
     binomial_accuracy_test : Core analytical test.
     assess_post_hoc_permutation : Fast post-hoc alternative.
     """
-    stats_config = experiment_config.evaluation
+    stats_config = experiment_config.statistical_assessment
     unit = inferential_unit
     metrics = experiment_config.get_all_evaluation_metrics()
+    if stats_config.metrics:
+        metrics = [m for m in metrics if m in stats_config.metrics]
     rows: list[dict[str, Any]] = []
     nulls: dict[str, dict[str, Any]] = {}
+
+    predictions = observed_result.get_predictions()
+    if predictions.empty or "Model" not in predictions.columns:
+        n_groups = len(np.unique(groups)) if groups is not None else 0
+        raise ValueError(
+            "Statistical assessment cannot run because the experiment "
+            "produced no per-fold predictions. This typically means too "
+            f"few groups ({n_groups}) for the requested CV "
+            f"(``{experiment_config.cv.strategy}``, "
+            f"``n_splits={experiment_config.cv.n_splits}``) or an "
+            "earlier fold failure. Either increase the number of "
+            "subjects/groups, reduce ``cv.n_splits``, or disable "
+            "``statistical_assessment.enabled``."
+        )
 
     for model in observed_result.raw:
         if "error" in observed_result.raw[model]:

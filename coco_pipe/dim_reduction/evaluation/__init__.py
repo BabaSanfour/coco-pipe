@@ -9,6 +9,7 @@ from .geometry import (
     trajectory_displacement,
     trajectory_distance_from_center,
     trajectory_intra_spread,
+    trajectory_jerk,
     trajectory_path_length,
     trajectory_separation,
     trajectory_speed,
@@ -23,7 +24,12 @@ from .metrics import (
     shepard_diagram_data,
     trustworthiness,
 )
-from .stats import grouped_condition_stats, paired_condition_stats
+from .result import EmbeddingQualityResult, TrajectoryResult, VelocityResult
+from .stats import (
+    grouped_condition_stats,
+    paired_condition_stats,
+    permutation_null_separation_auc,
+)
 from .velocity import compute_velocity_fields
 
 __all__ = [
@@ -39,6 +45,7 @@ __all__ = [
     "trajectory_acceleration",
     "trajectory_auc_speed",
     "trajectory_cohesion",
+    "trajectory_jerk",
     "trajectory_curvature",
     "trajectory_dispersion",
     "trajectory_displacement",
@@ -51,4 +58,8 @@ __all__ = [
     "trajectory_turning_angle",
     "paired_condition_stats",
     "grouped_condition_stats",
+    "permutation_null_separation_auc",
+    "EmbeddingQualityResult",
+    "TrajectoryResult",
+    "VelocityResult",
 ]

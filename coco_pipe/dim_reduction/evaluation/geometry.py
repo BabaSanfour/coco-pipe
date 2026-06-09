@@ -11,6 +11,8 @@ moving_average
     Smooth a one-dimensional timecourse with a valid-mode moving average.
 trajectory_acceleration
     Compute instantaneous acceleration magnitude from second-order derivatives.
+trajectory_jerk
+    Compute instantaneous jerk magnitude (derivative of acceleration).
 trajectory_speed
     Compute instantaneous speed from first-order trajectory differences.
 trajectory_curvature
@@ -41,6 +43,7 @@ import numpy as np
 __all__ = [
     "moving_average",
     "trajectory_acceleration",
+    "trajectory_jerk",
     "trajectory_speed",
     "trajectory_curvature",
     "trajectory_path_length",
@@ -339,6 +342,59 @@ def trajectory_acceleration(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
     velocity = np.gradient(traj, dt, axis=-2)
     acceleration = np.gradient(velocity, dt, axis=-2)
     return np.linalg.norm(acceleration, axis=-1)
+
+
+def trajectory_jerk(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
+    """
+    Calculate instantaneous jerk magnitude (derivative of acceleration).
+
+    Jerk is the third derivative of position with respect to time, or
+    equivalently the first derivative of the acceleration vector. A sudden
+    spike in jerk means the trajectory "snapped" into a new movement,
+    often correlating with discrete cognitive decisions or abrupt state
+    transitions.
+
+    Parameters
+    ----------
+    traj : np.ndarray of shape (..., n_times, n_dims)
+        Trajectory array. The second-to-last axis is interpreted as time and
+        the last axis as coordinates.
+    dt : float, default=1.0
+        Uniform time step between consecutive samples.
+
+    Returns
+    -------
+    np.ndarray of shape (..., n_times)
+        Jerk-magnitude timecourse aligned with the input time axis.
+
+    Raises
+    ------
+    ValueError
+        If ``traj`` has fewer than two dimensions, contains fewer than four
+        time points, or if ``dt <= 0``.
+
+    See Also
+    --------
+    trajectory_acceleration : Second-order trajectory dynamics.
+    trajectory_speed : First-order trajectory dynamics.
+    trajectory_curvature : Geometric bending of a trajectory.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0.0, 3.0, 4)
+    >>> traj = np.stack([t**3, np.zeros_like(t)], axis=1)
+    >>> trajectory_jerk(traj, dt=1.0).shape
+    (4,)
+    """
+    traj = _validate_trajectory_array(traj, min_timepoints=4)
+    if dt <= 0:
+        raise ValueError("`dt` must be > 0.")
+
+    velocity = np.gradient(traj, dt, axis=-2)
+    acceleration = np.gradient(velocity, dt, axis=-2)
+    jerk = np.gradient(acceleration, dt, axis=-2)
+    return np.linalg.norm(jerk, axis=-1)
 
 
 def trajectory_speed(

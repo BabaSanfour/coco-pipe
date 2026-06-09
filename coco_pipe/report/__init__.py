@@ -19,7 +19,7 @@ _LAZY_EXPORTS = {
     "Section": ("coco_pipe.report.core", "Section"),
     "PlotlyElement": ("coco_pipe.report.core", "PlotlyElement"),
     "TableElement": ("coco_pipe.report.core", "TableElement"),
-    "InteractiveTableElement": ("coco_pipe.report.core", "InteractiveTableElement"),
+    "InteractiveTableElement": ("coco_pipe.report.elements", "InteractiveTableElement"),
     "ImageElement": ("coco_pipe.report.core", "ImageElement"),
     "from_container": ("coco_pipe.report.api", "from_container"),
     "from_bids": ("coco_pipe.report.api", "from_bids"),
@@ -29,6 +29,14 @@ _LAZY_EXPORTS = {
     "from_experiment_result": ("coco_pipe.report.api", "from_experiment_result"),
     "merge_reports": ("coco_pipe.report.api", "merge_reports"),
     "make_decoding_report": ("coco_pipe.report.decoding", "make_decoding_report"),
+    "generate_descriptor_subject_report": (
+        "coco_pipe.report.descriptor_qc",
+        "generate_descriptor_subject_report",
+    ),
+    "generate_descriptor_dataset_report": (
+        "coco_pipe.report.descriptor_qc",
+        "generate_descriptor_dataset_report",
+    ),
     "make_reduction_report": (
         "coco_pipe.report.dim_reduction",
         "make_reduction_report",

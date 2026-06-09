@@ -7,8 +7,10 @@ electrophysiological and behavioral data.
 """
 
 from .configs import (
+    ChanceAssessmentConfig,
     CheckpointConfig,
     ClassicalModelConfig,
+    CVConfig,
     DeviceConfig,
     ExperimentConfig,
     FoundationEmbeddingModelConfig,
@@ -53,6 +55,8 @@ __all__ = [
     "TrainerConfig",
     "TrainStageConfig",
     "StatisticalAssessmentConfig",
+    "CVConfig",
+    "ChanceAssessmentConfig",
     # Execution
     "Experiment",
     "ExperimentResult",

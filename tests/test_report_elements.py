@@ -340,3 +340,68 @@ def test_download_asset_element_string():
     registry = {}
     elem.collect_payload(registry)
     assert registry[elem.registry_id]["filename"] == "data.csv"
+
+
+def _decode_report_payload(html: str) -> dict:
+    """Decompress the gzip+base64 payload script and return the parsed dict.
+
+    Mirrors what the browser does in initPayload(). Raising ``json.JSONDecodeError``
+    here would mean the browser-side ``JSON.parse`` would also reject the payload,
+    blanking the entire report.
+    """
+    import base64
+    import gzip
+    import json
+    import re
+
+    match = re.search(
+        r'<script type="application/json" id="report-payload">([^<]+)</script>',
+        html,
+    )
+    assert match, "report-payload script tag not found in rendered HTML"
+    raw = base64.b64decode(match.group(1).strip())
+    return json.loads(gzip.decompress(raw))
+
+
+def test_payload_replaces_nan_with_null_in_table():
+    """NaN/Inf in a TableElement must serialize as JSON null, not literal NaN."""
+    df = pd.DataFrame(
+        {
+            "subject": ["s1", "s2", "s3"],
+            "value": [1.0, float("nan"), float("inf")],
+            "neg_inf": [float("-inf"), 2.0, 3.0],
+        }
+    )
+    report = Report(title="NaN payload regression")
+    section = report  # report subclasses ContainerElement
+
+    section.add_element(InteractiveTableElement(df, title="With NaN"))
+    html = report.render()
+    payload = _decode_report_payload(html)  # raises if invalid JSON
+
+    table = next(p for p in payload.values() if isinstance(p, dict) and "rows" in p)
+    rows = table["rows"]
+    assert rows[0]["value"] == 1.0
+    assert rows[1]["value"] is None  # was NaN
+    assert rows[2]["value"] is None  # was +Inf
+    assert rows[0]["neg_inf"] is None  # was -Inf
+
+
+def test_payload_replaces_nan_inside_plotly_trace():
+    """NaN inside a Plotly trace y-array must also become JSON null."""
+    import plotly.graph_objects as go
+
+    fig = go.Figure(go.Scatter(x=[0, 1, 2], y=[1.0, float("nan"), 3.0]))
+    report = Report(title="Plotly NaN regression")
+    report.add_element(PlotlyElement(fig))
+
+    payload = _decode_report_payload(report.render())
+    fig_payload = next(
+        p
+        for p in payload.values()
+        if isinstance(p, dict) and "data" in p and "layout" in p
+    )
+    y = fig_payload["data"][0]["y"]
+    assert y[0] == 1.0
+    assert y[1] is None
+    assert y[2] == 3.0

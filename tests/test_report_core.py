@@ -12,8 +12,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+from coco_pipe.io.quality import CheckResult
 from coco_pipe.report.core import Report, Section
-from coco_pipe.report.data_quality import CheckResult
 from coco_pipe.report.elements import (
     ContainerElement,
     HtmlElement,
@@ -318,8 +318,15 @@ def test_asset_mode_inline_round_trip(monkeypatch, tmp_path):
         def read(self):
             return self._data
 
-    def fake_urlopen(url, timeout=None):
-        # url ends in the asset filename (plotly.min.js etc.); match by stem
+    def fake_urlopen(url_or_request, timeout=None):
+        # ``_download_to`` now wraps the URL in a ``urllib.request.Request``
+        # object so it can pass a User-Agent header. Accept either a bare
+        # string URL or a Request, match by filename stem.
+        url = (
+            url_or_request.full_url
+            if hasattr(url_or_request, "full_url")
+            else url_or_request
+        )
         for name, data in fake_bundles.items():
             if name in url:
                 return FakeResp(data)

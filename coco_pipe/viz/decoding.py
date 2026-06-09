@@ -465,6 +465,7 @@ def plot_temporal_score_curve(
     title: str | None = None,
     ax: plt.Axes | None = None,
     figsize: tuple[float, float] | None = None,
+    smooth_window: int | None = None,
 ) -> tuple[plt.Figure, plt.Axes]:
     """
     Plot mean temporal decoding score curves.
@@ -529,8 +530,22 @@ def plot_temporal_score_curve(
             numeric = pd.to_numeric(group["Time"], errors="coerce")
             use_numeric = numeric.notna().all()
             x_vals = numeric.to_numpy() if use_numeric else np.arange(len(group))
-            y_vals = group["Mean"].astype(float)
-            yerr = group["Std"].fillna(0).astype(float) if "Std" in group else None
+
+            y_vals_s = group["Mean"].astype(float)
+            yerr_s = group["Std"].fillna(0).astype(float) if "Std" in group else None
+
+            if smooth_window is not None and smooth_window > 1:
+                y_vals_s = y_vals_s.rolling(
+                    smooth_window, center=True, min_periods=1
+                ).mean()
+                if yerr_s is not None:
+                    yerr_s = yerr_s.rolling(
+                        smooth_window, center=True, min_periods=1
+                    ).mean()
+
+            y_vals = y_vals_s.to_numpy()
+            yerr = yerr_s.to_numpy() if yerr_s is not None else None
+
             fig, ax = plot_line(
                 x_vals,
                 y_vals,
