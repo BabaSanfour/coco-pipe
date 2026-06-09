@@ -33,35 +33,31 @@ def test_get_package_version():
     assert v_fake == "Unknown"
 
 
-def test_experiment_provenance_metadata_integration(tmp_path):
+def test_experiment_provenance_metadata_integration():
     """Verify that decoded results contain the dynamic version."""
-    import joblib
+    import numpy as np
+    import pandas as pd
 
     from coco_pipe.decoding.configs import (
+        ClassicalModelConfig,
         CVConfig,
         ExperimentConfig,
-        LogisticRegressionConfig,
     )
-    from coco_pipe.decoding.core import Experiment
+    from coco_pipe.decoding.experiment import Experiment
 
     config = ExperimentConfig(
         task="classification",
-        models={"lr": LogisticRegressionConfig(method="LogisticRegression")},
+        models={"lr": ClassicalModelConfig(estimator="LogisticRegression")},
         metrics=["accuracy"],
         cv=CVConfig(strategy="kfold", n_splits=2),
-        output_dir=str(tmp_path),
         tag="test_meta",
     )
 
     exp = Experiment(config)
-    exp.results = {"dummy": "data"}
+    exp._observation_level = "epoch"
+    exp._inferential_unit = "sample"
+    exp._sample_metadata = pd.DataFrame()
 
-    save_path = exp.save_results()
-    assert save_path.exists()
-
-    payload = joblib.load(save_path)
-    assert "meta" in payload
-    assert "coco_pipe_version" in payload["meta"]
-
-    version = payload["meta"]["coco_pipe_version"]
-    assert isinstance(version, str)
+    meta = exp._build_result_meta(np.zeros((10, 5)), None)
+    assert "coco_pipe_version" in meta
+    assert isinstance(meta["coco_pipe_version"], str)

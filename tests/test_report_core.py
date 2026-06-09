@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from coco_pipe.report.core import (
+    ContainerElement,
     HtmlElement,
     ImageElement,
     InteractiveTableElement,
@@ -18,6 +19,7 @@ from coco_pipe.report.core import (
     _metrics_summary_table,
     _trajectory_times,
 )
+from coco_pipe.report.quality import CheckResult
 
 
 @pytest.fixture
@@ -330,3 +332,65 @@ def test_fluent_interface_structure():
     rep = Report("Fluency")
     rep.add_element("Start").add_section(Section("Middle")).add_markdown("End")
     assert len(rep.children) == 3
+
+
+def test_report_elements_hardening(tmp_path):
+    # ImageElement
+    img_data = b"fake-image-data"
+    elem = ImageElement(img_data)
+    assert "data:image/png;base64" in elem.render()
+
+    p = tmp_path / "test.png"
+    p.write_bytes(img_data)
+    elem_p = ImageElement(p)
+    assert "data:image/png;base64" in elem_p.render()
+
+    with pytest.raises(ValueError, match="Unsupported image source type"):
+        ImageElement(123)._encode_image()
+
+    # PlotlyElement binary decoding
+    class MockFig:
+        def to_json(self):
+            return '{"data": [{"y": {"dtype": "f8", "bdata": "AAAAAAAAAAA="}}]}'
+
+        def to_dict(self):
+            return {"data": []}
+
+    elem_plotly = PlotlyElement(MockFig())
+    registry = {}
+    elem_plotly.collect_payload(registry)
+    assert elem_plotly.registry_id in registry
+
+    # TableElement normalization
+    assert isinstance(TableElement._to_frame({"a": 1, "b": 2}), pd.DataFrame)
+
+    # MetricsTableElement directions
+    df = pd.DataFrame({"m": ["a", "b"], "score": [0.8, 0.9], "error": [0.1, 0.05]})
+    elem_metrics = MetricsTableElement(
+        df, higher_is_better=["score"], highlight_cols=["score", "error"]
+    )
+    assert elem_metrics.best_vals["score"] == 0.9
+
+    elem_metrics_low = MetricsTableElement(df, higher_is_better=False)
+    assert elem_metrics_low.best_vals["score"] == 0.8
+
+    # ContainerElement markdown fallback
+    cont = ContainerElement()
+    cont.add_markdown("# Title")
+    assert "Title" in cont.render()
+
+    # Section status upgrades
+    sec = Section("Test")
+    sec.add_finding(CheckResult("c1", "WARN", "w", 4))
+    assert sec.status == "WARN"
+    sec.add_finding(CheckResult("c2", "FAIL", "f", 9))
+    assert sec.status == "FAIL"
+    sec.add_finding(CheckResult("c3", "WARN", "w2", 4))
+    assert sec.status == "FAIL"
+
+    # Report config coercion
+    rep = Report(title="T", config={"some_param": 1})
+    assert rep.title == "T"
+    # In Pydantic 2, extra fields are allowed but might be on the object
+    # if extra='allow'
+    assert getattr(rep.config, "some_param") == 1

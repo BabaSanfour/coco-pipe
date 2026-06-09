@@ -42,127 +42,77 @@ Whether you're conducting clinical research, developing ML models for brain-comp
 
 For detailed development instructions, please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Using the ML Module
+## Using the Decoding Module
 
-CoCo Pipe provides two main ways to use the ML module:
-
-### 1. Direct Python API Usage
-
-You can use the ML module directly in your Python scripts by importing from `coco_pipe.io` for data loading and `coco_pipe.ml` for machine learning pipelines:
+The supported modeling API is `coco_pipe.decoding.Experiment`. It is array-first:
+prepare `X` and `y` explicitly, then pass optional sample IDs, groups, feature
+names, and time labels when they matter for the analysis.
 
 ```python
-from coco_pipe.io import load_data
-from coco_pipe.ml import MLPipeline
-
-# Load your data into the canonical package container
-container = load_data(
-    "data/your_dataset.csv",
-    mode="tabular",
-    target_col="target_class",
-    sep=",",
+from coco_pipe.decoding import Experiment, ExperimentConfig
+from coco_pipe.decoding.configs import (
+    CVConfig,
+    FeatureSelectionConfig,
+    LogisticRegressionConfig,
+    TuningConfig,
 )
 
-# Select a subset explicitly from the container when needed
-container = container.select(feature=["feat1", "feat2"], y=["case", "control"])
-X = container.X
-y = container.y
+config = ExperimentConfig(
+    task="classification",
+    models={"logreg": LogisticRegressionConfig(max_iter=500)},
+    metrics=["accuracy", "roc_auc"],
+    cv=CVConfig(strategy="stratified", n_splits=5, shuffle=True, random_state=42),
+    feature_selection=FeatureSelectionConfig(
+        enabled=True,
+        method="k_best",
+        n_features=20,
+        scoring="f_classif",
+    ),
+    tuning=TuningConfig(
+        enabled=True,
+        param_grid={"model__C": [0.1, 1.0, 10.0]},
+        scoring="roc_auc",
+        cv=CVConfig(strategy="stratified", n_splits=3, shuffle=True, random_state=42),
+    ),
+    n_jobs=1,
+)
 
-# Configure and run ML pipeline
-config = {
-    "task": "classification",  # or 'regression'
-    "analysis_type": "baseline",  # Options: 'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'
-    "models": "all",  # or list of specific models
-    "metrics": ["accuracy", "f1-score"],
-    "cv_strategy": "stratified",
-    "n_splits": 5,
-    "n_features": 10,  # For feature selection
-    "direction": "forward",  # For feature selection
-    "search_type": "grid",  # For hyperparameter search
-    "n_iter": 100,  # For random search
-    "scoring": "accuracy",
-    "n_jobs": -1
-}
+result = Experiment(config).run(
+    X,
+    y,
+    groups=subject_ids,
+    sample_ids=trial_ids,
+    feature_names=feature_names,
+)
 
-pipeline = MLPipeline(X=X, y=y, config=config)
-results = pipeline.run()
+summary = result.summary()
+predictions = result.get_predictions()
+splits = result.get_splits()
+selected = result.get_selected_features()
 ```
 
-### 2. Using the CLI Tool
+For grouped EEG studies, make the outer and inner CV decisions explicit:
 
-For batch processing or experiment management, use the CLI tool with a YAML configuration file:
+```python
+config = ExperimentConfig(
+    task="classification",
+    models={"logreg": LogisticRegressionConfig(max_iter=500)},
+    metrics=["accuracy"],
+    cv=CVConfig(strategy="group_kfold", n_splits=5),
+    tuning=TuningConfig(
+        enabled=True,
+        param_grid={"model__C": [0.1, 1.0, 10.0]},
+        scoring="accuracy",
+        cv=CVConfig(strategy="group_kfold", n_splits=3),
+    ),
+)
 
-```yaml
-# -----------------------------------------------------------------------------
-# Toy config for MLPipeline
-# -----------------------------------------------------------------------------
-
-# Global parameters shared across analyses
-global_experiment_id: "toy_ml_config"
-data_path: "../datasets/toy_dataset.csv"
-results_dir: "../results"
-results_file: "toy_ml_config"
-
-# Default analysis parameters (can be overridden per analysis)
-defaults:
-  random_state: 42
-  n_jobs: -1
-  cv_kwargs:
-    strategy: "stratified"
-    n_splits: 5
-    shuffle: true
-    random_state: 42
-  covariates: ["age"]
-  spatial_units: ["regionX", "regionY"]
-  feature_names: ["feat1", "feat2", "feat3"]
-
-# List of analyses to run
-analyses:
-  - id: "classification_baseline"
-    task: "classification"
-    analysis_type: "baseline"
-    target_columns: ["target_class"]
-    row_filter:
-      - column: "age"
-        values: 13
-        operator: ">"
-      - column: "sex"
-        values: ["male"]
-    models:
-      - "Logistic Regression"
-      - "Random Forest"
-    metrics:
-      - "accuracy"
-      - "roc_auc"
-
-  - id: "regression_hp_search"
-    task: "regression"
-    analysis_type: "hp_search"
-    target_columns: ["target_reg"]
-    feature_names: ["feat1"]
-    spatial_units: ["regionX"]
-    models: "all"
-    metrics:
-      - "r2"
-      - "neg_mse"
-    cv_kwargs:
-      strategy: "kfold"
-      n_splits: 3
-    search_type: "grid"
-    n_iter: 20
-    scoring: "r2"
+result = Experiment(config).run(X, y, groups=subject_ids)
 ```
 
-Run the analysis using:
-
-```bash
-python scripts/run_ml.py --config configs/your_config.yml
-```
-
-The pipeline will:
-- Load and preprocess your data
-- Run all specified analyses
-- Save results for each model/analysis
-- Generate a combined results file
+See the decoding documentation for feature selection, temporal decoding, result
+tables, plotting helpers, and report integration. Batch decoding CLIs are not
+part of the public surface yet; use the Python API for now.
 
 ## Documentation
 
@@ -178,12 +128,6 @@ Contributions are welcome! If you have suggestions or find any bugs, please open
 #### IO Module
 - Implement CSV loading and M/EEG data loading functionalities.
 - Develop comprehensive unit tests.
-
-#### ML Module
-- Restructure to mirror the design of the dim_reduction module.
-- Consolidate scripts within the main pipeline.
-- Add regression support and enhance cross-validation methods.
-- Update and expand unit tests.
 
 #### DL Module
 - Define and implement deep learning functionalities.

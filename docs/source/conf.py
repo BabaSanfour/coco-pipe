@@ -19,6 +19,8 @@ from datetime import date
 
 curdir = os.path.dirname(__file__)
 sys.path.append(os.path.abspath(os.path.join(curdir, "..", "coco-pipe")))
+# Make the local _ext/ directory importable
+sys.path.insert(0, os.path.abspath(os.path.join(curdir, "_ext")))
 
 
 def copy_readme():
@@ -77,6 +79,7 @@ extensions = [
     "sphinxcontrib.mermaid",
     "sphinx.ext.napoleon",
     "myst_parser",
+    "capability_table",
 ]
 
 # Allow Markdown files to be used as documentation pages

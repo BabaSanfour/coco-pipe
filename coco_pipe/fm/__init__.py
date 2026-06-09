@@ -1,8 +1,3 @@
-"""Foundation model pipelines for CoCo Pipe."""
+"""Foundation-model integration namespace for CoCo Pipe."""
 
-from .cbramod import CBRAModRegressionPipeline, FoundationRegressor
-
-__all__ = [
-    "CBRAModRegressionPipeline",
-    "FoundationRegressor",
-]
+__all__: list[str] = []

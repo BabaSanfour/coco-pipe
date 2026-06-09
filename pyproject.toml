@@ -18,10 +18,10 @@ classifiers = [
 dependencies = [
     "numpy>=2.0.0",
     "pandas",
-    "scikit-learn",
+    "scikit-learn>1.6",
     "matplotlib",
     "seaborn",
-    "scipy",
+    "scipy>=1.11.0",
     "pyyaml",
     "pydantic",
     "hydra-core",
@@ -88,6 +88,35 @@ topology = [
     "skorch",
     "gudhi",
 ]
+torch = [
+    "torch",
+]
+braindecode = [
+    "braindecode",
+]
+hf = [
+    "transformers",
+    "huggingface-hub",
+]
+peft = [
+    "peft",
+    "accelerate",
+]
+quant = [
+    "bitsandbytes",
+]
+moabb = [
+    "moabb",
+    "mne",
+]
+torcheeg = [
+    "torcheeg",
+]
+dev-gpu = [
+    "pytest>=7.0",
+    "torch",
+    "accelerate",
+]
 spatiotemporal = [
     "pydmd",
     "meegkit",
@@ -149,9 +178,6 @@ Homepage = "https://github.com/BabaSanfour/coco-pipe"
 Documentation = "https://cocopipe.readthedocs.io/"
 Repository = "https://github.com/BabaSanfour/coco-pipe.git"
 
-[project.scripts]
-run-coco-pipe = "scripts.run_ml:main"
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["coco_pipe*", "scripts*"]
@@ -161,7 +187,7 @@ include = ["coco_pipe*", "scripts*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --ignore-glob=tests/test_ml_*.py"
+addopts = "-ra -q"
 testpaths = [
     "tests",
 ]

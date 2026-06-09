@@ -11,6 +11,7 @@ import gzip
 import html
 import io
 import json
+import logging
 import re
 import uuid
 from abc import ABC, abstractmethod
@@ -30,6 +31,8 @@ from .quality import (
     check_missingness,
     check_outliers_zscore,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _get_reducer_summary(reducer: Any) -> Dict[str, Any]:
@@ -1121,8 +1124,8 @@ class Report(ContainerElement):
             res_outlier = check_outliers_zscore(sample_X)
             if res_outlier:
                 sec.add_finding(res_outlier)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Data quality checks failed: {e}")
 
         # Ensure 2D
         if hasattr(X, "ndim") and X.ndim == 1:
@@ -1203,6 +1206,263 @@ class Report(ContainerElement):
             fig_radar = plot_radar_comparison(summary_table, normalize=True)
             sec.add_element(PlotlyElement(fig_radar, height="400px"))
 
+        self.add_section(sec)
+        return self
+
+    def add_decoding_temporal(
+        self,
+        result: Any,
+        metric: Optional[str] = None,
+        model: Optional[str] = None,
+        name: str = "Temporal Decoding",
+    ) -> "Report":
+        """
+        Add a compact temporal decoding section from an ExperimentResult.
+        """
+        from coco_pipe.viz.decoding import (
+            plot_temporal_generalization_matrix,
+            plot_temporal_score_curve,
+        )
+
+        if not hasattr(result, "get_temporal_score_summary"):
+            raise TypeError(
+                "result must provide get_temporal_score_summary() for temporal "
+                "decoding report sections."
+            )
+
+        summary = result.get_temporal_score_summary()
+        if metric is not None:
+            summary = summary[summary["Metric"] == metric]
+        if model is not None:
+            summary = summary[summary["Model"] == model]
+        if summary.empty:
+            raise ValueError("No temporal decoding scores available for report.")
+
+        sec = Section(title=name, icon="📈")
+        sec.add_element(TableElement(summary, title="Temporal Score Summary"))
+
+        if "Time" in summary and summary["Time"].notna().any():
+            fig_curve = plot_temporal_score_curve(
+                summary, metric=metric, model=model, title="Temporal Score Curve"
+            )
+            sec.add_element(ImageElement(fig_curve, caption="Temporal score curve"))
+
+        if (
+            {"TrainTime", "TestTime"}.issubset(summary.columns)
+            and summary["TrainTime"].notna().any()
+            and summary["TestTime"].notna().any()
+        ):
+            fig_matrix = plot_temporal_generalization_matrix(
+                summary,
+                metric=metric,
+                model=model,
+                title="Temporal Generalization Matrix",
+            )
+            sec.add_element(
+                ImageElement(fig_matrix, caption="Temporal generalization matrix")
+            )
+
+    def add_decoding_summary(
+        self,
+        result: Any,
+        name: str = "Decoding Summary",
+    ) -> "Report":
+        """Add a summary performance table for all models."""
+        if not hasattr(result, "summary"):
+            raise TypeError("result must provide a summary() method.")
+
+        summary = result.summary()
+        if summary.empty:
+            return self
+
+        sec = Section(title=name)
+        sec.add_element(
+            MetricsTableElement(
+                summary,
+                title="Model Performance Summary",
+                highlight_best=True,
+            )
+        )
+        self.add_section(sec)
+        return self
+
+    def add_decoding_diagnostics(
+        self,
+        result: Any,
+        metric: Optional[str] = None,
+        model: Optional[str] = None,
+        name: str = "Decoding Diagnostics",
+    ) -> "Report":
+        """Add shallow decoding diagnostics from an ExperimentResult."""
+        from coco_pipe.viz.decoding import (
+            plot_calibration_curve,
+            plot_confusion_matrix,
+            plot_fold_score_dispersion,
+            plot_pr_curve,
+            plot_roc_curve,
+        )
+
+        required = [
+            "get_detailed_scores",
+            "get_fit_diagnostics",
+            "get_confusion_matrices",
+        ]
+        if not all(hasattr(result, attr) for attr in required):
+            raise TypeError("result must provide decoding diagnostic accessors.")
+
+        sec = Section(title=name)
+
+        meta = getattr(result, "meta", {}) or {}
+        if meta.get("observation_level") or meta.get("inferential_unit"):
+            inference_context = pd.DataFrame(
+                [
+                    {
+                        "ObservationLevel": meta.get("observation_level", "sample"),
+                        "InferentialUnit": meta.get("inferential_unit", "sample"),
+                    }
+                ]
+            )
+            sec.add_element(TableElement(inference_context, title="Inference Context"))
+
+        scores = result.get_detailed_scores()
+        if metric is not None and "Metric" in scores:
+            scores = scores[scores["Metric"] == metric]
+        if model is not None and "Model" in scores:
+            scores = scores[scores["Model"] == model]
+        if not scores.empty:
+            sec.add_element(TableElement(scores, title="Fold Scores"))
+            try:
+                fig_scores = plot_fold_score_dispersion(
+                    scores,
+                    metric=metric,
+                    model=model,
+                    title="Fold Score Dispersion",
+                )
+                sec.add_element(
+                    ImageElement(fig_scores, caption="Fold score dispersion")
+                )
+            except ValueError as e:
+                logger.debug(f"Could not plot fold score dispersion: {e}")
+
+        diagnostics = result.get_fit_diagnostics()
+        if model is not None and "Model" in diagnostics:
+            diagnostics = diagnostics[diagnostics["Model"] == model]
+        if not diagnostics.empty:
+            # 1. Clean Timing Table
+            timing_cols = ["Model", "Fold", "FitTime", "PredictTime", "TotalTime"]
+            timing_cols = [c for c in timing_cols if c in diagnostics.columns]
+            timings = diagnostics[timing_cols].drop_duplicates()
+            sec.add_element(TableElement(timings, title="Fit Diagnostics"))
+
+            # 2. Warnings Table (only if they exist)
+            warns = diagnostics[diagnostics["WarningMessage"].notna()]
+            if not warns.empty:
+                warn_cols = [
+                    "Model",
+                    "Fold",
+                    "Stage",
+                    "WarningCategory",
+                    "WarningMessage",
+                ]
+                warn_cols = [c for c in warn_cols if c in warns.columns]
+                sec.add_element(
+                    TableElement(warns[warn_cols], title="Training Warnings")
+                )
+
+        confusion = result.get_confusion_matrices(model=model)
+        if not confusion.empty:
+            sec.add_element(TableElement(confusion, title="Confusion Matrix Data"))
+            try:
+                fig_confusion = plot_confusion_matrix(
+                    confusion,
+                    model=model,
+                    title="Confusion Matrix",
+                )
+                sec.add_element(ImageElement(fig_confusion, caption="Confusion matrix"))
+            except ValueError as e:
+                logger.debug(f"Could not plot confusion matrix: {e}")
+
+        for title, plotter in [
+            ("ROC Curve", plot_roc_curve),
+            ("Precision-Recall Curve", plot_pr_curve),
+            ("Calibration Curve", plot_calibration_curve),
+        ]:
+            try:
+                fig = plotter(result, model=model, title=title)
+                sec.add_element(ImageElement(fig, caption=title))
+            except ValueError as e:
+                logger.debug(f"Could not plot curve '{title}': {e}")
+
+        self.add_section(sec)
+        return self
+
+    def add_decoding_statistical_assessment(
+        self,
+        result: Any,
+        metric: Optional[str] = None,
+        model: Optional[str] = None,
+        name: str = "Statistical Assessment",
+    ) -> "Report":
+        """Add finite-sample decoding statistical assessment rows and plots."""
+        from coco_pipe.viz.decoding import plot_temporal_statistical_assessment
+
+        if not hasattr(result, "get_statistical_assessment"):
+            raise TypeError("result must provide get_statistical_assessment().")
+
+        assessment = result.get_statistical_assessment()
+        if metric is not None and "Metric" in assessment:
+            assessment = assessment[assessment["Metric"] == metric]
+        if model is not None and "Model" in assessment:
+            assessment = assessment[assessment["Model"] == model]
+        if assessment.empty:
+            raise ValueError("No statistical assessment rows available for report.")
+
+        sec = Section(title=name)
+        sec.add_element(
+            TableElement(assessment, title="Finite-Sample Statistical Assessment")
+        )
+
+        if "Time" in assessment and assessment["Time"].notna().any():
+            try:
+                fig = plot_temporal_statistical_assessment(
+                    assessment,
+                    metric=metric,
+                    model=model,
+                    title="Temporal Statistical Assessment",
+                )
+                sec.add_element(
+                    ImageElement(fig, caption="Temporal statistical assessment")
+                )
+            except ValueError as e:
+                logger.debug(f"Could not plot temporal statistical assessment: {e}")
+
+        self.add_section(sec)
+        return self
+
+    def add_decoding_neural_artifacts(
+        self,
+        result: Any,
+        model: Optional[str] = None,
+        name: str = "Neural Artifacts",
+    ) -> "Report":
+        """Add neural/foundation-model artifact metadata to the report."""
+        from coco_pipe.viz.decoding import plot_training_history
+
+        if not hasattr(result, "get_model_artifacts"):
+            raise TypeError("result must provide get_model_artifacts().")
+        artifacts = result.get_model_artifacts()
+        if model is not None and "Model" in artifacts:
+            artifacts = artifacts[artifacts["Model"] == model]
+        if artifacts.empty:
+            raise ValueError("No model artifacts available for report.")
+
+        sec = Section(title=name)
+        sec.add_element(TableElement(artifacts, title="Model Artifacts"))
+        try:
+            fig = plot_training_history(artifacts, model=model)
+            sec.add_element(ImageElement(fig, caption="Training history"))
+        except ValueError:
+            pass
         self.add_section(sec)
         return self
 

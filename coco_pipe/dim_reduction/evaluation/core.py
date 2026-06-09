@@ -41,8 +41,7 @@ from sklearn.linear_model import LogisticRegression
 if TYPE_CHECKING:
     from ..core import DimReduction
 
-from ...decoding.configs import CVConfig
-from ...decoding.utils import cross_validate_score
+from ._supervised import _cross_validate_score
 from .geometry import (
     trajectory_acceleration,
     trajectory_curvature,
@@ -620,17 +619,15 @@ def evaluate_embedding(
                     f"`labels` and `groups` are required for "
                     f"'{SEPARATION_LOGREG_BALANCED_ACCURACY}'."
                 )
-            separation_score = cross_validate_score(
+            separation_score = _cross_validate_score(
                 LogisticRegression(max_iter=1000, class_weight="balanced"),
                 X_emb,
                 labels,
                 groups=groups,
-                cv_config=CVConfig(
-                    strategy="stratified_group_kfold",
-                    n_splits=5,
-                    shuffle=True,
-                    random_state=42,
-                ),
+                cv_strategy="stratified_group_kfold",
+                n_splits=5,
+                shuffle=True,
+                random_state=42,
                 metric="balanced_accuracy",
                 use_scaler=True,
             )
