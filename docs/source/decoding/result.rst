@@ -42,7 +42,7 @@ and statistical inference — all without rerunning the experiment.
 
    # Per-fold, per-metric scores
    scores = result.get_detailed_scores()
-   # columns: Model, Fold, Metric, Score, Time (if temporal)
+   # columns: Model, Fold, Metric, Value, Time (if temporal)
 
    # Fold-level split information
    splits = result.get_splits(with_metadata=True)

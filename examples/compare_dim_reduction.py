@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 #!/usr/bin/env python3
 """
 Compare different dimension reduction methods on MNIST and Fashion-MNIST datasets.

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 #!/usr/bin/env python
 """
 Download a subset of the EEG Motor Movement/Imagery Dataset from Physionet and

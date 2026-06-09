@@ -18,21 +18,21 @@ Examples
 >>> X = np.random.randn(10, 64, 500)
 >>> container = DataContainer(
 ...     X=X,
-...     dims=('obs', 'channel', 'time'),
+...     dims=("obs", "channel", "time"),
 ...     coords={
-...         'channel': ['Fz', 'Cz', 'Pz'], # ... etc
-...         'time': np.linspace(0, 1.0, 500)
+...         "channel": ["Fz", "Cz", "Pz"],  # ... etc
+...         "time": np.linspace(0, 1.0, 500),
 ...     },
 ...     y=np.random.randint(0, 2, 10),
-...     ids=[f'sub-01_trial-{i}' for i in range(10)]
+...     ids=[f"sub-01_trial-{i}" for i in range(10)],
 ... )
 
 # 2. Creating a container for simple Tabular Features (N_subjects, N_features)
 >>> X_tab = np.random.randn(20, 5)
 >>> container_tab = DataContainer(
 ...     X=X_tab,
-...     dims=('obs', 'feature'),
-...     coords={'feature': ['age', 'IQ', 'response_time', 'power_alpha', 'power_beta']}
+...     dims=("obs", "feature"),
+...     coords={"feature": ["age", "IQ", "response_time", "power_alpha", "power_beta"]},
 ... )
 """
 
@@ -91,7 +91,7 @@ class DataContainer:
     (10, 64, 500)
 
     Accessing coordinates:
-    >>> container.coords['channel'][:3]
+    >>> container.coords["channel"][:3]
     ['Fz', 'Cz', 'Pz']
     """
 
@@ -419,18 +419,18 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Simple Undersampling of 'y'
-        >>> balanced = container.balance(strategy='undersample')
+        >>> balanced = container.balance(strategy="undersample")
 
         >>> # 2. Balance based on a metadata column 'condition'
-        >>> balanced = container.balance(target='condition')
+        >>> balanced = container.balance(target="condition")
 
         >>> # 3. Stratified Balancing (Balance 'y' while preserving 'sex' and 'age'
         >>> #    ratios)
-        >>> balanced = container.balance(target='y', covariates=['sex', 'age'])
+        >>> balanced = container.balance(target="y", covariates=["sex", "age"])
 
         >>> # 4. Iterative Bootstrapping (Different seeds)
         >>> for seed in [1, 2, 3]:
-        ...     subset = container.balance(strategy='undersample', random_state=seed)
+        ...     subset = container.balance(strategy="undersample", random_state=seed)
         ...     # process subset...
         """
         # 1. Construct temporary DataFrame for Metadata
@@ -605,22 +605,22 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Exact Selection (Sensors)
-        >>> sub = container.select(channel=['Fz', 'Cz'])
+        >>> sub = container.select(channel=["Fz", "Cz"])
 
         >>> # 2. Wildcard Selection (All Alpha features)
-        >>> sub = container.select(feature='*alpha*')
+        >>> sub = container.select(feature="*alpha*")
 
         >>> # 3. Range Selection (Time)
-        >>> sub = container.select(time={'>=': 0.1, '<': 0.5})
+        >>> sub = container.select(time={">=": 0.1, "<": 0.5})
 
         >>> # 4. Case-Insensitive Fuzzy Matching
-        >>> sub = container.select(channel=['fz'], ignore_case=True)
+        >>> sub = container.select(channel=["fz"], ignore_case=True)
 
         >>> # 5. Filter by Target (y)
-        >>> sub = container.select(y=['Patient'])
+        >>> sub = container.select(y=["Patient"])
 
         >>> # 6. Complex Logic (Subjects 1-5 via Operator)
-        >>> sub = container.select(subject_id={'>=': 1, '<=': 5})
+        >>> sub = container.select(subject_id={">=": 1, "<=": 5})
 
         >>> # 7. Stratified Selection (First 2 epochs per subject via Callable)
         >>> def first_n(ids, n=2):
@@ -874,14 +874,14 @@ class DataContainer:
         Examples
         --------
         >>> # Flatten (10, 64, 500) -> (10, 32000)
-        >>> flat = container.flatten(preserve='obs')
+        >>> flat = container.flatten(preserve="obs")
         >>> flat.shape
         (10, 32000)
-        >>> flat.coords['feature'][0]
+        >>> flat.coords["feature"][0]
         'Fz_0.0'
 
         >>> # Flatten spatial only, keep time (10, 64, 500) -> (10, 500, 64)
-        >>> time_resolved = container.flatten(preserve=['obs', 'time'])
+        >>> time_resolved = container.flatten(preserve=["obs", "time"])
         """
         if isinstance(preserve, str):
             preserve = [preserve]
@@ -978,7 +978,7 @@ class DataContainer:
         --------
         >>> # Stack time into observations:
         >>> # (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
-        >>> stacked = container.stack(dims=('obs', 'time'), new_dim='obs')
+        >>> stacked = container.stack(dims=("obs", "time"), new_dim="obs")
         >>> stacked.shape
         (5000, 64)
         """
@@ -1098,9 +1098,9 @@ class DataContainer:
         Examples
         --------
         >>> # Stack 'trials' and 'time' -> 'obs'
-        >>> stacked = container.stack(('trials', 'time'), new_dim='obs')
+        >>> stacked = container.stack(("trials", "time"), new_dim="obs")
         >>> # Unstack 'obs' -> ('trials', 'time') (automatically inferred)
-        >>> unstacked = stacked.unstack('obs')
+        >>> unstacked = stacked.unstack("obs")
         """
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
@@ -1195,7 +1195,7 @@ class DataContainer:
         Examples
         --------
         >>> # Baseline correction over time
-        >>> container.center(dim='time')
+        >>> container.center(dim="time")
         """
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
@@ -1235,7 +1235,7 @@ class DataContainer:
         Examples
         --------
         >>> # Standardize each channel's timecourse
-        >>> container.zscore(dim='time')
+        >>> container.zscore(dim="time")
         """
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in {self.dims}")

@@ -926,33 +926,33 @@ def test_evaluation_plot(data):
             "method": "PCA",
             "metric": "trustworthiness",
             "value": 0.9,
-            "scope": "k",
-            "scope_value": 1,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "PCA",
             "metric": "trustworthiness",
             "value": 0.8,
-            "scope": "k",
-            "scope_value": 2,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "UMAP",
             "metric": "trustworthiness",
             "value": 0.95,
-            "scope": "k",
-            "scope_value": 1,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "UMAP",
             "metric": "trustworthiness",
             "value": 0.85,
-            "scope": "k",
-            "scope_value": 2,
+            "scope": "global",
+            "scope_value": "global",
         },
     ]
 
-    fig = plot_metrics(selector, metric="trustworthiness")
+    fig, ax = plot_metrics(selector, metric="trustworthiness")
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 
@@ -1422,3 +1422,41 @@ def test_evaluate_embedding_invalid_dim():
     X_emb = np.random.rand(10, 2, 2, 2)
     with pytest.raises(ValueError, match="must be either 2D or 3D"):
         evaluate_embedding(X_emb)
+
+
+def test_trajectory_distance_from_center():
+    from coco_pipe.dim_reduction.evaluation.geometry import (
+        trajectory_distance_from_center,
+    )
+
+    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
+    dist = trajectory_distance_from_center(traj)
+    np.testing.assert_allclose(dist[0], [2 / 3, 4 / 3, 2 / 3])
+
+
+def test_trajectory_cohesion():
+    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_cohesion
+
+    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
+    coh = trajectory_cohesion(traj)
+    np.testing.assert_allclose(coh, [8 / 9])
+
+
+def test_trajectory_intra_spread():
+    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_intra_spread
+
+    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
+    spread = trajectory_intra_spread(traj)
+    np.testing.assert_allclose(spread, [np.sqrt(8) / 9])
+
+
+def test_trajectory_auc_speed():
+    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_auc_speed
+
+    traj = np.array([[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]])
+    auc = trajectory_auc_speed(traj, dt=1.0)
+    np.testing.assert_allclose(auc, [1.0])
+
+    time = np.array([0.0, 100.0, 200.0])
+    auc_time = trajectory_auc_speed(traj, time=time)
+    np.testing.assert_allclose(auc_time, [1.0])

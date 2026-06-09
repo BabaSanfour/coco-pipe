@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import mne
 import numpy as np
 

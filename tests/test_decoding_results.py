@@ -11,6 +11,7 @@ from coco_pipe.decoding.configs import (
     ExperimentConfig,
     LogisticRegressionConfig,
 )
+from tests.fixtures.synthetic_result import make_synthetic_result
 
 
 def _classification_data():
@@ -907,3 +908,113 @@ def test_generalization_matrix_formatting():
     assert wide_df.index.tolist() == [0.1, 0.2]
     assert wide_df.columns.tolist() == [0.1, 0.2]
     assert np.allclose(wide_df.values, 0.85)
+
+
+def test_synthetic_result_accessor_columns():
+    result = make_synthetic_result()
+    expected = {
+        "get_detailed_scores": {"Model", "Fold", "Metric", "Value"},
+        "get_temporal_score_summary": {"Model", "Metric", "Mean", "Std"},
+        "get_predictions": {"Model", "Fold", "SampleID", "Subject", "y_true", "y_pred"},
+        "get_splits": {"Model", "Fold", "Set", "SampleID", "Subject"},
+        "get_fit_diagnostics": {"Model", "Fold", "FitTime", "PredictTime", "TotalTime"},
+        "get_confusion_matrices": {
+            "Model",
+            "Fold",
+            "TrueLabel",
+            "PredictedLabel",
+            "Value",
+        },
+        "get_confusion_counts": {
+            "Model",
+            "Fold",
+            "TrueLabel",
+            "PredictedLabel",
+            "Value",
+        },
+        "get_pooled_confusion_matrix": {
+            "Model",
+            "TrueLabel",
+            "PredictedLabel",
+            "Value",
+        },
+        "get_roc_curve": {"Model", "Fold", "Class", "Threshold", "FPR", "TPR"},
+        "get_pr_curve": {"Model", "Fold", "Class", "Threshold", "Precision", "Recall"},
+        "get_roc_auc_summary": {"Model", "Fold", "MacroROCAUC", "WeightedROCAUC"},
+        "get_pr_auc_summary": {"Model", "Fold", "MacroPRAUC", "WeightedPRAUC"},
+        "get_calibration_curve": {
+            "Model",
+            "Fold",
+            "Class",
+            "MeanPredictedProbability",
+            "FractionPositive",
+        },
+        "get_probability_diagnostics": {"Model", "Fold", "Metric", "Class", "Value"},
+        "get_statistical_assessment": {
+            "Model",
+            "Metric",
+            "Observed",
+            "PValue",
+            "CorrectedPValue",
+            "ChanceThreshold",
+            "NullMedian",
+            "NEff",
+        },
+        "get_model_artifacts": {"Model", "Fold", "ArtifactType", "Key", "Value"},
+        "get_feature_importances": {
+            "Model",
+            "Feature",
+            "FeatureName",
+            "Mean",
+            "Std",
+            "Rank",
+        },
+        "get_best_params": {"Model", "Fold", "Param", "Value"},
+        "get_search_results": {
+            "Model",
+            "Fold",
+            "Candidate",
+            "Rank",
+            "MeanTestScore",
+            "StdTestScore",
+            "Params",
+        },
+        "get_selected_features": {
+            "Model",
+            "Fold",
+            "Feature",
+            "FeatureName",
+            "Selected",
+            "Order",
+        },
+        "get_feature_scores": {
+            "Model",
+            "Fold",
+            "Feature",
+            "FeatureName",
+            "Selector",
+            "Score",
+            "PValue",
+            "Selected",
+        },
+        "get_feature_stability": {
+            "Model",
+            "Feature",
+            "FeatureName",
+            "SelectionFrequency",
+            "NFolds",
+        },
+        "get_generalization_matrix": {
+            "Model",
+            "Metric",
+            "TrainTime",
+            "TestTime",
+            "Value",
+        },
+    }
+    for accessor, columns in expected.items():
+        if accessor == "get_generalization_matrix":
+            frame = getattr(result, accessor)(metric="generalization_accuracy")
+        else:
+            frame = getattr(result, accessor)()
+        assert columns.issubset(frame.columns), accessor

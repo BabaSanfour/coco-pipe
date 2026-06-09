@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Benchmarking Dimensionality Reduction: The Epistemology of Embeddings
 =====================================================================

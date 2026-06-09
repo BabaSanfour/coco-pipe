@@ -2,11 +2,17 @@ from .analysis import interpret_features
 from .config import METHODS
 from .core import DimReduction
 from .evaluation.geometry import (
+    trajectory_auc_speed,
+    trajectory_cohesion,
     trajectory_curvature,
+    trajectory_distance_from_center,
+    trajectory_intra_spread,
     trajectory_separation,
     trajectory_speed,
 )
 from .evaluation.metrics import continuity, lcmc, shepard_diagram_data, trustworthiness
+from .evaluation.stats import grouped_condition_stats, paired_condition_stats
+from .preprocessing import apply_pca_score_baseline, flip_pc_scores_for_consistency
 from .reducers import (
     BaseReducer,
     IncrementalPCAReducer,
@@ -30,6 +36,14 @@ __all__ = [
     "trajectory_speed",
     "trajectory_curvature",
     "trajectory_separation",
+    "trajectory_distance_from_center",
+    "trajectory_cohesion",
+    "trajectory_intra_spread",
+    "trajectory_auc_speed",
+    "paired_condition_stats",
+    "grouped_condition_stats",
+    "apply_pca_score_baseline",
+    "flip_pc_scores_for_consistency",
     "BaseReducer",
     "PCAReducer",
     "IncrementalPCAReducer",

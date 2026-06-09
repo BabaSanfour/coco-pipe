@@ -49,6 +49,10 @@ __all__ = [
     "trajectory_turning_angle",
     "trajectory_dispersion",
     "trajectory_separation",
+    "trajectory_distance_from_center",
+    "trajectory_cohesion",
+    "trajectory_intra_spread",
+    "trajectory_auc_speed",
 ]
 
 
@@ -337,7 +341,11 @@ def trajectory_acceleration(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
     return np.linalg.norm(acceleration, axis=-1)
 
 
-def trajectory_speed(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
+def trajectory_speed(
+    traj: np.ndarray,
+    dt: float = 1.0,
+    time: Optional[np.ndarray] = None,
+) -> np.ndarray:
     """
     Calculate instantaneous trajectory speed.
 
@@ -347,25 +355,30 @@ def trajectory_speed(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
         Trajectory array. The second-to-last axis is interpreted as time and
         the last axis as coordinates.
     dt : float, default=1.0
-        Uniform time step between consecutive samples.
+        Uniform time step between consecutive samples.  Ignored when ``time``
+        is provided.
+    time : np.ndarray of shape (n_times,), optional
+        Real timestamps (e.g. milliseconds) for non-uniform sampling.  When
+        provided, per-step ``dt`` values are derived from ``np.diff(time)``
+        and the output has shape ``(..., n_times - 1)`` — no padding is
+        applied because the associated time axis is ``time[:-1]``.
 
     Returns
     -------
-    np.ndarray of shape (..., n_times)
-        Instantaneous speed timecourse. The final value is padded with the last
-        computed speed so that the output length matches the number of time
-        points.
+    np.ndarray
+        - ``time=None``: shape ``(..., n_times)``, last value padded.
+        - ``time`` provided: shape ``(..., n_times - 1)``, no padding.
 
     Raises
     ------
     ValueError
-        If ``traj`` has fewer than two dimensions, contains fewer than two time
-        points, or if ``dt <= 0``.
+        If ``traj`` has fewer than two dimensions, fewer than two time points,
+        ``dt <= 0`` (uniform mode), or ``time`` length mismatches ``traj``.
 
     Notes
     -----
-    This function computes the norm of the first difference along the time
-    axis, divided by ``dt``.
+    Speed is the Euclidean norm of the first difference divided by the time
+    step.
 
     See Also
     --------
@@ -379,18 +392,31 @@ def trajectory_speed(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
     >>> traj = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
     >>> trajectory_speed(traj)
     array([1., 1., 1.])
+    >>> trajectory_speed(traj, time=np.array([0.0, 100.0, 250.0]))
+    array([0.01 , 0.00666667])
     """
     traj = _validate_trajectory_array(traj, min_timepoints=2)
+    step_dist = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)
+
+    if time is not None:
+        time = np.asarray(time, dtype=float)
+        if time.ndim != 1 or len(time) != traj.shape[-2]:
+            raise ValueError(
+                "`time` must be a 1D array with length equal to the "
+                "time axis of `traj`."
+            )
+        dt_arr = np.diff(time)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return step_dist / np.where(dt_arr > 0, dt_arr, np.nan)
+
     if dt <= 0:
         raise ValueError("`dt` must be > 0.")
-
-    diffs = np.diff(traj, axis=-2)
-    speed = np.linalg.norm(diffs, axis=-1) / dt
+    speed = step_dist / dt
     padding = np.take(speed, [-1], axis=-1)
     return np.concatenate([speed, padding], axis=-1)
 
 
-def trajectory_curvature(traj: np.ndarray) -> np.ndarray:
+def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray:
     """
     Calculate geometric curvature of a trajectory.
 
@@ -399,30 +425,34 @@ def trajectory_curvature(traj: np.ndarray) -> np.ndarray:
     traj : np.ndarray of shape (..., n_times, n_dims)
         Trajectory array. The second-to-last axis is interpreted as time and
         the last axis as coordinates.
+    method : {"cosine", "gradient"}, default="cosine"
+        Formula used to compute curvature.
+
+        ``"cosine"`` — discrete turning-angle formula: the angle between
+        consecutive step vectors divided by the step length.  Output shape
+        is ``(..., n_times - 2)`` because two differencing operations are
+        required.
+
+        ``"gradient"`` — continuous formula using first and second
+        derivatives: ``sqrt(||v||^2 ||a||^2 - (v·a)^2) / ||v||^3``.
+        Assumes uniformly spaced samples.  Output shape is
+        ``(..., n_times)``.
 
     Returns
     -------
-    np.ndarray of shape (..., n_times)
-        Curvature timecourse aligned with the input time axis.
+    np.ndarray
+        - ``method="cosine"``:  shape ``(..., n_times - 2)``
+        - ``method="gradient"``: shape ``(..., n_times)``
 
     Raises
     ------
     ValueError
-        If ``traj`` has fewer than two dimensions or fewer than two time
-        points.
-
-    Notes
-    -----
-    For vector-valued trajectories, curvature is computed from first and second
-    derivatives using the generalized formula
-
-    ``sqrt(||v||^2 ||a||^2 - (v . a)^2) / ||v||^3``.
-
-    The implementation assumes uniformly spaced samples.
+        If ``traj`` has fewer than two dimensions, insufficient time points,
+        or an unsupported ``method`` is given.
 
     See Also
     --------
-    trajectory_turning_angle : Discrete local directional change.
+    trajectory_turning_angle : Discrete local turning angles (no curvature scaling).
     trajectory_tortuosity : Path inefficiency relative to net displacement.
     trajectory_speed : First-order trajectory dynamics.
 
@@ -431,30 +461,52 @@ def trajectory_curvature(traj: np.ndarray) -> np.ndarray:
     >>> import numpy as np
     >>> t = np.linspace(0, 2 * np.pi, 100)
     >>> traj = np.stack([np.cos(t), np.sin(t)], axis=1)
-    >>> k = trajectory_curvature(traj)
-    >>> k.shape
+    >>> trajectory_curvature(traj, method="gradient").shape
     (100,)
+    >>> trajectory_curvature(traj, method="cosine").shape
+    (98,)
     """
-    traj = _validate_trajectory_array(traj, min_timepoints=2)
+    if method == "cosine":
+        traj = _validate_trajectory_array(traj, min_timepoints=3)
+        steps = np.diff(traj, axis=-2)  # (..., n_times-1, n_dims)
+        v1 = steps[..., :-1, :]  # (..., n_times-2, n_dims)
+        v2 = steps[..., 1:, :]  # (..., n_times-2, n_dims)
+        step_dist = np.linalg.norm(steps, axis=-1)  # (..., n_times-1)
+        step_dist_inner = step_dist[..., 1:]  # (..., n_times-2)
 
-    vel = np.gradient(traj, axis=-2)
-    acc = np.gradient(vel, axis=-2)
+        norm_v1 = np.linalg.norm(v1, axis=-1)
+        norm_v2 = np.linalg.norm(v2, axis=-1)
+        denom = norm_v1 * norm_v2
 
-    v_norm_sq = np.sum(vel**2, axis=-1)
-    a_norm_sq = np.sum(acc**2, axis=-1)
-    v_dot_a = np.sum(vel * acc, axis=-1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cosang = np.where(
+                denom > 0,
+                np.clip(np.sum(v1 * v2, axis=-1) / denom, -1.0, 1.0),
+                0.0,
+            )
+        angles = np.arccos(cosang)
+        return angles / (step_dist_inner + np.finfo(float).eps)
 
-    numerator_sq = v_norm_sq * a_norm_sq - v_dot_a**2
-    numerator_sq = np.maximum(numerator_sq, 0.0)
-    numerator = np.sqrt(numerator_sq)
+    if method == "gradient":
+        traj = _validate_trajectory_array(traj, min_timepoints=2)
 
-    denominator = v_norm_sq**1.5
-    eps = 1e-8
-    with np.errstate(divide="ignore", invalid="ignore"):
-        curvature = numerator / (denominator + eps)
-    curvature[denominator < eps] = 0.0
+        vel = np.gradient(traj, axis=-2)
+        acc = np.gradient(vel, axis=-2)
 
-    return curvature
+        v_norm_sq = np.sum(vel**2, axis=-1)
+        a_norm_sq = np.sum(acc**2, axis=-1)
+        v_dot_a = np.sum(vel * acc, axis=-1)
+
+        numerator_sq = np.maximum(v_norm_sq * a_norm_sq - v_dot_a**2, 0.0)
+        numerator = np.sqrt(numerator_sq)
+        denominator = v_norm_sq**1.5
+        eps = 1e-8
+        with np.errstate(divide="ignore", invalid="ignore"):
+            curvature = numerator / (denominator + eps)
+        curvature[denominator < eps] = 0.0
+        return curvature
+
+    raise ValueError(f"Unsupported method '{method}'. Choose 'cosine' or 'gradient'.")
 
 
 def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.ndarray:
@@ -477,6 +529,11 @@ def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.
         cumulative path length with shape ``(..., n_times)`` when
         ``cumulative=True``.
 
+    Notes
+    -----
+    NaN-valued steps are skipped in both the total and cumulative modes so
+    that a single missing coordinate does not invalidate the whole result.
+
     See Also
     --------
     trajectory_displacement : Distance from the initial state across time.
@@ -494,26 +551,33 @@ def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.
     segment_lengths = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)
 
     if cumulative:
-        cumulative_lengths = np.cumsum(segment_lengths, axis=-1)
+        safe = np.nan_to_num(segment_lengths, nan=0.0)
+        cumulative_lengths = np.cumsum(safe, axis=-1)
         zeros = np.zeros(cumulative_lengths.shape[:-1] + (1,), dtype=float)
         return np.concatenate([zeros, cumulative_lengths], axis=-1)
-    return np.sum(segment_lengths, axis=-1)
+    return np.nansum(segment_lengths, axis=-1)
 
 
-def trajectory_displacement(traj: np.ndarray) -> np.ndarray:
+def trajectory_displacement(traj: np.ndarray, *, final: bool = False) -> np.ndarray:
     """
-    Calculate displacement from the initial state across time.
+    Calculate displacement from the initial state.
 
     Parameters
     ----------
     traj : np.ndarray of shape (..., n_times, n_dims)
         Trajectory array. The second-to-last axis is interpreted as time and
         the last axis as coordinates.
+    final : bool, default=False
+        If ``False`` (default), return the displacement timecourse from the
+        first point at every time index — shape ``(..., n_times)``.
+        If ``True``, return only the scalar net displacement from the first
+        to the last point — shape ``(...)``.
 
     Returns
     -------
-    np.ndarray of shape (..., n_times)
-        Euclidean displacement from the first time point at each time index.
+    np.ndarray
+        - ``final=False``: shape ``(..., n_times)``
+        - ``final=True``:  shape ``(...)``
 
     See Also
     --------
@@ -526,8 +590,12 @@ def trajectory_displacement(traj: np.ndarray) -> np.ndarray:
     >>> traj = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     >>> trajectory_displacement(traj)
     array([0.        , 1.        , 1.41421356])
+    >>> trajectory_displacement(traj, final=True)
+    np.float64(1.4142135623730951)
     """
     traj = _validate_trajectory_array(traj, min_timepoints=1)
+    if final:
+        return np.linalg.norm(traj[..., -1, :] - traj[..., 0, :], axis=-1)
     origin = traj[..., :1, :]
     return np.linalg.norm(traj - origin, axis=-1)
 
@@ -591,13 +659,14 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray of shape (..., n_times)
-        Turning-angle timecourse in radians. The first and last time points are
-        padded with the nearest interior angle to preserve length.
+    np.ndarray of shape (..., n_times - 2)
+        Turning-angle timecourse in radians.  The output is shorter than the
+        input by two points because each angle requires one predecessor and
+        one successor segment.
 
     See Also
     --------
-    trajectory_curvature : Continuous geometric bending.
+    trajectory_curvature : Curvature computed from turning angles (cosine method).
     trajectory_speed : Local motion magnitude.
     trajectory_path_length : Total or cumulative traveled distance.
 
@@ -606,7 +675,7 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
     >>> import numpy as np
     >>> traj = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])
     >>> trajectory_turning_angle(traj)
-    array([1.57079633, 1.57079633, 1.57079633])
+    array([1.57079633])
     """
     traj = _validate_trajectory_array(traj, min_timepoints=3)
     steps = np.diff(traj, axis=-2)
@@ -621,11 +690,7 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
         cos_angle = np.sum(step_prev * step_next, axis=-1) / denom
     cos_angle = np.clip(cos_angle, -1.0, 1.0)
     angles = np.arccos(cos_angle)
-    angles = np.where(denom < 1e-12, 0.0, angles)
-
-    pad_start = np.take(angles, [0], axis=-1)
-    pad_end = np.take(angles, [-1], axis=-1)
-    return np.concatenate([pad_start, angles, pad_end], axis=-1)
+    return np.where(denom < 1e-12, 0.0, angles)
 
 
 def trajectory_dispersion(
@@ -751,3 +816,182 @@ def trajectory_separation(
             f"Unsupported separation method '{method}'. Supported methods: {supported}."
         )
     return _pairwise_label_timecourses(traj, labels, reducers[method], **kwargs)
+
+
+def trajectory_distance_from_center(traj: np.ndarray) -> np.ndarray:
+    """
+    Compute each point's Euclidean distance from the trajectory's own spatial centroid.
+
+    The centroid is the mean position across all time points of a single
+    trajectory.  This is distinct from :func:`trajectory_dispersion`, which
+    measures spread *across trials* at each fixed time point.
+
+    Parameters
+    ----------
+    traj : np.ndarray of shape (..., n_times, n_dims)
+        Trajectory array.  The second-to-last axis is interpreted as time and
+        the last axis as coordinates.
+
+    Returns
+    -------
+    np.ndarray of shape (..., n_times)
+        Per-point distance from the temporal centroid.
+
+    See Also
+    --------
+    trajectory_cohesion : Mean of this timecourse (compactness scalar).
+    trajectory_intra_spread : Std of this timecourse (variability scalar).
+    trajectory_dispersion : Across-trial spread at each time point.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> traj = np.array([[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]])
+    >>> trajectory_distance_from_center(traj)
+    array([0.66666667, 1.33333333, 0.66666667])
+    """
+    traj = _validate_trajectory_array(traj, min_timepoints=1)
+    centroid = np.nanmean(traj, axis=-2, keepdims=True)  # (..., 1, n_dims)
+    return np.linalg.norm(traj - centroid, axis=-1)  # (..., n_times)
+
+
+def trajectory_cohesion(traj: np.ndarray) -> np.ndarray:
+    """
+    Mean distance from the trajectory's own spatial centroid.
+
+    A small value means the trajectory stays near its average position (compact
+    loop or oscillation); a large value means it sweeps far from its center.
+
+    Parameters
+    ----------
+    traj : np.ndarray of shape (..., n_times, n_dims)
+        Trajectory array.  The second-to-last axis is interpreted as time and
+        the last axis as coordinates.
+
+    Returns
+    -------
+    np.ndarray of shape (...)
+        Cohesion scalar for each trajectory in the batch.
+
+    See Also
+    --------
+    trajectory_distance_from_center : Full per-point timecourse.
+    trajectory_intra_spread : Complementary variability measure.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> traj = np.array([[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]])
+    >>> trajectory_cohesion(traj)
+    np.float64(0.888...)
+    """
+    return np.nanmean(trajectory_distance_from_center(traj), axis=-1)
+
+
+def trajectory_intra_spread(traj: np.ndarray) -> np.ndarray:
+    """
+    Standard deviation of distances from the trajectory's own spatial centroid.
+
+    Measures how variable the distance-from-center is across time: a trajectory
+    that uniformly orbits its centroid has low intra-spread; one that starts
+    close and ends far away has high intra-spread.
+
+    Not to be confused with :func:`trajectory_separation`, which compares the
+    centroids of *two separate trial groups*.
+
+    Parameters
+    ----------
+    traj : np.ndarray of shape (..., n_times, n_dims)
+        Trajectory array.  The second-to-last axis is interpreted as time and
+        the last axis as coordinates.
+
+    Returns
+    -------
+    np.ndarray of shape (...)
+        Intra-spread scalar for each trajectory in the batch.
+
+    See Also
+    --------
+    trajectory_distance_from_center : Full per-point timecourse.
+    trajectory_cohesion : Complementary mean measure.
+    trajectory_separation : Between-group separation (different concept).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> traj = np.array([[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]])
+    >>> trajectory_intra_spread(traj)
+    np.float64(0.314...)
+    """
+    return np.nanstd(trajectory_distance_from_center(traj), axis=-1)
+
+
+def trajectory_auc_speed(
+    traj: np.ndarray,
+    dt: float = 1.0,
+    time: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """
+    Area under the instantaneous speed curve (trapezoidal integration).
+
+    Integrates speed over time, giving a measure of total kinetic activity that
+    weights fast periods more heavily than :func:`trajectory_path_length`.
+    Units are ``[spatial_units · time_units]`` when ``time`` is provided, or
+    ``[spatial_units · samples]`` with uniform ``dt=1``.
+
+    Parameters
+    ----------
+    traj : np.ndarray of shape (..., n_times, n_dims)
+        Trajectory array.  The second-to-last axis is interpreted as time and
+        the last axis as coordinates.
+    dt : float, default=1.0
+        Uniform time step.  Ignored when ``time`` is provided.
+    time : np.ndarray of shape (n_times,), optional
+        Real timestamps for non-uniform integration.  When provided, per-step
+        ``dt`` values are derived from ``np.diff(time)`` and the speed is
+        integrated against ``time[:-1]``.
+
+    Returns
+    -------
+    np.ndarray of shape (...)
+        AUC-speed scalar for each trajectory in the batch.
+
+    Raises
+    ------
+    ValueError
+        If ``traj`` has fewer than two time points, ``dt <= 0`` (uniform mode),
+        or ``time`` length mismatches ``traj``.
+
+    See Also
+    --------
+    trajectory_speed : Per-step speed timecourse.
+    trajectory_path_length : Total path length (uniform speed weighting).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> traj = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
+    >>> trajectory_auc_speed(traj, dt=1.0)
+    np.float64(1.0)
+    >>> trajectory_auc_speed(traj, time=np.array([0.0, 100.0, 200.0]))
+    np.float64(100.0)
+    """
+    traj = _validate_trajectory_array(traj, min_timepoints=2)
+    step_dist = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)  # (..., n_times-1)
+
+    if time is not None:
+        time = np.asarray(time, dtype=float)
+        if time.ndim != 1 or len(time) != traj.shape[-2]:
+            raise ValueError(
+                "`time` must be a 1D array with length equal to the "
+                "time axis of `traj`."
+            )
+        dt_arr = np.diff(time)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            speed = step_dist / np.where(dt_arr > 0, dt_arr, np.nan)
+        return np.trapezoid(np.nan_to_num(speed, nan=0.0), time[:-1], axis=-1)
+
+    if dt <= 0:
+        raise ValueError("`dt` must be > 0.")
+    speed = step_dist / dt
+    return np.trapezoid(np.nan_to_num(speed, nan=0.0), dx=dt, axis=-1)

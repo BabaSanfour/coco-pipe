@@ -23,6 +23,7 @@ from .dim_reduction import (
     shepard_diagram_data,
     trustworthiness,
 )
+from .utils import get_environment_info, get_git_revision_hash, get_package_version
 
 # Core exports
 __all__ = [
@@ -43,6 +44,9 @@ __all__ = [
     "continuity",
     "lcmc",
     "shepard_diagram_data",
+    "get_environment_info",
+    "get_git_revision_hash",
+    "get_package_version",
     # Optional (Lazy)
     "UMAPReducer",
     "PacmapReducer",
