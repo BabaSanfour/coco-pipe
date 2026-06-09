@@ -1,5 +1,17 @@
 from .analysis import interpret_features
-from .config import METHODS
+from .artifacts import (
+    EVAL_METRIC_COLUMNS,
+    EVAL_RUN_KEY_FIELDS,
+    FIT_METRIC_COLUMNS,
+    FIT_RUN_KEY_FIELDS,
+    SEPARATION_METRIC_KEY,
+    load_fit_artifact,
+    load_fit_runs,
+    save_eval_artifact,
+    save_fit_artifact,
+    update_runs,
+)
+from .config import DEFAULT_EVAL_GROUP_COL, METHODS, parse_eval_specs
 from .core import DimReduction
 from .evaluation.geometry import (
     moving_average,
@@ -28,6 +40,12 @@ from .evaluation.metrics import (
 )
 from .evaluation.stats import grouped_condition_stats, paired_condition_stats
 from .evaluation.velocity import compute_velocity_fields
+from .pipeline import (
+    POOLED_CONDITION,
+    build_auto_pooled_eval_spec,
+    run_eval,
+    run_fit,
+)
 from .preprocessing import apply_pca_score_baseline, flip_pc_scores_for_consistency
 from .reducers import (
     BaseReducer,
@@ -45,6 +63,25 @@ __all__ = [
     "DimReduction",
     "METHODS",
     "interpret_features",
+    # Artifact persistence
+    "save_fit_artifact",
+    "save_eval_artifact",
+    "load_fit_artifact",
+    "load_fit_runs",
+    "update_runs",
+    # Artifact constants
+    "SEPARATION_METRIC_KEY",
+    "FIT_METRIC_COLUMNS",
+    "EVAL_METRIC_COLUMNS",
+    "FIT_RUN_KEY_FIELDS",
+    "EVAL_RUN_KEY_FIELDS",
+    # Pipeline
+    "POOLED_CONDITION",
+    "run_fit",
+    "run_eval",
+    "build_auto_pooled_eval_spec",
+    "parse_eval_specs",
+    "DEFAULT_EVAL_GROUP_COL",
     "trustworthiness",
     "continuity",
     "lcmc",

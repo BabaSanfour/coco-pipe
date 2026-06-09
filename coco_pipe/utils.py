@@ -8,11 +8,14 @@ import datetime as dt
 import importlib.metadata
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Mapping
-from typing import Any, Optional
+from collections.abc import Mapping, Sequence
+from typing import Any, Callable, Optional
+
+import joblib
 
 PACKAGE_VERSIONS: Mapping[str, str] = {
     "numpy": "numpy",
@@ -57,6 +60,9 @@ __all__ = [
     "get_git_revision_hash",
     "get_package_version",
     "import_optional_dependency",
+    "_slug",
+    "_resolve_n_jobs",
+    "_run_task_batch",
 ]
 
 
@@ -157,3 +163,73 @@ def get_environment_info(
             for label, distribution in version_packages.items()
         },
     }
+
+
+def _slug(value: object, *, max_len: int = 80) -> str:
+    """Return a filesystem-safe slug from an arbitrary value.
+
+    Collapses runs of non-alphanumeric characters (except ``.``, ``_``, ``=``,
+    ``-``) into a single ``-``, strips leading/trailing punctuation, and
+    truncates at *max_len*.
+
+    Parameters
+    ----------
+    value:
+        Any object; ``str(value)`` is used as the source text.
+    max_len:
+        Maximum character length of the returned slug.
+    """
+    text = str(value).strip()
+    text = re.sub(r"[^A-Za-z0-9._=-]+", "-", text)
+    text = text.strip("-._")
+    if not text:
+        text = "none"
+    return text[:max_len]
+
+
+def _resolve_n_jobs(n_jobs: int) -> int:
+    """Resolve ``n_jobs`` to a concrete positive integer.
+
+    ``-1`` maps to ``os.cpu_count()`` (minimum 1).  Any other value must
+    already be a positive integer, or :class:`ValueError` is raised.
+    """
+    if n_jobs == -1:
+        return max(os.cpu_count() or 1, 1)
+    if n_jobs < 1:
+        raise ValueError("n_jobs must be -1 or a positive integer.")
+    return n_jobs
+
+
+def _run_task_batch(
+    tasks: Sequence[Any],
+    worker_fn: Callable[[Any], Any],
+    max_workers: int,
+) -> list[Any]:
+    """Execute *tasks* with *worker_fn*, optionally in parallel.
+
+    When *max_workers* is 1 the tasks are run serially in the current process.
+    For any larger value :func:`joblib.Parallel` is used with
+    ``n_jobs=min(max_workers, len(tasks))`` so the pool size never exceeds the
+    actual work to do.
+
+    Parameters
+    ----------
+    tasks:
+        Sequence of opaque task objects passed one-by-one to *worker_fn*.
+    worker_fn:
+        Single-argument callable that processes one task and returns a result.
+    max_workers:
+        Maximum number of parallel workers.  Pass ``1`` for serial execution.
+
+    Returns
+    -------
+    list
+        Results in the same order as *tasks*.
+    """
+    if not tasks:
+        return []
+    if max_workers == 1:
+        return [worker_fn(task) for task in tasks]
+    return joblib.Parallel(n_jobs=min(max_workers, len(tasks)))(
+        joblib.delayed(worker_fn)(task) for task in tasks
+    )

@@ -25,6 +25,7 @@ from .quality import (
 )
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
+from .units import iter_analysis_units
 from .utils import normalize_subject_value, read_table
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "run_qc",
     "normalize_subject_value",
     "read_table",
+    "iter_analysis_units",
     "BIDSDataset",
     "TabularDataset",
     "EmbeddingDataset",
