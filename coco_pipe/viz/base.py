@@ -708,6 +708,63 @@ def plot_distribution_groups(
     return fig, ax
 
 
+def plot_histogram(
+    values: Sequence[float] | np.ndarray | pd.Series,
+    bins: int | Sequence[float] = 30,
+    color: str | None = None,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = "Count",
+    figsize: tuple[float, float] | None = None,
+    ax: plt.Axes | None = None,
+    **_: Any,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot a histogram of a 1D array of scalar values.
+
+    Parameters
+    ----------
+    values
+        Values to histogram. Non-finite values are dropped.
+    bins
+        Number of bins, or explicit bin edges, passed to ``ax.hist``.
+    color
+        Bar color.
+    title
+        Optional axes title.
+    xlabel
+        Optional x-axis label.
+    ylabel
+        Optional y-axis label (defaults to ``"Count"``).
+    figsize
+        Figure size used when creating new axes.
+    ax
+        Existing Matplotlib axes to draw into.
+
+    Returns
+    -------
+    tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]
+        The created or reused figure and axes.
+    """
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        raise ValueError("values must contain at least one finite value.")
+
+    if ax is None:
+        fig, ax = plt.subplots(
+            figsize=figsize or figure_size(columns=2, aspect_ratio=4 / 7),
+            constrained_layout=True,
+        )
+    else:
+        fig = ax.get_figure()
+
+    if isinstance(bins, int):
+        bins = min(bins, max(5, arr.size))
+    ax.hist(arr, bins=bins, color=color, edgecolor="white")
+    finalize_axes(ax, title=title, xlabel=xlabel, ylabel=ylabel)
+    return fig, ax
+
+
 def plot_scatter2d(
     x: pd.Series | Sequence[float] | np.ndarray,
     y: pd.Series | Sequence[float] | np.ndarray,

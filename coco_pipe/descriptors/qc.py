@@ -123,6 +123,227 @@ def compute_family_constant_summary(
     return constants.merge(classification, on="column", how="left")
 
 
+def summarize_failures(failure_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Summarize an extraction failure log by family, channel, and exception.
+
+    Parameters
+    ----------
+    failure_df
+        Failure records as produced by
+        :class:`~coco_pipe.descriptors.core.DescriptorPipeline`,
+        with optional ``family``, ``channel_name``, ``exception_type``, and
+        ``condition`` columns.
+
+    Returns
+    -------
+    dict of DataFrame
+        ``by_family``, ``by_channel``, ``by_exception_type``, ``by_condition``,
+        ``by_family_channel`` (one row per (family, channel) pair), and
+        ``combined`` (the four ``by_*`` group summaries stacked with a
+        ``group`` column identifying their origin).
+    """
+
+    def _group_frame(column: str) -> pd.DataFrame:
+        if failure_df.empty or column not in failure_df.columns:
+            return pd.DataFrame(columns=["value", "count"])
+        return (
+            failure_df[column]
+            .fillna("unknown")
+            .astype(str)
+            .value_counts()
+            .rename_axis("value")
+            .reset_index(name="count")
+        )
+
+    by_family = _group_frame("family")
+    by_channel = _group_frame("channel_name")
+    by_exception = _group_frame("exception_type")
+    by_condition = _group_frame("condition")
+    by_family_channel = (
+        failure_df.fillna({"family": "unknown", "channel_name": "unknown"})
+        .groupby(["family", "channel_name"], dropna=False)
+        .size()
+        .reset_index(name="count")
+        if not failure_df.empty
+        and {"family", "channel_name"}.issubset(failure_df.columns)
+        else pd.DataFrame(columns=["family", "channel_name", "count"])
+    )
+    combined = (
+        pd.concat(
+            [
+                by_family.assign(group="family"),
+                by_channel.assign(group="channel"),
+                by_exception.assign(group="exception_type"),
+                by_condition.assign(group="condition"),
+            ],
+            ignore_index=True,
+        )
+        if any(
+            not frame.empty
+            for frame in (by_family, by_channel, by_exception, by_condition)
+        )
+        else pd.DataFrame(columns=["value", "count", "group"])
+    )
+    return {
+        "by_family": by_family,
+        "by_channel": by_channel,
+        "by_exception_type": by_exception,
+        "by_condition": by_condition,
+        "by_family_channel": by_family_channel,
+        "combined": combined,
+    }
+
+
+def add_family_diagnostics(
+    family_summary_df: pd.DataFrame,
+    feature_missingness_df: pd.DataFrame,
+    feature_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Add family-specific sanity diagnostics to a family-QC summary.
+
+    Extends each row of *family_summary_df* (e.g. from :func:`aggregate_family_qc`)
+    with diagnostics specific to the ``band``, ``param``, and ``complexity``
+    descriptor families:
+
+    - ``band``: rate of negative absolute-power values, out-of-range relative
+      power values (outside ``[0, 1]``), and NaN ratio features.
+    - ``param``: median/p05 of FOOOF ``r_squared``, median/p95 of
+      ``fit_error``, and missingness of peak-related measures.
+    - ``complexity``: median/max missingness across complexity measures and
+      the non-finite rate.
+
+    Parameters
+    ----------
+    family_summary_df
+        One row per family, as produced by :func:`aggregate_family_qc`.
+    feature_missingness_df
+        Per-column missingness with family metadata, as produced by
+        :func:`compute_family_missingness`.
+    feature_df
+        The underlying feature values (epoch- or subject-level) used to
+        compute value-based diagnostics.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of *family_summary_df* with additional family-specific columns.
+    """
+    if family_summary_df.empty:
+        return family_summary_df
+    rows: list[dict[str, Any]] = []
+    for summary_row in family_summary_df.to_dict("records"):
+        family = str(summary_row["family"])
+        family_missingness = feature_missingness_df[
+            feature_missingness_df["family"] == family
+        ]
+        family_cols = family_missingness["column"].tolist()
+        row: dict[str, Any] = dict(summary_row)
+        if family == "band":
+            band_abs_cols = [
+                column
+                for column in family_cols
+                if "_band_abs_" in f"_{column}_"
+                or "band_abs_" in column
+                or "band_corr_abs_" in column
+            ]
+            rel_cols = [column for column in family_cols if "band_rel_" in column]
+            corr_rel_cols = [
+                column for column in family_cols if "band_corr_rel_" in column
+            ]
+            ratio_cols = [column for column in family_cols if "ratio_" in column]
+            row["band_abs_negative_rate"] = (
+                float((feature_df[band_abs_cols] < 0).stack().mean())
+                if band_abs_cols
+                else 0.0
+            )
+            row["band_rel_out_of_range_rate"] = (
+                float(
+                    ((feature_df[rel_cols] < 0) | (feature_df[rel_cols] > 1))
+                    .stack()
+                    .mean()
+                )
+                if rel_cols
+                else 0.0
+            )
+            row["band_corr_rel_out_of_range_rate"] = (
+                float(
+                    ((feature_df[corr_rel_cols] < 0) | (feature_df[corr_rel_cols] > 1))
+                    .stack()
+                    .mean()
+                )
+                if corr_rel_cols
+                else 0.0
+            )
+            row["band_ratio_nan_rate"] = (
+                float(feature_df[ratio_cols].isna().stack().mean())
+                if ratio_cols
+                else 0.0
+            )
+        elif family == "param":
+            r2_cols = [column for column in family_cols if "param_r_squared_" in column]
+            fit_error_cols = [
+                column for column in family_cols if "param_fit_error_" in column
+            ]
+            peak_cols = [column for column in family_cols if "peak" in column]
+            alpha_peak_cols = [
+                column for column in family_cols if "alpha_peak_freq" in column
+            ]
+            row["param_r_squared_median"] = (
+                float(
+                    pd.to_numeric(feature_df[r2_cols].stack(), errors="coerce").median()
+                )
+                if r2_cols
+                else np.nan
+            )
+            row["param_r_squared_p05"] = (
+                float(
+                    pd.to_numeric(
+                        feature_df[r2_cols].stack(), errors="coerce"
+                    ).quantile(0.05)
+                )
+                if r2_cols
+                else np.nan
+            )
+            row["param_fit_error_median"] = (
+                float(
+                    pd.to_numeric(
+                        feature_df[fit_error_cols].stack(), errors="coerce"
+                    ).median()
+                )
+                if fit_error_cols
+                else np.nan
+            )
+            row["param_fit_error_p95"] = (
+                float(
+                    pd.to_numeric(
+                        feature_df[fit_error_cols].stack(), errors="coerce"
+                    ).quantile(0.95)
+                )
+                if fit_error_cols
+                else np.nan
+            )
+            row["param_peak_count_missing_rate"] = (
+                float(feature_df[peak_cols].isna().stack().mean())
+                if peak_cols
+                else np.nan
+            )
+            row["param_alpha_peak_freq_missing_rate"] = (
+                float(feature_df[alpha_peak_cols].isna().stack().mean())
+                if alpha_peak_cols
+                else np.nan
+            )
+        elif family == "complexity":
+            row["complexity_measure_missingness_max"] = row["missing_rate_max"]
+            row["complexity_measure_missingness_median"] = (
+                float(family_missingness["missing_rate"].median())
+                if not family_missingness.empty
+                else 0.0
+            )
+            row["complexity_nonfinite_rate"] = row["nonfinite_rate"]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def aggregate_family_qc(
     df: pd.DataFrame,
     descriptor_names: list[str],

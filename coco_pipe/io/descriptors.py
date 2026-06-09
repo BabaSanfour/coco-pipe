@@ -9,11 +9,85 @@ from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+import pandas as pd
 
 from .structures import DataContainer
 from .utils import normalize_subject_value, read_table
 
 logger = logging.getLogger(__name__)
+
+
+def save_descriptor_table(
+    df: pd.DataFrame,
+    base_path: Path | str,
+    feature_columns: Sequence[str] | None = None,
+) -> None:
+    """Write a descriptor table as parquet + csv, with an optional feature-column
+    sidecar.
+
+    This is the canonical on-disk layout consumed by :func:`load_descriptor_table`:
+    ``{base_path}.parquet``, ``{base_path}.csv``, and (if *feature_columns* is
+    given) ``{base_path.name}_feature_columns.json`` listing the descriptor
+    feature columns.
+
+    Parameters
+    ----------
+    df
+        Table to write.
+    base_path
+        Output path without suffix, e.g. ``combined/sensor_subject_features``.
+    feature_columns
+        Optional ordered list of descriptor feature-column names written to
+        a ``_feature_columns.json`` sidecar alongside the table.
+    """
+    base_path = Path(base_path)
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(base_path.with_suffix(".parquet"), index=False)
+    df.to_csv(base_path.with_suffix(".csv"), index=False)
+    if feature_columns is not None:
+        (base_path.parent / f"{base_path.name}_feature_columns.json").write_text(
+            json.dumps(list(feature_columns), indent=2),
+            encoding="utf-8",
+        )
+
+
+def check_feature_column_consistency(
+    shard_root: Path | str,
+    json_name: str,
+    accumulated: dict[str, list[str] | None],
+    col_key: str,
+) -> None:
+    """Load a feature-column sidecar from *shard_root* and assert consistency.
+
+    Intended for merging per-shard descriptor outputs: on the first call for
+    a given *col_key* the loaded column list is stored in *accumulated*. On
+    every subsequent call the loaded list is compared against the stored one
+    and a :class:`ValueError` is raised on any mismatch, preventing a silent
+    merge of shards produced with incompatible feature sets.
+
+    Parameters
+    ----------
+    shard_root
+        Directory containing the ``json_name`` feature-column sidecar.
+    json_name
+        Filename of the feature-column JSON sidecar within *shard_root*.
+    accumulated
+        Mapping of ``col_key -> feature column list``, mutated in place.
+    col_key
+        Key identifying which feature-column set this sidecar belongs to
+        (e.g. ``"sensor_epoch"``).
+    """
+    shard_root = Path(shard_root)
+    loaded: list[str] = json.loads((shard_root / json_name).read_text(encoding="utf-8"))
+    if accumulated.get(col_key) is None:
+        accumulated[col_key] = loaded
+    elif loaded != accumulated[col_key]:
+        raise ValueError(
+            f"Feature column mismatch detected in shard {shard_root!r} "
+            f"(key '{col_key}'): columns differ from the first shard.\n"
+            "This usually means shards were produced with different configs. "
+            "Clear the derivative root and re-run extraction with a single config."
+        )
 
 
 def parse_descriptor_feature_column(

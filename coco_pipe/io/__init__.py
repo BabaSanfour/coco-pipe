@@ -5,7 +5,12 @@ from .config import (
     EmbeddingConfig,
     TabularConfig,
 )
-from .descriptors import load_descriptor_table, parse_descriptor_feature_column
+from .descriptors import (
+    check_feature_column_consistency,
+    load_descriptor_table,
+    parse_descriptor_feature_column,
+    save_descriptor_table,
+)
 from .load import load_data
 from .quality import (
     CheckResult,
@@ -35,6 +40,8 @@ __all__ = [
     "load_data",
     "load_descriptor_table",
     "parse_descriptor_feature_column",
+    "save_descriptor_table",
+    "check_feature_column_consistency",
     "CheckResult",
     "EpochDropRecord",
     "QCResult",
