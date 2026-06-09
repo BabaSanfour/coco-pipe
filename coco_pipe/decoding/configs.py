@@ -1020,7 +1020,7 @@ class ExperimentConfig(BaseModel):
         description="List of metrics to compute.",
     )
 
-    use_scaler: bool = Field(
+    use_scaler: Union[bool, str] = Field(
         True, description="Whether to scalar normalize features upstream."
     )
     n_jobs: int = -1
