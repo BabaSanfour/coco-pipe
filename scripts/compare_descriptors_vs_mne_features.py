@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 #!/usr/bin/env python3
 """
 Standalone comparison harness for `coco-pipe.descriptors` vs `mne-features`.

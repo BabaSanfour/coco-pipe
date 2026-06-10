@@ -361,14 +361,20 @@ def _make_spec(**overrides):
 
 def test_fit_estimator_routes_sample_weight():
     """fit_estimator forwards sample_weight to clf step inside a Pipeline."""
-    from sklearn.linear_model import LogisticRegression
 
     clf = _WeightCapturingClassifier()
     pipe = Pipeline([("clf", clf)])
     sw = np.array([1.0, 2.0, 3.0])
 
-    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
-                  MockConfig(), MockConfig(), sample_weight=sw)
+    fit_estimator(
+        pipe,
+        np.zeros((3, 2)),
+        np.array([0, 1, 0]),
+        None,
+        MockConfig(),
+        MockConfig(),
+        sample_weight=sw,
+    )
 
     assert np.allclose(clf.recorded_weight_, sw)
 
@@ -378,8 +384,15 @@ def test_fit_estimator_no_sample_weight_when_none():
     clf = _WeightCapturingClassifier()
     pipe = Pipeline([("clf", clf)])
 
-    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
-                  MockConfig(), MockConfig(), sample_weight=None)
+    fit_estimator(
+        pipe,
+        np.zeros((3, 2)),
+        np.array([0, 1, 0]),
+        None,
+        MockConfig(),
+        MockConfig(),
+        sample_weight=None,
+    )
 
     assert clf.recorded_weight_ is None
 
@@ -400,8 +413,15 @@ def test_fit_estimator_skips_unsupported_clf():
     pipe = Pipeline([("clf", NoWeightClf())])
     sw = np.array([1.0, 2.0, 3.0])
     # should not raise
-    fit_estimator(pipe, np.zeros((3, 2)), np.array([0, 1, 0]), None,
-                  MockConfig(), MockConfig(), sample_weight=sw)
+    fit_estimator(
+        pipe,
+        np.zeros((3, 2)),
+        np.array([0, 1, 0]),
+        None,
+        MockConfig(),
+        MockConfig(),
+        sample_weight=sw,
+    )
 
 
 def test_fit_and_score_fold_sample_weight_train_only():
@@ -424,8 +444,14 @@ def test_fit_and_score_fold_sample_weight_train_only():
             m, "classification", lambda yt, yp: float(yp.mean()), "predict"
         )
         fit_and_score_fold(
-            pipe, X, y, None, ids, None,
-            train_idx=train_idx, test_idx=test_idx,
+            pipe,
+            X,
+            y,
+            None,
+            ids,
+            None,
+            train_idx=train_idx,
+            test_idx=test_idx,
             metrics=["acc"],
             feature_selection_config=MockConfig(),
             calibration_config=MockConfig(),
@@ -437,14 +463,15 @@ def test_fit_and_score_fold_sample_weight_train_only():
 
     # Only train-fold weights should have been forwarded
     expected = sw[train_idx]
-    assert np.allclose(clf.recorded_weight_, expected), (
-        f"Expected {expected}, got {clf.recorded_weight_}"
-    )
+    assert np.allclose(
+        clf.recorded_weight_, expected
+    ), f"Expected {expected}, got {clf.recorded_weight_}"
 
 
 def test_experiment_run_rejects_length_mismatch():
     """Experiment.run raises ValueError when sample_weight length != len(X)."""
     import pytest
+
     from coco_pipe.decoding import Experiment, ExperimentConfig
     from coco_pipe.decoding.configs import CVConfig, LogisticRegressionConfig
 

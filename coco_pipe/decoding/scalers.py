@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 from sklearn import config_context
 from sklearn.base import BaseEstimator, TransformerMixin

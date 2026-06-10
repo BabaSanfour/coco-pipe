@@ -182,6 +182,7 @@ class Experiment:
         if self.config.use_scaler and allow_prep:
             if self.config.use_scaler == "subject":
                 from .scalers import SubjectStandardScaler
+
                 steps.append(("scaler", SubjectStandardScaler()))
             else:
                 steps.append(("scaler", StandardScaler()))

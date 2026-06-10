@@ -210,7 +210,9 @@ def fit_and_score_fold(
             warnings.simplefilter("always")
             if _needs_group_routing:
                 with config_context(enable_metadata_routing=True):
-                    fold_data["y_proba"] = estimator.predict_proba(X_test, groups=test_groups)
+                    fold_data["y_proba"] = estimator.predict_proba(
+                        X_test, groups=test_groups
+                    )
             else:
                 fold_data["y_proba"] = estimator.predict_proba(X_test)
         captured_warnings.extend(
@@ -222,7 +224,9 @@ def fit_and_score_fold(
             warnings.simplefilter("always")
             if _needs_group_routing:
                 with config_context(enable_metadata_routing=True):
-                    fold_data["y_score"] = estimator.decision_function(X_test, groups=test_groups)
+                    fold_data["y_score"] = estimator.decision_function(
+                        X_test, groups=test_groups
+                    )
             else:
                 fold_data["y_score"] = estimator.decision_function(X_test)
         captured_warnings.extend(
@@ -387,7 +391,11 @@ def fit_estimator(
             if "groups" in inspect.signature(scaler_step.fit).parameters:
                 fit_params["scaler__groups"] = groups_train
 
-    if sample_weight is not None and isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
+    if (
+        sample_weight is not None
+        and isinstance(pipeline, Pipeline)
+        and "clf" in pipeline.named_steps
+    ):
         clf_step = pipeline.named_steps["clf"]
         if "sample_weight" in inspect.signature(clf_step.fit).parameters:
             fit_params["clf__sample_weight"] = sample_weight
