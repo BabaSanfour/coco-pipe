@@ -95,6 +95,7 @@ def fit_and_score_fold(
     feature_names: Optional[list[str]] = None,
     search_enabled: bool = False,
     force_serial: bool = False,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -135,6 +136,9 @@ def fit_and_score_fold(
         Original names of the features, used for importance labeling.
     force_serial : bool, default=False
         If True, forces the internal estimator fit to be serial.
+    sample_weight : np.ndarray, optional
+        Per-sample weights for the full dataset. Only the training-fold
+        slice is forwarded to the classifier; test samples are never weighted.
 
     Returns
     -------
@@ -145,6 +149,7 @@ def fit_and_score_fold(
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
 
+    sw_train = sample_weight[train_idx] if sample_weight is not None else None
     groups_train = groups[train_idx] if groups is not None else None
     test_groups = groups[test_idx] if groups is not None else None
     _needs_group_routing = (
@@ -173,6 +178,7 @@ def fit_and_score_fold(
                 feature_selection_config=feature_selection_config,
                 calibration_config=calibration_config,
                 tuning_config=tuning_config,
+                sample_weight=sw_train,
             )
     fit_time = time.perf_counter() - fit_start
     captured_warnings.extend(warning_records_to_dict("fit", warning_records))
@@ -309,6 +315,7 @@ def fit_estimator(
     feature_selection_config: Any,
     calibration_config: Any,
     tuning_config: Any = None,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> None:
     """
     Fit an estimator with intelligent metadata and group routing.
@@ -335,6 +342,10 @@ def fit_estimator(
         Probability calibration settings.
     tuning_config : Any
         Hyperparameter tuning settings.
+    sample_weight : np.ndarray, optional
+        Per-sample weights for the training fold. Forwarded as
+        ``clf__sample_weight`` when the pipeline's ``clf`` step exposes
+        a ``sample_weight`` parameter in its ``fit`` signature.
     """
     from sklearn.calibration import CalibratedClassifierCV
     from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
@@ -375,6 +386,12 @@ def fit_estimator(
             scaler_step = pipeline.named_steps["scaler"]
             if "groups" in inspect.signature(scaler_step.fit).parameters:
                 fit_params["scaler__groups"] = groups_train
+
+    if sample_weight is not None and isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
+        clf_step = pipeline.named_steps["clf"]
+        if "sample_weight" in inspect.signature(clf_step.fit).parameters:
+            fit_params["clf__sample_weight"] = sample_weight
+
     estimator.fit(X_train, y_train, **fit_params)
 
 
