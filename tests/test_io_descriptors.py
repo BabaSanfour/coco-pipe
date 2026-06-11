@@ -5,8 +5,10 @@ import pandas as pd
 import pytest
 
 from coco_pipe.io.descriptors import (
+    check_feature_column_consistency,
     load_descriptor_table,
     parse_descriptor_feature_column,
+    save_descriptor_table,
 )
 
 KNOWN_FAMILIES = ("band", "param", "complexity")
@@ -225,3 +227,88 @@ def test_load_descriptor_table_rejects_nonpositive_threshold(descriptor_files):
             columns_path,
             descriptor_max_abs_value=0,
         )
+
+
+def test_save_descriptor_table_extra(tmp_path):
+    df = pd.DataFrame({"a": [1]})
+    save_descriptor_table(df, tmp_path / "test", feature_columns=["a"])
+    assert (tmp_path / "test.parquet").exists()
+    assert (tmp_path / "test.csv").exists()
+    assert (tmp_path / "test_feature_columns.json").exists()
+
+
+def test_check_feature_column_consistency_extra(tmp_path):
+    d1 = tmp_path / "d1"
+    d1.mkdir()
+    (d1 / "f.json").write_text('["a"]')
+
+    acc = {}
+    check_feature_column_consistency(d1, "f.json", acc, "key1")
+    assert acc["key1"] == ["a"]
+
+    (d1 / "f2.json").write_text('["b"]')
+    with pytest.raises(ValueError):
+        check_feature_column_consistency(d1, "f2.json", acc, "key1")
+
+
+def test_parse_descriptor_feature_column_extra():
+    with pytest.raises(ValueError):
+        parse_descriptor_feature_column("not_a_family_feat_ch-s1", ("band",))
+
+
+def test_load_descriptor_table_errors(tmp_path):
+    df = pd.DataFrame({"obs_id": ["1", "2"]})
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+
+    feat_json = tmp_path / "tbl_feature_columns.json"
+    feat_json.write_text('["band_feat_ch-s1"]')
+
+    # Condition column not found
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, condition="C")
+
+    # Subject filter column not found
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, subjects=["sub-1"])
+
+    # Expected JSON list
+    feat_json.write_text("{}")
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # Columns not found
+    feat_json.write_text('["band_feat_ch-s1"]')
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # Target column not found
+    df["band_feat_ch-s1"] = [1, 2]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, target_col="missing")
+
+    # No features matched descriptor_families
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(
+            tmp_path / "tbl.csv", feat_json, descriptor_families=["other"]
+        )
+
+    # No rows survived NaN/Inf filtering
+    df["band_feat_ch-s1"] = [np.nan, np.inf]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # No rows survived extreme-value filtering
+    df["band_feat_ch-s1"] = [100, 200]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(
+            tmp_path / "tbl.csv", feat_json, descriptor_max_abs_value=50
+        )
+
+    # Cannot infer obs IDs
+    df_noid = pd.DataFrame({"band_feat_ch-s1": [1, 2]})
+    df_noid.to_csv(tmp_path / "tbl2.csv", index=False)
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl2.csv", feat_json)

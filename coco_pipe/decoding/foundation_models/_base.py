@@ -3,7 +3,8 @@ Foundation Model Base Backend
 ==============================
 
 Abstract base class shared by all EEG/MEG foundation model backends.
-Backends ARE the sklearn estimator — no wrapping layer is needed.
+Backends can be used directly. Clone-safe adapters wrap them inside sklearn
+pipelines and cross-validation.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class BackendBase(BaseEstimator, TransformerMixin, ABC):
-    """Abstract base for all FM backends. The backend IS the sklearn estimator.
+    """Abstract base for direct foundation-model backend use.
 
     Training modes
     --------------
@@ -29,6 +30,13 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     lora     — peft LoRA adapters injected; only adapter weights train.
     qlora    — 4-bit quantized backbone + LoRA (hugging_face backend only).
     """
+
+    _task: str = "classification"
+    _device: str = "cpu"
+    _n_outputs: int | None = None
+    _expected_n_chans: int | None = None
+    signal_metadata_: "SignalMetadata | None" = None
+    _net_ = None
 
     @abstractmethod
     def reset_head(self, n_outputs: int) -> "BackendBase":
@@ -119,6 +127,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         In ``frozen`` mode only the classification head is updated; in
         ``full`` and ``lora``/``qlora`` modes the backbone is also trained.
 
+        ``signal_metadata`` (sfreq + ch_names) must be declared at
+        ``load(signal_metadata=...)`` time before fitting.
+
         Parameters
         ----------
         X : np.ndarray of shape (n_samples, n_channels, n_times)
@@ -127,11 +138,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             Target labels (classification) or continuous values (regression).
         **fit_params
             Recognised extra keys:
-
-            signal_metadata : SignalMetadata
-                Binds ``sfreq`` and ``ch_names`` for subsequent validation in
-                ``transform`` / ``predict``. Falls back to the model's
-                pretrained defaults when omitted.
             max_epochs : int, default 10
             lr : float, default 1e-3
             batch_size : int, default 32
@@ -142,6 +148,32 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             The fitted backend instance.
         """
         return self._fit_with_skorch(X, y, **fit_params)
+
+    def get_channel_adaptation(self) -> dict:
+        """Return the channel mapping actually applied by the backend."""
+        meta = self.signal_metadata_
+        channels = list(meta.ch_names) if meta is not None else []
+        return {
+            "source_channels": channels,
+            "target_channels": channels,
+            "interpolated_channels": [],
+            "zero_filled_channels": [],
+            "dropped_channels": [],
+        }
+
+    @property
+    def device(self) -> str:
+        """The torch device string this backend lives on."""
+        return self._device
+
+    def checkpoint_components(self) -> dict:
+        """Restorable torch modules keyed by name (state-dict layout).
+
+        Backends override this to expose their own modules (e.g.
+        ``{"model": ...}`` or ``{"backbone": ..., "head": ...}``). Default:
+        nothing to checkpoint.
+        """
+        return {}
 
     @abstractmethod
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -217,43 +249,118 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """Shared skorch training loop. Both real backends use this verbatim."""
         from skorch import NeuralNetClassifier, NeuralNetRegressor
 
-        from .._specs import SignalMetadata
-
-        signal_metadata = fit_params.pop("signal_metadata", None)
-        if signal_metadata is None:
-            signal_metadata = SignalMetadata(
-                sfreq=self._metadata.pretrained_sfreq,
-                ch_names=[f"ch{i}" for i in range(X.shape[1])],
+        groups = fit_params.pop("groups", None)
+        class_weight = fit_params.pop("class_weight", None)
+        if self.signal_metadata_ is None:
+            raise RuntimeError(
+                "fit() requires signal_metadata declared at load() time via "
+                "load(signal_metadata=...)."
             )
-        self.signal_metadata_ = signal_metadata
 
         out_dim = (
             int(np.unique(y).size)
-            if getattr(self, "_task", "classification") == "classification"
-            and y is not None
+            if self._task == "classification" and y is not None
             else 1
         )
+        if out_dim and self._n_outputs != out_dim:
+            self.reset_head(out_dim)
         net_cls = (
             NeuralNetClassifier
-            if getattr(self, "_task", "classification") == "classification"
+            if self._task == "classification"
             else NeuralNetRegressor
         )
+        net_kwargs = {}
+        if net_cls is NeuralNetClassifier:
+            import torch.nn as nn
+
+            net_kwargs["criterion"] = nn.CrossEntropyLoss
+            if class_weight is not None:
+                import torch
+
+                net_kwargs["criterion__weight"] = torch.as_tensor(
+                    class_weight, dtype=torch.float32
+                ).to(self._device)
+        validation_fraction = float(fit_params.get("validation_fraction", 0.2))
+        if groups is not None and validation_fraction > 0:
+            from sklearn.model_selection import (
+                GroupShuffleSplit,
+                StratifiedGroupKFold,
+            )
+            from skorch.dataset import Dataset
+            from skorch.helper import predefined_split
+
+            groups_arr = np.asarray(groups)
+            y_arr = np.asarray(y)
+            random_state = fit_params.get("random_state", 42)
+            n_splits = max(2, int(round(1.0 / validation_fraction)))
+            # Cap folds at the smallest number of distinct groups in any class.
+            min_groups_per_class = min(
+                np.unique(groups_arr[y_arr == cls]).size for cls in np.unique(y_arr)
+            )
+            n_splits = min(n_splits, int(min_groups_per_class))
+            if n_splits >= 2:
+                splitter = StratifiedGroupKFold(
+                    n_splits=n_splits,
+                    shuffle=True,
+                    random_state=random_state,
+                )
+                train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
+            else:
+                splitter = GroupShuffleSplit(
+                    n_splits=1,
+                    test_size=validation_fraction,
+                    random_state=random_state,
+                )
+                train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
+            self._training_groups_ = np.unique(groups_arr[train_idx])
+            self._validation_groups_ = np.unique(groups_arr[valid_idx])
+            valid_ds = Dataset(X[valid_idx], np.asarray(y)[valid_idx])
+            X = X[train_idx]
+            y = np.asarray(y)[train_idx]
+            net_kwargs["train_split"] = predefined_split(valid_ds)
+
+        callbacks = []
+        patience = fit_params.get("early_stopping_patience")
+        if patience:
+            from skorch.callbacks import EarlyStopping
+
+            callbacks.append(
+                EarlyStopping(
+                    monitor="valid_loss",
+                    patience=int(patience),
+                    load_best=True,
+                )
+            )
+
         self._net_ = net_cls(
             module=self._get_skorch_module(),
             module__backend=self,
             module__output_dim=out_dim,
-            device=getattr(self, "_device", "cpu"),
+            device=self._device,
             max_epochs=fit_params.get("max_epochs", 10),
             lr=fit_params.get("lr", 1e-3),
             batch_size=fit_params.get("batch_size", 32),
+            callbacks=callbacks,
+            **net_kwargs,
         )
         self._net_.fit(X, y)
         return self
 
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Return class probabilities from the fitted skorch network."""
+        self._validate(X)
+        if self._net_ is None:
+            raise RuntimeError("Model must be fitted before predict_proba().")
+        return np.asarray(self._net_.predict_proba(X))
+
+    def training_history(self) -> list:
+        """Return the skorch training history (empty if not trained)."""
+        return list(self._net_.history) if self._net_ is not None else []
+
     def _to_tensor(self, X: np.ndarray):
         import torch
 
-        return torch.from_numpy(X).float().to(getattr(self, "_device", "cpu"))
+        return torch.from_numpy(X).float().to(self._device)
 
     @staticmethod
     def _from_tensor(t) -> np.ndarray:
@@ -288,7 +395,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         sfreq mismatch → UserWarning (allows intentional mismatch for research).
         Channel count mismatch for fixed-channel models → ValueError.
         """
-        meta: SignalMetadata | None = getattr(self, "signal_metadata_", None)
+        meta = self.signal_metadata_
         if meta is None:
             raise RuntimeError(
                 "Model must be fitted before transform/predict. Call fit() first."
@@ -302,11 +409,13 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 UserWarning,
                 stacklevel=3,
             )
-        if (
-            model_meta.pretrained_n_chans is not None
-            and X.shape[1] != model_meta.pretrained_n_chans
-        ):
+        expected_n_chans = (
+            self._expected_n_chans
+            if self._expected_n_chans is not None
+            else model_meta.pretrained_n_chans
+        )
+        if expected_n_chans is not None and X.shape[1] != expected_n_chans:
             raise ValueError(
-                f"{model_meta.display_name} expects {model_meta.pretrained_n_chans} "
+                f"{model_meta.display_name} expects {expected_n_chans} "
                 f"channels, got {X.shape[1]}."
             )

@@ -165,11 +165,6 @@ def test_registered_estimator_survives_fit_predict_and_declared_responses(method
             assert estimator.decision_function(X_test).shape[0] == X_test.shape[0]
 
 
-# =============================================================================
-# SCIENTIFIC VALIDITY & LEAKAGE GUARDS
-# =============================================================================
-
-
 def test_grouped_outer_cv_respects_boundaries():
     X, y = _classification_data(n_samples=20)
     groups = np.repeat(np.arange(5), 4)  # 5 subjects, 4 trials each
@@ -211,13 +206,7 @@ def test_group_leakage_guard_raises_error():
         Experiment(config).run(X, y, groups=groups)
 
 
-# =============================================================================
-# TEMPORAL DECODING (Comprehensive)
-# =============================================================================
-
-
 def test_sliding_and_generalizing_estimators_full_workflow():
-    pytest.importorskip("mne")
     X, y = _temporal_data()
     times = np.array([-0.1, 0.0, 0.1, 0.2])
     # Use real instances to avoid Pydantic issues
@@ -240,11 +229,6 @@ def test_sliding_and_generalizing_estimators_full_workflow():
     assert result.get_generalization_matrix(
         "generalizing", metric="accuracy"
     ).shape == (4, 4)
-
-
-# =============================================================================
-# FEATURE SELECTION & TUNING
-# =============================================================================
 
 
 def test_sfs_with_tuning_and_groups_routing():
@@ -270,11 +254,6 @@ def test_sfs_with_tuning_and_groups_routing():
     result = Experiment(config).run(X, y, groups=groups)
     assert result.raw["lr"]["status"] == "success"
     assert len(result.get_selected_features()["FeatureName"].unique()) == 6
-
-
-# =============================================================================
-# EDGE CASES & COVERAGE GAPS
-# =============================================================================
 
 
 def test_experiment_config_validation_errors():
@@ -473,11 +452,6 @@ def test_observation_level_validation():
         exp.run(X, y, observation_level="invalid")
 
 
-# =============================================================================
-# REPRODUCIBILITY & GROUPED CV SCIENTIFIC VALIDITY
-# =============================================================================
-
-
 def test_grouped_cv_requires_at_least_two_groups():
     X, y = _classification_data(n_samples=10)
     groups = np.zeros(10)  # All same group
@@ -514,11 +488,6 @@ def test_inject_seed_recursion_depth():
     )
     exp._inject_seed(cfg, 123)
     assert cfg.base.random_state == 123
-
-
-# =============================================================================
-# PIPELINE COMBINATIONS (Tuning, SFS, Calibration)
-# =============================================================================
 
 
 def test_tuning_only_workflow():
@@ -627,7 +596,6 @@ def test_sfs_with_calibration():
 
 
 def test_instantiate_temporal_model_explicit():
-    pytest.importorskip("mne")
     base_cfg = ClassicalModelConfig(estimator="LogisticRegression", params={"C": 1.0})
     config = TemporalDecoderConfig(wrapper="sliding", base=base_cfg)
     exp = Experiment(ExperimentConfig(task="classification", models={"sl": config}))
@@ -737,3 +705,53 @@ def test_experiment_provenance_metadata_integration():
     meta = exp._build_result_meta(np.zeros((10, 5)), None)
     assert "coco_pipe_version" in meta
     assert isinstance(meta["coco_pipe_version"], str)
+
+
+def test_random_state_propagation_active():
+    config = ExperimentConfig(
+        task="classification",
+        random_state=42,
+        models={"lr": LogisticRegressionConfig(random_state=None)},
+        tuning=TuningConfig(enabled=True, cv=CVConfig(strategy="stratified")),
+    )
+    # The __init__ should propagate random state
+    Experiment(config)
+    assert config.cv.random_state == 42
+    assert config.tuning.random_state == 44
+    assert config.models["lr"].random_state is not None
+
+
+def test_instantiate_temporal_model_dict():
+    exp = Experiment(
+        ExperimentConfig(
+            task="classification", models={"lr": LogisticRegressionConfig()}
+        )
+    )
+    config_dict = {
+        "kind": "temporal",
+        "wrapper": "sliding",
+        "base": {"method": "LogisticRegression", "C": 1.0},
+        "n_jobs": 2,
+    }
+    est = exp._instantiate_model("sl_dict", config_dict)
+    assert est.__class__.__name__ == "SlidingEstimator"
+    assert est.n_jobs == 2
+
+
+def test_experiment_run_with_statistical_assessment():
+    from coco_pipe.decoding.configs import ChanceAssessmentConfig
+
+    X, y = _classification_data(n_samples=20)
+    config = ExperimentConfig(
+        task="classification",
+        models={"lr": LogisticRegressionConfig()},
+        cv=CVConfig(n_splits=2),
+    )
+    config.statistical_assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        chance=ChanceAssessmentConfig(method="binomial", p0=0.5),
+    )
+    res = Experiment(config).run(X, y)
+    assert "statistical_assessment" in res.meta
+    assert "statistical_assessment" in res.raw["lr"]

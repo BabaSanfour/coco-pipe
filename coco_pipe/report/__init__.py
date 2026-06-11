@@ -29,6 +29,14 @@ _LAZY_EXPORTS = {
     "from_experiment_result": ("coco_pipe.report.api", "from_experiment_result"),
     "merge_reports": ("coco_pipe.report.api", "merge_reports"),
     "make_decoding_report": ("coco_pipe.report.decoding", "make_decoding_report"),
+    "make_foundation_embedding_report": (
+        "coco_pipe.report.foundation",
+        "make_foundation_embedding_report",
+    ),
+    "make_foundation_decoding_report": (
+        "coco_pipe.report.foundation",
+        "make_foundation_decoding_report",
+    ),
     "generate_descriptor_subject_report": (
         "coco_pipe.report.descriptor_qc",
         "generate_descriptor_subject_report",

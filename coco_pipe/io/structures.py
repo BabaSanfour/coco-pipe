@@ -142,6 +142,22 @@ class DataContainer:
         joblib.dump(self, p)
         logger.info(f"DataContainer saved to {p}")
 
+    def observation_frame(self) -> pd.DataFrame:
+        """Return observation-aligned coordinates and stable sample IDs."""
+        if "obs" not in self.dims:
+            raise ValueError("DataContainer has no 'obs' dimension.")
+        n_obs = self.X.shape[self.dims.index("obs")]
+        frame = pd.DataFrame(index=np.arange(n_obs))
+        for key, values in self.coords.items():
+            array = np.asarray(values)
+            if array.ndim == 1 and len(array) == n_obs:
+                frame[str(key)] = array
+        if self.ids is not None:
+            frame["sample_id"] = np.asarray(self.ids).astype(str)
+        elif "sample_id" not in frame:
+            frame["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
+        return frame
+
     @classmethod
     def load(cls, path: Union[str, Any]) -> "DataContainer":
         """

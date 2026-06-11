@@ -19,7 +19,11 @@ import numpy as np
 import pandas as pd
 from sklearn import config_context
 from sklearn.base import BaseEstimator
-from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.feature_selection import (
+    SelectKBest,
+    SequentialFeatureSelector,
+    f_classif,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.utils.multiclass import type_of_target
 
@@ -76,6 +80,36 @@ class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
     ):
         """Fit to data, then transform it."""
         return self.fit(X, y, groups=groups, **params).transform(X)
+
+
+class _SafeSelectKBest(BaseEstimator):
+    """Clamp ``k`` to the fold-local feature width after reduction."""
+
+    def __init__(self, score_func=f_classif, k=10):
+        self.score_func = score_func
+        self.k = k
+
+    def fit(self, X, y):
+        effective_k = (
+            min(self.k, int(np.asarray(X).shape[1]))
+            if isinstance(self.k, int)
+            else self.k
+        )
+        self.selector_ = SelectKBest(
+            score_func=self.score_func,
+            k=effective_k,
+        ).fit(X, y)
+        self.n_features_in_ = self.selector_.n_features_in_
+        self.scores_ = self.selector_.scores_
+        self.pvalues_ = getattr(self.selector_, "pvalues_", None)
+        self.effective_k_ = effective_k
+        return self
+
+    def transform(self, X):
+        return self.selector_.transform(X)
+
+    def get_support(self, indices=False):
+        return self.selector_.get_support(indices=indices)
 
 
 def fit_and_score_fold(
@@ -390,6 +424,10 @@ def fit_estimator(
             scaler_step = pipeline.named_steps["scaler"]
             if "groups" in inspect.signature(scaler_step.fit).parameters:
                 fit_params["scaler__groups"] = groups_train
+        if isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
+            classifier_step = pipeline.named_steps["clf"]
+            if "groups" in inspect.signature(classifier_step.fit).parameters:
+                fit_params["clf__groups"] = groups_train
 
     if (
         sample_weight is not None
@@ -671,6 +709,9 @@ def extract_metadata(
 
             if clf_step is not None:
                 estimator = clf_step
+
+    if hasattr(estimator, "named_steps"):
+        estimator = estimator.named_steps.get("clf", estimator)
 
     # 3. Custom Artifacts (Structural Type Check via Protocol)
     if isinstance(estimator, NeuralTrainable):

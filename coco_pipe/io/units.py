@@ -3,7 +3,7 @@ Analysis-unit enumeration for multi-mode EEG pipelines.
 
 An *analysis unit* is a (container-slice, metadata) pair that feeds one
 independent analysis run (dim-reduction, decoding, connectivity, …).
-The four supported modes are:
+The six supported modes are:
 
 ``flat``
     One unit per scope — the entire container is used as-is.
@@ -15,6 +15,10 @@ The four supported modes are:
     One unit per descriptor feature family (descriptor inputs only).
 ``sensor_within_family``
     One unit per (sensor, family) combination (descriptor inputs only).
+``feature``
+    One unit per descriptor feature across all sensors.
+``feature_within_family``
+    One unit per (feature, family) combination across all sensors.
 """
 
 from __future__ import annotations
@@ -56,7 +60,8 @@ def iter_analysis_units(
         Full data container for one analysis scope/condition.
     analysis_mode:
         One of ``"flat"``, ``"sensor"``, ``"family"``,
-        ``"sensor_within_family"``.
+        ``"sensor_within_family"``, ``"feature"``, or
+        ``"feature_within_family"``.
     input_mode:
         ``"raw"`` or ``"descriptors"``.  Controls which container dimension is
         sliced for the ``"sensor"`` mode.
@@ -151,6 +156,7 @@ def iter_analysis_units(
     feature_families = np.asarray(
         container.coords["feature_family"], dtype=object
     ).astype(str)
+    feature_names = np.asarray(container.coords["feature"], dtype=object).astype(str)
     wanted_families = list(
         dict.fromkeys(descriptor_families or feature_families.tolist())
     )
@@ -183,6 +189,38 @@ def iter_analysis_units(
                     container.isel(sensor=idx, feature=feature_indices).flatten(
                         preserve="obs"
                     ),
+                )
+        return units
+
+    if analysis_mode == "feature":
+        for feature_name in dict.fromkeys(feature_names.tolist()):
+            feature_indices = np.flatnonzero(feature_names == feature_name).tolist()
+            if not feature_indices:
+                continue
+            _add_unit(
+                "feature",
+                feature_name,
+                feature_name,
+                None,
+                container.isel(feature=feature_indices).flatten(preserve="obs"),
+            )
+        return units
+
+    if analysis_mode == "feature_within_family":
+        for family in wanted_families:
+            family_indices = np.flatnonzero(feature_families == family)
+            for feature_name in dict.fromkeys(feature_names[family_indices].tolist()):
+                feature_indices = np.flatnonzero(
+                    (feature_families == family) & (feature_names == feature_name)
+                ).tolist()
+                if not feature_indices:
+                    continue
+                _add_unit(
+                    "feature",
+                    feature_name,
+                    f"{family}_{feature_name}",
+                    family,
+                    container.isel(feature=feature_indices).flatten(preserve="obs"),
                 )
         return units
 

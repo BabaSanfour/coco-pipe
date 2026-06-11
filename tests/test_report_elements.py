@@ -34,9 +34,6 @@ def tmp_report_file(tmp_path):
     return tmp_path / "test_report.html"
 
 
-# ----- Core element rendering -----------------------------------------------
-
-
 def test_html_element_rendering():
     el = HtmlElement("<p>Test</p>")
     assert el.render() == "<p>Test</p>"
@@ -115,9 +112,6 @@ def test_plotly_element_decodes_bdata_inside_collect():
     registry = {}
     elem_plotly.collect_payload(registry)
     assert elem_plotly.registry_id in registry
-
-
-# ----- Tables ----------------------------------------------------------------
 
 
 def test_table_element_dict_inputs():
@@ -207,9 +201,6 @@ def test_metrics_table_best_values_directions():
 
     elem_metrics_low = MetricsTableElement(df, higher_is_better=False)
     assert elem_metrics_low.best_vals["score"] == 0.8
-
-
-# ----- UI primitives ---------------------------------------------------------
 
 
 def test_stat_card_element():

@@ -114,6 +114,66 @@ See the decoding documentation for feature selection, temporal decoding, result
 tables, plotting helpers, and report integration. Batch decoding CLIs are not
 part of the public surface yet; use the Python API for now.
 
+## Testing
+
+Install the test extras (the suite exercises the optional model backends):
+
+```bash
+pip install -e .[full,test]
+```
+
+### Standard run (fast, offline)
+
+```bash
+pytest
+```
+
+This is exactly what CI runs on every push and pull request. It needs **no
+network access and no HuggingFace token**. Tests that download real foundation
+checkpoints are marked `@pytest.mark.real_checkpoints` and are **deselected by
+default** (`addopts = -m 'not real_checkpoints'` in `pyproject.toml`).
+
+> `tests/conftest.py` pins native thread pools (`OMP_NUM_THREADS=1`, etc.) so
+> the heavy native backends (faiss, torch, annoy, …) don't segfault when run
+> together in one process. Export a higher value before `pytest` if you want
+> multi-threaded test runs.
+
+### Running heavy foundation tests
+
+These download gated checkpoints from HuggingFace, so they are opt-in and
+require a token. Run them locally with:
+
+```bash
+export HF_TOKEN=hf_xxxxxxxx              # do NOT commit this
+export COCO_PIPE_RUN_REAL_FOUNDATION=1
+pytest -m real_checkpoints
+```
+
+The token is resolved (in order) from the `token=` argument, the `HF_TOKEN`
+environment variable, or a prior `hf auth login`. The account behind the token
+must have **accepted each gated model's license** on huggingface.co, otherwise
+downloads come back as `authentication_required`.
+
+The real **training** test is heavier still (needs a GPU); enable it
+additionally with `export COCO_PIPE_RUN_REAL_FOUNDATION_TRAINING=1`.
+
+#### In CI
+
+The heavy tests run in a separate `foundation` job that triggers **only** on a
+manual *Run workflow* (workflow_dispatch) or a version tag push (`v*`) — never on
+ordinary pushes or pull requests, and never on PRs from forks (GitHub does not
+expose secrets to those). To enable it, add the token once as a repository
+secret:
+
+1. On HuggingFace: create a read token and accept the license for each gated
+   model you need.
+2. On GitHub: **Settings → Secrets and variables → Actions → New repository
+   secret**, name it `HF_TOKEN`, paste the token.
+
+The workflow injects `HF_TOKEN` only into the heavy job's test step, and GitHub
+automatically masks it in logs. The token is never needed to clone, push, or
+open a PR — only to download checkpoints at test time.
+
 ## Documentation
 
 Full documentation for CoCo Pipe is available at:

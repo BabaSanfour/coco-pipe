@@ -24,6 +24,70 @@ from .configs import StatisticalAssessmentConfig
 
 logger = logging.getLogger(__name__)
 
+
+def benjamini_hochberg(
+    p_values: Sequence[float],
+    *,
+    alpha: float = 0.05,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Correct a family of p-values with the Benjamini-Hochberg procedure."""
+    values = np.asarray(p_values, dtype=float)
+    adjusted = np.full(values.shape, np.nan, dtype=float)
+    rejected = np.zeros(values.shape, dtype=bool)
+    valid = np.isfinite(values)
+    if not valid.any():
+        return adjusted, rejected
+    raw = values[valid]
+    order = np.argsort(raw)
+    ranked = raw[order]
+    n = len(ranked)
+    corrected_ranked = np.minimum.accumulate((ranked * n / np.arange(1, n + 1))[::-1])[
+        ::-1
+    ]
+    corrected_ranked = np.clip(corrected_ranked, 0.0, 1.0)
+    corrected = np.empty(n, dtype=float)
+    corrected[order] = corrected_ranked
+    adjusted[valid] = corrected
+    rejected[valid] = corrected <= alpha
+    return adjusted, rejected
+
+
+def correct_sweep_pvalues(
+    results: pd.DataFrame,
+    *,
+    p_column: str = "p_value",
+    family_columns: Sequence[str] = (
+        "target",
+        "input_mode",
+        "analysis_mode",
+        "model",
+        "selection_mode",
+    ),
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Apply BH-FDR independently within configured decoding sweep families."""
+    if p_column not in results.columns:
+        raise KeyError(f"Missing p-value column: {p_column}")
+    out = results.copy()
+    out["p_value_fdr"] = np.nan
+    out["significant_fdr"] = False
+    present = [column for column in family_columns if column in out.columns]
+    groups = (
+        [(None, out.index)]
+        if not present
+        else out.groupby(present, dropna=False).groups.items()
+    )
+    for _, indices in groups:
+        index = list(indices)
+        adjusted, rejected = benjamini_hochberg(
+            out.loc[index, p_column].to_numpy(dtype=float),
+            alpha=alpha,
+        )
+        out.loc[index, "p_value_fdr"] = adjusted
+        out.loc[index, "significant_fdr"] = rejected
+    return out
+
+
 TEMPORAL_COLUMNS = ["Time", "TrainTime", "TestTime"]
 
 
@@ -112,10 +176,14 @@ def aggregate_predictions_for_inference(
             custom_unit_column if unit_of_inference == "custom" else unit_of_inference
         )
         if unit_col not in frame.columns:
-            raise ValueError(
-                f"Inference unit '{unit_col}' not found in result columns. "
-                f"Available: {list(frame.columns)}"
-            )
+            normalized = {str(column).casefold(): column for column in frame.columns}
+            resolved = normalized.get(str(unit_col).casefold())
+            if resolved is None:
+                raise ValueError(
+                    f"Inference unit '{unit_col}' not found in result columns. "
+                    f"Available: {list(frame.columns)}"
+                )
+            unit_col = resolved
         aggregation = custom_aggregation
 
     if unit_of_inference == "sample":

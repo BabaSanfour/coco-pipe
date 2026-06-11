@@ -376,3 +376,110 @@ def test_aggregate_unknown_family_columns_excluded():
     )
 
     assert result["family"].tolist() == ["band"]
+
+
+def test_classify_descriptor_columns_remainder_parsing():
+    result = classify_descriptor_columns(["CZ_band_abs_alpha"])
+    assert result.loc[0, "family"] == "band"
+    assert result.loc[0, "measure"] == "CZ_abs_alpha"
+    assert result.loc[0, "scope"] == ""
+    assert result.loc[0, "channel"] == ""
+
+
+def test_summarize_failures_empty_and_normal():
+    from coco_pipe.descriptors.qc import summarize_failures
+
+    # 1. Empty DataFrame
+    res_empty = summarize_failures(pd.DataFrame())
+    assert res_empty["by_family"].empty
+    assert res_empty["by_channel"].empty
+    assert res_empty["by_exception_type"].empty
+    assert res_empty["by_condition"].empty
+    assert res_empty["by_family_channel"].empty
+    assert res_empty["combined"].empty
+
+    # 2. DataFrame with missing columns
+    res_missing_cols = summarize_failures(pd.DataFrame({"dummy": [1]}))
+    assert res_missing_cols["by_family"].empty
+    assert res_missing_cols["combined"].empty
+
+    # 3. Normal DataFrame
+    fail_df = pd.DataFrame(
+        {
+            "family": ["band", None, "param"],
+            "channel_name": ["Fz", "Cz", None],
+            "exception_type": ["ValueError", "TypeError", "ValueError"],
+            "condition": ["rest", "task", "rest"],
+        }
+    )
+    res = summarize_failures(fail_df)
+    assert not res["by_family"].empty
+    assert not res["by_channel"].empty
+    assert not res["by_exception_type"].empty
+    assert not res["by_condition"].empty
+    assert not res["by_family_channel"].empty
+    assert not res["combined"].empty
+
+    # Verify "combined" columns
+    assert "group" in res["combined"].columns
+    assert set(res["combined"]["group"].unique()) == {
+        "family",
+        "channel",
+        "exception_type",
+        "condition",
+    }
+
+
+def test_add_family_diagnostics():
+    from coco_pipe.descriptors.qc import add_family_diagnostics
+
+    # 1. Empty input
+    empty_df = pd.DataFrame()
+    res_empty = add_family_diagnostics(empty_df, pd.DataFrame(), pd.DataFrame())
+    assert res_empty.empty
+
+    # 2. Band, Param, Complexity families
+    family_summary = pd.DataFrame(
+        [
+            {"family": "band", "missing_rate_max": 0.1, "nonfinite_rate": 0.05},
+            {"family": "param", "missing_rate_max": 0.2, "nonfinite_rate": 0.0},
+            {"family": "complexity", "missing_rate_max": 0.3, "nonfinite_rate": 0.1},
+        ]
+    )
+
+    feature_missingness = pd.DataFrame(
+        [
+            {"column": "band_abs_alpha", "family": "band", "missing_rate": 0.1},
+            {"column": "band_rel_beta", "family": "band", "missing_rate": 0.0},
+            {"column": "band_corr_rel_theta", "family": "band", "missing_rate": 0.0},
+            {"column": "ratio_gamma", "family": "band", "missing_rate": 0.2},
+            {"column": "param_r_squared_1", "family": "param", "missing_rate": 0.2},
+            {"column": "param_fit_error_1", "family": "param", "missing_rate": 0.2},
+            {"column": "peak_freq", "family": "param", "missing_rate": 0.2},
+            {"column": "alpha_peak_freq", "family": "param", "missing_rate": 0.2},
+            {
+                "column": "complexity_entropy",
+                "family": "complexity",
+                "missing_rate": 0.3,
+            },
+        ]
+    )
+
+    feature_df = pd.DataFrame(
+        {
+            "band_abs_alpha": [-0.5, 1.0, 2.0],
+            "band_rel_beta": [-0.1, 0.5, 1.2],
+            "band_corr_rel_theta": [0.1, 0.9, 1.5],
+            "ratio_gamma": [1.0, np.nan, 3.0],
+            "param_r_squared_1": [0.8, 0.9, 0.95],
+            "param_fit_error_1": [0.01, 0.05, 0.1],
+            "peak_freq": [10.0, np.nan, 12.0],
+            "alpha_peak_freq": [9.0, np.nan, 10.0],
+            "complexity_entropy": [1.2, 1.5, 1.8],
+        }
+    )
+
+    res = add_family_diagnostics(family_summary, feature_missingness, feature_df)
+    assert "band_abs_negative_rate" in res.columns
+    assert "param_r_squared_median" in res.columns
+    assert "complexity_measure_missingness_max" in res.columns

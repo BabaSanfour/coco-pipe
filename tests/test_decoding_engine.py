@@ -1,12 +1,17 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.datasets import make_classification
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from coco_pipe.decoding import Experiment, ExperimentConfig
 from coco_pipe.decoding._engine import (
+    GroupedSequentialFeatureSelector,
+    _SafeSelectKBest,
     compact_search_results,
     compute_metric_safe,
     extract_feature_importances,
@@ -19,11 +24,11 @@ from coco_pipe.decoding._engine import (
 from coco_pipe.decoding.configs import (
     CalibrationConfig,
     CVConfig,
+    FeatureSelectionConfig,
     LinearSVCConfig,
 )
 from coco_pipe.decoding.interfaces import NeuralTrainable
-
-# --- Mock Objects ---
+from coco_pipe.decoding.registry import EstimatorSpec
 
 
 class MockConfig:
@@ -79,9 +84,6 @@ class MockEstimator(BaseEstimator, ClassifierMixin):
 
     def get_support(self):
         return getattr(self, "support_", np.array([True, True]))
-
-
-# --- Tests ---
 
 
 def test_diagnostics_basics():
@@ -488,3 +490,217 @@ def test_experiment_run_rejects_length_mismatch():
 
     with pytest.raises(ValueError, match="sample_weight length"):
         Experiment(config).run(X, y, sample_weight=np.ones(5))
+
+
+def test_grouped_sfs():
+    from sklearn.model_selection import KFold
+
+    sfs = GroupedSequentialFeatureSelector(
+        LogisticRegression(), n_features_to_select=1, cv=KFold(2)
+    )
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    groups = np.array([0] * 5 + [1] * 5)
+    sfs.fit_transform(X, y, groups=groups)
+    assert sfs.n_features_to_select_ == 1
+
+
+def test_safe_select_k_best():
+    skb = _SafeSelectKBest(k=10)
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    skb.fit(X, y)
+    assert skb.effective_k_ == 3  # Should clamp to 3
+    xt = skb.transform(X)
+    assert xt.shape[1] == 3
+    assert skb.get_support().sum() == 3
+
+
+def test_compute_metric_safe_temporal_accuracy():
+    y_true = np.array([0, 1])
+    # Sliding
+    y_est_sl = np.array([[0, 1], [1, 1]])  # (samples, times)
+    acc_sl = compute_metric_safe(
+        lambda y, p: None,
+        y_true,
+        y_est_sl,
+        is_multiclass=False,
+        is_proba=False,
+        name="accuracy",
+    )
+    assert acc_sl.shape == (2,)
+    # Generalizing
+    y_est_gen = np.zeros((2, 2, 2))
+    acc_gen = compute_metric_safe(
+        lambda y, p: None,
+        y_true,
+        y_est_gen,
+        is_multiclass=False,
+        is_proba=False,
+        name="accuracy",
+    )
+    assert acc_gen.shape == (2, 2)
+    # Invalid
+    with pytest.raises(ValueError):
+        compute_metric_safe(lambda y, p: None, y_true, np.zeros((2, 2, 2, 2)), False)
+
+
+def test_fit_estimator_pipeline_groups():
+    pipe = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("fs", _SafeSelectKBest(k=1)),
+            ("clf", LogisticRegression()),
+        ]
+    )
+    fs_cfg = FeatureSelectionConfig(enabled=True, method="k_best")
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    groups = np.array([0] * 5 + [1] * 5)
+    sample_weight = np.ones(10)
+    fit_estimator(
+        pipe,
+        X,
+        y,
+        groups,
+        feature_selection_config=fs_cfg,
+        calibration_config=None,
+        sample_weight=sample_weight,
+    )
+    assert hasattr(pipe.named_steps["clf"], "coef_")
+
+
+def test_extract_feature_importances_pipeline():
+    pipe = Pipeline([("fs", _SafeSelectKBest(k=2)), ("clf", LogisticRegression())])
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    pipe.fit(X, y)
+
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec = get_estimator_spec("LogisticRegression")
+    imp = extract_feature_importances(pipe, spec, fs_enabled=True)
+    assert imp is not None
+    assert len(imp) == 3
+
+
+def test_fit_and_score_fold_needs_group_routing():
+    from coco_pipe.decoding._engine import fit_and_score_fold
+    from coco_pipe.decoding.configs import (
+        FeatureSelectionConfig,
+    )
+    from coco_pipe.decoding.scalers import SubjectStandardScaler
+
+    pipe = Pipeline(
+        [("scaler", SubjectStandardScaler()), ("clf", LogisticRegression())]
+    )
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec = get_estimator_spec("LogisticRegression")
+    fs_cfg = FeatureSelectionConfig()
+    cal_cfg = FeatureSelectionConfig(enabled=False)
+
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    groups = np.array([0] * 5 + [1] * 5)
+    sample_ids = np.arange(10)
+    train_idx = np.arange(6)
+    test_idx = np.arange(6, 10)
+
+    # We just need to mock warning context or ensure it passes without error
+    res = fit_and_score_fold(
+        estimator=pipe,
+        X=X,
+        y=y,
+        groups=groups,
+        sample_ids=sample_ids,
+        sample_metadata=None,
+        train_idx=train_idx,
+        test_idx=test_idx,
+        metrics=["accuracy"],
+        feature_selection_config=fs_cfg,
+        calibration_config=cal_cfg,
+        spec=spec,
+    )
+    assert "accuracy" in res["scores"]
+
+
+def test_extract_feature_importances_feature_importances():
+    from sklearn.ensemble import RandomForestClassifier
+
+    clf = RandomForestClassifier(n_estimators=2)
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    clf.fit(X, y)
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec = get_estimator_spec("RandomForestClassifier")
+    imp = extract_feature_importances(clf, spec)
+    assert imp is not None
+    assert len(imp) == 3
+
+
+def test_extract_feature_importances_calibrated():
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.linear_model import LogisticRegression
+
+    clf = CalibratedClassifierCV(LogisticRegression(), cv=2)
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    clf.fit(X, y)
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec = get_estimator_spec("LogisticRegression")
+    imp = extract_feature_importances(clf, spec, calibration_enabled=True)
+    assert imp is not None
+    assert len(imp) == 3
+
+
+def test_extract_metadata_fs():
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    from coco_pipe.decoding._engine import extract_metadata
+    from coco_pipe.decoding.configs import FeatureSelectionConfig
+
+    pipe = Pipeline([("fs", _SafeSelectKBest(k=2)), ("clf", LogisticRegression())])
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    pipe.fit(X, y)
+
+    fs_cfg = FeatureSelectionConfig(enabled=True, method="k_best")
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec = get_estimator_spec("LogisticRegression")
+    meta = extract_metadata(pipe, spec, fs_cfg)
+    assert "feature_scores" in meta
+
+
+def test_extract_feature_importances_edge_cases():
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.svm import SVC
+
+    # search_enabled=True
+    X = np.random.randn(10, 3)
+    y = np.array([0, 1] * 5)
+    search = GridSearchCV(LogisticRegression(), {"C": [1.0]})
+    search.fit(X, y)
+
+    from coco_pipe.decoding.registry import get_estimator_spec
+
+    spec_lr = get_estimator_spec("LogisticRegression")
+    imp1 = extract_feature_importances(search, spec_lr, search_enabled=True)
+    assert imp1 is not None
+
+    # _get_raw_importance returns None
+    spec_svc = EstimatorSpec("SVC", ["feature_importances"], True, True, True)
+    svc = SVC()
+    svc.fit(X, y)
+    imp2 = extract_feature_importances(svc, spec_svc)
+    assert imp2 is None
+
+    # fs_enabled but raw_imp is None
+    pipe = Pipeline([("fs", _SafeSelectKBest(k=2)), ("clf", SVC())])
+    pipe.fit(X, y)
+    imp3 = extract_feature_importances(pipe, spec_svc, fs_enabled=True)
+    assert imp3 is None

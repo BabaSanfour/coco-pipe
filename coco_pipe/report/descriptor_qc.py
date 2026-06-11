@@ -234,10 +234,12 @@ def generate_descriptor_subject_report(
         family_summary_df.round(4) if family_summary_df is not None else None,
         "Family Summary",
         selector_columns=[
-            column for column in ["family"] if column in family_summary_df.columns
+            column
+            for column in ["family"]
+            if family_summary_df is not None and column in family_summary_df.columns
         ],
         default_sort={"column": "missing_rate", "direction": "desc"}
-        if "missing_rate" in family_summary_df.columns
+        if family_summary_df is not None and "missing_rate" in family_summary_df.columns
         else None,
         page_size=5,
     )
@@ -416,10 +418,12 @@ def generate_descriptor_dataset_report(
         family_summary_df.round(4) if family_summary_df is not None else None,
         "Family Summary",
         selector_columns=[
-            column for column in ["family"] if column in family_summary_df.columns
+            column
+            for column in ["family"]
+            if family_summary_df is not None and column in family_summary_df.columns
         ],
         default_sort={"column": "missing_rate", "direction": "desc"}
-        if "missing_rate" in family_summary_df.columns
+        if family_summary_df is not None and "missing_rate" in family_summary_df.columns
         else None,
         page_size=5,
     )

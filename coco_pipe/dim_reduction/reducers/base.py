@@ -529,4 +529,7 @@ class BaseReducer(ABC):
         This method assumes the reducer was serialized with `save` or a
         compatible `joblib.dump` call.
         """
-        return joblib.load(str(filepath))
+        reducer = joblib.load(str(filepath))
+        if not isinstance(reducer, BaseReducer):
+            raise TypeError("Loaded object is not a BaseReducer")
+        return reducer

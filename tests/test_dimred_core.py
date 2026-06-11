@@ -4,9 +4,16 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from sklearn.linear_model import LogisticRegression
 
+import coco_pipe.dim_reduction as dr
+import coco_pipe.dim_reduction.reducers as reducers
 from coco_pipe.dim_reduction.config import UMAPConfig
 from coco_pipe.dim_reduction.core import DimReduction
+from coco_pipe.dim_reduction.evaluation._supervised import (
+    _cross_validate_score,
+    _make_splitter,
+)
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
 
 
@@ -474,3 +481,89 @@ def test_score_no_metrics_payload_note():
         scores = dr.score(np.zeros((10, 2)), X=X)
         assert "note" in scores["metrics"]
         assert "Metrics unavailable" in scores["metrics"]["note"]
+
+
+def test_dim_reduction_init():
+    # Test lazy loading existing
+    assert hasattr(dr, "UMAPReducer")
+    assert dr.UMAPReducer.__name__ == "UMAPReducer"
+
+    # Test unknown lazy loading
+    with pytest.raises(AttributeError):
+        dr.UnknownReducer
+
+
+def test_reducers_init():
+    # Test optional lazy loading
+    assert hasattr(reducers, "UMAPReducer")
+    assert reducers.UMAPReducer.__name__ == "UMAPReducer"
+
+    # Test unknown optional
+    with pytest.raises(AttributeError):
+        reducers.UnknownReducer
+
+
+def test_supervised_splitter_errors():
+    with pytest.raises(ValueError, match="groups are required"):
+        _make_splitter(
+            "stratified_group_kfold",
+            n_splits=5,
+            shuffle=True,
+            random_state=42,
+            groups=None,
+        )
+
+    with pytest.raises(ValueError, match="groups are required"):
+        _make_splitter(
+            "group_kfold", n_splits=5, shuffle=True, random_state=42, groups=None
+        )
+
+    with pytest.raises(ValueError, match="Unsupported"):
+        _make_splitter(
+            "unknown_strategy", n_splits=5, shuffle=True, random_state=42, groups=None
+        )
+
+
+def test_supervised_cv_score_errors():
+    est = LogisticRegression()
+    X = np.zeros((10, 2))
+    y = np.zeros(10)
+
+    # metric
+    with pytest.raises(ValueError, match="only 'balanced_accuracy'"):
+        _cross_validate_score(est, X, y, metric="accuracy")
+
+    # X and y length mismatch
+    with pytest.raises(ValueError, match="matching sample counts"):
+        _cross_validate_score(est, np.zeros((9, 2)), y)
+
+    # groups length mismatch
+    with pytest.raises(ValueError, match="groups must align"):
+        _cross_validate_score(est, X, y, groups=np.zeros(9))
+
+
+def test_supervised_splitter_success():
+    from sklearn.model_selection import (
+        GroupKFold,
+        StratifiedGroupKFold,
+        StratifiedKFold,
+    )
+
+    sgkf = _make_splitter(
+        "stratified_group_kfold",
+        n_splits=5,
+        shuffle=True,
+        random_state=42,
+        groups=np.zeros(10),
+    )
+    assert isinstance(sgkf, StratifiedGroupKFold)
+
+    gkf = _make_splitter(
+        "group_kfold", n_splits=5, shuffle=True, random_state=42, groups=np.zeros(10)
+    )
+    assert isinstance(gkf, GroupKFold)
+
+    skf = _make_splitter(
+        "stratified", n_splits=5, shuffle=True, random_state=42, groups=None
+    )
+    assert isinstance(skf, StratifiedKFold)

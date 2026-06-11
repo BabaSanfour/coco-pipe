@@ -1094,20 +1094,23 @@ def test_unstack_updates_metadata():
     assert "feats" in unstacked.coords
 
 
-def test_unstack_error_missing_metadata():
-    X = np.zeros((100, 10))
-    # No metadata provided
-    container = DataContainer(X=X, dims=("obs", "features"))
-
-    with pytest.raises(ValueError, match="Cannot unstack: Metadata"):
-        container.unstack("obs")
-
-
-def test_unstack_error_dim_not_found():
-    X = np.zeros((10, 10))
-    container = DataContainer(X=X, dims=("a", "b"))
-    with pytest.raises(ValueError, match="Dimension 'c' not found"):
-        container.unstack("c")
+@pytest.mark.parametrize(
+    "dims, unstack_dim, match",
+    [
+        # No metadata provided -> cannot reconstruct the stacked axis.
+        pytest.param(
+            ("obs", "features"),
+            "obs",
+            "Cannot unstack: Metadata",
+            id="missing_metadata",
+        ),
+        pytest.param(("a", "b"), "c", "Dimension 'c' not found", id="dim_not_found"),
+    ],
+)
+def test_unstack_errors(dims, unstack_dim, match):
+    container = DataContainer(X=np.zeros((10, 10)), dims=dims)
+    with pytest.raises(ValueError, match=match):
+        container.unstack(unstack_dim)
 
 
 def test_aggregate_validation_errors(sample_container):
@@ -1354,3 +1357,38 @@ def test_aggregate_empty_feature_dim():
     # Should not raise even if min_count=1 because valid_row_count will match row_count
     agg = dc.aggregate(by=["A", "B"], min_count=1)
     assert agg.shape == (2, 0)
+
+
+def test_observation_frame_extra():
+    # no obs dim
+    dc = DataContainer(X=np.zeros((2, 2)), dims=("a", "b"))
+    with pytest.raises(ValueError, match="no 'obs' dimension"):
+        dc.observation_frame()
+
+    # no ids
+    dc2 = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    df = dc2.observation_frame()
+    assert "sample_id" in df.columns
+    assert df["sample_id"].iloc[0] == "sample-000000"
+
+
+def test_concat_extra():
+    dc1 = DataContainer(X=np.zeros((2, 2)), dims=("a", "b"))
+    # concat empty
+    with pytest.raises(ValueError):
+        DataContainer.concat([])
+
+    # no obs in base
+    with pytest.raises(ValueError, match="include an 'obs' dimension"):
+        DataContainer.concat([dc1, dc1])
+
+    # matching dims
+    dc_obs = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    dc_diff = DataContainer(X=np.zeros((2, 2)), dims=("obs", "other"))
+    with pytest.raises(ValueError, match="matching dims"):
+        DataContainer.concat([dc_obs, dc_diff])
+
+    # matching non-obs dims
+    dc_shape = DataContainer(X=np.zeros((2, 3)), dims=("obs", "feature"))
+    with pytest.raises(ValueError, match="matching non-obs dimensions"):
+        DataContainer.concat([dc_obs, dc_shape])

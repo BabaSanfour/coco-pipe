@@ -191,62 +191,103 @@ def test_pool_channels_reject_overlapping_assignments():
         )
 
 
-def test_pool_channels_reject_non_2d_x():
+@pytest.mark.parametrize(
+    "result, groups, match",
+    [
+        pytest.param(
+            {"X": np.zeros((2, 2, 2)), "descriptor_names": ["a", "b"], "failures": []},
+            {"G": ["ch1"]},
+            "2D",
+            id="non_2d_x",
+        ),
+        pytest.param(
+            {"X": np.zeros((2, 1)), "descriptor_names": ["a", "b"], "failures": []},
+            {"G": ["ch1"]},
+            r"align with result\['X'\]",
+            id="mismatched_names_and_columns",
+        ),
+        pytest.param(
+            {
+                "X": np.zeros((2, 2)),
+                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
+                "failures": [],
+            },
+            {},
+            "at least one group",
+            id="empty_groups",
+        ),
+        pytest.param(
+            {
+                "X": np.zeros((2, 2)),
+                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
+                "failures": [],
+            },
+            {"": ["Fz"]},
+            "non-empty strings",
+            id="empty_group_name",
+        ),
+        pytest.param(
+            {
+                "X": np.zeros((2, 2)),
+                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
+                "failures": [],
+            },
+            {"G": []},
+            "at least one channel",
+            id="empty_channel_list",
+        ),
+        pytest.param(
+            {
+                "X": np.zeros((2, 2)),
+                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
+                "failures": [],
+            },
+            {"G": ["Fz", "Fz"]},
+            "not contain duplicates",
+            id="duplicate_channels",
+        ),
+        pytest.param(
+            {
+                "X": np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]], dtype=float),
+                "descriptor_names": [
+                    "toy_mean_ch-Fz",
+                    "other_mean_ch-Fz",
+                    "other_mean_ch-Cz",
+                ],
+                "failures": [],
+            },
+            {"Frontal": ["Fz", "Cz"]},
+            "could not form group",
+            id="incomplete_grouped_feature_base",
+        ),
+        pytest.param(
+            {"X": np.ones((2, 2))},
+            {"G1": ["Fz"]},
+            "'X', 'descriptor_names', and 'failures'",
+            id="missing_result_keys",
+        ),
+        pytest.param(
+            {
+                "X": np.ones((2, 1)),
+                "descriptor_names": ["global_metric"],
+                "failures": [],
+            },
+            {"G1": ["Fz"]},
+            "sensor-level descriptor names",
+            id="global_only_names",
+        ),
+        pytest.param(
+            {"X": np.zeros((2, 2)), "descriptor_names": ["a_ch-Fz"], "failures": []},
+            {"G": ["Fz"]},
+            r"align with result\['X'\] columns",
+            id="mismatched_columns",
+        ),
+    ],
+)
+def test_pool_channels_rejects(result, groups, match):
     pipe = DescriptorPipeline({})
-    result = {
-        "X": np.zeros((2, 2, 2)),
-        "descriptor_names": ["a", "b"],
-        "failures": [],
-    }
-    with pytest.raises(ValueError, match="2D"):
-        pipe.pool_channels(result, {"G": ["ch1"]})
-
-
-def test_pool_channels_reject_mismatched_names_and_columns():
-    pipe = DescriptorPipeline({})
-    result = {
-        "X": np.zeros((2, 1)),
-        "descriptor_names": ["a", "b"],
-        "failures": [],
-    }
-    with pytest.raises(ValueError, match=r"align with result\['X'\]"):
-        pipe.pool_channels(result, {"G": ["ch1"]})
-
-
-def test_pool_channels_reject_empty_group_definitions():
-    pipe = DescriptorPipeline({})
-    result = {
-        "X": np.zeros((2, 2)),
-        "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
-        "failures": [],
-    }
-    with pytest.raises(ValueError, match="at least one group"):
-        pipe.pool_channels(result, {})
-
-    with pytest.raises(ValueError, match="non-empty strings"):
-        pipe.pool_channels(result, {"": ["Fz"]})
-
-    with pytest.raises(ValueError, match="at least one channel"):
-        pipe.pool_channels(result, {"G": []})
-
-    with pytest.raises(ValueError, match="not contain duplicates"):
-        pipe.pool_channels(result, {"G": ["Fz", "Fz"]})
-
-
-def test_pool_channels_reject_incomplete_grouped_feature_base():
-    pipe = DescriptorPipeline({})
-    result = {
-        "X": np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]], dtype=float),
-        "descriptor_names": [
-            "toy_mean_ch-Fz",
-            "other_mean_ch-Fz",
-            "other_mean_ch-Cz",
-        ],
-        "failures": [],
-    }
-
-    with pytest.raises(ValueError, match="could not form group"):
-        pipe.pool_channels(result, {"Frontal": ["Fz", "Cz"]})
+    with pytest.raises(ValueError, match=match):
+        pipe.pool_channels(result, groups)
 
 
 def test_require_channel_names_flag_is_enforced():
@@ -465,7 +506,6 @@ def test_multi_family_scale_smoke():
 
 
 def test_multi_family_parallel_matches_sequential():
-    pytest.importorskip("joblib")
     rng = np.random.default_rng(12)
     X = rng.normal(size=(12, 3, 128))
     channel_names = ["Fz", "Cz", "Pz"]
@@ -499,7 +539,6 @@ def test_multi_family_parallel_matches_sequential():
 
 
 def test_parametric_parallel_matches_sequential():
-    pytest.importorskip("joblib")
     rng = np.random.default_rng(13)
     t = np.linspace(0, 1, 128, endpoint=False)
     X = rng.normal(scale=0.05, size=(6, 3, 128))
@@ -595,7 +634,6 @@ def test_n_jobs_one_skips_joblib_loading(monkeypatch):
 
 
 def test_parametric_parallel_n_jobs_all_cores_smoke():
-    pytest.importorskip("joblib")
     rng = np.random.default_rng(17)
     t = np.linspace(0, 4, 512, endpoint=False)
     X = rng.normal(scale=0.05, size=(4, 3, 512))
@@ -827,7 +865,6 @@ def test_shared_union_psd_matches_separate_family_outputs():
 
 
 def test_obs_batch_parallel_disables_parametric_inner_joblib(monkeypatch):
-    pytest.importorskip("joblib")
     rng = np.random.default_rng(22)
     t = np.linspace(0, 4, 512, endpoint=False)
     X = rng.normal(scale=0.05, size=(6, 3, 512))
@@ -889,7 +926,6 @@ def test_obs_batch_parallel_disables_parametric_inner_joblib(monkeypatch):
 
 
 def test_single_psd_group_uses_psd_level_n_jobs(monkeypatch):
-    pytest.importorskip("joblib")
     rng = np.random.default_rng(23)
     X = rng.normal(size=(4, 3, 128))
     calls: list[int | None] = []
@@ -939,25 +975,6 @@ def test_validation_edge_cases_runtime():
         validate_runtime_inputs(config, X=X, sfreq=100.0, channel_names=None)
 
 
-def test_pool_channels_requires_standard_result_structure():
-    pipe = DescriptorPipeline({})
-
-    with pytest.raises(ValueError, match="'X', 'descriptor_names', and 'failures'"):
-        pipe.pool_channels({"X": np.ones((2, 2))}, {"G1": ["Fz"]})
-
-
-def test_pool_channels_requires_sensor_level_descriptor_names():
-    pipe = DescriptorPipeline({})
-    result = {
-        "X": np.ones((2, 1)),
-        "descriptor_names": ["global_metric"],
-        "failures": [],
-    }
-
-    with pytest.raises(ValueError, match="sensor-level descriptor names"):
-        pipe.pool_channels(result, {"G1": ["Fz"]})
-
-
 def test_pool_channels_handles_mixture_of_sensor_and_global_features():
     pipe = DescriptorPipeline({})
     result = {
@@ -1003,17 +1020,6 @@ def test_pipeline_instantiation_validates_fit_range_coverage():
         DescriptorPipeline(config)
 
 
-def test_pool_channels_reject_mismatched_columns():
-    pipe = DescriptorPipeline({})
-    result = {
-        "X": np.zeros((2, 2)),
-        "descriptor_names": ["a_ch-Fz"],  # 2 columns vs 1 name
-        "failures": [],
-    }
-    with pytest.raises(ValueError, match=r"align with result\['X'\] columns"):
-        pipe.pool_channels(result, {"G": ["Fz"]})
-
-
 def test_pipeline_precision_is_propagated_to_pooled_output():
     pipe = DescriptorPipeline({"precision": "float32"})
     result = {
@@ -1026,7 +1032,6 @@ def test_pipeline_precision_is_propagated_to_pooled_output():
 
 
 def test_empty_work_unit_parallel_smoke():
-    pytest.importorskip("joblib")
     # 0 signal extractors, 1 PSD group (1 consumer) -> sequential
     pipe = DescriptorPipeline(
         {

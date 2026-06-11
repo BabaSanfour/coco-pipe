@@ -16,11 +16,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
-from sklearn.feature_selection import (
-    SelectKBest,
-    f_classif,
-    f_regression,
-)
+from sklearn.feature_selection import f_classif, f_regression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.multiclass import type_of_target
@@ -28,7 +24,11 @@ from sklearn.utils.multiclass import type_of_target
 from coco_pipe.utils import get_environment_info
 
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
-from ._engine import GroupedSequentialFeatureSelector, fit_and_score_fold
+from ._engine import (
+    GroupedSequentialFeatureSelector,
+    _SafeSelectKBest,
+    fit_and_score_fold,
+)
 from ._metrics import get_metric_spec
 from ._splitters import get_cv_splitter
 from .configs import ExperimentConfig
@@ -187,6 +187,27 @@ class Experiment:
             else:
                 steps.append(("scaler", StandardScaler()))
 
+        if self.config.reducer.enabled and allow_prep:
+            if self.config.reducer.method == "pca":
+                from sklearn.decomposition import PCA
+
+                steps.append(
+                    (
+                        "reducer",
+                        PCA(
+                            n_components=self.config.reducer.n_components,
+                            whiten=self.config.reducer.whiten,
+                            svd_solver=self.config.reducer.svd_solver,
+                            random_state=self.config.reducer.random_state,
+                        ),
+                    )
+                )
+        elif self.config.reducer.enabled and not allow_prep:
+            raise ValueError(
+                f"Fold-local reduction is only valid for classical 2D inputs. "
+                f"Model '{model_name}' uses {spec.input_kinds} data."
+            )
+
         if self.config.feature_selection.enabled and allow_prep:
             fs_step = self._create_fs_step(full_est)
             if fs_step:
@@ -239,12 +260,13 @@ class Experiment:
         self._inject_seed(self.config.feature_selection, seed + 1)
         self._inject_seed(self.config.tuning, seed + 2)
         self._inject_seed(self.config.calibration, seed + 3)
+        self._inject_seed(self.config.reducer, seed + 4)
 
         # 2. Model seeds
         model_names = sorted(self.config.models.keys())
         from numpy.random import SeedSequence
 
-        ss = SeedSequence(seed + 4)
+        ss = SeedSequence(seed + 5)
         model_seeds = ss.spawn(len(model_names))
         for name, m_ss in zip(model_names, model_seeds):
             self._inject_seed(self.config.models[name], int(m_ss.generate_state(1)[0]))
@@ -270,6 +292,65 @@ class Experiment:
         """Create a concrete scikit-learn estimator instance from a model config."""
         # 1. Use the pre-resolved spec for explicit dispatch
         spec = self._model_specs.get(model_name) or resolve_estimator_spec(config)
+        kind = _get_val(config, "kind", "classical")
+
+        if kind == "frozen_backbone":
+            from .foundation_models import FrozenBackboneTransformer
+
+            backbone = _get_val(config, "backbone")
+            head_config = _get_val(config, "head")
+            transformer = FrozenBackboneTransformer(
+                model_key=_get_val(backbone, "model_key"),
+                backend=_get_val(backbone, "backend", "auto"),
+                pooling=_get_val(backbone, "pooling", "mean"),
+                sfreq=_get_val(backbone, "sfreq"),
+                ch_names=_get_val(backbone, "ch_names"),
+                backend_kwargs=_get_val(backbone, "backend_kwargs", {}),
+            )
+            head_spec = resolve_estimator_spec(head_config)
+            head_cls = get_estimator_cls(head_spec.name)
+            head = head_cls(**dict(_get_val(head_config, "params", {})))
+            return Pipeline([("backbone", transformer), ("head", head)])
+
+        if kind == "neural_finetune":
+            from .foundation_models import FoundationClassifier
+
+            trainer = _get_val(config, "trainer")
+            trainer_payload = (
+                trainer.model_dump()
+                if hasattr(trainer, "model_dump")
+                else dict(trainer or {})
+            )
+            optimizer = dict(_get_val(config, "optimizer", {}))
+            if "lr" in optimizer:
+                trainer_payload["lr"] = optimizer["lr"]
+            device_cfg = _get_val(config, "device")
+            device = _get_val(device_cfg, "device", "auto")
+            lora = _get_val(config, "lora")
+            lora_payload = (
+                lora.model_dump() if hasattr(lora, "model_dump") else dict(lora or {})
+            )
+            checkpoints = _get_val(config, "checkpoints")
+            checkpoint_payload = (
+                checkpoints.model_dump()
+                if hasattr(checkpoints, "model_dump")
+                else dict(checkpoints or {})
+            )
+            return FoundationClassifier(
+                model_key=_get_val(config, "model_key"),
+                backend=_get_val(config, "backend", "auto"),
+                train_mode=_get_val(config, "train_mode", "full"),
+                device=device,
+                n_outputs=_get_val(config, "n_outputs"),
+                sfreq=_get_val(config, "sfreq"),
+                ch_names=_get_val(config, "ch_names"),
+                trainer=trainer_payload,
+                lora=lora_payload,
+                backend_kwargs=_get_val(config, "backend_kwargs", {}),
+                checkpoints=checkpoint_payload,
+                class_weight=_get_val(config, "class_weight", "balanced"),
+                random_state=self.config.random_state or 42,
+            )
 
         if spec.family in CLASSICAL_FAMILIES:
             est_cls = get_estimator_cls(spec.name)
@@ -351,7 +432,10 @@ class Experiment:
             )
             return (
                 "fs",
-                SelectKBest(score_func=score_func, k=fs_conf.n_features or "all"),
+                _SafeSelectKBest(
+                    score_func=score_func,
+                    k=fs_conf.n_features or "all",
+                ),
             )
         if fs_conf.method == "sfs":
             cv = get_cv_splitter(fs_conf.cv, require_groups=False)

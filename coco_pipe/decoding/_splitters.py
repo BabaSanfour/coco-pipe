@@ -26,6 +26,7 @@ from sklearn.model_selection import (
 
 from ._constants import GROUP_CV_STRATEGIES, MetricTask
 from .configs import CVConfig
+from .targets import safe_group_n_splits
 
 
 class _CVWithGroups(BaseCrossValidator):
@@ -326,8 +327,21 @@ def get_cv_splitter(
         )
 
     common_kwargs = {}
+    effective_n_splits = config.n_splits
+    if (
+        getattr(config, "auto_reduce_n_splits", True)
+        and groups is not None
+        and strat in GROUP_CV_STRATEGIES
+        and strat not in {"leave_one_group_out", "leave_p_out"}
+    ):
+        effective_n_splits = safe_group_n_splits(
+            y if y is not None else np.zeros(len(groups), dtype=int),
+            groups,
+            requested=config.n_splits,
+            stratified=strat == "stratified_group_kfold",
+        )
     if strat not in ["leave_one_group_out", "leave_p_out", "split", "timeseries"]:
-        common_kwargs["n_splits"] = config.n_splits
+        common_kwargs["n_splits"] = effective_n_splits
 
     if strat in ["stratified", "kfold", "stratified_group_kfold", "split"]:
         common_kwargs["shuffle"] = config.shuffle
@@ -339,7 +353,7 @@ def get_cv_splitter(
     elif strat == "kfold":
         splitter = KFold(**common_kwargs)
     elif strat == "group_kfold":
-        splitter = GroupKFold(n_splits=config.n_splits)
+        splitter = GroupKFold(n_splits=effective_n_splits)
     elif strat == "stratified_group_kfold":
         splitter = StratifiedGroupKFold(**common_kwargs)
     elif strat == "leave_p_out":
@@ -348,7 +362,7 @@ def get_cv_splitter(
         splitter = LeaveOneGroupOut()
     elif strat == "group_shuffle_split":
         splitter = GroupShuffleSplit(
-            n_splits=config.n_splits,
+            n_splits=effective_n_splits,
             test_size=config.test_size,
             random_state=config.random_state,
         )

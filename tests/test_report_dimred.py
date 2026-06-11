@@ -271,9 +271,6 @@ def test_reduction_full_coverage():
     assert len(report.children) > 0
 
 
-# ----- Helper-level edge cases moved from test_report_core.py ----------------
-
-
 def test_get_reducer_summary_edge_cases():
     # 1. Missing get_summary
     with pytest.raises(TypeError, match="must implement get_summary"):
@@ -430,96 +427,80 @@ class MockReducerForExceptions:
         return np.ones((2, 2))
 
 
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_embedding", side_effect=ValueError("Plot error")
+@pytest.mark.parametrize(
+    "plot_target, call, log_prefix, patch_kwargs",
+    [
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_embedding",
+            lambda rep: add_reduction_embedding(rep, np.random.randn(10, 2)),
+            "Embedding section skipped: %s",
+            {},
+            id="embedding",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_metrics",
+            lambda rep: add_reduction_metrics(rep, MockReducerForExceptions()),
+            "Metrics section skipped: %s",
+            {},
+            id="metrics",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_shepard_diagram",
+            lambda rep: add_reduction_diagnostics(
+                rep, np.random.randn(10, 5), np.random.randn(10, 2)
+            ),
+            "Diagnostics section skipped: %s",
+            {},
+            id="diagnostics",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_interpretation",
+            lambda rep: add_reduction_interpretation(
+                rep, {"loadings": np.ones((2, 2))}, analysis="loadings"
+            ),
+            "Interpretation section skipped: %s",
+            {"create": True},
+            id="interpretation",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_coranking_matrix",
+            lambda rep: add_reduction_coranking(rep, np.ones((5, 5))),
+            "Co-ranking section skipped: %s",
+            {},
+            id="coranking",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_component_loadings",
+            lambda rep: add_reduction_components(rep, np.ones((2, 2))),
+            "Component section skipped: %s",
+            {},
+            id="components",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_trajectory",
+            lambda rep: add_reduction_trajectory(rep, np.random.randn(5, 10, 2)),
+            "Trajectory section skipped: %s",
+            {},
+            id="trajectory",
+        ),
+        pytest.param(
+            "coco_pipe.viz.dim_reduction.plot_trajectory_separation",
+            lambda rep: add_reduction_trajectory_separation(rep, {"A-B": [1, 2]}),
+            "Trajectory separation section skipped: %s",
+            {},
+            id="trajectory_separation",
+        ),
+    ],
 )
-def test_add_reduction_embedding_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_embedding(rep, np.random.randn(10, 2))
-    mock_log.assert_called_with("Embedding section skipped: %s", mock_plot.side_effect)
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch("coco_pipe.viz.dim_reduction.plot_metrics", side_effect=ValueError("Plot error"))
-def test_add_reduction_metrics_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_metrics(rep, MockReducerForExceptions())
-    mock_log.assert_called_with("Metrics section skipped: %s", mock_plot.side_effect)
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_shepard_diagram",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_reduction_diagnostics_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_diagnostics(rep, np.random.randn(10, 5), np.random.randn(10, 2))
-    mock_log.assert_called_with(
-        "Diagnostics section skipped: %s", mock_plot.side_effect
-    )
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_interpretation",
-    side_effect=ValueError("Plot error"),
-    create=True,
-)
-def test_add_reduction_interpretation_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_interpretation(
-        rep, {"loadings": np.ones((2, 2))}, analysis="loadings"
-    )
-    mock_log.assert_called_with(
-        "Interpretation section skipped: %s", mock_plot.side_effect
-    )
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_coranking_matrix",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_reduction_coranking_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_coranking(rep, np.ones((5, 5)))
-    mock_log.assert_called_with("Co-ranking section skipped: %s", mock_plot.side_effect)
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_component_loadings",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_reduction_components_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_components(rep, np.ones((2, 2)))
-    mock_log.assert_called_with("Component section skipped: %s", mock_plot.side_effect)
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_trajectory", side_effect=ValueError("Plot error")
-)
-def test_add_reduction_trajectory_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_trajectory(rep, np.random.randn(5, 10, 2))
-    mock_log.assert_called_with("Trajectory section skipped: %s", mock_plot.side_effect)
-
-
-@patch("coco_pipe.report.dim_reduction.logger.debug")
-@patch(
-    "coco_pipe.viz.dim_reduction.plot_trajectory_separation",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_reduction_trajectory_separation_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_reduction_trajectory_separation(rep, {"A-B": [1, 2]})
-    mock_log.assert_called_with(
-        "Trajectory separation section skipped: %s", mock_plot.side_effect
-    )
+def test_add_reduction_section_exception(plot_target, call, log_prefix, patch_kwargs):
+    """Each section logs and skips gracefully when its plot helper raises."""
+    err = ValueError("Plot error")
+    with (
+        patch("coco_pipe.report.dim_reduction.logger.debug") as mock_log,
+        patch(plot_target, side_effect=err, **patch_kwargs),
+    ):
+        call(Report("Test"))
+    mock_log.assert_called_with(log_prefix, err)
 
 
 @patch("coco_pipe.report.dim_reduction.warnings.warn")

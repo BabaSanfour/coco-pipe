@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -7,8 +8,18 @@ import pytest
 
 import coco_pipe.io.utils as utils_mod
 from coco_pipe.io.quality import row_quality_score
-
-# --- DataFrame Utilities ---
+from coco_pipe.io.utils import (
+    _get_bids_path,
+    _get_mne,
+    _get_read_raw_bids,
+    detect_runs,
+    detect_sessions,
+    detect_subjects,
+    load_participants_tsv,
+    make_strata,
+    sample_indices,
+    smart_reader,
+)
 
 
 def test_row_quality_score():
@@ -74,9 +85,6 @@ def test_sample_indices():
     sampled_rows = df.loc[idx]
     assert sampled_rows["target"].value_counts()["A"] == 1
     assert sampled_rows["target"].value_counts()["B"] == 2
-
-
-# --- File/String Utilities ---
 
 
 def test_split_column():
@@ -207,9 +215,6 @@ def test_smart_reader(tmp_path):
         m_file.keys.return_value = ["data"]
         m_file.__getitem__.return_value.__getitem__.return_value = "h5_data"
         assert utils_mod.smart_reader(p_h5) == "h5_data"
-
-
-# --- BIDS Utilities ---
 
 
 def test_read_bids_entry(monkeypatch, tmp_path):
@@ -417,3 +422,313 @@ def test_participants_tsv(tmp_path):
 
     # Missing
     assert utils_mod.load_participants_tsv(tmp_path / "nowhere") == {}
+
+
+def test_lazy_imports():
+    utils_mod.mne = None
+    assert _get_mne() is not None
+    utils_mod.read_raw_bids = None
+    assert _get_read_raw_bids() is not None
+
+
+def test_make_strata_extra():
+    df = pd.DataFrame({"num": [1, 2, 3, 4, 5], "num_dup": [1, 1, 1, 1, 1]})
+
+    # uniform
+    res = make_strata(df, covariates=["num"], n_bins=2, binning="uniform")
+    assert len(res) == 5
+
+    # qcut exception fallback to cut
+    res2 = make_strata(df, covariates=["num_dup"], n_bins=2, binning="quantile")
+    assert len(res2) == 5
+
+
+def test_sample_indices_extra():
+    df = pd.DataFrame({"target": ["A", "A", "B"], "feat": [1, 2, 3]})
+    rng = np.random.default_rng(42)
+
+    # n <= 0
+    res = sample_indices(
+        df, "target", {"A": 0}, rng, replace=False, prefer_clean=False, exclude=[]
+    )
+    assert len(res) == 0
+
+    # prefer_clean with replace
+    res2 = sample_indices(
+        df, "target", {"A": 3}, rng, replace=True, prefer_clean=True, exclude=[]
+    )
+    assert len(res2) == 3
+
+
+def test_load_participants_tsv_exception(tmp_path):
+    p = tmp_path / "participants.tsv"
+    p.write_text("invalid\ttsv\ncontent")
+    # Actually just missing columns or something might not raise exception
+    # unless it's malformed.
+    # To force pd.read_csv to raise, we can make it a directory
+    p.unlink()
+    p.mkdir()
+    res = load_participants_tsv(tmp_path)
+    assert res == {}
+
+
+def test_detect_subjects_sessions(tmp_path):
+    (tmp_path / "sub-01").mkdir()
+    (tmp_path / "sub-02").mkdir()
+    (tmp_path / "sub-01" / "ses-A").mkdir()
+
+    subs = detect_subjects(tmp_path)
+    assert "01" in subs and "02" in subs
+
+    sess = detect_sessions(tmp_path, "01")
+    assert "A" in sess
+
+    sess2 = detect_sessions(tmp_path, "03")  # doesn't exist
+    assert len(sess2) == 0
+
+
+def test_detect_runs(tmp_path):
+    # This requires mne_bids matching logic which might be hard to mock
+    # without actual files
+    # I will skip deep mocking if it's complicated, but let's try a simple mock
+    class MockMatch:
+        run = "01"
+
+    class MockBIDSPath:
+        def __init__(self, **kwargs):
+            pass
+
+        def match(self):
+            return [MockMatch()]
+
+    orig = utils_mod.BIDSPath
+    utils_mod.BIDSPath = MockBIDSPath
+    try:
+        runs = detect_runs(tmp_path, "01")
+        assert "01" in runs
+    finally:
+        utils_mod.BIDSPath = orig
+
+
+def test_smart_reader_h5(tmp_path):
+    import h5py
+
+    p1 = tmp_path / "test1.h5"
+    with h5py.File(p1, "w") as f:
+        f.create_dataset("embeddings", data=np.array([1, 2]))
+    assert len(smart_reader(p1)) == 2
+
+    p2 = tmp_path / "test2.h5"
+    with h5py.File(p2, "w") as f:
+        f.create_dataset("data", data=np.array([1, 2]))
+    assert len(smart_reader(p2)) == 2
+
+    p3 = tmp_path / "test3.h5"
+    with h5py.File(p3, "w") as f:
+        f.create_dataset("random", data=np.array([1, 2]))
+    assert len(smart_reader(p3)) == 2
+
+    p4 = tmp_path / "test4.h5"
+    with h5py.File(p4, "w") as f:
+        f.create_dataset("a", data=np.array([1]))
+        f.create_dataset("b", data=np.array([2]))
+    with pytest.raises(ValueError):
+        smart_reader(p4)
+
+    p5 = tmp_path / "test5.unknown"
+    with pytest.raises(ValueError):
+        smart_reader(p5)
+
+
+def test_get_bids_path():
+    utils_mod.BIDSPath = None
+    assert _get_bids_path() is not None
+
+
+def test_sample_indices_not_clean():
+    df = pd.DataFrame({"target": ["A", "A", "B"], "feat": [1, 2, 3]})
+    rng = np.random.default_rng(42)
+
+    # n <= len and not replace
+    res = sample_indices(
+        df, "target", {"A": 2}, rng, replace=False, prefer_clean=False, exclude=[]
+    )
+    assert len(res) == 2
+
+    # n > len or replace
+    res2 = sample_indices(
+        df, "target", {"A": 3}, rng, replace=True, prefer_clean=False, exclude=[]
+    )
+    assert len(res2) == 3
+
+
+def test_read_bids_entry_evoked(monkeypatch):
+    class DummyEvoked:
+        def __init__(self):
+            self.data = np.zeros((2, 10))
+            self.times = np.zeros(10)
+            self.ch_names = ["C1", "C2"]
+            self.info = {"sfreq": 100.0}
+
+    class MockMNE:
+        def read_evokeds(self, *args, **kwargs):
+            return [DummyEvoked()]
+
+    monkeypatch.setattr(utils_mod, "_get_mne", lambda: MockMNE())
+
+    class MockBIDSPath:
+        fpath = Path("fake")
+
+        def match(self):
+            return [Path("fake2")]
+
+    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+        MockBIDSPath(), False, True, "continuous", None, None
+    )
+    assert data.shape == (1, 2, 10)
+
+
+def test_read_bids_entry_raw_continuous(monkeypatch):
+    class DummyRaw:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.ch_names = ["C1", "C2"]
+            self.info = {"sfreq": 100.0}
+
+        def load_data(self):
+            pass
+
+        def pick_types(self, **kwargs):
+            pass
+
+        def get_data(self):
+            return np.zeros((2, 10))
+
+    monkeypatch.setattr(
+        utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
+    )
+
+    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+        None, False, False, "continuous", None, None
+    )
+    assert data.shape == (1, 2, 10)
+
+
+def test_read_bids_entry_raw_fixed_epochs(monkeypatch):
+    class DummyRaw:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.ch_names = ["C1", "C2"]
+            self.info = {"sfreq": 100.0}
+
+        def load_data(self):
+            pass
+
+        def pick_types(self, **kwargs):
+            pass
+
+        def get_data(self):
+            return np.zeros((2, 10))
+
+    class DummyEpochs:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.events = np.zeros((5, 3))
+
+        def get_data(self, **kwargs):
+            return np.zeros((5, 2, 10))
+
+    class MockMNE:
+        def make_fixed_length_epochs(self, *args, **kwargs):
+            return DummyEpochs()
+
+    monkeypatch.setattr(
+        utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
+    )
+    monkeypatch.setattr(utils_mod, "_get_mne", lambda: MockMNE())
+
+    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+        None, False, False, "epochs", 1.0, 0.5
+    )
+    assert data.shape == (5, 2, 10)
+
+
+def test_read_bids_entry_raw_event_epochs(monkeypatch):
+    class DummyRaw:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.ch_names = ["C1", "C2"]
+            self.info = {"sfreq": 100.0}
+
+        def load_data(self):
+            pass
+
+        def pick_types(self, **kwargs):
+            pass
+
+        def get_data(self):
+            return np.zeros((2, 10))
+
+    class DummyEpochs:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.events = np.zeros((5, 3))
+
+        def get_data(self, **kwargs):
+            return np.zeros((5, 2, 10))
+
+    class MockMNE:
+        def Epochs(*args, **kwargs):
+            return DummyEpochs()
+
+        def events_from_annotations(self, *args, **kwargs):
+            return np.zeros((5, 3)), {"A": 1}
+
+    monkeypatch.setattr(
+        utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
+    )
+    monkeypatch.setattr(utils_mod, "_get_mne", lambda: MockMNE())
+
+    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+        None, False, False, "epochs", None, None, event_id={"A": 1}
+    )
+    assert data.shape == (5, 2, 10)
+
+
+def test_read_bids_entry_raw_no_length(monkeypatch):
+    class DummyRaw:
+        def __init__(self):
+            self.times = np.zeros(10)
+            self.ch_names = ["C1", "C2"]
+            self.info = {"sfreq": 100.0}
+
+        def load_data(self):
+            pass
+
+        def pick_types(self, **kwargs):
+            pass
+
+        def get_data(self):
+            return np.zeros((2, 10))
+
+    monkeypatch.setattr(
+        utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
+    )
+
+    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+        None, False, False, "epochs", None, None
+    )
+    assert data.shape == (1, 2, 10)
+
+
+def test_io_init_getattr():
+    import coco_pipe.io as coco_io
+
+    # 1. Valid attributes
+    assert coco_io.BIDSDataset is not None
+    assert coco_io.EmbeddingDataset is not None
+    assert coco_io.TabularDataset is not None
+
+    # 2. Invalid attribute raises AttributeError
+    with pytest.raises(AttributeError, match="has no attribute 'invalid_attr'"):
+        _ = coco_io.invalid_attr

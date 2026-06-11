@@ -169,6 +169,82 @@ class ExperimentResult:
 
         return path
 
+    def export(
+        self,
+        output_dir: Union[str, Path],
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """Export the result object and all available tidy tables.
+
+        Individual optional table failures are recorded in the run manifest
+        rather than invalidating an otherwise complete experiment.
+        """
+        import json
+
+        import yaml
+
+        from .persistence import config_hash, redact_sensitive
+
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        effective_config = dict(config or self.config or {})
+        written: Dict[str, str] = {}
+        export_errors: Dict[str, str] = {}
+        written["result"] = str(self.save(output / "result.joblib"))
+        accessors = {
+            "summary": self.summary,
+            "fold_scores": self.get_detailed_scores,
+            "predictions": self.get_predictions,
+            "splits": self.get_splits,
+            "confusion_matrices": self.get_confusion_matrices,
+            "feature_importances": self.get_feature_importances,
+            "selected_features": self.get_selected_features,
+            "feature_scores": self.get_feature_scores,
+            "feature_stability": self.get_feature_stability,
+            "fit_diagnostics": self.get_fit_diagnostics,
+            "statistical_assessment": self.get_statistical_assessment,
+            "model_artifacts": self.get_model_artifacts,
+        }
+        for name, accessor in accessors.items():
+            try:
+                table = accessor()
+                if not isinstance(table, pd.DataFrame):
+                    table = pd.DataFrame(table)
+                if name == "summary":
+                    table = table.reset_index()
+                csv_path = output / f"{name}.csv"
+                table.to_csv(csv_path, index=False)
+                written[name] = str(csv_path)
+                try:
+                    parquet_path = output / f"{name}.parquet"
+                    table.to_parquet(parquet_path, index=False)
+                    written[f"{name}_parquet"] = str(parquet_path)
+                except (ImportError, ValueError, TypeError, OSError) as exc:
+                    export_errors[f"{name}_parquet"] = f"{type(exc).__name__}: {exc}"
+            except Exception as exc:
+                export_errors[name] = f"{type(exc).__name__}: {exc}"
+
+        if "summary" not in written:
+            raise RuntimeError(
+                "Experiment result export failed to produce the required summary table."
+            )
+        (output / "config_used.yaml").write_text(
+            yaml.safe_dump(redact_sensitive(effective_config), sort_keys=False),
+            encoding="utf-8",
+        )
+        manifest = {
+            "config_hash": config_hash(effective_config),
+            "status": "success",
+            "artifacts": written,
+            "export_errors": export_errors,
+        }
+        (output / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        (output / "_SUCCESS").write_text("", encoding="utf-8")
+        return written
+
     @classmethod
     def load(cls, path: Union[str, Path, Any]) -> "ExperimentResult":
         """

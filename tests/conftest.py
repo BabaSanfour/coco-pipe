@@ -4,6 +4,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# --- Native threading guard -------------------------------------------------
+for _thread_var in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_thread_var, "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 
 @pytest.fixture(scope="session", autouse=True)
 def mock_visualizations():
