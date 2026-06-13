@@ -744,7 +744,12 @@ def _run_permutation_loop(
         local_rng = np.random.default_rng(seed)
         perm_idx = local_rng.permutation(n_unique)
         y_perm = unit_labels_orig[perm_idx][unit_map_idx]
-        perm_config = experiment_config.model_copy()
+        perm_config = experiment_config.model_copy(deep=True)
+        # A permutation run must not recursively trigger its own statistical
+        # assessment: that nests permutation-within-permutation (runaway cost and
+        # degenerate inner folds). Score the permuted fit only.
+        if perm_config.statistical_assessment is not None:
+            perm_config.statistical_assessment.enabled = False
         p_res = Experiment(perm_config).run(
             X,
             y_perm,

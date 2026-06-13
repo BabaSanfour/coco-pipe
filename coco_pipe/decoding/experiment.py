@@ -835,6 +835,12 @@ class Experiment:
         else:
             meta = pd.DataFrame(meta_in).reset_index(drop=True)
             meta.columns = [str(c).capitalize() for c in meta.columns]
+            # Capitalization must be idempotent: when already-resolved metadata is
+            # passed back through ``run()`` (e.g. the permutation null re-runs the
+            # experiment), the previously injected lowercase ``group_key`` column
+            # capitalizes onto the original group column, creating a duplicate name
+            # whose ``.values`` is 2-D and corrupts downstream prediction frames.
+            meta = meta.loc[:, ~meta.columns.duplicated()]
             if len(meta) != n:
                 raise ValueError(f"sample_metadata length mismatch: {len(meta)} vs {n}")
 
