@@ -24,3 +24,13 @@ QualityInput = pd.DataFrame | np.ndarray
 
 _STATUS_ORDER: dict[str, int] = {"pass": 0, "warn": 1, "fail": 2}
 """Ordinal ranking used by ``resolve_qc_status`` to pick the worst level."""
+
+GROUP_BY_COLUMN: dict[str, str] = {
+    "family": "family",
+    "subfamily": "subfamily",
+    "measure": "measure",
+    "feature": "column",
+}
+"""Maps a ``group_by`` granularity to the ``classify_descriptor_columns`` column
+that carries its label. Shared by the QC drop path and downstream callers so the
+set of valid ``group_by`` values lives in one place."""

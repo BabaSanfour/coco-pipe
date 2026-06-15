@@ -84,6 +84,51 @@ def build_qc_section(qc_result: QCResult) -> "Section":
             )
         )
 
+    if qc_result.per_family_dropped:
+        group_by = (qc_result.thresholds or {}).get("group_by", "family")
+        n_in = qc_result.n_obs_in
+        group_column = f"Group ({group_by})"
+        retention_rows = []
+        drop_rows = []
+        for group, records in qc_result.per_family_dropped.items():
+            dropped_ids = {
+                getattr(record, "subject_id", getattr(record, "obs_id", ""))
+                for record in records
+            }
+            retention_rows.append(
+                {
+                    group_column: group,
+                    "N In": n_in,
+                    "N Dropped": len(dropped_ids),
+                    "N Kept": (n_in - len(dropped_ids)) if n_in else None,
+                }
+            )
+            for record in records:
+                drop_rows.append(
+                    {
+                        group_column: group,
+                        "Dropped ID": getattr(
+                            record,
+                            "subject_id",
+                            getattr(record, "obs_id", ""),
+                        ),
+                        "Outlier Fraction": record.outlier_fraction,
+                    }
+                )
+        section.add_element(
+            TableElement(
+                pd.DataFrame(retention_rows),
+                title=f"Per-Group Retention (group_by={group_by})",
+            )
+        )
+        if drop_rows:
+            section.add_element(
+                TableElement(
+                    pd.DataFrame(drop_rows),
+                    title=f"Conditional Drops by {group_by}",
+                )
+            )
+
     burden = qc_result.subject_outlier_burden
     if burden is not None and not burden.empty:
         import matplotlib.pyplot as plt
@@ -124,4 +169,9 @@ def build_qc_section(qc_result: QCResult) -> "Section":
     missingness = qc_result.feature_missingness
     if missingness is not None:
         section.add_element(TableElement(missingness, title="Feature Missingness"))
+    dropped_columns = qc_result.feature_columns_dropped
+    if dropped_columns is not None and not dropped_columns.empty:
+        section.add_element(
+            TableElement(dropped_columns, title="Pruned Descriptor Columns")
+        )
     return section

@@ -134,6 +134,8 @@ def test_classify_empty_list():
         "scope",
         "channel",
         "measure",
+        "subfamily",
+        "descriptor",
     ]
 
 
@@ -483,3 +485,53 @@ def test_add_family_diagnostics():
     assert "band_abs_negative_rate" in res.columns
     assert "param_r_squared_median" in res.columns
     assert "complexity_measure_missingness_max" in res.columns
+
+
+def test_descriptor_subfamily_derivation():
+    from coco_pipe.descriptors.qc import descriptor_subfamily
+
+    # band: output type, robust to stat prefix and band suffix
+    assert descriptor_subfamily("band", "log_abs_alpha") == "log_abs"
+    assert descriptor_subfamily("band", "median_log_abs_alpha") == "log_abs"
+    assert descriptor_subfamily("band", "iqr_corr_rel_beta") == "corr_rel"
+    assert descriptor_subfamily("band", "corr_log_abs_gamma") == "corr_log_abs"
+    assert descriptor_subfamily("band", "abs_delta") == "abs"
+    assert descriptor_subfamily("band", "agg_ratio_theta_beta") == "ratio"
+    assert descriptor_subfamily("band", "agg_corr_ratio_theta_beta") == "corr_ratio"
+    # param: aperiodic / peaks / fit_quality
+    assert descriptor_subfamily("param", "offset") == "aperiodic"
+    assert descriptor_subfamily("param", "median_alpha_peak_freq") == "peaks"
+    assert descriptor_subfamily("param", "r_squared") == "fit_quality"
+    # complexity: curated 3-way map
+    assert descriptor_subfamily("complexity", "sample_entropy") == "entropy"
+    assert descriptor_subfamily("complexity", "higuchi_fd") == "fractal_complexity"
+    assert descriptor_subfamily("complexity", "hjorth_mobility") == "signal_dynamics"
+    # unknowns fall back
+    assert descriptor_subfamily(None, "x") == "unknown"
+    assert descriptor_subfamily("complexity", "made_up") == "complexity_other"
+
+
+def test_classify_adds_subfamily_column():
+    result = classify_descriptor_columns(
+        ["band_log_abs_alpha_ch-Fz", "complexity_sample_entropy_ch-Fz"]
+    )
+    assert result["subfamily"].tolist() == ["log_abs", "entropy"]
+
+
+def test_select_viable_feature_columns_row_budget():
+    from coco_pipe.descriptors.qc import select_viable_feature_columns
+
+    df = pd.DataFrame(
+        {
+            "band_log_abs_alpha_ch-Fz": [1.0, 2.0, 3.0, np.nan, 5.0],  # 20% missing
+            "band_log_abs_beta_ch-Fz": [5.0, 4.0, 3.0, 2.0, 1.0],  # clean
+        }
+    )
+    cols = list(df.columns)
+    # Without a budget the 20%-missing column survives (not over threshold)...
+    surviving, _ = select_viable_feature_columns(df, cols)
+    assert set(surviving) == set(cols)
+    # ...with budget 0 it is dropped (worst-NaN first) to preserve all rows.
+    surviving, drop_log = select_viable_feature_columns(df, cols, max_row_drop_rate=0.0)
+    assert surviving == ["band_log_abs_beta_ch-Fz"]
+    assert "row_preserving" in set(drop_log["drop_reason"])

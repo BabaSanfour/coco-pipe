@@ -13,12 +13,26 @@ The six supported modes are:
     flattened.
 ``family``
     One unit per descriptor feature family (descriptor inputs only).
+``subfamily``
+    One unit per descriptor sub-family — the output type within a family, e.g.
+    band ``log_abs`` / ``rel`` or param ``aperiodic`` / ``peaks`` (descriptor
+    inputs only; requires a ``feature_subfamily`` coord).
 ``sensor_within_family``
     One unit per (sensor, family) combination (descriptor inputs only).
+``sensor_within_subfamily``
+    One unit per (sensor, sub-family) combination (descriptor inputs only;
+    requires a ``feature_subfamily`` coord).
 ``feature``
     One unit per descriptor feature across all sensors.
 ``feature_within_family``
     One unit per (feature, family) combination across all sensors.
+``descriptor``
+    One unit per descriptor across all sensors — all aggregation-stat columns of
+    a descriptor (e.g. mean + iqr of alpha) kept together (requires a
+    ``feature_descriptor`` coord).
+``descriptor_sensor``
+    One unit per (descriptor, sensor) — one descriptor's stats at a single
+    sensor (requires a ``feature_descriptor`` coord).
 """
 
 from __future__ import annotations
@@ -90,6 +104,7 @@ def iter_analysis_units(
         u_key: str,
         u_family: str | None,
         u_container: DataContainer,
+        u_subfamily: str | None = None,
     ) -> None:
         u_container.meta = {
             **dict(u_container.meta),
@@ -97,6 +112,7 @@ def iter_analysis_units(
             "unit_name": u_name,
             "unit_key": u_key,
             "family": u_family,
+            "subfamily": u_subfamily,
         }
         units.append(
             {
@@ -104,6 +120,7 @@ def iter_analysis_units(
                 "unit_name": u_name,
                 "unit_key": u_key,
                 "family": u_family,
+                "subfamily": u_subfamily,
                 "container": u_container,
             }
         )
@@ -160,6 +177,84 @@ def iter_analysis_units(
     wanted_families = list(
         dict.fromkeys(descriptor_families or feature_families.tolist())
     )
+
+    if analysis_mode in {"subfamily", "sensor_within_subfamily"}:
+        if "feature_subfamily" not in container.coords:
+            raise ValueError(
+                f"analysis_mode='{analysis_mode}' requires a 'feature_subfamily' coord."
+            )
+        feature_subfamilies = np.asarray(
+            container.coords["feature_subfamily"], dtype=object
+        ).astype(str)
+        family_mask = (
+            np.isin(feature_families, [str(f) for f in descriptor_families])
+            if descriptor_families
+            else np.ones(feature_families.shape, dtype=bool)
+        )
+        for subfamily in dict.fromkeys(feature_subfamilies[family_mask].tolist()):
+            feature_indices = np.flatnonzero(
+                family_mask & (feature_subfamilies == subfamily)
+            ).tolist()
+            if not feature_indices:
+                continue
+            family = str(feature_families[feature_indices[0]])
+            if analysis_mode == "subfamily":
+                _add_unit(
+                    "subfamily",
+                    subfamily,
+                    subfamily,
+                    family,
+                    container.isel(feature=feature_indices).flatten(preserve="obs"),
+                    u_subfamily=subfamily,
+                )
+            else:  # sensor_within_subfamily
+                for idx, sensor_name in enumerate(sensor_names):
+                    _add_unit(
+                        "sensor",
+                        str(sensor_name),
+                        f"{subfamily}_{sensor_name}",
+                        family,
+                        container.isel(sensor=idx, feature=feature_indices).flatten(
+                            preserve="obs"
+                        ),
+                        u_subfamily=subfamily,
+                    )
+        return units
+
+    if analysis_mode in {"descriptor", "descriptor_sensor"}:
+        if "feature_descriptor" not in container.coords:
+            raise ValueError(
+                f"analysis_mode='{analysis_mode}' requires a "
+                "'feature_descriptor' coord."
+            )
+        feature_descriptors = np.asarray(
+            container.coords["feature_descriptor"], dtype=object
+        ).astype(str)
+        for descriptor in dict.fromkeys(feature_descriptors.tolist()):
+            feature_indices = np.flatnonzero(feature_descriptors == descriptor).tolist()
+            if not feature_indices:
+                continue
+            family = str(feature_families[feature_indices[0]])
+            if analysis_mode == "descriptor":
+                _add_unit(
+                    "descriptor",
+                    descriptor,
+                    descriptor,
+                    family,
+                    container.isel(feature=feature_indices).flatten(preserve="obs"),
+                )
+            else:  # descriptor_sensor — one descriptor (all its stats) at one sensor
+                for idx, sensor_name in enumerate(sensor_names):
+                    _add_unit(
+                        "descriptor",
+                        descriptor,
+                        f"{descriptor}_{sensor_name}",
+                        family,
+                        container.isel(sensor=idx, feature=feature_indices).flatten(
+                            preserve="obs"
+                        ),
+                    )
+        return units
 
     if analysis_mode == "family":
         for family in wanted_families:

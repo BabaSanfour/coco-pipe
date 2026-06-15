@@ -35,6 +35,8 @@ _CLASSIFICATION_COLUMNS: list[str] = [
     "scope",
     "channel",
     "measure",
+    "subfamily",
+    "descriptor",
 ]
 """Output schema of :func:`~coco_pipe.descriptors.qc.classify_descriptor_columns`."""
 

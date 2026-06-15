@@ -887,6 +887,14 @@ class FeatureSelectionConfig(BaseModel):
     method: Literal["k_best", "sfs"] = "sfs"
     n_features: Optional[int] = Field(None, gt=0, description="Number of features.")
     direction: Literal["forward", "backward"] = "forward"
+    tol: Optional[float] = Field(
+        None,
+        description=(
+            "SFS early-stopping tolerance. When set and n_features is None, the "
+            "selector uses n_features_to_select='auto' and stops once the score "
+            "stops improving by at least tol (plateau stop)."
+        ),
+    )
     cv: Optional[CVConfig] = Field(
         None,
         description=(

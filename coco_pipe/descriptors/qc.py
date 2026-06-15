@@ -26,6 +26,100 @@ from coco_pipe.io.quality import (
     compute_feature_missingness,
 )
 
+# Aggregation-stat tokens that may prefix a subject-level measure
+# (e.g. ``median_log_abs_alpha``); stripped before sub-family derivation.
+_AGG_STAT_PREFIXES = frozenset(
+    {"mean", "median", "iqr", "mad", "std", "var", "min", "max"}
+)
+
+# Band output-type patterns, longest/corrected first so e.g. ``corr_log_abs``
+# matches before ``log_abs`` and ``abs``.
+_BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("corr_log_abs", "corr_log_abs"),
+    ("corr_rel", "corr_rel"),
+    ("corr_ratio", "corr_ratio"),
+    ("corr_abs", "corr_abs"),
+    ("log_abs", "log_abs"),
+    ("ratio", "ratio"),
+    ("rel", "rel"),
+    ("abs", "abs"),
+)
+
+_PARAM_SUBFAMILY: dict[str, str] = {
+    "offset": "aperiodic",
+    "exponent": "aperiodic",
+    "knee": "aperiodic",
+    "r_squared": "fit_quality",
+    "fit_error": "fit_quality",
+    "peak_count": "peaks",
+    "peak_freq_dom": "peaks",
+    "peak_power_dom": "peaks",
+    "peak_bandwidth_dom": "peaks",
+    "alpha_peak_freq": "peaks",
+    "alpha_peak_power": "peaks",
+}
+
+_COMPLEXITY_SUBFAMILY: dict[str, str] = {
+    "sample_entropy": "entropy",
+    "perm_entropy": "entropy",
+    "spectral_entropy": "entropy",
+    "svd_entropy": "entropy",
+    "fuzzy_entropy": "entropy",
+    "dispersion_entropy": "entropy",
+    "higuchi_fd": "fractal_complexity",
+    "petrosian_fd": "fractal_complexity",
+    "hurst_exponent": "fractal_complexity",
+    "lziv_complexity": "fractal_complexity",
+    "hjorth_mobility": "signal_dynamics",
+    "hjorth_complexity": "signal_dynamics",
+    "kurtosis": "signal_dynamics",
+    "zero_crossings": "signal_dynamics",
+}
+
+
+def _strip_stat_prefix(measure: str) -> str:
+    head, _, tail = str(measure).partition("_")
+    return tail if head in _AGG_STAT_PREFIXES and tail else str(measure)
+
+
+def descriptor_identity(measure: str) -> str:
+    """Return a measure's descriptor identity (aggregation-stat prefix removed).
+
+    Collapses the per-stat columns of one descriptor — e.g.
+    ``mean_log_abs_alpha`` and ``iqr_log_abs_alpha`` both map to
+    ``log_abs_alpha`` — so location and spread stay together as one unit.
+    """
+    return _strip_stat_prefix(measure)
+
+
+def descriptor_subfamily(family: str | None, measure: str) -> str:
+    """Map a ``(family, measure)`` pair to its descriptor sub-family.
+
+    A sub-family is the *output type* within a family — finer than ``family``
+    but coarser than ``measure``:
+
+    - **band** → ``log_abs`` / ``rel`` / ``corr_log_abs`` / ``corr_rel`` /
+      ``abs`` / ``corr_abs`` / ``ratio`` / ``corr_ratio`` (band name stripped)
+    - **param** → ``aperiodic`` / ``peaks`` / ``fit_quality``
+    - **complexity** → ``entropy`` / ``fractal_complexity`` / ``signal_dynamics``
+
+    Robust to subject-level aggregation-stat prefixes (``median_…``). Unknown
+    families/measures fall back to ``"<family>_other"`` (or ``"unknown"``).
+    """
+    if family is None:
+        return "unknown"
+    core = _strip_stat_prefix(measure)
+    if family == "band":
+        for pattern, label in _BAND_SUBFAMILY_PATTERNS:
+            if pattern in core:
+                return label
+        return "band_other"
+    if family == "param":
+        return _PARAM_SUBFAMILY.get(core, "param_other")
+    if family == "complexity":
+        return _COMPLEXITY_SUBFAMILY.get(core, "complexity_other")
+    return str(family)
+
 
 @lru_cache(maxsize=32)
 def _classify_cached(
@@ -75,6 +169,8 @@ def _classify_cached(
                 "scope": scope,
                 "channel": channel,
                 "measure": measure,
+                "subfamily": descriptor_subfamily(family, measure),
+                "descriptor": descriptor_identity(measure),
             }
         )
 
@@ -121,6 +217,84 @@ def compute_family_constant_summary(
     constants = compute_constant_feature_summary(df, descriptor_names, tol)
     classification = classify_descriptor_columns(descriptor_names, known_families)
     return constants.merge(classification, on="column", how="left")
+
+
+def select_viable_feature_columns(
+    feature_df: pd.DataFrame,
+    descriptor_names: list[str],
+    *,
+    max_missing_rate: float = 0.20,
+    drop_all_nan: bool = True,
+    drop_constant: bool = True,
+    constant_tol: float = 1e-12,
+    max_row_drop_rate: float | None = None,
+    known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
+) -> tuple[list[str], pd.DataFrame]:
+    """Select descriptor columns that pass missingness and degeneracy gates.
+
+    After the missingness/constant gates, if ``max_row_drop_rate`` is set the
+    surviving columns are further pruned (worst-NaN first) so the rows that the
+    caller's any-NaN purge would still drop stay within ``rate * n_rows`` — i.e.
+    prefer shedding a few NaN columns over losing observations.
+    """
+    if not 0 <= max_missing_rate <= 1:
+        raise ValueError("max_missing_rate must be between 0 and 1.")
+    missingness = compute_family_missingness(
+        feature_df, descriptor_names, known_families
+    )
+    constants = compute_family_constant_summary(
+        feature_df, descriptor_names, constant_tol, known_families
+    )
+    summary = missingness.merge(
+        constants[["column", "std", "is_all_nan", "is_constant"]],
+        on="column",
+        how="left",
+    )
+    reasons = []
+    for row in summary.itertuples(index=False):
+        column_reasons = []
+        if drop_all_nan and bool(row.is_all_nan):
+            column_reasons.append("all_nan")
+        elif float(row.missing_rate) > max_missing_rate:
+            column_reasons.append("missing_rate")
+        if drop_constant and bool(row.is_constant):
+            column_reasons.append("constant")
+        reasons.append(",".join(column_reasons))
+    summary["drop_reason"] = reasons
+    summary["dropped"] = summary["drop_reason"].astype(bool)
+    surviving = summary.loc[~summary["dropped"], "column"].astype(str).tolist()
+    drop_log = summary.loc[summary["dropped"]].reset_index(drop=True)
+
+    if max_row_drop_rate is not None and len(feature_df) and surviving:
+        sub = feature_df.loc[:, surviving]
+        budget = int(np.floor(float(max_row_drop_rate) * len(sub)))
+        row_preserving: list[str] = []
+        while surviving:
+            nan_cells = sub.isna()
+            if int(nan_cells.any(axis=1).sum()) <= budget:
+                break
+            column_nan_counts = nan_cells.sum(axis=0)
+            worst = str(column_nan_counts.idxmax())
+            if int(column_nan_counts.max()) == 0:
+                break
+            surviving.remove(worst)
+            sub = sub.drop(columns=[worst])
+            row_preserving.append(worst)
+        if row_preserving:
+            drop_log = pd.concat(
+                [
+                    drop_log,
+                    pd.DataFrame(
+                        {
+                            "column": row_preserving,
+                            "drop_reason": "row_preserving",
+                            "dropped": True,
+                        }
+                    ),
+                ],
+                ignore_index=True,
+            )
+    return surviving, drop_log
 
 
 def summarize_failures(failure_df: pd.DataFrame) -> dict[str, pd.DataFrame]:

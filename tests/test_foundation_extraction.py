@@ -253,3 +253,82 @@ def test_embedding_extractor_3d_pooling_and_normalization():
     # Shape is flattened to (4, 20)
     assert res_flat.window_embeddings.shape == (4, 20)
     np.testing.assert_allclose(np.linalg.norm(res_flat.window_embeddings, axis=1), 1.0)
+
+
+def _window_container(n_times, sfreq=200.0):
+    from coco_pipe.io import DataContainer
+
+    X = np.zeros((2, 3, n_times), dtype=np.float32)
+    return DataContainer(
+        X=X,
+        dims=("obs", "channel", "time"),
+        coords={
+            "obs": np.array(["a", "b"], dtype=object),
+            "channel": np.array(["Fz", "Cz", "Pz"], dtype=object),
+            "time": np.arange(n_times),
+        },
+        ids=np.array(["a", "b"], dtype=object),
+        meta={"sfreq": sfreq},
+    )
+
+
+def test_normalize_inclusive_endpoint_passes_correct_length_through():
+    from coco_pipe.decoding.foundation_models import normalize_inclusive_endpoint
+
+    container = _window_container(200)
+    out, reason = normalize_inclusive_endpoint(
+        container, segment_duration=1.0, expected_sfreq=200.0, model_key="m"
+    )
+    assert reason is None
+    assert out is container
+    assert out.X.shape[-1] == 200
+
+
+def test_normalize_inclusive_endpoint_trims_extra_sample():
+    from coco_pipe.decoding.foundation_models import normalize_inclusive_endpoint
+
+    out, reason = normalize_inclusive_endpoint(
+        _window_container(201),
+        segment_duration=1.0,
+        expected_sfreq=200.0,
+        model_key="m",
+    )
+    assert reason is None
+    assert out.X.shape[-1] == 200
+    assert out.meta["inclusive_endpoint_removed"] is True
+    assert out.meta["original_n_times"] == 201
+    assert out.meta["normalized_n_times"] == 200
+
+
+def test_normalize_inclusive_endpoint_skip_vs_error_on_bad_length():
+    from coco_pipe.decoding.foundation_models import normalize_inclusive_endpoint
+
+    out, reason = normalize_inclusive_endpoint(
+        _window_container(205),
+        segment_duration=1.0,
+        expected_sfreq=200.0,
+        model_key="m",
+        on_mismatch="skip",
+    )
+    assert out is None
+    assert "205" in reason
+
+    with pytest.raises(ValueError, match="205"):
+        normalize_inclusive_endpoint(
+            _window_container(205),
+            segment_duration=1.0,
+            expected_sfreq=200.0,
+            model_key="m",
+            on_mismatch="error",
+        )
+
+
+def test_spec_pretrained_window_seconds_matches_formula():
+    # labram declares a fixed window (3000 samples @ 200 Hz = 15 s)
+    labram = get_foundation_model_spec("labram")
+    assert labram.pretrained_window_seconds == (
+        labram.pretrained_n_times / labram.pretrained_sfreq
+    )
+    assert labram.pretrained_window_seconds == 15.0
+    # cbramod leaves pretrained_n_times unset → no fixed window
+    assert get_foundation_model_spec("cbramod").pretrained_window_seconds is None

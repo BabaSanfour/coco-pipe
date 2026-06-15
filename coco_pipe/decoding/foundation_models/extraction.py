@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 
@@ -12,6 +12,9 @@ from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from ._loader import _BACKEND_MAP
 from ._prepare import normalize_channel_names, prepare_backend
+
+if TYPE_CHECKING:
+    from ...io import DataContainer
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,50 @@ def check_capability(
                 {**details, "model_n_times": model_n_times},
             )
     return CapabilityResult(model_key, train_mode, "available", details=details)
+
+
+def normalize_inclusive_endpoint(
+    container: "DataContainer",
+    *,
+    segment_duration: float,
+    expected_sfreq: float,
+    model_key: str = "model",
+    on_mismatch: str = "error",
+) -> "tuple[DataContainer | None, str | None]":
+    """Drop MNE's inclusive-endpoint extra sample from epoched windows.
+
+    MNE epochs span ``[tmin, tmax]`` inclusively, yielding ``expected_n_times +
+    1`` samples; foundation backends want the half-open count. This trims the
+    trailing sample (recording it in ``meta``) when the off-by-one is observed,
+    so ``prepare`` does not raise on the mismatch.
+
+    Returns ``(container, None)`` when the window is already correct or was
+    normalized. On any other length mismatch, returns ``(None, reason)`` if
+    ``on_mismatch == "skip"`` and otherwise raises ``ValueError``.
+    """
+    sfreq = float(container.meta.get("sfreq", expected_sfreq))
+    expected_n_times = int(round(segment_duration * sfreq))
+    observed_n_times = int(container.X.shape[-1])
+    if observed_n_times == expected_n_times:
+        return container, None
+    if observed_n_times == expected_n_times + 1:
+        normalized = container.isel(time=np.arange(expected_n_times, dtype=int))
+        normalized.meta = {
+            **dict(normalized.meta),
+            "inclusive_endpoint_removed": True,
+            "original_n_times": observed_n_times,
+            "normalized_n_times": expected_n_times,
+        }
+        return normalized, None
+
+    reason = (
+        f"{model_key} expected {expected_n_times} samples for a "
+        f"{segment_duration:g} s window at {sfreq:g} Hz, but loaded "
+        f"{observed_n_times}."
+    )
+    if on_mismatch == "skip":
+        return None, reason
+    raise ValueError(reason)
 
 
 @dataclass

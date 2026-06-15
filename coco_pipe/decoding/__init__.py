@@ -25,6 +25,7 @@ from .configs import (
     TemporalDecoderConfig,
     TrainerConfig,
     TrainStageConfig,
+    TuningConfig,
 )
 from .experiment import Experiment
 from .persistence import (
@@ -71,6 +72,7 @@ __all__ = [
     "ReducerConfig",
     "StatisticalAssessmentConfig",
     "CVConfig",
+    "TuningConfig",
     "ChanceAssessmentConfig",
     # Execution
     "Experiment",

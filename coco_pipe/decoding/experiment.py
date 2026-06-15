@@ -442,9 +442,13 @@ class Experiment:
             scoring = (
                 fs_conf.scoring or self.config.tuning.scoring or self.config.metrics[0]
             )
+            n_to_select = fs_conf.n_features
+            if n_to_select is None and fs_conf.tol is not None:
+                n_to_select = "auto"
             sfs = GroupedSequentialFeatureSelector(
                 estimator=clone(estimator),
-                n_features_to_select=fs_conf.n_features,
+                n_features_to_select=n_to_select,
+                tol=fs_conf.tol,
                 direction=fs_conf.direction,
                 cv=cv,
                 scoring=scoring,

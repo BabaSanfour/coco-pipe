@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 from ._constants import (
     _STATUS_ORDER,
+    GROUP_BY_COLUMN,
     QCFlagLevel,
     QualityInput,
     QualityStatus,
@@ -84,8 +85,12 @@ class QCResult:
     subject_drop_threshold: float | None = None
     subject_outlier_fraction_threshold: float | None = None
     subjects_dropped: list[SubjectDropRecord] = field(default_factory=list)
+    per_family_dropped: dict[str, list[EpochDropRecord | SubjectDropRecord]] = field(
+        default_factory=dict
+    )
     subject_outlier_burden: pd.DataFrame | None = None
     feature_missingness: pd.DataFrame | None = None
+    feature_columns_dropped: pd.DataFrame | None = None
     family_qc: pd.DataFrame | None = None
     thresholds: dict[str, Any] = field(default_factory=dict)
 
@@ -115,7 +120,7 @@ class QCResult:
 
     def summary(self) -> dict[str, Any]:
         """Return a flat summary suitable for logs and report headers."""
-        return {
+        summary = {
             "n_rows_entering_qc": self.n_rows_entering_qc,
             "n_dropped_nan_inf": self.n_dropped_nan_inf,
             "n_dropped_extreme": self.n_dropped_extreme,
@@ -132,6 +137,9 @@ class QCResult:
                 self.subject_outlier_fraction_threshold
             ),
         }
+        if self.feature_columns_dropped is not None:
+            summary["n_feature_columns_dropped"] = len(self.feature_columns_dropped)
+        return summary
 
 
 @dataclass
@@ -307,12 +315,40 @@ def compute_constant_feature_summary(
     )
 
 
+def _validate_group_by(value: str) -> None:
+    if value not in GROUP_BY_COLUMN:
+        raise ValueError("group_by must be one of 'family', 'measure', or 'feature'.")
+
+
+def _resolve_group_labels(descriptor_names: list[str], group_by: str) -> np.ndarray:
+    """Map descriptor names to their grouping label at the chosen granularity."""
+    _validate_group_by(group_by)
+    from coco_pipe.descriptors.qc import classify_descriptor_columns
+
+    classification = classify_descriptor_columns(
+        [str(name) for name in descriptor_names]
+    )
+    return (
+        classification[GROUP_BY_COLUMN[group_by]]
+        .fillna("unknown")
+        .astype(str)
+        .to_numpy()
+    )
+
+
 def compute_row_outlier_scores(
     df: pd.DataFrame,
     feature_cols: list[str],
     z_threshold: float = 5.0,
+    descriptor_names: list[str] | None = None,
+    group_by: str | None = None,
 ) -> pd.DataFrame:
-    """Compute per-row outlier fractions using MAD-based robust z-scores."""
+    """Compute per-row outlier fractions using MAD-based robust z-scores.
+
+    When ``group_by`` is set (``"family"``, ``"measure"``, or ``"feature"``) the
+    result also carries per-group ``outlier_fraction_<label>`` columns so a row
+    can be judged within each descriptor group rather than across all features.
+    """
     if z_threshold <= 0:
         raise ValueError("z_threshold must be positive.")
 
@@ -350,7 +386,7 @@ def compute_row_outlier_scores(
     n_outliers = outlier_flags.sum(axis=1).astype(int)
     finite_z = np.where(finite_values, robust_z, np.nan)
     mad_z_max = pd.DataFrame(finite_z).max(axis=1, skipna=True).to_numpy()
-    return pd.DataFrame(
+    result = pd.DataFrame(
         {
             "outlier_fraction": n_outliers.astype(float) / n_features,
             "n_outlier_features": n_outliers,
@@ -358,6 +394,21 @@ def compute_row_outlier_scores(
         },
         index=df.index,
     )
+    if group_by is None:
+        return result
+
+    names = descriptor_names or feature_cols
+    if len(names) != len(feature_cols):
+        raise ValueError("descriptor_names must align with feature_cols.")
+    labels = _resolve_group_labels(names, group_by)
+    for label in dict.fromkeys(labels.tolist()):
+        label_mask = labels == label
+        label_count = outlier_flags[:, label_mask].sum(axis=1).astype(int)
+        result[f"outlier_fraction_{label}"] = label_count.astype(float) / int(
+            label_mask.sum()
+        )
+        result[f"n_outlier_features_{label}"] = label_count
+    return result
 
 
 def compute_subject_outlier_burden(
@@ -667,12 +718,25 @@ def drop_epoch_outliers(
     outlier_fraction_threshold: float = 0.30,
     subject_col: str = "subject",
     feature_cols: list[str] | None = None,
-) -> tuple["DataContainer", QCResult]:
-    """Drop observations with a high fraction of MAD-based feature outliers."""
+    descriptor_names: list[str] | None = None,
+    group_by: str | None = None,
+    min_obs: int | None = None,
+) -> tuple["DataContainer" | dict[str, np.ndarray], QCResult]:
+    """Drop observations with a high fraction of MAD-based feature outliers.
+
+    ``group_by=None`` makes one global drop decision across all features. When
+    set (``"family"``, ``"measure"``, or ``"feature"``) the decision is made per
+    descriptor group at that granularity and the returned dict is keyed by group
+    label.
+    """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
     if z_threshold <= 0:
         raise ValueError("z_threshold must be positive.")
+    if group_by is not None:
+        _validate_group_by(group_by)
+    if min_obs is not None and min_obs < 1:
+        raise ValueError("min_obs must be a positive integer or None.")
 
     n_obs_in = container.X.shape[0]
     n_subjects_in = _count_unique_subjects(container, subject_col)
@@ -681,9 +745,65 @@ def drop_epoch_outliers(
         feature_df,
         feature_df.columns.tolist(),
         z_threshold=z_threshold,
+        descriptor_names=descriptor_names,
+        group_by=group_by,
     )
+    if group_by is not None:
+        family_masks: dict[str, np.ndarray] = {}
+        per_family_dropped: dict[str, list[EpochDropRecord]] = {}
+        ids = (
+            np.asarray(container.ids)
+            if container.ids is not None
+            else np.arange(n_obs_in).astype(str)
+        )
+        for column in scores.columns:
+            prefix = "outlier_fraction_"
+            if not column.startswith(prefix):
+                continue
+            family = column.removeprefix(prefix)
+            fractions = scores[column].to_numpy(dtype=float)
+            keep = fractions <= outlier_fraction_threshold
+            if min_obs is not None and int(keep.sum()) < min_obs:
+                raise RuntimeError(
+                    f"Only {int(keep.sum())} observation(s) remain for family "
+                    f"'{family}' after MAD rejection (minimum required: {min_obs})."
+                )
+            family_masks[family] = keep
+            per_family_dropped[family] = [
+                EpochDropRecord(
+                    obs_index=index,
+                    obs_id=str(ids[index]),
+                    outlier_fraction=float(fractions[index]),
+                    mad_z_max=float(scores.iloc[index]["mad_z_max"]),
+                )
+                for index in np.flatnonzero(~keep)
+            ]
+        combined_keep = np.logical_and.reduce(list(family_masks.values()))
+        combined_dropped = _deduplicate_epoch_records(per_family_dropped)
+        return family_masks, QCResult(
+            n_obs_in=n_obs_in,
+            n_obs_out=int(combined_keep.sum()),
+            n_subjects_in=n_subjects_in,
+            n_subjects_out=_count_unique_subjects(
+                _filter_observations(container, combined_keep), subject_col
+            ),
+            epoch_drop_threshold=z_threshold,
+            epoch_outlier_fraction_threshold=outlier_fraction_threshold,
+            epochs_dropped=combined_dropped,
+            per_family_dropped=per_family_dropped,
+            thresholds={
+                "epoch_z_threshold": z_threshold,
+                "epoch_outlier_fraction_threshold": outlier_fraction_threshold,
+                "group_by": group_by,
+            },
+        )
     outlier_fractions = scores["outlier_fraction"].to_numpy()
     keep_mask = outlier_fractions <= outlier_fraction_threshold
+    if min_obs is not None and int(keep_mask.sum()) < min_obs:
+        raise RuntimeError(
+            f"Only {int(keep_mask.sum())} observation(s) remain after MAD rejection "
+            f"(minimum required: {min_obs})."
+        )
     ids = (
         np.asarray(container.ids)
         if container.ids is not None
@@ -720,16 +840,92 @@ def drop_subject_outliers(
     outlier_fraction_threshold: float = 0.20,
     subject_col: str = "subject",
     feature_cols: list[str] | None = None,
-) -> tuple["DataContainer", QCResult]:
-    """Drop subjects with a high cohort-level feature outlier burden."""
+    descriptor_names: list[str] | None = None,
+    group_by: str | None = None,
+) -> tuple["DataContainer" | dict[str, np.ndarray], QCResult]:
+    """Drop subjects with a high cohort-level feature outlier burden.
+
+    ``group_by=None`` makes one global decision across all features. When set
+    (``"family"``, ``"measure"``, or ``"feature"``) the burden is computed per
+    descriptor group at that granularity and the returned dict is keyed by group
+    label.
+    """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
+    if group_by is not None:
+        _validate_group_by(group_by)
     n_obs_in = container.X.shape[0]
     subject_ids = np.asarray(_get_subject_ids(container, subject_col), dtype=object)
     n_subjects_in = len(set(subject_ids.tolist()))
     feature_df = _container_to_feature_df(container, feature_cols).copy()
     feature_df[subject_col] = subject_ids
     score_columns = [column for column in feature_df.columns if column != subject_col]
+    if group_by is not None:
+        scores = compute_row_outlier_scores(
+            feature_df,
+            score_columns,
+            z_threshold=z_threshold,
+            descriptor_names=descriptor_names,
+            group_by=group_by,
+        ).copy()
+        scores[subject_col] = subject_ids
+        family_names = [
+            column.removeprefix("outlier_fraction_")
+            for column in scores.columns
+            if column.startswith("outlier_fraction_")
+        ]
+        burden_parts = []
+        family_masks: dict[str, np.ndarray] = {}
+        per_family_dropped: dict[str, list[SubjectDropRecord]] = {}
+        for family in family_names:
+            fraction_col = f"outlier_fraction_{family}"
+            count_col = f"n_outlier_features_{family}"
+            family_burden = (
+                scores.groupby(subject_col, sort=False)
+                .agg(
+                    outlier_fraction=(fraction_col, "mean"),
+                    n_outlier_features=(count_col, "mean"),
+                    n_epochs=(fraction_col, "count"),
+                )
+                .reset_index()
+            )
+            family_burden["family"] = family
+            burden_parts.append(family_burden)
+            bad = family_burden["outlier_fraction"] > outlier_fraction_threshold
+            bad_subjects = set(family_burden.loc[bad, subject_col].astype(str))
+            family_masks[family] = np.asarray(
+                [str(subject) not in bad_subjects for subject in subject_ids],
+                dtype=bool,
+            )
+            per_family_dropped[family] = [
+                SubjectDropRecord(
+                    subject_id=str(row[subject_col]),
+                    outlier_fraction=float(row["outlier_fraction"]),
+                    n_outlier_features=float(row["n_outlier_features"]),
+                )
+                for _, row in family_burden.loc[bad].iterrows()
+            ]
+        combined_keep = np.logical_and.reduce(list(family_masks.values()))
+        combined_dropped = _deduplicate_subject_records(per_family_dropped)
+        burden = pd.concat(burden_parts, ignore_index=True)
+        return family_masks, QCResult(
+            n_obs_in=n_obs_in,
+            n_obs_out=int(combined_keep.sum()),
+            n_subjects_in=n_subjects_in,
+            n_subjects_out=_count_unique_subjects(
+                _filter_observations(container, combined_keep), subject_col
+            ),
+            subject_drop_threshold=z_threshold,
+            subject_outlier_fraction_threshold=outlier_fraction_threshold,
+            subjects_dropped=combined_dropped,
+            per_family_dropped=per_family_dropped,
+            subject_outlier_burden=burden,
+            thresholds={
+                "subject_z_threshold": z_threshold,
+                "subject_outlier_fraction_threshold": outlier_fraction_threshold,
+                "group_by": group_by,
+            },
+        )
     burden = compute_subject_outlier_burden(
         feature_df,
         score_columns,
@@ -838,6 +1034,7 @@ def run_qc(
         subjects_dropped=subjects_dropped,
         subject_outlier_burden=subject_burden,
         feature_missingness=missingness,
+        feature_columns_dropped=meta.get("dropped_feature_columns"),
         thresholds={
             "epoch_z_threshold": epoch_z_threshold,
             "epoch_outlier_fraction_threshold": (epoch_outlier_fraction_threshold),
@@ -859,6 +1056,30 @@ def _validate_container(container: "DataContainer") -> None:
 def _validate_fraction_threshold(value: float) -> None:
     if not 0 <= value <= 1:
         raise ValueError("outlier_fraction_threshold must be between 0 and 1.")
+
+
+def _deduplicate_epoch_records(
+    records: dict[str, list[EpochDropRecord]],
+) -> list[EpochDropRecord]:
+    by_index: dict[int, EpochDropRecord] = {}
+    for family_records in records.values():
+        for record in family_records:
+            previous = by_index.get(record.obs_index)
+            if previous is None or record.outlier_fraction > previous.outlier_fraction:
+                by_index[record.obs_index] = record
+    return [by_index[index] for index in sorted(by_index)]
+
+
+def _deduplicate_subject_records(
+    records: dict[str, list[SubjectDropRecord]],
+) -> list[SubjectDropRecord]:
+    by_subject: dict[str, SubjectDropRecord] = {}
+    for family_records in records.values():
+        for record in family_records:
+            previous = by_subject.get(record.subject_id)
+            if previous is None or record.outlier_fraction > previous.outlier_fraction:
+                by_subject[record.subject_id] = record
+    return list(by_subject.values())
 
 
 def _count_unique_subjects(

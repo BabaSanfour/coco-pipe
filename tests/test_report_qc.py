@@ -37,17 +37,29 @@ def test_build_qc_section_full():
         subject_outlier_fraction_threshold=0.5,
         family_qc=pd.DataFrame({"family": ["fam1"], "status": ["pass"]}),
         feature_missingness=pd.DataFrame({"feature": ["feat1"], "missing": [0.0]}),
+        per_family_dropped={
+            "band": [
+                SubjectDropRecord(
+                    subject_id="sub1", outlier_fraction=0.8, n_outlier_features=5
+                )
+            ]
+        },
+        feature_columns_dropped=pd.DataFrame(
+            {"column": ["band_bad_ch-Fz"], "drop_reason": ["all_nan"]}
+        ),
     )
     section = build_qc_section(qc_res)
-    assert len(section.children) == 6
+    assert len(section.children) == 8
     types = [type(e) for e in section.children]
     assert types == [
         TableElement,  # Summary
         TableElement,  # Epochs Dropped
         TableElement,  # Subjects Dropped
+        TableElement,  # Family-scoped drops
         ImageElement,  # Outlier Burden Image
         TableElement,  # Family QC
         TableElement,  # Feature missingness
+        TableElement,  # Pruned columns
     ]
 
     # Verify titles
@@ -55,5 +67,7 @@ def test_build_qc_section_full():
     assert titles[0] == "QC Funnel Summary"
     assert titles[1] == "Dropped Epochs (2)"
     assert titles[2] == "Dropped Subjects (1)"
-    assert titles[4] == "Family-Level Quality Summary"
-    assert titles[5] == "Feature Missingness"
+    assert titles[3] == "Family-Scoped Drops"
+    assert titles[5] == "Family-Level Quality Summary"
+    assert titles[6] == "Feature Missingness"
+    assert titles[7] == "Pruned Descriptor Columns"

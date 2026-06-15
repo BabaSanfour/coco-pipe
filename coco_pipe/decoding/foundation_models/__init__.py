@@ -12,6 +12,7 @@ from .extraction import (
     FoundationEmbeddingExtractor,
     FoundationEmbeddingResult,
     check_capability,
+    normalize_inclusive_endpoint,
 )
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "FoundationEmbeddingExtractor",
     "FoundationEmbeddingResult",
     "check_capability",
+    "normalize_inclusive_endpoint",
     "normalize_channel_names",
     "register_backend",
     "unregister_backend",

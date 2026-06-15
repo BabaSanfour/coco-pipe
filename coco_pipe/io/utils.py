@@ -378,7 +378,12 @@ def normalize_subject_value(value: object) -> str:
     return text
 
 
-def read_table(path: Path | str, sep: str | None = None) -> pd.DataFrame:
+def read_table(
+    path: Path | str,
+    sep: str | None = None,
+    *,
+    drop_all_empty: bool = True,
+) -> pd.DataFrame:
     """Read a CSV or parquet file into a DataFrame.
 
     CSV delimiters are auto-detected when ``sep`` is omitted. Unnamed and
@@ -390,6 +395,9 @@ def read_table(path: Path | str, sep: str | None = None) -> pd.DataFrame:
         Path to a ``.csv`` or ``.parquet`` file.
     sep : str, optional
         Explicit CSV delimiter. When omitted, pandas' Python engine detects it.
+    drop_all_empty : bool, default=True
+        Whether to remove entirely empty named columns. Descriptor loading
+        disables this so column-pruning QC can record all-NaN features.
 
     Returns
     -------
@@ -418,7 +426,7 @@ def read_table(path: Path | str, sep: str | None = None) -> pd.DataFrame:
         )
 
     df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
-    return df.dropna(axis=1, how="all")
+    return df.dropna(axis=1, how="all") if drop_all_empty else df
 
 
 def smart_reader(path: Path) -> Any:

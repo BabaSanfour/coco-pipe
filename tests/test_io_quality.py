@@ -511,6 +511,57 @@ def test_qc_result_summary_and_retention_rate():
     }
 
 
+def test_row_scores_by_family_separates_bad_family():
+    names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
+    df = pd.DataFrame(
+        {
+            names[0]: [0.0, 0.0, 0.0, 100.0],
+            names[1]: [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+
+    result = compute_row_outlier_scores(
+        df, names, z_threshold=3.0, descriptor_names=names, group_by="family"
+    )
+
+    assert result.loc[3, "outlier_fraction_band"] == 1.0
+    assert result.loc[3, "outlier_fraction_complexity"] == 0.0
+
+
+def test_drop_subject_outliers_per_family_returns_masks():
+    names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
+    container = DataContainer(
+        X=np.asarray([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0], [100.0, 1.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": names, "subject": ["s1", "s2", "s3", "s4"]},
+        ids=np.asarray(["o1", "o2", "o3", "o4"]),
+    )
+
+    masks, result = drop_subject_outliers(
+        container,
+        z_threshold=3.0,
+        outlier_fraction_threshold=0.5,
+        descriptor_names=names,
+        group_by="family",
+    )
+
+    assert masks["band"].tolist() == [True, True, True, False]
+    assert masks["complexity"].all()
+    assert result.per_family_dropped["band"][0].subject_id == "s4"
+
+
+def test_drop_epoch_outliers_min_obs_gate():
+    container = _clean_container(n_subjects=4, n_features=2)
+    container.X[-1, :] = 1000.0
+    with pytest.raises(RuntimeError, match="minimum required"):
+        drop_epoch_outliers(
+            container,
+            z_threshold=3.0,
+            outlier_fraction_threshold=0.5,
+            min_obs=4,
+        )
+
+
 def test_drop_epoch_clean_data_drops_nothing():
     container = _clean_container()
 

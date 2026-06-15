@@ -273,6 +273,17 @@ class FoundationModelSpec(EstimatorSpec):
     paper_url: str | None = None
     model_notes: str = ""
 
+    @property
+    def pretrained_window_seconds(self) -> float | None:
+        """Window length in seconds the checkpoint was pretrained on.
+
+        ``None`` when ``pretrained_n_times`` is unknown. Single source of truth
+        for "expected window duration" so preflight and loading agree.
+        """
+        if self.pretrained_n_times is None:
+            return None
+        return self.pretrained_n_times / self.pretrained_sfreq
+
 
 _FM_DEFAULTS: dict[str, Any] = dict(
     import_path="coco_pipe.decoding.foundation_models:BackendBase",
