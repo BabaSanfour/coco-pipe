@@ -51,6 +51,13 @@ test = [
     "pytest>=7.0",
     "pytest-cov",
     "beautifulsoup4",
+    "torch",
+    "skorch",
+    "braindecode>=1.4.0,<1.6",
+    "transformers",
+    "huggingface-hub",
+    "peft",
+    "accelerate",
 ]
 docs = [
     "sphinx>=4.0.0",
