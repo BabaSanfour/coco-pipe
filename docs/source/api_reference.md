@@ -16,18 +16,13 @@ accessors.
 
    coco_pipe.decoding.Experiment
    coco_pipe.decoding.ExperimentConfig
-   coco_pipe.decoding.EstimatorSpec
    coco_pipe.decoding.EstimatorCapabilities
-   coco_pipe.decoding.SelectorCapabilities
    coco_pipe.decoding.result.ExperimentResult
    coco_pipe.decoding.result.ExperimentResult.to_payload
    coco_pipe.decoding.result.ExperimentResult.save
    coco_pipe.decoding.result.ExperimentResult.load
-   coco_pipe.decoding.get_estimator_cls
    coco_pipe.decoding.register_estimator
    coco_pipe.decoding.register_estimator_spec
-   coco_pipe.decoding.get_estimator_spec
-   coco_pipe.decoding.list_estimator_specs
    coco_pipe.decoding.get_capabilities
    coco_pipe.decoding.list_capabilities
    coco_pipe.decoding.run_statistical_assessment
@@ -313,11 +308,11 @@ every public entry point.
 .. autosummary::
    :toctree: generated/
 
-   coco_pipe.report.data_quality.CheckResult
-   coco_pipe.report.data_quality.check_missingness
-   coco_pipe.report.data_quality.check_constant_columns
-   coco_pipe.report.data_quality.check_outliers_zscore
-   coco_pipe.report.data_quality.check_flatline
+   coco_pipe.io.quality.CheckResult
+   coco_pipe.io.quality.check_missingness
+   coco_pipe.io.quality.check_constant_columns
+   coco_pipe.io.quality.check_outliers_zscore
+   coco_pipe.io.quality.check_flatline
 ```
 
 ### Asset Vendoring (Offline Mode)

@@ -4,11 +4,11 @@
 Data-Quality Checks and Findings
 ==================================
 
-:mod:`coco_pipe.report.data_quality` contains the dataclass-based
+:mod:`coco_pipe.io.quality` contains the dataclass-based
 quality checks that run automatically when a
 :class:`~coco_pipe.io.DataContainer` is passed to
 :meth:`Report.add_container <coco_pipe.report.core.Report.add_container>`,
-plus the :class:`~coco_pipe.report.data_quality.CheckResult` type that
+plus the :class:`~coco_pipe.io.quality.CheckResult` type that
 :meth:`Section.add_finding <coco_pipe.report.core.Section.add_finding>`
 consumes.
 
@@ -49,21 +49,21 @@ operate on numeric columns only.
 ==================================  ============================================================
 Check                                What it does
 ==================================  ============================================================
-:func:`~coco_pipe.report.data_quality.check_missingness`     Fraction of NaN values.
+:func:`~coco_pipe.io.quality.check_missingness`     Fraction of NaN values.
                                     ``WARN`` ≥ ``threshold_warn`` (default 0.01),
                                     ``FAIL`` ≥ ``threshold_fail`` (default 0.20).
-:func:`~coco_pipe.report.data_quality.check_constant_columns`  Per-column near-zero variance.
+:func:`~coco_pipe.io.quality.check_constant_columns`  Per-column near-zero variance.
                                     Returns one ``CheckResult`` per offending column;
                                     ``FAIL`` for any constant numeric column.
-:func:`~coco_pipe.report.data_quality.check_outliers_zscore`  Z-score outlier detection.
+:func:`~coco_pipe.io.quality.check_outliers_zscore`  Z-score outlier detection.
                                     ``WARN`` when outlier fraction exceeds threshold.
-:func:`~coco_pipe.report.data_quality.check_flatline`        Detect zero-variance signal
+:func:`~coco_pipe.io.quality.check_flatline`        Detect zero-variance signal
                                     arrays (e.g., flatlined EEG channels).
 ==================================  ============================================================
 
 .. code-block:: python
 
-   from coco_pipe.report.data_quality import (
+   from coco_pipe.io.quality import (
        check_missingness, check_constant_columns,
        check_flatline, check_outliers_zscore,
    )
@@ -117,7 +117,7 @@ your own at any point.
 .. code-block:: python
 
    from coco_pipe.report import Section
-   from coco_pipe.report.data_quality import CheckResult
+   from coco_pipe.io.quality import CheckResult
 
    sec = Section(title="Manual QC")
    sec.add_finding(CheckResult(
