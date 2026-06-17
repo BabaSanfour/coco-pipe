@@ -35,7 +35,7 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, Path):
-        return str(value)
+        return value.as_posix()
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return f"<{type(value).__module__}.{type(value).__name__}: {value!s}>"
