@@ -27,8 +27,25 @@ _LAZY_EXPORTS = {
     "from_embeddings": ("coco_pipe.report.api", "from_embeddings"),
     "from_reductions": ("coco_pipe.report.api", "from_reductions"),
     "from_experiment_result": ("coco_pipe.report.api", "from_experiment_result"),
+    "from_experiment_results": ("coco_pipe.report.api", "from_experiment_results"),
     "merge_reports": ("coco_pipe.report.api", "merge_reports"),
     "make_decoding_report": ("coco_pipe.report.decoding", "make_decoding_report"),
+    "ResultCollection": (
+        "coco_pipe.report.decoding_comparison",
+        "ResultCollection",
+    ),
+    "collect_results": (
+        "coco_pipe.report.decoding_comparison",
+        "collect_results",
+    ),
+    "build_comparison_section": (
+        "coco_pipe.report.decoding_comparison",
+        "build_comparison_section",
+    ),
+    "build_result_tabs": (
+        "coco_pipe.report.decoding_comparison",
+        "build_result_tabs",
+    ),
     "make_foundation_embedding_report": (
         "coco_pipe.report.foundation",
         "make_foundation_embedding_report",

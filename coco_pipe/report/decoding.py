@@ -1,9 +1,11 @@
-"""Section builders for decoding (ExperimentResult) reports."""
+"""Composable section builders for decoding reports."""
 
 from __future__ import annotations
 
+import inspect
 import logging
 import warnings
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import pandas as pd
@@ -11,15 +13,18 @@ import pandas as pd
 from coco_pipe.io.quality import QCResult
 
 from ._utils import (
+    _add_tabs_or_single,
     _config_element,
-    _resolve_sections,
+    _csv_download,
+    _ensure_static_matplotlib_backend,
+    _plot_or_none,
     _table_from_mapping,
 )
 from .core import Report, Section
 from .elements import (
+    AccordionElement,
     BadgeElement,
-    ColumnsElement,
-    DownloadAssetElement,
+    CalloutElement,
     ImageElement,
     TableElement,
     TabsElement,
@@ -28,57 +33,120 @@ from .qc import build_qc_section
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SECTIONS: list[str] = [
-    "overview",
-    "configuration",
-    "provenance",
-    "model_summary",
-    "cv_summary",
-    "performance",
-    "statistical",
-    "confusion_probability",
-    "temporal",
-    "features",
-    "fit_diagnostics",
-    "caveats",
-    "export_inventory",
-]
-VALID_SECTIONS = set(DEFAULT_SECTIONS) | {"topomaps"}
+
+class SectionDataUnavailable(RuntimeError):
+    """Signal that a report section is inapplicable because its data is absent."""
 
 
-def add_decoding_overview(
-    self: Report,
+DECODING_PRESETS: dict[str, list[str]] = {
+    "compact": [
+        "overview",
+        "model_summary",
+        "cv",
+        "probability",
+        "statistical",
+        "features",
+        "topomaps",
+    ],
+    "default": [
+        "overview",
+        "configuration",
+        "provenance",
+        "model_summary",
+        "cv",
+        "performance",
+        "statistical",
+        "probability",
+        "temporal",
+        "features",
+        "fit_diagnostics",
+        "tuning",
+        "caveats",
+        "export_inventory",
+    ],
+    "full": [
+        "overview",
+        "configuration",
+        "provenance",
+        "model_summary",
+        "cv",
+        "performance",
+        "statistical",
+        "probability",
+        "temporal",
+        "features",
+        "topomaps",
+        "fit_diagnostics",
+        "tuning",
+        "neural",
+        "caveats",
+        "export_inventory",
+    ],
+}
+DEFAULT_SECTIONS = DECODING_PRESETS["default"]
+_SECTION_ALIASES = {
+    "cv_summary": "cv",
+    "confusion_probability": "probability",
+}
+
+
+def _accepted_kwargs(method: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop kwargs the accessor does not accept, unless it takes ``**kwargs``."""
+    if not kwargs:
+        return {}
+    signature = inspect.signature(method)
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return dict(kwargs)
+    return {
+        name: value for name, value in kwargs.items() if name in signature.parameters
+    }
+
+
+def _result_frame(
+    result: Any,
+    accessor: str,
+    *,
+    required: bool = True,
+    context: str | None = None,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """Fetch ``result.<accessor>(**kwargs)`` as a DataFrame.
+
+    Every ``ExperimentResult`` accessor exists and returns an empty frame when it
+    holds no data, so callers branch on emptiness rather than ``hasattr``. The two
+    section policies share this one fetch:
+
+    - ``required=True`` (a section's primary data): a missing accessor or empty
+      result raises :class:`SectionDataUnavailable`, and accessor errors propagate.
+    - ``required=False`` (one of several optional inputs): the same conditions, and
+      any accessor error, yield an empty frame for the caller to test with ``.empty``.
+    """
+    label = context or accessor
+    method = getattr(result, accessor, None)
+    if not callable(method):
+        if required:
+            raise SectionDataUnavailable(f"{label} requires {accessor}().")
+        return pd.DataFrame()
+    try:
+        frame = pd.DataFrame(method(**_accepted_kwargs(method, kwargs)))
+    except (TypeError, ValueError, KeyError):
+        if required:
+            raise
+        return pd.DataFrame()
+    if frame.empty and required:
+        raise SectionDataUnavailable(f"No {label.lower()} data are available.")
+    return frame
+
+
+def build_decoding_overview_section(
     result: Any,
     *,
     name: str = "Overview",
-) -> Report:
-    """Add a summary table of the decoding context to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Decoding result object (e.g. ``ExperimentResult``).
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended.
-
-    See Also
-    --------
-    add_decoding_summary : Model-level performance summary table.
-    make_decoding_report : Factory that calls this and all other adders.
-
-    Examples
-    --------
-    >>> report = Report(title="My Report")
-    >>> report.add_decoding_overview(result)
-    >>> report.save("report.html")
-    """
+) -> Section:
+    """Build high-level decoding context."""
     meta = getattr(result, "meta", {}) or {}
     rows = [
         {
@@ -90,171 +158,916 @@ def add_decoding_overview(
             "SchemaVersion": getattr(result, "schema_version", None),
         }
     ]
-    sec = Section(title=name)
-    sec.add_element(TableElement(pd.DataFrame(rows), title="Decoding Context"))
-    self.add_section(sec)
-    return self
+    section = Section(title=name)
+    section.add_element(TableElement(pd.DataFrame(rows), title="Decoding Context"))
+    return section
 
 
-def add_decoding_temporal(
-    self: Report,
+def build_decoding_summary_section(
     result: Any,
+    *,
+    name: str = "Model Performance",
+) -> Section:
+    """Build the scalar model-performance summary."""
+    summary = _result_frame(result, "summary", context="Model performance")
+    summary = summary.reset_index() if summary.index.name else summary
+    section = Section(title=name)
+    section.add_element(
+        _csv_download(summary, "decoding_summary.csv", "Download Summary CSV")
+    )
+    section.add_element(TableElement(summary, title="Model Performance Summary"))
+    return section
+
+
+def build_cv_section(
+    result: Any,
+    *,
+    metric: str | None = None,
+    model: str | None = None,
+    name: str = "Cross-Validation",
+    include_tables: bool = False,
+) -> Section:
+    """Build fold scores and score dispersion only."""
+    from coco_pipe.viz.decoding import plot_fold_score_dispersion
+
+    scores = _result_frame(
+        result,
+        "get_detailed_scores",
+        context="Cross-validation",
+        model=model,
+    )
+    if metric is not None and "Metric" in scores:
+        scores = scores[scores["Metric"] == metric]
+    if scores.empty:
+        raise SectionDataUnavailable("No matching cross-validation scores.")
+
+    section = Section(
+        title=name,
+        description="Per-fold score spread — how stable the metric is across "
+        "cross-validation folds.",
+    )
+    section.add_element(
+        _csv_download(scores, "fold_scores.csv", "Download Fold Scores CSV")
+    )
+    if include_tables:
+        section.add_element(TableElement(scores, title="Fold Scores"))
+    image = _plot_or_none(
+        plot_fold_score_dispersion,
+        scores,
+        metric=metric,
+        model=model,
+        caption="Fold score dispersion",
+    )
+    if image is not None:
+        section.add_element(image)
+    return section
+
+
+def build_probability_section(
+    result: Any,
+    *,
+    model: str | None = None,
+    name: str = "Confusion and Probability",
+    include_tables: bool = False,
+) -> Section:
+    """Build confusion, ROC, precision-recall, and calibration diagnostics."""
+    from coco_pipe.viz.decoding import (
+        plot_calibration_curve,
+        plot_confusion_matrix,
+        plot_pr_curve,
+        plot_roc_curve,
+    )
+
+    confusion = _result_frame(
+        result, "get_confusion_matrices", required=False, model=model
+    )
+
+    models = [model] if model is not None else []
+    if not models and "Model" in confusion:
+        models = list(dict.fromkeys(confusion["Model"].dropna().astype(str)))
+    if not models:
+        models = list(getattr(result, "raw", {}) or {})
+    if not models and confusion.empty:
+        raise SectionDataUnavailable("No classification probability diagnostics.")
+
+    section = Section(title=name)
+    if not confusion.empty:
+        section.add_element(
+            _csv_download(
+                confusion,
+                "confusion_matrices.csv",
+                "Download Confusion Matrix CSV",
+            )
+        )
+        if include_tables:
+            section.add_element(TableElement(confusion, title="Confusion Matrix Data"))
+
+    model_blocks: dict[str, AccordionElement] = {}
+    for model_name in models or [None]:
+        label = str(model_name or "Model")
+        block = AccordionElement(label, open=len(models) <= 1)
+        images = {
+            "Confusion Matrix": _plot_or_none(
+                plot_confusion_matrix,
+                confusion,
+                model=model_name,
+                caption=f"Confusion matrix for {label}",
+            )
+            if not confusion.empty
+            else None,
+            "ROC Curve": _plot_or_none(
+                plot_roc_curve,
+                result,
+                model=model_name,
+                mean_only=True,
+                caption=f"ROC curve for {label}",
+            ),
+            "Precision-Recall": _plot_or_none(
+                plot_pr_curve,
+                result,
+                model=model_name,
+                mean_only=True,
+                caption=f"Precision-recall curve for {label}",
+            ),
+            "Calibration": _plot_or_none(
+                plot_calibration_curve,
+                result,
+                model=model_name,
+                mean_only=True,
+                caption=f"Calibration curve for {label}",
+            ),
+        }
+        _add_tabs_or_single(block, images)
+        if block.children:
+            model_blocks[label] = block
+
+    if not model_blocks and confusion.empty:
+        raise SectionDataUnavailable("No classification probability diagnostics.")
+    if len(model_blocks) == 1:
+        section.add_element(next(iter(model_blocks.values())))
+    elif model_blocks:
+        section.add_element(TabsElement(model_blocks))
+    return section
+
+
+def build_decoding_diagnostics_section(
+    result: Any,
+    *,
+    metric: str | None = None,
+    model: str | None = None,
+    name: str = "Decoding Diagnostics",
+    include_tables: bool = False,
+) -> Section:
+    """Combine the now-separated CV and probability blocks into one section.
+
+    Legacy-only: this re-colocates diagnostics that the presets deliberately keep
+    apart. It backs the deprecated :func:`add_decoding_diagnostics` method and is
+    intentionally absent from every preset, so it cannot reintroduce the historical
+    double-render. Prefer ``build_cv_section`` + ``build_probability_section``.
+    """
+    section = Section(title=name)
+    builders = (
+        (
+            build_cv_section,
+            {
+                "metric": metric,
+                "model": model,
+                "include_tables": include_tables,
+            },
+        ),
+        (
+            build_probability_section,
+            {"model": model, "include_tables": include_tables},
+        ),
+    )
+    for builder, kwargs in builders:
+        try:
+            child = builder(result, **kwargs)
+        except SectionDataUnavailable:
+            continue
+        accordion = AccordionElement(child.title, open=True)
+        for element in child.children:
+            accordion.add_element(element)
+        section.add_element(accordion)
+    if not section.children:
+        raise SectionDataUnavailable("No decoding diagnostics are available.")
+    return section
+
+
+def build_statistical_section(
+    result: Any,
+    *,
+    metric: str | None = None,
+    model: str | None = None,
+    name: str = "Statistical Assessment",
+) -> Section:
+    """Build finite-sample and temporal statistical assessment."""
+    from coco_pipe.viz.decoding import (
+        plot_null_interval_summary,
+        plot_temporal_statistical_assessment,
+    )
+
+    assessment = _result_frame(
+        result,
+        "get_statistical_assessment",
+        context="Statistical assessment",
+    )
+    if metric is not None and "Metric" in assessment:
+        assessment = assessment[assessment["Metric"] == metric]
+    if model is not None and "Model" in assessment:
+        assessment = assessment[assessment["Model"] == model]
+    if assessment.empty:
+        raise SectionDataUnavailable("No matching statistical assessment.")
+
+    section = Section(title=name)
+    section.add_element(
+        _csv_download(
+            assessment,
+            "statistical_assessment.csv",
+            "Download Statistical Assessment CSV",
+        )
+    )
+    section.add_element(
+        TableElement(assessment, title="Finite-Sample Statistical Assessment")
+    )
+    null_image = _plot_or_none(
+        plot_null_interval_summary,
+        assessment,
+        caption="Null interval summary",
+    )
+    if null_image is not None:
+        section.add_element(null_image)
+    if "Time" in assessment and assessment["Time"].notna().any():
+        temporal_image = _plot_or_none(
+            plot_temporal_statistical_assessment,
+            assessment,
+            metric=metric,
+            model=model,
+            caption="Temporal statistical assessment",
+        )
+        if temporal_image is not None:
+            section.add_element(temporal_image)
+    return section
+
+
+def build_temporal_section(
+    result: Any,
+    *,
     metric: str | None = None,
     model: str | None = None,
     name: str = "Temporal Decoding",
-) -> Report:
-    """Add temporal score curve and generalisation matrix plots to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Must expose ``get_temporal_score_summary() -> pd.DataFrame``.
-    metric : str, optional
-        Filter to a single metric name.
-    model : str, optional
-        Filter to a single model name.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if data is absent.
-
-    Raises
-    ------
-    TypeError
-        If *result* does not provide ``get_temporal_score_summary``.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_temporal_score_curve
-    coco_pipe.viz.decoding.plot_temporal_generalization_matrix
-
-    Examples
-    --------
-    >>> report = Report(title="My Report")
-    >>> report.add_decoding_temporal(result, metric="accuracy")
-    """
+    include_tables: bool = False,
+) -> Section:
+    """Build temporal score and generalization diagnostics when applicable."""
     from coco_pipe.viz.decoding import (
         plot_temporal_generalization_matrix,
         plot_temporal_score_curve,
     )
 
-    if not hasattr(result, "get_temporal_score_summary"):
-        raise TypeError("result must provide get_temporal_score_summary().")
-    summary = result.get_temporal_score_summary()
+    summary = _result_frame(
+        result,
+        "get_temporal_score_summary",
+        context="Temporal decoding",
+        model=model,
+    )
     if metric is not None and "Metric" in summary:
         summary = summary[summary["Metric"] == metric]
-    if model is not None and "Model" in summary:
-        summary = summary[summary["Model"] == model]
     if summary.empty:
-        return self
-
-    sec = Section(title=name)
-    csv_data = summary.to_csv(index=False)
-    if metric:
-        sec.add_element(BadgeElement(f"Metric: {metric}", "purple"))
-    if model:
-        sec.add_element(BadgeElement(f"Model: {model}", "blue"))
-    sec.add_element(
-        DownloadAssetElement(
-            csv_data,
-            "temporal_scores.csv",
-            "text/csv",
-            label="Download Temporal CSV",
-            style="gray",
-        )
-    )
-    sec.add_element(TableElement(summary, title="Temporal Score Summary"))
-    if "Time" in summary and summary["Time"].notna().any():
-        try:
-            plot_result = plot_temporal_score_curve(summary, metric=metric, model=model)
-            sec.add_element(
-                ImageElement(
-                    plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                    caption="Temporal score curve",
-                )
-            )
-        except ValueError as exc:
-            logger.debug("Temporal curve skipped: %s", exc)
-    if (
+        raise SectionDataUnavailable("No matching temporal decoding scores.")
+    has_time = "Time" in summary and summary["Time"].notna().any()
+    has_generalization = (
         {"TrainTime", "TestTime"}.issubset(summary.columns)
         and summary["TrainTime"].notna().any()
         and summary["TestTime"].notna().any()
-    ):
-        try:
-            plot_result = plot_temporal_generalization_matrix(
-                summary, metric=metric, model=model
+    )
+    if not has_time and not has_generalization:
+        raise SectionDataUnavailable("The result is not temporally resolved.")
+
+    section = Section(title=name)
+    section.add_element(
+        _csv_download(summary, "temporal_scores.csv", "Download Temporal Scores CSV")
+    )
+    if include_tables:
+        section.add_element(TableElement(summary, title="Temporal Score Summary"))
+    if metric:
+        section.add_element(BadgeElement(f"Metric: {metric}", "purple"))
+    if model:
+        section.add_element(BadgeElement(f"Model: {model}", "blue"))
+    if has_time:
+        image = _plot_or_none(
+            plot_temporal_score_curve,
+            summary,
+            metric=metric,
+            model=model,
+            caption="Temporal score curve",
+        )
+        if image is not None:
+            section.add_element(image)
+    if has_generalization:
+        image = _plot_or_none(
+            plot_temporal_generalization_matrix,
+            summary,
+            metric=metric,
+            model=model,
+            caption="Temporal generalization matrix",
+        )
+        if image is not None:
+            section.add_element(image)
+    return section
+
+
+def build_performance_section(
+    result: Any,
+    *,
+    metric: str | None = None,
+    name: str = "Performance",
+) -> Section:
+    """Build aggregate score and paired model-comparison figures."""
+    from coco_pipe.viz.decoding import plot_decoding_scores, plot_model_comparison
+
+    scores = _result_frame(result, "get_detailed_scores", context="Performance")
+    images = {
+        "Score Distribution": _plot_or_none(
+            plot_decoding_scores,
+            scores,
+            metric=metric,
+            caption="Decoding scores",
+        )
+    }
+    models = list(dict.fromkeys(scores["Model"])) if "Model" in scores else []
+    if len(models) > 1:
+        images["Model Comparison"] = _plot_or_none(
+            plot_model_comparison,
+            result,
+            metric=metric or "accuracy",
+            caption="Paired model comparison",
+        )
+    section = Section(
+        title=name,
+        description="Aggregate score distribution and between-model comparison — "
+        "how the models rank, not fold-to-fold stability (see Cross-Validation).",
+    )
+    _add_tabs_or_single(section, images)
+    if not section.children:
+        raise SectionDataUnavailable("No performance plots are available.")
+    return section
+
+
+def build_features_section(
+    result: Any,
+    *,
+    feature_metadata: pd.DataFrame | None = None,
+    model: str | None = None,
+    top_n: int = 20,
+    name: str = "Features",
+    include_tables: bool = False,
+) -> Section:
+    """Build feature importance, stability, and sensor-family summaries."""
+    from coco_pipe.viz.decoding import (
+        plot_feature_importance,
+        plot_feature_stability,
+        plot_sensor_feature_heatmap,
+    )
+
+    importances = _result_frame(
+        result, "get_feature_importances", required=False, model=model
+    )
+    stability = _result_frame(
+        result, "get_feature_stability", required=False, model=model
+    )
+    metadata = (
+        pd.DataFrame(feature_metadata).drop_duplicates()
+        if feature_metadata is not None
+        else pd.DataFrame()
+    )
+    if importances.empty and stability.empty:
+        raise SectionDataUnavailable("No feature diagnostics are available.")
+
+    section = Section(title=name)
+    if not importances.empty:
+        section.add_element(
+            _csv_download(
+                importances,
+                "feature_importances.csv",
+                "Download Feature Importances CSV",
             )
-            sec.add_element(
-                ImageElement(
-                    plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                    caption="Temporal generalization matrix",
+        )
+    if not stability.empty:
+        section.add_element(
+            _csv_download(
+                stability,
+                "feature_stability.csv",
+                "Download Feature Stability CSV",
+            )
+        )
+
+    models = [model] if model is not None else []
+    if not models and "Model" in importances:
+        models = list(dict.fromkeys(importances["Model"].dropna().astype(str)))
+    if not models:
+        models = [None]
+    model_tabs: dict[str, AccordionElement] = {}
+    for model_name in models:
+        label = str(model_name or "Model")
+        block = AccordionElement(label, open=len(models) <= 1)
+        model_importances = (
+            importances[importances["Model"].astype(str) == str(model_name)]
+            if model_name is not None and "Model" in importances
+            else importances
+        )
+        model_stability = (
+            stability[stability["Model"].astype(str) == str(model_name)]
+            if model_name is not None and "Model" in stability
+            else stability
+        )
+        images: dict[str, ImageElement | None] = {}
+        if not model_importances.empty:
+            images["Importance"] = _plot_or_none(
+                plot_feature_importance,
+                model_importances,
+                model=model_name,
+                top_n=top_n,
+                caption=f"Top feature importances for {label}",
+            )
+            required = {"FeatureName", "Sensor", "FeatureFamily"}
+            if required.issubset(metadata.columns):
+                images["Sensor x Family"] = _plot_or_none(
+                    plot_sensor_feature_heatmap,
+                    model_importances,
+                    feature_metadata=metadata,
+                    caption=f"Sensor-by-feature-family importance for {label}",
                 )
+        if not model_stability.empty:
+            images["Stability"] = _plot_or_none(
+                plot_feature_stability,
+                model_stability,
+                model=model_name,
+                caption=f"Feature-selection stability for {label}",
             )
-        except ValueError as exc:
-            logger.debug("Temporal matrix skipped: %s", exc)
-    self.add_section(sec)
-    return self
+        _add_tabs_or_single(block, images)
+        if block.children:
+            model_tabs[label] = block
+    if len(model_tabs) == 1:
+        section.add_element(next(iter(model_tabs.values())))
+    elif model_tabs:
+        section.add_element(TabsElement(model_tabs))
+
+    if not metadata.empty:
+        section.add_element(
+            _csv_download(
+                metadata,
+                "feature_metadata.csv",
+                "Download Feature Metadata CSV",
+            )
+        )
+        if include_tables:
+            section.add_element(TableElement(metadata, title="Feature Metadata"))
+    return section
+
+
+def build_topomaps_section(
+    result: Any,
+    *,
+    feature_metadata: pd.DataFrame | None = None,
+    info: Any = None,
+    coords: Any = None,
+    name: str = "Sensor Maps",
+) -> Section:
+    """Build feature-family sensor profiles when spatial metadata exists."""
+    from coco_pipe.viz.decoding import plot_feature_sensor_profile
+
+    metadata = pd.DataFrame(feature_metadata)
+    if metadata.empty or "FeatureFamily" not in metadata:
+        raise SectionDataUnavailable("Feature-family metadata is unavailable.")
+    if info is None and coords is None:
+        raise SectionDataUnavailable("Sensor positions are unavailable.")
+
+    section = Section(title=name)
+    tabs: dict[str, ImageElement] = {}
+    for family in pd.unique(metadata["FeatureFamily"].dropna()):
+        image = _plot_or_none(
+            plot_feature_sensor_profile,
+            result,
+            feature_metadata=metadata,
+            feature_family=str(family),
+            info=info,
+            coords=coords,
+            caption=f"{family} sensor profile",
+        )
+        if image is not None:
+            tabs[str(family)] = image
+    _add_tabs_or_single(section, tabs)
+    if not section.children:
+        raise SectionDataUnavailable("No sensor maps could be rendered.")
+    return section
+
+
+def build_fit_diagnostics_section(
+    result: Any,
+    *,
+    model: str | None = None,
+    name: str = "Fit Diagnostics",
+    include_tables: bool = False,
+    supplementary: bool = True,
+) -> Section:
+    """Build timing and warning diagnostics as supplementary content."""
+    from coco_pipe.viz.decoding import plot_fit_diagnostics
+
+    diagnostics = _result_frame(
+        result,
+        "get_fit_diagnostics",
+        context="Fit diagnostics",
+    )
+    if model is not None and "Model" in diagnostics:
+        diagnostics = diagnostics[diagnostics["Model"] == model]
+    if diagnostics.empty:
+        raise SectionDataUnavailable("No matching fit diagnostics.")
+
+    section = Section(title=name)
+    target: Section | AccordionElement = section
+    if supplementary:
+        target = AccordionElement("Show fit timing and warnings", open=False)
+        section.add_element(target)
+    target.add_element(
+        _csv_download(
+            diagnostics,
+            "fit_diagnostics.csv",
+            "Download Fit Diagnostics CSV",
+        )
+    )
+    if include_tables:
+        target.add_element(TableElement(diagnostics, title="Fit Diagnostics"))
+    image = _plot_or_none(
+        plot_fit_diagnostics,
+        diagnostics,
+        caption="Fit timing diagnostics",
+    )
+    if image is not None:
+        target.add_element(image)
+    warnings_frame = (
+        diagnostics[diagnostics["WarningMessage"].notna()]
+        if "WarningMessage" in diagnostics
+        else pd.DataFrame()
+    )
+    if not warnings_frame.empty:
+        target.add_element(
+            CalloutElement(
+                f"{len(warnings_frame)} training warning record(s) were captured.",
+                kind="warning",
+                title="Training warnings",
+            )
+        )
+    return section
+
+
+def build_tuning_section(
+    result: Any,
+    *,
+    model: str | None = None,
+    name: str = "Hyperparameter Tuning",
+    include_tables: bool = False,
+    supplementary: bool = True,
+) -> Section:
+    """Build best-parameter and search-result diagnostics."""
+    from coco_pipe.viz.decoding import plot_search_results
+
+    search = _result_frame(result, "get_search_results", context="Tuning")
+    if model is not None and "Model" in search:
+        search = search[search["Model"] == model]
+    if search.empty:
+        raise SectionDataUnavailable("No matching tuning results.")
+    best = _result_frame(result, "get_best_params", required=False, model=model)
+
+    section = Section(title=name)
+    target: Section | AccordionElement = section
+    if supplementary:
+        target = AccordionElement("Show tuning details", open=False)
+        section.add_element(target)
+    target.add_element(
+        _csv_download(search, "search_results.csv", "Download Search Results CSV")
+    )
+    if not best.empty:
+        target.add_element(
+            _csv_download(best, "best_params.csv", "Download Best Parameters CSV")
+        )
+    if include_tables:
+        target.add_element(TableElement(search, title="Search Results"))
+        if not best.empty:
+            target.add_element(TableElement(best, title="Best Parameters"))
+    image = _plot_or_none(
+        plot_search_results,
+        search,
+        model=model,
+        top_n=20,
+        caption="Top hyperparameter-search candidates",
+    )
+    if image is not None:
+        target.add_element(image)
+    return section
+
+
+def build_neural_section(
+    result: Any,
+    *,
+    model: str | None = None,
+    name: str = "Neural Artifacts",
+    include_tables: bool = False,
+) -> Section:
+    """Build neural training artifacts when available."""
+    from coco_pipe.viz.decoding import plot_training_history
+
+    artifacts = _result_frame(result, "get_model_artifacts", context="Neural artifacts")
+    if model is not None and "Model" in artifacts:
+        artifacts = artifacts[artifacts["Model"] == model]
+    if artifacts.empty:
+        raise SectionDataUnavailable("No matching neural artifacts.")
+    section = Section(title=name)
+    section.add_element(
+        _csv_download(artifacts, "model_artifacts.csv", "Download Model Artifacts CSV")
+    )
+    if include_tables:
+        section.add_element(TableElement(artifacts, title="Model Artifacts"))
+    image = _plot_or_none(
+        plot_training_history,
+        artifacts,
+        model=model,
+        caption="Training history",
+    )
+    if image is not None:
+        section.add_element(image)
+    return section
+
+
+def build_configuration_section(
+    result: Any,
+    *,
+    name: str = "Configuration",
+) -> Section:
+    """Build the stored run configuration."""
+    config = getattr(result, "config", {}) or {}
+    if not config:
+        raise SectionDataUnavailable("Run configuration is unavailable.")
+    section = Section(title=name)
+    section.add_element(_config_element(config, title="Run Configuration"))
+    return section
+
+
+def build_provenance_section(
+    result: Any,
+    *,
+    name: str = "Provenance",
+) -> Section:
+    """Build environment and provenance metadata."""
+    metadata = getattr(result, "meta", {}) or {}
+    if not metadata:
+        raise SectionDataUnavailable("Provenance metadata are unavailable.")
+    section = Section(title=name)
+    section.add_element(_table_from_mapping(metadata, title="Environment"))
+    return section
+
+
+def build_caveats_section(
+    result: Any,
+    *,
+    feature_metadata: pd.DataFrame | None = None,
+    name: str = "Caveats",
+) -> Section:
+    """Build explicit caveats for unavailable optional diagnostics."""
+    caveats: list[str] = []
+    if feature_metadata is None:
+        caveats.append(
+            "Feature metadata was not provided; sensor-wise feature plots were skipped."
+        )
+    if callable(getattr(result, "get_probability_diagnostics", None)):
+        if _result_frame(result, "get_probability_diagnostics", required=False).empty:
+            caveats.append("Probability diagnostics were unavailable.")
+    if not caveats:
+        raise SectionDataUnavailable("No report caveats were identified.")
+    section = Section(title=name)
+    for caveat in caveats:
+        section.add_element(CalloutElement(caveat, kind="warning"))
+    return section
+
+
+def build_export_inventory_section(
+    result: Any,
+    *,
+    name: str = "Export Inventory",
+) -> Section:
+    """Build a compact inventory of available result accessors."""
+    accessors = [
+        "summary",
+        "get_detailed_scores",
+        "get_predictions",
+        "get_fit_diagnostics",
+        "get_statistical_assessment",
+        "get_feature_importances",
+        "get_search_results",
+    ]
+    rows = []
+    for accessor in accessors:
+        if not hasattr(result, accessor):
+            continue
+        try:
+            value = getattr(result, accessor)()
+            rows.append(
+                {
+                    "Accessor": accessor,
+                    "Rows": len(value) if hasattr(value, "__len__") else None,
+                }
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            rows.append({"Accessor": accessor, "Rows": None, "Error": str(exc)})
+    if not rows:
+        raise SectionDataUnavailable("No result exports are available.")
+    section = Section(title=name)
+    section.add_element(TableElement(pd.DataFrame(rows), title="Available Tables"))
+    return section
+
+
+DECODING_SECTION_BUILDERS: dict[str, Callable[..., Section]] = {
+    "overview": build_decoding_overview_section,
+    "configuration": build_configuration_section,
+    "provenance": build_provenance_section,
+    "model_summary": build_decoding_summary_section,
+    "cv": build_cv_section,
+    "performance": build_performance_section,
+    "statistical": build_statistical_section,
+    "probability": build_probability_section,
+    "temporal": build_temporal_section,
+    "features": build_features_section,
+    "topomaps": build_topomaps_section,
+    "fit_diagnostics": build_fit_diagnostics_section,
+    "tuning": build_tuning_section,
+    "neural": build_neural_section,
+    "caveats": build_caveats_section,
+    "export_inventory": build_export_inventory_section,
+}
+VALID_SECTIONS = set(DECODING_SECTION_BUILDERS) | set(_SECTION_ALIASES)
+
+
+def _resolve_decoding_sections(
+    sections: str | Sequence[str],
+) -> list[str]:
+    if isinstance(sections, str):
+        if sections not in DECODING_PRESETS:
+            choices = ", ".join(sorted(DECODING_PRESETS))
+            raise ValueError(
+                f"Unknown decoding report preset {sections!r}. Choose from: {choices}."
+            )
+        return list(DECODING_PRESETS[sections])
+    selected = [_SECTION_ALIASES.get(key, key) for key in sections]
+    unknown = [key for key in selected if key not in DECODING_SECTION_BUILDERS]
+    if unknown:
+        raise ValueError(f"Unknown decoding report section(s): {', '.join(unknown)}")
+    return selected
+
+
+def _builder_kwargs(
+    key: str,
+    *,
+    feature_metadata: pd.DataFrame | None,
+    info: Any,
+    coords: Any,
+    verbose: bool,
+    section_options: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    kwargs = dict(section_options.get(key, {}))
+    if key in {"features", "topomaps", "caveats"}:
+        kwargs.setdefault("feature_metadata", feature_metadata)
+    if key == "topomaps":
+        kwargs.setdefault("info", info)
+        kwargs.setdefault("coords", coords)
+    if key in {
+        "cv",
+        "probability",
+        "temporal",
+        "features",
+        "fit_diagnostics",
+        "tuning",
+        "neural",
+    }:
+        kwargs.setdefault("include_tables", verbose)
+    return kwargs
+
+
+def build_decoding_sections(
+    result: Any,
+    *,
+    sections: str | Sequence[str] = "default",
+    feature_metadata: pd.DataFrame | None = None,
+    info: Any = None,
+    coords: Any = None,
+    verbose: bool | None = None,
+    on_error: Literal["raise", "warn", "placeholder"] = "warn",
+    section_options: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[Section]:
+    """Build ordered decoding sections without creating or mutating a report."""
+    _ensure_static_matplotlib_backend()
+    if on_error not in {"raise", "warn", "placeholder"}:
+        raise ValueError("on_error must be 'raise', 'warn', or 'placeholder'.")
+    selected = _resolve_decoding_sections(sections)
+    include_tables = sections == "full" if verbose is None else bool(verbose)
+    options = section_options or {}
+    built: list[Section] = []
+    for key in selected:
+        builder = DECODING_SECTION_BUILDERS[key]
+        kwargs = _builder_kwargs(
+            key,
+            feature_metadata=feature_metadata,
+            info=info,
+            coords=coords,
+            verbose=include_tables,
+            section_options=options,
+        )
+        try:
+            section = builder(result, **kwargs)
+        except SectionDataUnavailable:
+            continue
+        except Exception as exc:
+            if on_error == "raise":
+                raise
+            message = f"Decoding report section {key!r} failed: {exc}"
+            if on_error == "warn":
+                warnings.warn(message, RuntimeWarning, stacklevel=2)
+            else:
+                section = Section(title=key.replace("_", " ").title())
+                section.status = "WARN"
+                section.add_element(
+                    CalloutElement(message, kind="error", title="Section failed")
+                )
+                built.append(section)
+            continue
+        built.append(section)
+    return built
+
+
+def make_decoding_report(
+    result: Any,
+    *,
+    feature_metadata: pd.DataFrame | None = None,
+    info: Any = None,
+    coords: Any = None,
+    sections: str | Sequence[str] = "default",
+    interactive: bool = False,
+    theme: Literal["paper", "notebook", "poster"] = "paper",
+    title: str = "Decoding Report",
+    config: dict | None = None,
+    asset_urls: dict[str, str] | str | None = None,
+    qc_result: QCResult | None = None,
+    output_path: str | None = None,
+    verbose: bool | None = None,
+    on_error: Literal["raise", "warn", "placeholder"] = "warn",
+    section_options: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Report:
+    """Build a decoding report from one ``ExperimentResult``."""
+    if interactive:
+        raise NotImplementedError(
+            "interactive decoding reports are not implemented; pass interactive=False."
+        )
+    run_config = {"theme": theme, **(config or {})}
+    report = Report(title=title, config=run_config, theme=theme, asset_urls=asset_urls)
+    if qc_result is not None:
+        report.add_section(build_qc_section(qc_result))
+    for section in build_decoding_sections(
+        result,
+        sections=sections,
+        feature_metadata=feature_metadata,
+        info=info,
+        coords=coords,
+        verbose=verbose,
+        on_error=on_error,
+        section_options=section_options,
+    ):
+        report.add_section(section)
+    if output_path is not None:
+        report.save(output_path)
+    return report
+
+
+def _append_section(
+    report: Report,
+    builder: Callable[..., Section],
+    result: Any,
+    **kwargs: Any,
+) -> Report:
+    try:
+        report.add_section(builder(result, **kwargs))
+    except SectionDataUnavailable:
+        pass
+    return report
+
+
+def add_decoding_overview(
+    self: Report, result: Any, *, name: str = "Overview"
+) -> Report:
+    return _append_section(self, build_decoding_overview_section, result, name=name)
 
 
 def add_decoding_summary(
-    self: Report,
-    result: Any,
-    name: str = "Decoding Summary",
+    self: Report, result: Any, name: str = "Decoding Summary"
 ) -> Report:
-    """Add a model-performance summary table to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Must expose ``summary() -> pd.DataFrame``.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if empty.
-
-    Raises
-    ------
-    TypeError
-        If *result* does not provide ``summary``.
-
-    See Also
-    --------
-    add_decoding_overview : High-level context table.
-    add_decoding_performance : Score distribution plots.
-
-    Examples
-    --------
-    >>> report.add_decoding_summary(result, name="Model Performance")
-    """
-    if not hasattr(result, "summary"):
-        raise TypeError("result must provide summary().")
-    summary = result.summary()
-    if summary.empty:
-        return self
-    sec = Section(title=name)
-    csv_data = summary.to_csv(index=False)
-    sec.add_element(
-        DownloadAssetElement(
-            csv_data,
-            "decoding_summary.csv",
-            "text/csv",
-            label="Download Summary CSV",
-            style="gray",
-        )
-    )
-    sec.add_element(TableElement(summary, title="Model Performance Summary"))
-    self.add_section(sec)
-    return self
+    return _append_section(self, build_decoding_summary_section, result, name=name)
 
 
 def add_decoding_diagnostics(
@@ -264,200 +1077,14 @@ def add_decoding_diagnostics(
     model: str | None = None,
     name: str = "Decoding Diagnostics",
 ) -> Report:
-    """Add fold-level diagnostics, confusion matrix, ROC, PR, and calibration plots.
-
-    Related plots are displayed side by side: confusion matrix next to ROC curve,
-    and precision-recall curve next to calibration curve.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Decoding result object.
-    metric : str, optional
-        Filter scores to a single metric.
-    model : str, optional
-        Filter to a single model.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the diagnostics section appended, or unchanged if no data
-        is available.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_confusion_matrix
-    coco_pipe.viz.decoding.plot_roc_curve
-    coco_pipe.viz.decoding.plot_pr_curve
-    coco_pipe.viz.decoding.plot_calibration_curve
-
-    Examples
-    --------
-    >>> report.add_decoding_diagnostics(result, model="SVM")
-    """
-    from coco_pipe.viz.decoding import (
-        plot_calibration_curve,
-        plot_confusion_matrix,
-        plot_fold_score_dispersion,
-        plot_pr_curve,
-        plot_roc_curve,
+    return _append_section(
+        self,
+        build_decoding_diagnostics_section,
+        result,
+        metric=metric,
+        model=model,
+        name=name,
     )
-
-    sec = Section(title=name)
-    added = False
-
-    if hasattr(result, "get_detailed_scores"):
-        scores = result.get_detailed_scores()
-        if metric is not None and "Metric" in scores:
-            scores = scores[scores["Metric"] == metric]
-        if model is not None and "Model" in scores:
-            scores = scores[scores["Model"] == model]
-        if not scores.empty:
-            csv_data = scores.to_csv(index=False)
-            sec.add_element(
-                DownloadAssetElement(
-                    csv_data,
-                    "fold_scores.csv",
-                    "text/csv",
-                    label="Download Fold Scores CSV",
-                    style="gray",
-                )
-            )
-            sec.add_element(TableElement(scores, title="Fold Scores"))
-            added = True
-            try:
-                plot_result = plot_fold_score_dispersion(
-                    scores, metric=metric, model=model
-                )
-                sec.add_element(
-                    ImageElement(
-                        plot_result[0]
-                        if isinstance(plot_result, tuple)
-                        else plot_result,
-                        caption="Fold score dispersion",
-                    )
-                )
-            except ValueError as exc:
-                logger.debug("Fold score plot skipped: %s", exc)
-
-    if hasattr(result, "get_fit_diagnostics"):
-        diagnostics = result.get_fit_diagnostics()
-        if model is not None and "Model" in diagnostics:
-            diagnostics = diagnostics[diagnostics["Model"] == model]
-        if not diagnostics.empty:
-            cols = [
-                c
-                for c in ["Model", "Fold", "FitTime", "PredictTime", "TotalTime"]
-                if c in diagnostics
-            ]
-            sec.add_element(
-                TableElement(
-                    diagnostics[cols].drop_duplicates(), title="Fit Diagnostics"
-                )
-            )
-            added = True
-            if "WarningMessage" in diagnostics:
-                warns = diagnostics[diagnostics["WarningMessage"].notna()]
-                if not warns.empty:
-                    warn_cols = [
-                        c
-                        for c in [
-                            "Model",
-                            "Fold",
-                            "Stage",
-                            "WarningCategory",
-                            "WarningMessage",
-                        ]
-                        if c in warns
-                    ]
-                    sec.add_element(
-                        TableElement(warns[warn_cols], title="Training Warnings")
-                    )
-
-    # Confusion matrix + ROC curve — side by side
-    confusion_img: ImageElement | None = None
-    roc_img: ImageElement | None = None
-
-    if hasattr(result, "get_confusion_matrices"):
-        confusion = result.get_confusion_matrices(model=model)
-        if not confusion.empty:
-            sec.add_element(TableElement(confusion, title="Confusion Matrix Data"))
-            added = True
-            try:
-                plot_result = plot_confusion_matrix(confusion, model=model)
-                confusion_img = ImageElement(
-                    plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                    caption="Confusion matrix",
-                )
-            except ValueError as exc:
-                logger.debug("Confusion matrix skipped: %s", exc)
-
-    try:
-        plot_result = plot_roc_curve(result, model=model)
-        roc_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="ROC Curve",
-        )
-        added = True
-    except (TypeError, ValueError) as exc:
-        logger.debug("ROC Curve skipped: %s", exc)
-
-    if confusion_img or roc_img:
-        tabs = {}
-        if confusion_img:
-            tabs["Confusion Matrix"] = confusion_img
-        if roc_img:
-            tabs["ROC Curve"] = roc_img
-        sec.add_element(TabsElement(tabs))
-
-    # Precision-recall + Calibration — side by side
-    pr_img: ImageElement | None = None
-    cal_img: ImageElement | None = None
-
-    try:
-        plot_result = plot_pr_curve(result, model=model)
-        pr_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Precision-Recall Curve",
-        )
-        added = True
-    except (TypeError, ValueError) as exc:
-        logger.debug("PR Curve skipped: %s", exc)
-
-    try:
-        plot_result = plot_calibration_curve(result, model=model)
-        cal_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Calibration Curve",
-        )
-        added = True
-    except (TypeError, ValueError) as exc:
-        logger.debug("Calibration Curve skipped: %s", exc)
-
-    if pr_img or cal_img:
-        tabs = {}
-        if pr_img:
-            tabs["Precision-Recall"] = pr_img
-        if cal_img:
-            tabs["Calibration"] = cal_img
-        sec.add_element(TabsElement(tabs))
-
-    if added:
-        self.add_section(sec)
-    return self
-
-
-def _add_pair(section: Section, a: ImageElement | None, b: ImageElement | None) -> None:
-    """Add two images side by side if both exist, otherwise add whichever is present."""
-    pair = [img for img in (a, b) if img is not None]
-    if len(pair) == 2:
-        section.add_element(ColumnsElement(pair, cols=2))
-    elif len(pair) == 1:
-        section.add_element(pair[0])
 
 
 def add_decoding_statistical_assessment(
@@ -467,147 +1094,31 @@ def add_decoding_statistical_assessment(
     model: str | None = None,
     name: str = "Statistical Assessment",
 ) -> Report:
-    """Add null-interval summary and temporal statistical assessment plots.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Must expose ``get_statistical_assessment() -> pd.DataFrame``.
-    metric : str, optional
-        Filter to a single metric name.
-    model : str, optional
-        Filter to a single model name.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if data is absent.
-
-    Raises
-    ------
-    TypeError
-        If *result* does not provide ``get_statistical_assessment``.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_null_interval_summary
-    coco_pipe.viz.decoding.plot_temporal_statistical_assessment
-
-    Examples
-    --------
-    >>> report.add_decoding_statistical_assessment(result, metric="accuracy")
-    """
-    from coco_pipe.viz.decoding import (
-        plot_null_interval_summary,
-        plot_temporal_statistical_assessment,
+    return _append_section(
+        self,
+        build_statistical_section,
+        result,
+        metric=metric,
+        model=model,
+        name=name,
     )
 
-    if not hasattr(result, "get_statistical_assessment"):
-        raise TypeError("result must provide get_statistical_assessment().")
-    assessment = result.get_statistical_assessment()
-    if metric is not None and "Metric" in assessment:
-        assessment = assessment[assessment["Metric"] == metric]
-    if model is not None and "Model" in assessment:
-        assessment = assessment[assessment["Model"] == model]
-    if assessment.empty:
-        return self
 
-    sec = Section(title=name)
-    sec.add_element(
-        TableElement(assessment, title="Finite-Sample Statistical Assessment")
-    )
-    try:
-        plot_result = plot_null_interval_summary(assessment)
-        sec.add_element(
-            ImageElement(
-                plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                caption="Null interval summary",
-            )
-        )
-    except ValueError as exc:
-        logger.debug("Null interval summary skipped: %s", exc)
-    if "Time" in assessment and assessment["Time"].notna().any():
-        try:
-            plot_result = plot_temporal_statistical_assessment(
-                assessment, metric=metric, model=model
-            )
-            sec.add_element(
-                ImageElement(
-                    plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                    caption="Temporal statistical assessment",
-                )
-            )
-        except ValueError as exc:
-            logger.debug("Temporal statistics skipped: %s", exc)
-    self.add_section(sec)
-    return self
-
-
-def add_decoding_neural_artifacts(
+def add_decoding_temporal(
     self: Report,
     result: Any,
+    metric: str | None = None,
     model: str | None = None,
-    name: str = "Neural Artifacts",
+    name: str = "Temporal Decoding",
 ) -> Report:
-    """Add model artifact table and training-history plot to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Must expose ``get_model_artifacts() -> pd.DataFrame``.
-    model : str, optional
-        Filter to a single model name.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if data is absent.
-
-    Raises
-    ------
-    TypeError
-        If *result* does not provide ``get_model_artifacts``.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_training_history
-
-    Examples
-    --------
-    >>> report.add_decoding_neural_artifacts(result)
-    """
-    from coco_pipe.viz.decoding import plot_training_history
-
-    if not hasattr(result, "get_model_artifacts"):
-        raise TypeError("result must provide get_model_artifacts().")
-    artifacts = result.get_model_artifacts()
-    if model is not None and "Model" in artifacts:
-        artifacts = artifacts[artifacts["Model"] == model]
-    if artifacts.empty:
-        return self
-
-    sec = Section(title=name)
-    sec.add_element(TableElement(artifacts, title="Model Artifacts"))
-    try:
-        plot_result = plot_training_history(artifacts, model=model)
-        sec.add_element(
-            ImageElement(
-                plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                caption="Training history",
-            )
-        )
-    except ValueError:
-        pass
-    self.add_section(sec)
-    return self
+    return _append_section(
+        self,
+        build_temporal_section,
+        result,
+        metric=metric,
+        model=model,
+        name=name,
+    )
 
 
 def add_decoding_performance(
@@ -617,70 +1128,9 @@ def add_decoding_performance(
     metric: str | None = None,
     name: str = "Performance",
 ) -> Report:
-    """Add decoding-score distribution and model-comparison plots to *self*.
-
-    The two plots are rendered side by side when both are available.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Decoding result object.
-    metric : str, optional
-        Metric to visualise (e.g. ``"accuracy"``).
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if no plots succeed.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_decoding_scores
-    coco_pipe.viz.decoding.plot_model_comparison
-
-    Examples
-    --------
-    >>> report.add_decoding_performance(result, metric="roc_auc")
-    """
-    from coco_pipe.viz.decoding import plot_decoding_scores, plot_model_comparison
-
-    sec = Section(title=name)
-    scores_img: ImageElement | None = None
-    compare_img: ImageElement | None = None
-
-    try:
-        plot_result = plot_decoding_scores(result, metric=metric)
-        scores_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Decoding scores",
-        )
-    except (TypeError, ValueError) as exc:
-        logger.debug("Decoding score plot skipped: %s", exc)
-
-    try:
-        plot_result = plot_model_comparison(result, metric=metric or "accuracy")
-        compare_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Model comparison",
-        )
-    except (TypeError, ValueError) as exc:
-        logger.debug("Model comparison plot skipped: %s", exc)
-
-    if scores_img or compare_img:
-        tabs = {}
-        if scores_img:
-            tabs["Score Distribution"] = scores_img
-        if compare_img:
-            tabs["Model Comparison"] = compare_img
-        sec.add_element(TabsElement(tabs))
-
-    if scores_img is not None or compare_img is not None:
-        self.add_section(sec)
-    return self
+    return _append_section(
+        self, build_performance_section, result, metric=metric, name=name
+    )
 
 
 def add_decoding_features(
@@ -690,74 +1140,13 @@ def add_decoding_features(
     feature_metadata: pd.DataFrame | None = None,
     name: str = "Features",
 ) -> Report:
-    """Add feature-importance and feature-stability plots to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Decoding result object.
-    feature_metadata : pd.DataFrame, optional
-        Additional feature metadata rendered as a table.
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if nothing renders.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_feature_importance
-    coco_pipe.viz.decoding.plot_feature_stability
-
-    Examples
-    --------
-    >>> report.add_decoding_features(result, feature_metadata=meta_df)
-    """
-    from coco_pipe.viz.decoding import plot_feature_importance, plot_feature_stability
-
-    sec = Section(title=name)
-    importance_img: ImageElement | None = None
-    stability_img: ImageElement | None = None
-
-    try:
-        plot_result = plot_feature_importance(result)
-        importance_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Feature importance",
-        )
-    except (TypeError, ValueError) as exc:
-        logger.debug("Feature importance skipped: %s", exc)
-
-    try:
-        plot_result = plot_feature_stability(result)
-        stability_img = ImageElement(
-            plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-            caption="Feature stability",
-        )
-    except (TypeError, ValueError) as exc:
-        logger.debug("Feature stability skipped: %s", exc)
-
-    if importance_img or stability_img:
-        tabs = {}
-        if importance_img:
-            tabs["Importance"] = importance_img
-        if stability_img:
-            tabs["Stability"] = stability_img
-        sec.add_element(TabsElement(tabs))
-    added = importance_img is not None or stability_img is not None
-
-    if feature_metadata is not None:
-        sec.add_element(
-            TableElement(pd.DataFrame(feature_metadata), title="Feature Metadata")
-        )
-        added = True
-    if added:
-        self.add_section(sec)
-    return self
+    return _append_section(
+        self,
+        build_features_section,
+        result,
+        feature_metadata=feature_metadata,
+        name=name,
+    )
 
 
 def add_decoding_topomaps(
@@ -769,292 +1158,56 @@ def add_decoding_topomaps(
     coords: Any = None,
     name: str = "Sensor Maps",
 ) -> Report:
-    """Add per-family sensor-profile topomaps to *self*.
-
-    Parameters
-    ----------
-    self : Report
-        Target report.
-    result : Any
-        Decoding result object.
-    feature_metadata : pd.DataFrame, optional
-        Must contain a ``FeatureFamily`` column; skipped otherwise.
-    info : mne.Info, optional
-        MNE Info object used for topomap rendering.
-    coords : array-like, optional
-        Explicit 2-D sensor coordinates (alternative to *info*).
-    name : str
-        Section title.
-
-    Returns
-    -------
-    Report
-        *self* with the new section appended, or unchanged if data is absent.
-
-    See Also
-    --------
-    coco_pipe.viz.decoding.plot_feature_sensor_profile
-
-    Examples
-    --------
-    >>> report.add_decoding_topomaps(result, feature_metadata=meta_df, info=raw.info)
-    """
-    from coco_pipe.viz.decoding import plot_feature_sensor_profile
-
-    if feature_metadata is None:
-        return self
-    meta = pd.DataFrame(feature_metadata)
-    if "FeatureFamily" not in meta or meta.empty:
-        return self
-    sec = Section(title=name)
-    added = False
-    for family in pd.unique(meta["FeatureFamily"].dropna())[:4]:
-        try:
-            plot_result = plot_feature_sensor_profile(
-                result,
-                feature_metadata=meta,
-                feature_family=str(family),
-                info=info,
-                coords=coords,
-            )
-            sec.add_element(
-                ImageElement(
-                    plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                    caption=f"{family} sensor profile",
-                )
-            )
-            added = True
-        except (TypeError, ValueError, ImportError) as exc:
-            logger.debug("Topomap skipped: %s", exc)
-    if added:
-        self.add_section(sec)
-    return self
-
-
-def _add_configuration(report: Report, result: Any) -> None:
-    config = getattr(result, "config", {}) or {}
-    if not config:
-        return
-    sec = Section(title="Configuration")
-    sec.add_element(_config_element(config, title="Run Configuration"))
-    report.add_section(sec)
-
-
-def _add_provenance(report: Report) -> None:
-    sec = Section(title="Provenance")
-    metadata = getattr(report, "metadata", {}) or {}
-    sec.add_element(_table_from_mapping(metadata, title="Environment"))
-    report.add_section(sec)
-
-
-def _add_confusion_probability(report: Report, result: Any) -> None:
-    temp = Report(title="tmp")
-    add_decoding_diagnostics(temp, result, name="Confusion and Probability")
-    for child in temp.children:
-        report.add_section(child)
-
-
-def _add_fit_diagnostics(report: Report, result: Any) -> None:
-    from coco_pipe.viz.decoding import plot_fit_diagnostics
-
-    sec = Section(title="Fit Diagnostics")
-    added = False
-    if hasattr(result, "get_fit_diagnostics"):
-        data = result.get_fit_diagnostics()
-        if not data.empty:
-            sec.add_element(TableElement(data, title="Fit Diagnostics"))
-            added = True
-            try:
-                plot_result = plot_fit_diagnostics(data)
-                sec.add_element(
-                    ImageElement(
-                        plot_result[0]
-                        if isinstance(plot_result, tuple)
-                        else plot_result,
-                        caption="Fit diagnostics",
-                    )
-                )
-            except ValueError as exc:
-                logger.debug("Fit diagnostic plot skipped: %s", exc)
-    if added:
-        report.add_section(sec)
-
-
-def _add_caveats(report: Report, result: Any, feature_metadata: Any = None) -> None:
-    caveats = []
-    if feature_metadata is None:
-        caveats.append(
-            "Feature metadata was not provided; sensor-wise feature plots were skipped."
-        )
-    if hasattr(result, "get_probability_diagnostics"):
-        try:
-            if result.get_probability_diagnostics().empty:
-                caveats.append("Probability diagnostics were unavailable.")
-        except Exception:
-            caveats.append("Probability diagnostics could not be computed.")
-    if caveats:
-        sec = Section(title="Caveats")
-        sec.add_element(
-            TableElement(pd.DataFrame({"Caveat": caveats}), title="Caveats")
-        )
-        report.add_section(sec)
-
-
-def _add_export_inventory(report: Report, result: Any) -> None:
-    accessors = [
-        "summary",
-        "get_detailed_scores",
-        "get_predictions",
-        "get_fit_diagnostics",
-        "get_statistical_assessment",
-        "get_feature_importances",
-    ]
-    rows = []
-    for accessor in accessors:
-        if not hasattr(result, accessor):
-            continue
-        try:
-            raw_value = getattr(result, accessor)
-            value = raw_value() if callable(raw_value) else raw_value
-            rows.append(
-                {
-                    "Accessor": accessor,
-                    "Rows": len(value) if hasattr(value, "__len__") else None,
-                }
-            )
-        except Exception as exc:
-            rows.append({"Accessor": accessor, "Rows": None, "Error": str(exc)})
-    if rows:
-        sec = Section(title="Export Inventory")
-        sec.add_element(TableElement(pd.DataFrame(rows), title="Available Tables"))
-        report.add_section(sec)
-
-
-def make_decoding_report(
-    result: Any,
-    *,
-    feature_metadata: pd.DataFrame | None = None,
-    info: Any = None,
-    coords: Any = None,
-    sections: list[str] | Literal["default"] = "default",
-    interactive: bool = False,
-    theme: Literal["paper", "notebook", "poster"] = "paper",
-    title: str = "Decoding Report",
-    config: dict | None = None,
-    asset_urls: dict[str, str] | None = None,
-    qc_result: QCResult | None = None,
-    output_path: str | None = None,
-) -> Report:
-    """Build a static decoding report from an ``ExperimentResult``.
-
-    Parameters
-    ----------
-    result : Any
-        Decoding result object (e.g. ``ExperimentResult``).
-    feature_metadata : pd.DataFrame, optional
-        Feature-level metadata for sensor map sections.
-    info : mne.Info, optional
-        MNE Info for topomap rendering.
-    coords : array-like, optional
-        Explicit sensor coordinates (alternative to *info*).
-    sections : list of str or ``"default"``
-        Ordered list of section keys to include. Use ``"default"`` for all
-        standard sections (see :data:`DEFAULT_SECTIONS`).
-    interactive : bool
-        Reserved for future use. Currently ignored; pass ``False``.
-    theme : ``"paper"`` | ``"notebook"`` | ``"poster"``
-        Matplotlib theme preset.
-    title : str
-        Report title.
-    config : dict, optional
-        Extra configuration metadata stored in the report header.
-    asset_urls : dict, optional
-        Override JavaScript asset URLs used by the report shell.
-    qc_result : QCResult, optional
-        Structured QC drop log rendered before analysis sections.
-    output_path : str, optional
-        If given, save the rendered HTML to this path.
-
-    Returns
-    -------
-    Report
-        Fully populated report. Sections whose source data is absent are
-        skipped without raising.
-
-    See Also
-    --------
-    coco_pipe.report.api.from_experiment_result : Thin public wrapper.
-    make_reduction_report : Equivalent factory for dimensionality reduction.
-
-    Examples
-    --------
-    >>> report = make_decoding_report(result)
-    >>> report.save("decoding_report.html")
-    """
-    if interactive:
-        warnings.warn(
-            "interactive=True is not yet implemented in make_decoding_report. "
-            "All plots are currently rendered as static images.",
-            stacklevel=2,
-        )
-
-    selected = _resolve_sections(
-        sections,
-        default=DEFAULT_SECTIONS,
-        valid=VALID_SECTIONS,
-        context="decoding",
+    return _append_section(
+        self,
+        build_topomaps_section,
+        result,
+        feature_metadata=feature_metadata,
+        info=info,
+        coords=coords,
+        name=name,
     )
-    run_config = {"theme": theme, **(config or {})}
-    report = Report(title=title, config=run_config, theme=theme, asset_urls=asset_urls)
-    if qc_result is not None:
-        report.add_section(build_qc_section(qc_result))
 
-    for section in selected:
-        try:
-            if section == "overview":
-                add_decoding_overview(report, result)
-            elif section == "configuration":
-                _add_configuration(report, result)
-            elif section == "provenance":
-                _add_provenance(report)
-            elif section == "model_summary":
-                add_decoding_summary(report, result)
-            elif section == "cv_summary":
-                add_decoding_diagnostics(report, result)
-            elif section == "performance":
-                add_decoding_performance(report, result)
-            elif section == "statistical":
-                add_decoding_statistical_assessment(report, result)
-            elif section == "confusion_probability":
-                _add_confusion_probability(report, result)
-            elif section == "temporal":
-                add_decoding_temporal(report, result)
-            elif section == "features":
-                add_decoding_features(report, result, feature_metadata=feature_metadata)
-            elif section == "fit_diagnostics":
-                _add_fit_diagnostics(report, result)
-            elif section == "caveats":
-                _add_caveats(report, result, feature_metadata=feature_metadata)
-            elif section == "export_inventory":
-                _add_export_inventory(report, result)
-            elif section == "topomaps":
-                add_decoding_topomaps(
-                    report,
-                    result,
-                    feature_metadata=feature_metadata,
-                    info=info,
-                    coords=coords,
-                )
-        except Exception as exc:
-            logger.debug("Decoding report section %s skipped: %s", section, exc)
 
-    if output_path is not None:
-        report.save(output_path)
-    return report
+def add_decoding_neural_artifacts(
+    self: Report,
+    result: Any,
+    model: str | None = None,
+    name: str = "Neural Artifacts",
+) -> Report:
+    return _append_section(
+        self,
+        build_neural_section,
+        result,
+        model=model,
+        name=name,
+    )
 
 
 __all__ = [
+    "DECODING_PRESETS",
+    "DECODING_SECTION_BUILDERS",
     "DEFAULT_SECTIONS",
+    "VALID_SECTIONS",
+    "SectionDataUnavailable",
+    "build_decoding_sections",
+    "build_decoding_overview_section",
+    "build_decoding_summary_section",
+    "build_cv_section",
+    "build_probability_section",
+    "build_decoding_diagnostics_section",
+    "build_statistical_section",
+    "build_temporal_section",
+    "build_performance_section",
+    "build_features_section",
+    "build_topomaps_section",
+    "build_fit_diagnostics_section",
+    "build_tuning_section",
+    "build_neural_section",
+    "build_configuration_section",
+    "build_provenance_section",
+    "build_caveats_section",
+    "build_export_inventory_section",
     "add_decoding_overview",
     "add_decoding_temporal",
     "add_decoding_summary",
@@ -1067,9 +1220,6 @@ __all__ = [
     "make_decoding_report",
 ]
 
-# Bind section adders as Report methods. Reversing the dependency this way
-# keeps the fluent `report.add_decoding_*()` API without forcing core.py to
-# import this module (which would be circular).
 Report.add_decoding_overview = add_decoding_overview
 Report.add_decoding_temporal = add_decoding_temporal
 Report.add_decoding_summary = add_decoding_summary

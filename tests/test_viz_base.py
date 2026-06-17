@@ -15,6 +15,7 @@ from coco_pipe.viz._utils import (
 from coco_pipe.viz.base import (
     _colored_line_collection,
     _plot_alpha_encoded_line,
+    accuracy_color_limits,
     plot_bar,
     plot_distribution_groups,
     plot_error_points,
@@ -318,6 +319,21 @@ def test_plot_heatmap_exceptions():
 
     # center logic outside bounds
     fig, ax = plot_heatmap([[1, 2], [3, 4]], center=5.0)
+    plt.close(fig)
+
+
+def test_accuracy_heatmap_limits_are_symmetric_around_chance():
+    assert accuracy_color_limits([[0.51, 0.56], [0.48, 0.54]]) == pytest.approx(
+        (0.44, 0.56)
+    )
+    fig, ax = plot_heatmap(
+        [[0.51, 0.56], [0.52, 0.54]],
+        center=0.5,
+        minimum_half_range=0.02,
+    )
+    assert ax.images[0].norm.vmin == pytest.approx(0.44)
+    assert ax.images[0].norm.vcenter == pytest.approx(0.5)
+    assert ax.images[0].norm.vmax == pytest.approx(0.56)
     plt.close(fig)
 
 

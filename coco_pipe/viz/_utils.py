@@ -380,10 +380,12 @@ def coerce_sensor_layout(
         lower = {str(col).lower(): col for col in coords.columns}
         if "x" not in lower or "y" not in lower:
             raise ValueError("coords DataFrame must include x and y columns.")
-        if "FeatureName" in coords.columns:
-            coord_names = coords["FeatureName"].astype(str).tolist()
-        elif "Sensor" in coords.columns:
-            coord_names = coords["Sensor"].astype(str).tolist()
+        if "featurename" in lower:
+            coord_names = coords[lower["featurename"]].astype(str).tolist()
+        elif "sensor" in lower:
+            coord_names = coords[lower["sensor"]].astype(str).tolist()
+        elif "ch_name" in lower:
+            coord_names = coords[lower["ch_name"]].astype(str).tolist()
         else:
             coord_names = coords.index.astype(str).tolist()
         frame = coords.copy()

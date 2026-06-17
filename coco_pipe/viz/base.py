@@ -224,12 +224,53 @@ def plot_bar(
     return fig, ax
 
 
+def centered_color_limits(
+    values: pd.DataFrame | Sequence[float] | np.ndarray,
+    *,
+    center: float,
+    minimum_half_range: float = 0.0,
+    bounds: tuple[float, float] | None = None,
+) -> tuple[float, float]:
+    """Return finite color limits symmetric around ``center``."""
+    numeric = np.asarray(values, dtype=float)
+    finite = numeric[np.isfinite(numeric)]
+    half_range = float(np.max(np.abs(finite - center))) if finite.size else 0.0
+    half_range = max(half_range, float(minimum_half_range))
+    if half_range == 0:
+        half_range = max(abs(float(center)) * 0.05, 1e-12)
+    lower = float(center) - half_range
+    upper = float(center) + half_range
+    if bounds is not None:
+        bound_lower, bound_upper = map(float, bounds)
+        if not bound_lower < bound_upper:
+            raise ValueError("bounds must be an increasing (lower, upper) pair.")
+        lower = max(bound_lower, lower)
+        upper = min(bound_upper, upper)
+    return lower, upper
+
+
+def accuracy_color_limits(
+    values: pd.DataFrame | Sequence[float] | np.ndarray,
+    *,
+    center: float = 0.5,
+    minimum_half_range: float = 0.02,
+) -> tuple[float, float]:
+    """Return chance-centered color limits for accuracy-like values."""
+    return centered_color_limits(
+        values,
+        center=center,
+        minimum_half_range=minimum_half_range,
+        bounds=(0.0, 1.0),
+    )
+
+
 def plot_heatmap(
     matrix: pd.DataFrame | Sequence[Sequence[float]] | np.ndarray,
     x_labels: Sequence[Any] | None = None,
     y_labels: Sequence[Any] | None = None,
     cmap: str = SEQUENTIAL,
     center: float | None = None,
+    minimum_half_range: float = 0.0,
     vmin: float | None = None,
     vmax: float | None = None,
     aspect: str = "auto",
@@ -261,7 +302,10 @@ def plot_heatmap(
         Colormap name.
     center
         When set, a ``TwoSlopeNorm`` is applied so this value maps to the
-        colormap midpoint.
+        colormap midpoint. Limits are symmetric around the center unless both
+        ``vmin`` and ``vmax`` are supplied.
+    minimum_half_range
+        Minimum distance from ``center`` to either color limit.
     vmin
         Explicit colormap lower bound.
     vmax
@@ -321,8 +365,20 @@ def plot_heatmap(
     if center is not None:
         finite_values = values[np.isfinite(values)]
         if finite_values.size:
-            lower = float(np.nanmin(finite_values)) if vmin is None else float(vmin)
-            upper = float(np.nanmax(finite_values)) if vmax is None else float(vmax)
+            if vmin is None and vmax is None:
+                lower, upper = centered_color_limits(
+                    finite_values,
+                    center=float(center),
+                    minimum_half_range=minimum_half_range,
+                )
+            elif vmin is None:
+                upper = float(vmax)
+                lower = float(center) - abs(upper - float(center))
+            elif vmax is None:
+                lower = float(vmin)
+                upper = float(center) + abs(float(center) - lower)
+            else:
+                lower, upper = float(vmin), float(vmax)
             if lower < center < upper:
                 kwargs["norm"] = TwoSlopeNorm(
                     vmin=lower, vcenter=float(center), vmax=upper

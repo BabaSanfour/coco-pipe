@@ -2,7 +2,11 @@ import pandas as pd
 
 from coco_pipe.io.quality import EpochDropRecord, QCResult, SubjectDropRecord
 from coco_pipe.report.core import Section
-from coco_pipe.report.elements import ImageElement, TableElement
+from coco_pipe.report.elements import (
+    ImageElement,
+    InteractiveTableElement,
+    TableElement,
+)
 from coco_pipe.report.qc import build_qc_section
 
 
@@ -55,10 +59,10 @@ def test_build_qc_section_full():
         TableElement,  # Summary
         TableElement,  # Epochs Dropped
         TableElement,  # Subjects Dropped
+        TableElement,  # Per-group retention
         TableElement,  # Family-scoped drops
         ImageElement,  # Outlier Burden Image
         TableElement,  # Family QC
-        TableElement,  # Feature missingness
         TableElement,  # Pruned columns
     ]
 
@@ -67,7 +71,41 @@ def test_build_qc_section_full():
     assert titles[0] == "QC Funnel Summary"
     assert titles[1] == "Dropped Epochs (2)"
     assert titles[2] == "Dropped Subjects (1)"
-    assert titles[3] == "Family-Scoped Drops"
-    assert titles[5] == "Family-Level Quality Summary"
-    assert titles[6] == "Feature Missingness"
+    assert titles[3] == "Per-Group Retention (group_by=family)"
+    assert titles[4] == "Conditional Drops by family"
+    assert titles[6] == "Family-Level Quality Summary"
     assert titles[7] == "Pruned Descriptor Columns"
+
+
+def test_build_qc_section_compacts_long_tables_and_filters_zero_missingness():
+    qc_res = QCResult(
+        n_obs_in=20,
+        n_obs_out=8,
+        epochs_dropped=[
+            EpochDropRecord(
+                obs_id=f"obs{index}",
+                obs_index=index,
+                outlier_fraction=0.5,
+                mad_z_max=10.0,
+            )
+            for index in range(12)
+        ],
+        feature_missingness=pd.DataFrame(
+            {
+                "feature": ["complete", "incomplete"],
+                "missing": [0.0, 0.25],
+            }
+        ),
+    )
+
+    section = build_qc_section(qc_res, compact=True, page_size=10)
+
+    assert isinstance(section.children[1], InteractiveTableElement)
+    missingness = next(
+        element
+        for element in section.children
+        if getattr(element, "title", None) == "Feature Missingness"
+    )
+    assert TableElement._to_frame(missingness.data)["feature"].tolist() == [
+        "incomplete"
+    ]

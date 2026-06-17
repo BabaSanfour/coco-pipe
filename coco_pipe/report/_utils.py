@@ -2,16 +2,98 @@
 
 from __future__ import annotations
 
+import io
 import json
-from collections.abc import Iterable, Mapping, Sequence
+import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
-from .elements import CodeBlockElement, TableElement
+from .elements import (
+    CodeBlockElement,
+    DownloadAssetElement,
+    ImageElement,
+    TableElement,
+    TabsElement,
+)
 
 if TYPE_CHECKING:
-    pass
+    from .core import Section
+
+logger = logging.getLogger(__name__)
+
+
+def _figure_element(
+    plot_result: Any,
+    caption: str | None = None,
+    *,
+    width: str = "100%",
+) -> ImageElement:
+    """Eagerly render a Matplotlib figure (or ``(fig, ax)`` tuple) to a PNG element.
+
+    ``ImageElement`` can encode a live figure on its own, but it does so lazily at
+    render time. Encoding here and closing the figure immediately keeps peak memory
+    bounded across large sweeps, where lazy encoding would retain every open figure.
+    """
+    import matplotlib.pyplot as plt
+
+    figure = plot_result[0] if isinstance(plot_result, tuple) else plot_result
+    buffer = io.BytesIO()
+    try:
+        figure.savefig(buffer, format="png", bbox_inches="tight", dpi=150)
+    finally:
+        plt.close(figure)
+    return ImageElement(buffer.getvalue(), caption=caption, width=width)
+
+
+def _csv_download(
+    frame: pd.DataFrame,
+    filename: str,
+    label: str,
+) -> DownloadAssetElement:
+    """Return a gray CSV download button for *frame*."""
+    return DownloadAssetElement(
+        frame.to_csv(index=False),
+        filename,
+        "text/csv",
+        label=label,
+        style="gray",
+    )
+
+
+def _plot_or_none(
+    plotter: Callable[..., Any],
+    *args: Any,
+    caption: str,
+    **kwargs: Any,
+) -> ImageElement | None:
+    """Render a plot to an element, returning ``None`` if it cannot be drawn."""
+    try:
+        return _figure_element(plotter(*args, **kwargs), caption)
+    except (ImportError, TypeError, ValueError) as exc:
+        logger.debug("%s skipped: %s", caption, exc)
+        return None
+
+
+def _add_tabs_or_single(
+    container: "Section | Any",
+    elements: Mapping[str, ImageElement | None],
+) -> None:
+    """Add one image directly, or several as a tab group, skipping ``None``."""
+    available = {label: image for label, image in elements.items() if image is not None}
+    if len(available) == 1:
+        container.add_element(next(iter(available.values())))
+    elif available:
+        container.add_element(TabsElement(available))
+
+
+def _ensure_static_matplotlib_backend() -> None:
+    """Use a headless backend before report figures are created."""
+    import matplotlib
+
+    if str(matplotlib.get_backend()).lower() != "agg":
+        matplotlib.use("Agg", force=True)
 
 
 def _coerce_kind(value: Any, kind: type) -> Any:
