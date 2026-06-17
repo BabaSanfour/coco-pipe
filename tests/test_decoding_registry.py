@@ -4,6 +4,7 @@ import pytest
 
 from coco_pipe.decoding._specs import canonical_estimator_name
 from coco_pipe.decoding.registry import (
+    EstimatorNotFoundError,
     EstimatorSpec,
     get_capabilities,
     get_estimator_cls,
@@ -42,9 +43,7 @@ def test_registration_overwrite_warning():
 
 def test_get_estimator_cls_not_found():
     # Direct string check on the exception message
-    with pytest.raises(
-        pytest.importorskip("coco_pipe.decoding.registry").EstimatorNotFoundError
-    ) as excinfo:
+    with pytest.raises(EstimatorNotFoundError) as excinfo:
         get_estimator_cls("LogisticRegresion")  # Typo
     err_msg = str(excinfo.value)
     assert "Did you mean:" in err_msg
@@ -275,7 +274,7 @@ def test_list_foundation_models_contains_expected_keys():
 def test_get_metadata_known_key():
     m = get_estimator_spec("reve")
     assert m.name == "reve"
-    assert m.embedding_dim == 1024
+    assert m.embedding_dim == 512
     assert m.preferred_backend == "hugging_face"
 
 
@@ -297,3 +296,84 @@ def test_metadata_is_frozen():
     m = get_estimator_spec("reve")
     with pytest.raises(Exception):
         m.embedding_dim = 999  # type: ignore[misc]
+
+
+def test_register_estimator_spec_overwrite():
+    from coco_pipe.decoding._specs import _spec
+    from coco_pipe.decoding.registry import register_estimator_spec
+
+    spec = _spec("dummy", "dummy", "linear", ("classification",))
+    register_estimator_spec(spec)
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        register_estimator_spec(spec)
+        assert len(w) > 0
+        assert "Overwriting existing estimator spec for 'dummy'" in str(w[-1].message)
+
+
+def test_get_foundation_model_spec_error():
+    import pytest
+
+    from coco_pipe.decoding.registry import get_foundation_model_spec
+
+    with pytest.raises(KeyError, match="Unknown foundation model 'invalid'"):
+        get_foundation_model_spec("invalid")
+
+
+def test_resolve_estimator_spec_classical_fallback():
+    from coco_pipe.decoding.registry import resolve_estimator_spec
+
+    spec = resolve_estimator_spec(
+        {
+            "kind": "classical",
+            "method": "ClassicalModel",
+            "estimator": "LogisticRegression",
+        }
+    )
+    assert spec.name == "LogisticRegression"
+
+
+def test_resolve_estimator_spec_foundation_error():
+    import pytest
+
+    from coco_pipe.decoding.registry import resolve_estimator_spec
+
+    with pytest.raises(ValueError, match="requires a 'model_key'"):
+        resolve_estimator_spec({"kind": "foundation_embedding"})
+
+
+def test_resolve_estimator_spec_frozen_backbone():
+    from coco_pipe.decoding.registry import resolve_estimator_spec
+
+    spec = resolve_estimator_spec(
+        {
+            "kind": "frozen_backbone",
+            "backbone": "LogisticRegression",
+            "head": "LogisticRegression",
+        }
+    )
+    assert spec.name == "FrozenBackboneDecoder"
+    assert spec.supports_proba
+
+
+def test_resolve_estimator_spec_neural_finetune():
+    from coco_pipe.decoding._specs import _fm_spec
+    from coco_pipe.decoding.registry import (
+        register_estimator_spec,
+        resolve_estimator_spec,
+    )
+
+    spec = _fm_spec(
+        "dummy_fm",
+        hub_repo="repo",
+        embedding_dim=10,
+        pretrained_sfreq=200.0,
+        preferred_backend="hf",
+    )
+    register_estimator_spec(spec)
+    res_spec = resolve_estimator_spec(
+        {"kind": "neural_finetune", "model_key": "dummy_fm", "train_mode": "full"}
+    )
+    assert res_spec.name == "dummy_fm_full"

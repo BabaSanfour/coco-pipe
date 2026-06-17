@@ -15,15 +15,18 @@ from coco_pipe.viz._utils import (
 from coco_pipe.viz.base import (
     _colored_line_collection,
     _plot_alpha_encoded_line,
+    accuracy_color_limits,
     plot_bar,
     plot_distribution_groups,
     plot_error_points,
     plot_heatmap,
     plot_hexbin,
+    plot_histogram,
     plot_line,
     plot_scatter2d,
     plot_scatter3d,
     plot_streamfield,
+    plot_timecourses,
     plot_topomap,
 )
 from coco_pipe.viz.theme import figure_size
@@ -319,6 +322,21 @@ def test_plot_heatmap_exceptions():
     plt.close(fig)
 
 
+def test_accuracy_heatmap_limits_are_symmetric_around_chance():
+    assert accuracy_color_limits([[0.51, 0.56], [0.48, 0.54]]) == pytest.approx(
+        (0.44, 0.56)
+    )
+    fig, ax = plot_heatmap(
+        [[0.51, 0.56], [0.52, 0.54]],
+        center=0.5,
+        minimum_half_range=0.02,
+    )
+    assert ax.images[0].norm.vmin == pytest.approx(0.44)
+    assert ax.images[0].norm.vcenter == pytest.approx(0.5)
+    assert ax.images[0].norm.vmax == pytest.approx(0.56)
+    plt.close(fig)
+
+
 def test_plot_line_exceptions():
     with pytest.raises(ValueError, match="same length"):
         plot_line([1, 2], [1, 2, 3])
@@ -451,3 +469,251 @@ def test_top_level_viz_exports_new_helpers():
     assert not hasattr(top_viz, "coerce_decoding_frame")
     assert not hasattr(top_viz, "require_columns")
     assert not hasattr(top_viz, "select_rows")
+
+
+def test_plot_histogram_basic():
+    fig, ax = plot_histogram([1, 2, 3, 4, 5])
+    assert ax.get_ylabel() == "Count"
+    plt.close(fig)
+
+
+def test_plot_histogram_with_options():
+    fig, ax = plot_histogram(
+        [1, 2, 3, 4, 5, np.nan],
+        bins=3,
+        color="blue",
+        title="Test Histogram",
+        xlabel="Values",
+        ylabel="Freq",
+    )
+    assert ax.get_title() == "Test Histogram"
+    assert ax.get_xlabel() == "Values"
+    plt.close(fig)
+
+
+def test_plot_histogram_existing_ax():
+    fig, ax = plt.subplots()
+    plot_histogram([1, 2, 3], ax=ax)
+    plt.close(fig)
+
+
+def test_plot_histogram_many_values():
+    fig, ax = plot_histogram(np.arange(100))
+    plt.close(fig)
+
+
+def test_plot_histogram_few_values():
+    fig, ax = plot_histogram([1.0])
+    plt.close(fig)
+
+
+def test_plot_histogram_empty_raises():
+    with pytest.raises(ValueError, match="at least one finite"):
+        plot_histogram([np.nan])
+    with pytest.raises(ValueError, match="at least one finite"):
+        plot_histogram([])
+
+
+_TC_TIMES = np.arange(10, dtype=float)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(3, 20), np.linspace(0, 1, 20)),
+            id="2d",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(5, 3, 20), np.linspace(0, 1, 20)),
+            id="3d",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(6, 2, 10),
+                _TC_TIMES,
+                group_labels=[0, 0, 0, 1, 1, 1],
+                title="ERP",
+                xlabel="Time (s)",
+                ylabel="Amplitude",
+            ),
+            id="with_groups",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(4, 2, 10),
+                _TC_TIMES,
+                group_labels=[0, 0, 1, 1],
+                palette={0: "blue", 1: "red"},
+                linestyle_map={0: "solid", 1: "dash"},
+                group_name_map={0: "Cond A", 1: "Cond B"},
+            ),
+            id="palette_and_linestyle",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(4, 2, 10),
+                _TC_TIMES,
+                group_labels=[0, 0, 1, 1],
+                palette=["blue", "red"],
+            ),
+            id="seq_palette",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(2, 3, 10),
+                _TC_TIMES,
+                channel_names=["A", "B", "C"],
+                rois=["A", "C"],
+            ),
+            id="rois_as_list",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(2, 2, 10), _TC_TIMES, add_zero=True
+            ),
+            id="add_zero",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(1, 2, 10), _TC_TIMES),
+            id="single_trial",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(4, 2, 10), _TC_TIMES, error_style="bar"
+            ),
+            id="error_style_bar",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(2, 2, 10),
+                _TC_TIMES,
+                channel_names=["Ch0", "Ch1"],
+                rois={"Good": ["Ch0"], "Empty": ["Missing"]},
+            ),
+            id="empty_roi_channels",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(2, 3, 10), _TC_TIMES, n_cols=2),
+            id="extra_subplots_hidden",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(pd.DataFrame(np.random.randn(3, 10)), _TC_TIMES),
+            id="dataframe_input",
+        ),
+    ],
+)
+def test_plot_timecourses_renders(call):
+    fig, axes = call()
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
+
+
+def test_plot_timecourses_with_rois():
+    data = np.random.randn(4, 4, 10)
+    times = np.arange(10, dtype=float)
+    ch_names = ["C1", "C2", "C3", "C4"]
+    rois = {"Frontal": ["C1", "C2"], "Parietal": ["C3", "C4"]}
+    fig, axes = plot_timecourses(
+        data,
+        times,
+        channel_names=ch_names,
+        rois=rois,
+    )
+    assert len(axes) >= 2
+    plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    "call, match",
+    [
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(10), np.arange(10)),
+            "2D.*3D",
+            id="invalid_data_shape",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(np.random.randn(3, 10), np.arange(5)),
+            "times",
+            id="time_length_mismatch",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(3, 10), np.arange(10), channel_names=["A"]
+            ),
+            "channel_names",
+            id="channel_names_mismatch",
+        ),
+        pytest.param(
+            lambda: plot_timecourses(
+                np.random.randn(4, 3, 10), np.arange(10), group_labels=[0, 0]
+            ),
+            "group_labels",
+            id="group_labels_mismatch",
+        ),
+    ],
+)
+def test_plot_timecourses_errors(call, match):
+    with pytest.raises(ValueError, match=match):
+        call()
+
+
+def test_plot_scatter2d_yerr_only():
+    fig, ax = plot_scatter2d([1, 2], [1, 2], yerr=[0.1, 0.2])
+    plt.close(fig)
+
+
+def test_plot_scatter2d_label_map():
+    fig, ax = plot_scatter2d(
+        [1, 2],
+        [1, 2],
+        labels=["a", "b"],
+        label_map={"a": "Alpha", "b": "Beta"},
+    )
+    plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda: plot_scatter3d(
+                [1, 2], [1, 2], [1, 2], c=[0.5, 0.8], cmap="viridis", colorbar=True
+            ),
+            id="cmap_no_labels",
+        ),
+        pytest.param(
+            lambda: plot_scatter3d([1, 2], [1, 2], [1, 2], color="red"),
+            id="color_no_labels",
+        ),
+        pytest.param(
+            lambda: plot_scatter3d(
+                [1, 2, 3],
+                [1, 2, 3],
+                [1, 2, 3],
+                labels=["a", "b", "a"],
+                palette=["red", "blue"],
+                label_map={"a": "Alpha", "b": "Beta"},
+            ),
+            id="palette",
+        ),
+    ],
+)
+def test_plot_scatter3d_renders(call):
+    fig, ax = call()
+    plt.close(fig)
+
+
+def test_plot_line_error_bar_style():
+    fig, ax = plot_line([1, 2, 3], [4, 5, 6], yerr=[0.1, 0.2, 0.3], error_style="bar")
+    plt.close(fig)
+
+
+def test_plot_error_points_with_reference_style():
+    fig, ax = plot_error_points(
+        [1, 2],
+        [1, 2],
+        reference_x=1.5,
+        reference_style={"color": "red"},
+    )
+    plt.close(fig)

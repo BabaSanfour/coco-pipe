@@ -9,7 +9,7 @@ description = "A pipeline for EEG bio-data analysis with ML and Deep Learning co
 authors = [
   { name = "Hamza Abdelhedi", email = "hamza.abdelhedii@gmail.com" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -93,7 +93,7 @@ torch = [
     "torch",
 ]
 braindecode = [
-    "braindecode>=1.4.0,<1.6",
+    "braindecode>=1.5.0,<1.6",
 ]
 hf = [
     "transformers",
@@ -102,6 +102,18 @@ hf = [
 peft = [
     "peft",
     "accelerate",
+]
+foundation = [
+    "torch",
+    "skorch",
+    "braindecode>=1.4.0,<1.6",
+    "transformers",
+    "huggingface-hub",
+    "peft",
+    "accelerate",
+]
+decoding = [
+    "skorch",
 ]
 quant = [
     "bitsandbytes",
@@ -188,9 +200,14 @@ include = ["coco_pipe*", "scripts*"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q"
+# Heavy tests (real_checkpoints) are deselected by default so the common
+# `pytest` run stays fast and offline. Opt in with `pytest -m real_checkpoints`.
+addopts = "-ra -q -m 'not real_checkpoints'"
 testpaths = [
     "tests",
+]
+markers = [
+    "real_checkpoints: heavy tests that download real foundation checkpoints from HuggingFace. Requires the HF_TOKEN env var (with the gated-model licenses accepted) and network access. Deselected by default; run with `pytest -m real_checkpoints` and COCO_PIPE_RUN_REAL_FOUNDATION=1.",
 ]
 
 [tool.ruff]

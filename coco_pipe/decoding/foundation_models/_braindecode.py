@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -47,6 +48,8 @@ class BrainDecodeBackend(BackendBase):
     BrainDecode's dict output is unwrapped in ``_probe_feat_dim`` and
     ``transform`` — no dict leaks outside those methods.
     """
+
+    _uses_interpolation: bool = False
 
     def __init__(
         self,
@@ -161,9 +164,71 @@ class BrainDecodeBackend(BackendBase):
             )
 
         class_name, module_path = _BD_MODEL_MAP[model_key]
-        model_cls = getattr(importlib.import_module(module_path), class_name)
+        models_module = importlib.import_module(module_path)
+        electrode_names = kw.pop("electrode_names", None)
+        kw.pop("pooling", None)
+        sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
+        n_times = int(
+            metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
+        )
+        kw.pop("n_times", None)
+        revision = kw.pop("revision", metadata.checkpoint_revision)
+        filename = kw.pop("filename", metadata.checkpoint_filename)
+        interpolate_channels = bool(kw.pop("interpolate_channels", False))
+        if model_key == "labram" and interpolate_channels:
+            for candidate in ("InterpolatedLaBraM", "InterpolatedLabram"):
+                if hasattr(models_module, candidate):
+                    class_name = candidate
+                    break
+            else:
+                raise ImportError(
+                    "interpolate_channels=True requires InterpolatedLaBraM "
+                    "(braindecode>=1.5), which is not available in the "
+                    "installed braindecode version."
+                )
+        model_cls = getattr(models_module, class_name)
 
-        model = model_cls.from_pretrained(metadata.hub_repo, n_outputs=n_outputs, **kw)
+        if electrode_names and model_key in {"cbramod", "labram", "luna"}:
+            import mne
+
+            kw.setdefault("n_chans", len(electrode_names))
+            kw.setdefault("sfreq", sfreq)
+            info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
+            try:
+                info.set_montage("standard_1020", on_missing="warn")
+            except Exception as exc:
+                warnings.warn(
+                    f"Could not assign the standard_1020 montage for "
+                    f"{model_key} ({type(exc).__name__}: {exc}); channel "
+                    "positions are unset, which can degrade montage-dependent "
+                    "embeddings (e.g. LaBraM interpolation).",
+                    stacklevel=2,
+                )
+            kw.setdefault("chs_info", info["chs"])
+        if model_key == "luna":
+            kw.setdefault("n_times", n_times)
+            kw.setdefault("embed_dim", 64)
+            kw.setdefault("num_queries", 4)
+            kw.setdefault("depth", 8)
+        elif model_key == "cbramod":
+            kw.setdefault("n_times", n_times)
+        elif model_key == "labram":
+            # The pretrained temporal embedding has a checkpoint-native width.
+            # LaBraM adjusts it dynamically during forward, but overriding
+            # n_times while loading makes the state dict shape incompatible.
+            kw.pop("n_times", None)
+
+        load_kwargs = dict(kw)
+        if revision is not None:
+            load_kwargs["revision"] = revision
+        if filename is not None:
+            load_kwargs["filename"] = filename
+        effective_outputs = (
+            1 if model_key in {"cbramod", "luna"} and n_outputs is None else n_outputs
+        )
+        if effective_outputs is not None:
+            load_kwargs["n_outputs"] = effective_outputs
+        model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         model = model.to(device)
 
         if train_mode == "frozen":
@@ -183,12 +248,29 @@ class BrainDecodeBackend(BackendBase):
             model = get_peft_model(model, lora_cfg)
         # full: no changes — all params trainable
 
-        feat_dim = cls._probe_feat_dim(model, metadata, device)
+        feat_dim = cls._probe_feat_dim(
+            model,
+            metadata,
+            device,
+            n_chans=len(electrode_names) if electrode_names else None,
+            n_times=n_times,
+        )
 
         if n_outputs is not None:
-            model.reset_head(n_outputs)
+            try:
+                model.reset_head(n_outputs)
+            except NotImplementedError:
+                if model_key != "luna":
+                    raise
+        if train_mode == "frozen" and n_outputs is not None:
+            for head_name in ("final_layer", "classifier", "head"):
+                head = getattr(model, head_name, None)
+                if head is not None:
+                    for parameter in head.parameters():
+                        parameter.requires_grad = True
+                    break
 
-        return cls(
+        backend = cls(
             metadata=metadata,
             model=model,
             feat_dim=feat_dim,
@@ -197,21 +279,53 @@ class BrainDecodeBackend(BackendBase):
             train_mode=train_mode,
             task=task,
         )
+        if electrode_names:
+            backend._expected_n_chans = len(electrode_names)
+        backend._uses_interpolation = model_key == "labram" and interpolate_channels
+        backend._checkpoint_revision = revision
+        backend._checkpoint_filename = filename
+        return backend
 
-    @staticmethod
-    def _probe_feat_dim(model, metadata: FoundationModelSpec, device: str) -> int:
+    @classmethod
+    def _probe_feat_dim(
+        cls,
+        model,
+        metadata: FoundationModelSpec,
+        device: str,
+        *,
+        n_chans: int | None = None,
+        n_times: int = 400,
+    ) -> int:
         """Zero forward pass to get actual feature dim.
 
         Preferred over hard-coding — registry value is reference, probe is truth.
         """
         import torch
 
-        n_ch = metadata.pretrained_n_chans or 19
-        probe = torch.zeros(1, n_ch, 400, device=device)
+        n_ch = n_chans or metadata.pretrained_n_chans or 19
+        probe = torch.zeros(1, n_ch, n_times, device=device)
         with torch.no_grad():
-            out = model(probe, return_features=True)
-        feats = out["features"] if isinstance(out, dict) else out
+            feats = cls._forward_features(model, probe, metadata.name)
         return int(feats.shape[-1])
+
+    @staticmethod
+    def _forward_features(model, tensor, model_key: str):
+        if model_key != "luna":
+            out = model(tensor, return_features=True)
+            return out["features"] if isinstance(out, dict) else out
+        captured = {}
+
+        def _capture(_module, _inputs, output):
+            captured["latent"] = output
+
+        hook = model.norm.register_forward_hook(_capture)
+        try:
+            model(tensor)
+        finally:
+            hook.remove()
+        if "latent" not in captured:
+            raise RuntimeError("LUNA latent representation was not captured.")
+        return captured["latent"]
 
     def _get_skorch_module(self):
         import torch.nn as nn
@@ -221,9 +335,10 @@ class BrainDecodeBackend(BackendBase):
                 super().__init__()
                 self._backend = backend
                 self._output_dim = output_dim
+                self.model = backend._model
 
             def forward(self, X):
-                out = self._backend._model(X)
+                out = self.model(X)
                 return out["logits"] if isinstance(out, dict) else out
 
             def train(self, mode: bool = True):
@@ -236,6 +351,12 @@ class BrainDecodeBackend(BackendBase):
 
     def _set_backbone_eval(self) -> None:
         self._model.eval()
+        for module in self._model.modules():
+            if any(
+                parameter.requires_grad
+                for parameter in module.parameters(recurse=False)
+            ):
+                module.train()
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Extract backbone embeddings without running the classification head.
@@ -252,9 +373,49 @@ class BrainDecodeBackend(BackendBase):
         """
         self._validate(X)
         with self._no_grad():
-            out = self._model(self._to_tensor(X), return_features=True)
-            feats = out["features"] if isinstance(out, dict) else out
+            feats = self._forward_features(
+                self._model,
+                self._to_tensor(X),
+                self._metadata.name,
+            )
         return self._from_tensor(feats)
+
+    def checkpoint_components(self) -> dict:
+        """BrainDecode keeps one model (LoRA-wrapped when applicable)."""
+        return {"model": self._model}
+
+    def get_channel_adaptation(self) -> dict:
+        """Describe direct and interpolated channels from the real layer."""
+        meta = self.signal_metadata_
+        source = list(meta.ch_names) if meta is not None else []
+        if not self._uses_interpolation:
+            return {
+                "source_channels": source,
+                "target_channels": source,
+                "interpolated_channels": [],
+                "zero_filled_channels": [],
+                "dropped_channels": [],
+            }
+        layer = self._model.interpolation_layer
+        target = [str(item["ch_name"]) for item in layer.tgt_chs_info]
+        source_lookup = {name.casefold() for name in source}
+        mode = getattr(layer, "mode", "always")
+        direct = (
+            [name for name in target if name.casefold() in source_lookup]
+            if mode == "name_match"
+            else []
+        )
+        return {
+            "source_channels": source,
+            "target_channels": target,
+            "direct_channels": direct,
+            "interpolated_channels": [name for name in target if name not in direct],
+            "zero_filled_channels": [],
+            "dropped_channels": [],
+            "interpolation_method": getattr(layer, "method", None),
+            "interpolation_mode": mode,
+            "interpolation_matrix_shape": list(layer.matrix.shape),
+        }
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Run a full forward pass and return predictions.

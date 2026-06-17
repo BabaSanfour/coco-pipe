@@ -33,6 +33,13 @@ from coco_pipe.dim_reduction.evaluation.core import (
     SEPARATION_LOGREG_BALANCED_ACCURACY,
     evaluate_embedding,
 )
+from coco_pipe.dim_reduction.evaluation.geometry import (
+    trajectory_auc_speed,
+    trajectory_cohesion,
+    trajectory_distance_from_center,
+    trajectory_intra_spread,
+    trajectory_jerk,
+)
 from coco_pipe.viz.dim_reduction import plot_metrics
 
 
@@ -1424,35 +1431,24 @@ def test_evaluate_embedding_invalid_dim():
         evaluate_embedding(X_emb)
 
 
-def test_trajectory_distance_from_center():
-    from coco_pipe.dim_reduction.evaluation.geometry import (
-        trajectory_distance_from_center,
-    )
-
+@pytest.mark.parametrize(
+    "func, expected",
+    [
+        pytest.param(
+            trajectory_distance_from_center,
+            [[2 / 3, 4 / 3, 2 / 3]],
+            id="distance_from_center",
+        ),
+        pytest.param(trajectory_cohesion, [8 / 9], id="cohesion"),
+        pytest.param(trajectory_intra_spread, [np.sqrt(8) / 9], id="intra_spread"),
+    ],
+)
+def test_trajectory_geometry_scalar_metrics(func, expected):
     traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
-    dist = trajectory_distance_from_center(traj)
-    np.testing.assert_allclose(dist[0], [2 / 3, 4 / 3, 2 / 3])
-
-
-def test_trajectory_cohesion():
-    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_cohesion
-
-    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
-    coh = trajectory_cohesion(traj)
-    np.testing.assert_allclose(coh, [8 / 9])
-
-
-def test_trajectory_intra_spread():
-    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_intra_spread
-
-    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
-    spread = trajectory_intra_spread(traj)
-    np.testing.assert_allclose(spread, [np.sqrt(8) / 9])
+    np.testing.assert_allclose(func(traj), expected)
 
 
 def test_trajectory_auc_speed():
-    from coco_pipe.dim_reduction.evaluation.geometry import trajectory_auc_speed
-
     traj = np.array([[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]])
     auc = trajectory_auc_speed(traj, dt=1.0)
     np.testing.assert_allclose(auc, [1.0])
@@ -1460,3 +1456,54 @@ def test_trajectory_auc_speed():
     time = np.array([0.0, 100.0, 200.0])
     auc_time = trajectory_auc_speed(traj, time=time)
     np.testing.assert_allclose(auc_time, [1.0])
+
+
+@pytest.mark.parametrize(
+    "call, match",
+    [
+        pytest.param(
+            lambda: trajectory_jerk(np.zeros((1, 4, 2)), dt=0),
+            "`dt` must be > 0.",
+            id="jerk_dt",
+        ),
+        pytest.param(
+            lambda: trajectory_speed(np.zeros((1, 4, 2)), time=np.zeros(3)),
+            "must be a 1D array with length",
+            id="speed_time_len",
+        ),
+        pytest.param(
+            lambda: trajectory_speed(np.zeros((1, 4, 2)), time=np.zeros((4, 1))),
+            "must be a 1D array with length",
+            id="speed_time_2d",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), time=np.zeros(3)),
+            "must be a 1D array with length",
+            id="auc_time_len",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), time=np.zeros((4, 1))),
+            "must be a 1D array with length",
+            id="auc_time_2d",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), dt=0),
+            "`dt` must be > 0.",
+            id="auc_dt",
+        ),
+    ],
+)
+def test_geometry_error_paths(call, match):
+    with pytest.raises(ValueError, match=match):
+        call()
+
+
+def test_geometry_curvature_gradient():
+    # Circular trajectory
+    t = np.linspace(0, 2 * np.pi, 100)
+    traj = np.stack([np.cos(t), np.sin(t)], axis=1)
+    # The gradient method returns an array of the same shape as time
+    curv = trajectory_curvature(traj, method="gradient")
+    assert curv.shape == (100,)
+    # Curvature of a unit circle is ~1 (might vary slightly at edges with np.gradient)
+    assert np.allclose(curv[10:-10], 1.0, atol=0.1)

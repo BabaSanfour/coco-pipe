@@ -20,7 +20,7 @@ def test_provenance_config_from_env(mock_get_env):
     mock_get_env.return_value = {
         "timestamp_utc": "2023-01-01 12:00:00 UTC",
         "os_platform": "Linux",
-        "python_version": "3.10.0",
+        "python_version": "3.11.0",
         "command": "pytest",
         "git_hash": "deadbeef",
         "coco_pipe_version": "0.1.0",
@@ -32,7 +32,7 @@ def test_provenance_config_from_env(mock_get_env):
     assert prov.source == "BIDS Dataset"
     assert prov.timestamp_utc == "2023-01-01 12:00:00 UTC"
     assert prov.os_platform == "Linux"
-    assert prov.python_version == "3.10.0"
+    assert prov.python_version == "3.11.0"
     assert prov.command == "pytest"
     assert prov.git_hash == "deadbeef"
     assert prov.coco_pipe_version == "0.1.0"

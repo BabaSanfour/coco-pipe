@@ -11,6 +11,15 @@ from .descriptors import (
     parse_descriptor_feature_column,
     save_descriptor_table,
 )
+from .embeddings import (
+    discover_embedding_derivatives,
+    embedding_sidecar_path,
+    load_embedding_derivatives,
+    save_embedding_derivative,
+    validate_embedding_derivative,
+    write_embedding_dataset_description,
+    write_embedding_manifest,
+)
 from .load import load_data
 from .quality import (
     CheckResult,
@@ -42,6 +51,13 @@ __all__ = [
     "parse_descriptor_feature_column",
     "save_descriptor_table",
     "check_feature_column_consistency",
+    "discover_embedding_derivatives",
+    "embedding_sidecar_path",
+    "load_embedding_derivatives",
+    "save_embedding_derivative",
+    "validate_embedding_derivative",
+    "write_embedding_dataset_description",
+    "write_embedding_manifest",
     "CheckResult",
     "EpochDropRecord",
     "QCResult",

@@ -1,3 +1,7 @@
+import os
+import tempfile
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -149,6 +153,11 @@ def test_embedding_quality_result(dummy_quality_data, tmp_path):
     )  # 5 metrics (trust, cont, lcmc, mrre_int, mrre_ext) * 2 k_values = 10 rows
     assert "metric" in df_sum.columns
 
+    # Test shepard diagram
+    d_orig, d_emb = res.get_shepard_diagram_data(sample_size=10, random_state=0)
+    assert len(d_orig) == 45
+    assert len(d_emb) == 45
+
     # Test save/load
     p = tmp_path / "qual.pkl"
     res.save(p)
@@ -209,3 +218,100 @@ def test_trajectory_result_kinematic_timecourses(dummy_trajectory_data):
     assert "time" in df.columns
     assert set(df["metric"].unique()) == {"speed", "curvature"}
     assert len(df) > 0
+
+
+def test_trajectory_result_exceptions():
+    traj = np.zeros((2, 3, 2))
+    times = np.array([0, 1, 2])
+    subjects = np.array([1, 1])
+    conditions = np.array([1, 1])
+
+    res = TrajectoryResult(traj, times, subjects, conditions)
+
+    def mock_raise(*args, **kwargs):
+        raise RuntimeError("Mock error")
+
+    original_reducers = TrajectoryResult._REDUCERS
+    TrajectoryResult._REDUCERS = [("mock_metric", mock_raise)]
+    try:
+        df = res.get_per_trial_scalars()
+        assert np.isnan(df["value"].iloc[0])
+    finally:
+        TrajectoryResult._REDUCERS = original_reducers
+
+
+def test_trajectory_result_condition_scalars_skip():
+    traj = np.zeros((2, 3, 2))
+    subjects = np.array([1, 2])
+    conditions = np.array([1, 2])
+    res = TrajectoryResult(traj, np.array([0, 1, 2]), subjects, conditions)
+    df = res.get_per_condition_scalars()
+    assert len(df) == 4
+
+    # original test for mock exception
+    traj2 = np.zeros((1, 3, 2))
+    subjects2 = np.array([1])
+    conditions2 = np.array([1])
+    res2 = TrajectoryResult(traj2, np.array([0, 1, 2]), subjects2, conditions2)
+    with patch(
+        "coco_pipe.dim_reduction.evaluation.result.trajectory_cohesion",
+        side_effect=Exception("Mock"),
+    ):
+        df2 = res2.get_per_condition_scalars()
+        assert np.isnan(df2[df2["metric"] == "mean_cohesion"]["value"].iloc[0])
+
+
+def test_trajectory_result_separation_pair_scalars():
+    traj = np.zeros((2, 3, 2))
+    res = TrajectoryResult(
+        traj, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 1])
+    )
+    df = res.get_separation_pair_scalars()
+    assert len(df) == 0
+
+    res = TrajectoryResult(
+        traj, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2])
+    )
+    traj_nan = np.full((2, 3, 2), np.nan)
+    res_nan = TrajectoryResult(
+        traj_nan, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2])
+    )
+    df_nan = res_nan.get_separation_pair_scalars(["centroid"])
+    assert len(df_nan) == 0
+
+
+def test_trajectory_result_filter_and_slice():
+    traj = np.zeros((2, 3, 2))
+    times = np.array([0, 1, 2])
+    res = TrajectoryResult(traj, times, np.array([1, 2]), np.array([1, 2]))
+
+    with pytest.raises(ValueError, match="No timepoints found"):
+        res.slice_time(5, 6)
+
+    with pytest.raises(ValueError, match="0 trials"):
+        res.filter(subjects=[3])
+
+
+def test_trajectory_result_kinematic_timecourses_unknown_metric():
+    traj = np.zeros((2, 3, 2))
+    times = np.array([0, 1, 2])
+    res = TrajectoryResult(traj, times, np.array([1, 2]), np.array([1, 2]))
+    with pytest.raises(ValueError, match="Unknown metric"):
+        res.get_kinematic_timecourses(["unknown_metric"])
+
+
+def test_result_loads_type_error():
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "bad.pkl")
+        import joblib
+
+        joblib.dump("not a result", p)
+
+        with pytest.raises(TypeError, match="not a TrajectoryResult"):
+            TrajectoryResult.load(p)
+
+        with pytest.raises(TypeError, match="not an EmbeddingQualityResult"):
+            EmbeddingQualityResult.load(p)
+
+        with pytest.raises(TypeError, match="not a VelocityResult"):
+            VelocityResult.load(p)

@@ -292,7 +292,10 @@ def _plot_metric_distribution(
 def _plot_metric_heatmap(
     metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
 ) -> None:
-    has_scope_axis = metrics_df["ScopeValue"].astype(str).nunique() > 1
+    has_scope_axis = (
+        "ScopeValue" in metrics_df.columns
+        and metrics_df["ScopeValue"].astype(str).nunique() > 1
+    )
     has_single_metric = metrics_df["Metric"].nunique() == 1
     if has_scope_axis and has_single_metric:
         heatmap_df = metrics_df.pivot_table(

@@ -133,20 +133,22 @@ def test_get_cv_splitter_errors():
         get_cv_splitter(fake_cfg)
 
 
-def test_get_cv_splitter_all_strategies():
-    strategies = [
+@pytest.mark.parametrize(
+    "strategy, n_splits",
+    [
         ("stratified_group_kfold", 5),
         ("leave_p_out", 2),
         ("leave_one_group_out", 1),
         ("group_shuffle_split", 5),
         ("timeseries", 5),
         ("split", 1),
-    ]
+    ],
+)
+def test_get_cv_splitter_all_strategies(strategy, n_splits):
     groups = np.repeat(np.arange(10), 10)
-    for strat, n in strategies:
-        cfg = CVConfig(strategy=strat, n_splits=n)
-        splitter = get_cv_splitter(cfg, groups=groups, task="classification")
-        assert splitter is not None
+    cfg = CVConfig(strategy=strategy, n_splits=n_splits)
+    splitter = get_cv_splitter(cfg, groups=groups, task="classification")
+    assert splitter is not None
 
 
 def test_get_cv_splitter_unshuffled():
@@ -238,10 +240,6 @@ def test_cv_with_groups_more_coverage():
     # X is None (covers 75 and 104)
     assert np.all(wrapper._get_effective_groups(None) == groups)
     assert wrapper.get_n_splits(X=None, groups=[1, 1, 2, 2]) == 2
-
-    # Matching explicit groups (covers return on line 72 or similar)
-    # Actually, let's re-verify line numbers.
-    # In my local view, line 68 was the ValueError.
 
     # Explicit groups that match length (covers 72)
     explicit = np.array([3, 3, 4, 4])

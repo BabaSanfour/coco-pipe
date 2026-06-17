@@ -143,6 +143,13 @@ def load_descriptor_table(
     analysis_mode: str = "flat",
     descriptor_families: Sequence[str] | None = None,
     descriptor_max_abs_value: float | None = None,
+    drop_degenerate_columns: bool = False,
+    max_missing_rate: float = 0.20,
+    drop_constant_columns: bool = True,
+    constant_tol: float = 1e-12,
+    max_row_drop_rate: float | None = None,
+    location_statistic: str | None = None,
+    exclude_subfamilies: Sequence[str] | None = None,
 ) -> DataContainer:
     """Load a descriptor feature table into a :class:`DataContainer`."""
     table_path = Path(table_path)
@@ -153,7 +160,10 @@ def load_descriptor_table(
         if not np.isfinite(max_abs) or max_abs <= 0:
             raise ValueError("descriptor_max_abs_value must be positive.")
 
-    df = read_table(table_path)
+    df = read_table(
+        table_path,
+        drop_all_empty=not drop_degenerate_columns,
+    )
 
     if condition is not None:
         if "condition" not in df.columns:
@@ -199,8 +209,59 @@ def load_descriptor_table(
                 f"descriptor_families={list(descriptor_families)}."
             )
 
+    if location_statistic is not None:
+        if location_statistic not in {"mean", "median"}:
+            raise ValueError("location_statistic must be 'mean', 'median', or None.")
+        unwanted = "median" if location_statistic == "mean" else "mean"
+        parsed = [
+            item for item in parsed if str(item["column"]).split("_", 1)[0] != unwanted
+        ]
+        if not parsed:
+            raise RuntimeError(
+                f"No features matched location_statistic={location_statistic!r}."
+            )
+
+    if exclude_subfamilies:
+        from coco_pipe.descriptors.qc import descriptor_subfamily
+
+        excluded = {str(value).strip() for value in exclude_subfamilies}
+        parsed = [
+            item
+            for item in parsed
+            if descriptor_subfamily(item["family"], item["feature"]) not in excluded
+        ]
+        if not parsed:
+            raise RuntimeError(
+                f"No features remained after excluding sub-families {sorted(excluded)}."
+            )
+
     feature_cols = [item["column"] for item in parsed]
+    selected_feature_cols = list(feature_cols)
     feature_df = df.loc[:, feature_cols].replace([np.inf, -np.inf], np.nan)
+    dropped_feature_columns = pd.DataFrame()
+    if drop_degenerate_columns:
+        from coco_pipe.descriptors.qc import select_viable_feature_columns
+
+        feature_cols, dropped_feature_columns = select_viable_feature_columns(
+            feature_df,
+            feature_cols,
+            max_missing_rate=max_missing_rate,
+            drop_constant=drop_constant_columns,
+            constant_tol=constant_tol,
+            max_row_drop_rate=max_row_drop_rate,
+            known_families=known_families,
+        )
+        if not feature_cols:
+            raise RuntimeError("No descriptor feature columns survived column pruning.")
+        dropped_names = set(dropped_feature_columns["column"].astype(str))
+        parsed = [item for item in parsed if item["column"] not in dropped_names]
+        feature_df = feature_df.loc[:, feature_cols]
+        logger.warning(
+            "Dropped %d degenerate descriptor column(s) from %s (condition=%r).",
+            len(dropped_feature_columns),
+            table_path,
+            condition,
+        )
 
     valid_mask = ~feature_df.isna().any(axis=1)
     n_dropped_nan_inf = int((~valid_mask).sum())
@@ -238,7 +299,7 @@ def load_descriptor_table(
                 f"condition={condition!r}."
             )
 
-    metadata_df = df.drop(columns=feature_cols)
+    metadata_df = df.drop(columns=selected_feature_cols)
     if target_col is not None:
         if target_col not in df.columns:
             raise ValueError(f"Target column '{target_col}' not found in {table_path}.")
@@ -267,6 +328,8 @@ def load_descriptor_table(
         "descriptor_max_abs_value": descriptor_max_abs_value,
         "dropped_extreme_rows": dropped_extreme,
     }
+    if drop_degenerate_columns:
+        meta_base["dropped_feature_columns"] = dropped_feature_columns
 
     if analysis_mode == "flat":
         coords["feature"] = np.asarray(feature_cols, dtype=object)
@@ -279,11 +342,20 @@ def load_descriptor_table(
             meta=meta_base,
         )
 
+    from coco_pipe.descriptors.qc import descriptor_identity, descriptor_subfamily
+
     sensors = list(dict.fromkeys(item["sensor"] for item in parsed))
     features = list(dict.fromkeys(item["feature"] for item in parsed))
     sensor_index = {sensor: index for index, sensor in enumerate(sensors)}
     feature_index = {feature: index for index, feature in enumerate(features)}
     feature_family = {item["feature"]: item["family"] for item in parsed}
+    feature_subfamily = {
+        item["feature"]: descriptor_subfamily(item["family"], item["feature"])
+        for item in parsed
+    }
+    feature_descriptor = {
+        item["feature"]: descriptor_identity(item["feature"]) for item in parsed
+    }
 
     X = np.full(
         (len(feature_df), len(sensors), len(features)),
@@ -301,6 +373,14 @@ def load_descriptor_table(
     coords["feature"] = np.asarray(features, dtype=object)
     coords["feature_family"] = np.asarray(
         [feature_family[feature] for feature in features],
+        dtype=object,
+    )
+    coords["feature_subfamily"] = np.asarray(
+        [feature_subfamily[feature] for feature in features],
+        dtype=object,
+    )
+    coords["feature_descriptor"] = np.asarray(
+        [feature_descriptor[feature] for feature in features],
         dtype=object,
     )
     return DataContainer(

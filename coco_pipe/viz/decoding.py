@@ -2040,6 +2040,7 @@ def plot_decoding_topomap(
     info=None,
     coords=None,
     center: float | None = None,
+    minimum_half_range: float = 0.02,
     times: list[float] | None = None,
     mask: np.ndarray | None = None,
     title: str | None = None,
@@ -2064,6 +2065,8 @@ def plot_decoding_topomap(
     center
         Optional numeric center for diverging color limits. When provided,
         ``vmin`` and ``vmax`` are computed symmetrically around this value.
+    minimum_half_range
+        Minimum distance from ``center`` to either color limit.
     times
         Optional list of time values used to filter rows when ``Time`` exists.
     mask
@@ -2124,13 +2127,13 @@ def plot_decoding_topomap(
         values = data.groupby("FeatureName")[value].mean()
         vmin = vmax = None
         if center is not None:
-            numeric = pd.to_numeric(values, errors="coerce")
-            amplitude = float(np.nanmax(np.abs(numeric - center)))
-            amplitude = (
-                1.0 if not np.isfinite(amplitude) or amplitude == 0 else amplitude
+            from coco_pipe.viz.base import centered_color_limits
+
+            vmin, vmax = centered_color_limits(
+                pd.to_numeric(values, errors="coerce"),
+                center=float(center),
+                minimum_half_range=minimum_half_range,
             )
-            vmin = center - amplitude
-            vmax = center + amplitude
         return plot_topomap(
             values,
             coords=coords,
@@ -2413,3 +2416,85 @@ def plot_feature_sensor_profile(
             ax=ax,
             figsize=figsize or (5, 5),
         )
+
+
+def plot_head_to_head(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+    value: str,
+    error: str | None = None,
+    reference: float | None = None,
+    title: str = "Head-to-Head Comparison",
+    ylabel: str | None = None,
+    ax: plt.Axes | None = None,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot labelled estimates for cross-result head-to-head comparisons."""
+    require_columns(frame, [label, value], context="plot_head_to_head")
+    columns = [label, value] + ([error] if error else [])
+    data = frame[columns].copy()
+    data[value] = pd.to_numeric(data[value], errors="coerce")
+    data = data.dropna(subset=[label, value])
+    require_non_empty(data, "head-to-head comparison")
+    values = pd.Series(data[value].to_numpy(), index=data[label].astype(str))
+    errors = (
+        pd.Series(
+            pd.to_numeric(data[error], errors="coerce").to_numpy(),
+            index=values.index,
+        )
+        if error is not None and error in data
+        else None
+    )
+    fig, ax = plot_bar(
+        values,
+        errors=errors,
+        sort=False,
+        title=title,
+        ylabel=ylabel or value,
+        ax=ax,
+        figsize=figsize,
+    )
+    if reference is not None:
+        ax.axhline(reference, color="0.4", linestyle="--", linewidth=1)
+    return fig, ax
+
+
+def plot_paired_delta(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+    delta: str,
+    lower: str | None = None,
+    upper: str | None = None,
+    title: str = "Paired Difference",
+    xlabel: str = "Comparison",
+    ylabel: str = "Delta",
+    ax: plt.Axes | None = None,
+    figsize: tuple[float, float] | None = None,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Plot paired deltas with optional confidence intervals."""
+    require_columns(frame, [label, delta], context="plot_paired_delta")
+    data = frame.copy()
+    data[delta] = pd.to_numeric(data[delta], errors="coerce")
+    data = data.dropna(subset=[label, delta])
+    require_non_empty(data, "paired delta comparison")
+    yerr = None
+    if lower is not None and upper is not None:
+        require_columns(data, [lower, upper], context="plot_paired_delta")
+        low = pd.to_numeric(data[lower], errors="coerce").to_numpy()
+        high = pd.to_numeric(data[upper], errors="coerce").to_numpy()
+        estimate = data[delta].to_numpy(dtype=float)
+        yerr = np.vstack([estimate - low, high - estimate])
+    return plot_error_points(
+        np.arange(len(data)),
+        data[delta].to_numpy(dtype=float),
+        yerr=yerr,
+        labels=data[label].astype(str).tolist(),
+        reference_y=0.0,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        ax=ax,
+        figsize=figsize,
+    )

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from .core import Report
 
-SectionSelection = list[str] | Literal["default"]
+SectionSelection = list[str] | Literal["compact", "default", "full"]
 
 
 def from_container(
@@ -336,14 +336,18 @@ def from_experiment_result(
     *,
     feature_metadata=None,
     info=None,
+    coords=None,
     sections: SectionSelection = "default",
     interactive: bool = False,
     theme: str = "paper",
     title: str = "Decoding Report",
     config: dict | None = None,
-    asset_urls: dict[str, str] | None = None,
+    asset_urls: dict[str, str] | str | None = None,
     qc_result: "QCResult" | None = None,
     output_path: str | Path | None = None,
+    verbose: bool | None = None,
+    on_error: Literal["raise", "warn", "placeholder"] = "warn",
+    section_options=None,
 ) -> "Report":
     """Build a decoding report from an ``ExperimentResult``.
 
@@ -355,10 +359,13 @@ def from_experiment_result(
         Feature-level metadata for sensor map sections.
     info : mne.Info, optional
         MNE Info for topomap rendering.
-    sections : list of str or ``"default"``
-        Ordered list of section keys to include.
+    coords : array-like or DataFrame, optional
+        Sensor coordinates used when MNE Info is unavailable.
+    sections : list of str or ``{"compact", "default", "full"}``
+        Ordered section keys or a named report preset.
     interactive : bool
-        Reserved for future use. Currently ignored.
+        Interactive decoding plots are not implemented; passing ``True`` raises
+        ``NotImplementedError``.
     theme : str
         Matplotlib theme preset (``"paper"`` | ``"notebook"`` | ``"poster"``).
     title : str
@@ -371,6 +378,12 @@ def from_experiment_result(
         Structured QC drop log rendered as a standard report section.
     output_path : path-like, optional
         If given, save the rendered report to this path.
+    verbose : bool, optional
+        Override whether raw tables are rendered inline.
+    on_error : {"raise", "warn", "placeholder"}
+        Policy for unexpected section-builder failures.
+    section_options : mapping, optional
+        Per-section keyword overrides keyed by section name.
 
     Returns
     -------
@@ -393,6 +406,7 @@ def from_experiment_result(
         result,
         feature_metadata=feature_metadata,
         info=info,
+        coords=coords,
         sections=sections,
         interactive=interactive,
         theme=theme,
@@ -401,8 +415,49 @@ def from_experiment_result(
         asset_urls=asset_urls,
         qc_result=qc_result,
         output_path=output_path,
+        verbose=verbose,
+        on_error=on_error,
+        section_options=section_options,
     )
     return report
+
+
+def from_experiment_results(
+    items,
+    *,
+    by,
+    comparisons="default",
+    per_result="compact",
+    nest=True,
+    feature_metadata=None,
+    info=None,
+    coords=None,
+    title="Decoding Comparison",
+    config=None,
+    asset_urls=None,
+    qc_result=None,
+    output_path=None,
+    on_error="warn",
+) -> "Report":
+    """Build one report from many labelled ``ExperimentResult`` objects or paths."""
+    from .decoding_comparison import make_experiment_results_report
+
+    return make_experiment_results_report(
+        items,
+        by=by,
+        comparisons=comparisons,
+        per_result=per_result,
+        nest=nest,
+        feature_metadata=feature_metadata,
+        info=info,
+        coords=coords,
+        title=title,
+        config=config,
+        asset_urls=asset_urls,
+        qc_result=qc_result,
+        output_path=output_path,
+        on_error=on_error,
+    )
 
 
 def merge_reports(*reports: "Report", title: str = "Comparison Report") -> "Report":

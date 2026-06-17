@@ -8,6 +8,7 @@ from coco_pipe.report.api import (
     from_container,
     from_embeddings,
     from_experiment_result,
+    from_experiment_results,
     from_reductions,
     from_tabular,
     merge_reports,
@@ -168,6 +169,40 @@ def test_from_experiment_result_forwards_qc_result(mock_make):
     from_experiment_result("result_mock", qc_result=qc_result)
 
     assert mock_make.call_args.kwargs["qc_result"] is qc_result
+
+
+@patch("coco_pipe.report.decoding.make_decoding_report")
+def test_from_experiment_result_forwards_composition_options(mock_make):
+    mock_make.return_value = MagicMock()
+    coords = {"Fp1": (-0.2, 0.4)}
+    section_options = {"cv": {"metric": "accuracy"}}
+
+    from_experiment_result(
+        "result_mock",
+        coords=coords,
+        sections="compact",
+        verbose=False,
+        on_error="placeholder",
+        section_options=section_options,
+    )
+
+    kwargs = mock_make.call_args.kwargs
+    assert kwargs["coords"] is coords
+    assert kwargs["on_error"] == "placeholder"
+    assert kwargs["section_options"] is section_options
+
+
+@patch("coco_pipe.report.decoding_comparison.make_experiment_results_report")
+def test_from_experiment_results(mock_make):
+    mock_make.return_value = MagicMock()
+    items = [({"scope": "EO"}, "result.joblib")]
+
+    from_experiment_results(items, by=("scope",), title="Many")
+
+    mock_make.assert_called_once()
+    assert mock_make.call_args.args[0] == items
+    assert mock_make.call_args.kwargs["by"] == ("scope",)
+    assert mock_make.call_args.kwargs["title"] == "Many"
 
 
 def test_merge_reports_errors():

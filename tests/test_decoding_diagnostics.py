@@ -114,7 +114,10 @@ def test_proba_matrix():
     )
 
 
-def test_unit_indices():
+@pytest.mark.parametrize(
+    "unit", ["sample", "epoch", "group", "subject", "session", "site"]
+)
+def test_unit_indices_counts(unit):
     df = pd.DataFrame(
         {
             "SampleID": [1, 2],
@@ -124,8 +127,11 @@ def test_unit_indices():
             "Site": [1, 2],
         }
     )
-    for u in ["sample", "epoch", "group", "subject", "session", "site"]:
-        assert len(unit_indices(df, u)) == 2
+    assert len(unit_indices(df, unit)) == 2
+
+
+def test_unit_indices_errors():
+    df = pd.DataFrame({"SampleID": [1, 2], "Site": [1, 2]})
     with pytest.raises(ValueError):
         unit_indices(df, "unknown")
     df_err = pd.DataFrame({"SampleID": [1], "Site": [np.nan]})
@@ -271,3 +277,75 @@ def test_prediction_rows_temporal_multiclass():
     r_gen = prediction_rows("m", 0, p_gen)
     assert len(r_gen) == 4
     assert all(f"y_proba_{c}" in r_gen[0] for c in range(3))
+
+
+def test_prediction_rows_temporal_scores():
+    # 3D: Sliding Score
+    p_sl = {
+        "y_true": [0],
+        "y_pred": np.zeros((1, 2)),
+        "y_score": np.array([[0.5, 0.8]]),
+    }
+    r_sl = prediction_rows("m", 0, p_sl)
+    assert r_sl[0]["y_score"] == 0.5
+
+    # 4D: Generalizing Score
+    p_gen = {
+        "y_true": [0],
+        "y_pred": np.zeros((1, 2, 2)),
+        "y_score": np.zeros((1, 2, 2)),
+    }
+    r_gen = prediction_rows("m", 0, p_gen)
+    assert r_gen[0]["y_score"] == 0.0
+
+
+def test_score_frame_binary_proba():
+    df_p = pd.DataFrame(
+        {"y_true": [0, 1], "y_proba_0": [0.8, 0.2], "y_proba_1": [0.2, 0.8]}
+    )
+    assert score_frame(df_p, "roc_auc") == 1.0
+
+
+def test_score_frame_multiclass_ap():
+    df_m = pd.DataFrame(
+        {
+            "y_true": [0, 1, 2],
+            "y_proba_0": [0.8, 0.1, 0.1],
+            "y_proba_1": [0.1, 0.8, 0.1],
+            "y_proba_2": [0.1, 0.1, 0.8],
+        }
+    )
+    assert score_frame(df_m, "average_precision") == 1.0
+
+
+def test_score_frame_multiclass_log_loss():
+    df_m = pd.DataFrame(
+        {
+            "y_true": [0, 1, 2],
+            "y_proba_0": [0.8, 0.1, 0.1],
+            "y_proba_1": [0.1, 0.8, 0.1],
+            "y_proba_2": [0.1, 0.1, 0.8],
+        }
+    )
+    assert score_frame(df_m, "log_loss") < 1.0
+
+
+def test_curve_score_groups_y_score():
+    df = pd.DataFrame(
+        {"Model": ["m", "m"], "Fold": [0, 0], "y_true": [0, 1], "y_score": [0.5, 0.8]}
+    )
+    groups = list(curve_score_groups(df, require_probability=False))
+    assert len(groups) == 1
+
+
+def test_curve_score_groups_skip_missing():
+    df = pd.DataFrame(
+        {
+            "Model": ["m", "m"],
+            "Fold": [0, 0],
+            "y_true": [0, 1],
+            "y_score": [0.5, np.nan],
+        }
+    )
+    groups = list(curve_score_groups(df, require_probability=False))
+    assert len(groups) == 0

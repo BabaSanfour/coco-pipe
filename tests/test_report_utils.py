@@ -89,3 +89,17 @@ def test_config_element_string_is_not_nested():
         element.data["Value"].iloc[0]
         == "this is a string, which is technically a sequence"
     )
+
+
+def test_report_lazy_getattr():
+    import pytest
+
+    import coco_pipe.report as report
+
+    # 1. Valid lazy getattr
+    assert report.Report is not None
+    assert report.Section is not None
+
+    # 2. Invalid attribute raises AttributeError
+    with pytest.raises(AttributeError, match="has no attribute InvalidAttr"):
+        _ = report.InvalidAttr

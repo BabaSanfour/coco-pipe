@@ -261,13 +261,28 @@ class FoundationModelSpec(EstimatorSpec):
     pretrained_sfreq: float
     preferred_backend: str
     display_name: str = ""
+    checkpoint_revision: str | None = None
+    checkpoint_filename: str | None = None
+    requires_auth: bool = False
     pretrained_n_chans: int | None = None
+    pretrained_n_times: int | None = None
     pretrained_ch_names: list[str] | None = None
     supports_channel_interpolation: bool = False
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
     fallback_backends: tuple[str, ...] = ()
     paper_url: str | None = None
     model_notes: str = ""
+
+    @property
+    def pretrained_window_seconds(self) -> float | None:
+        """Window length in seconds the checkpoint was pretrained on.
+
+        ``None`` when ``pretrained_n_times`` is unknown. Single source of truth
+        for "expected window duration" so preflight and loading agree.
+        """
+        if self.pretrained_n_times is None:
+            return None
+        return self.pretrained_n_times / self.pretrained_sfreq
 
 
 _FM_DEFAULTS: dict[str, Any] = dict(
@@ -630,9 +645,11 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
     "reve": _fm_spec(
         "reve",
         display_name="REVE",
-        hub_repo="brain-bzh/reve-large",
-        embedding_dim=1024,
+        hub_repo="brain-bzh/reve-base",
+        embedding_dim=512,
         pretrained_sfreq=200.0,
+        checkpoint_revision="fa9a2163a4b7c0a42c8e28b56077ef9c368944dc",
+        requires_auth=True,
         preferred_backend="hugging_face",
         supported_train_modes=("frozen", "full", "lora", "qlora"),
         dependency_extra="transformers",
@@ -644,6 +661,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         hub_repo="braindecode/cbramod-pretrained",
         embedding_dim=200,
         pretrained_sfreq=200.0,
+        checkpoint_revision="584cdc415913739a05d84bf0c1cb3db397764507",
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         paper_url="https://arxiv.org/abs/2412.07236",
@@ -673,13 +691,32 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         hub_repo="braindecode/labram-pretrained",
         embedding_dim=200,
         pretrained_sfreq=200.0,
+        checkpoint_revision="0563b6c626e7b40d9a36653b763715db94d945d7",
         pretrained_n_chans=128,
+        pretrained_n_times=3000,
         supports_channel_interpolation=True,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         model_notes=(
             "Requires 128 channels in LABRAM_CHANNEL_ORDER. "
             "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets."
+        ),
+    ),
+    "luna": _fm_spec(
+        "luna",
+        display_name="LUNA",
+        hub_repo="PulpBio/LUNA",
+        embedding_dim=256,
+        pretrained_sfreq=200.0,
+        checkpoint_revision="999c1af0fd6fbfb43ed47169c61fe9faa49cfe9f",
+        checkpoint_filename="LUNA_base.safetensors",
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        supported_train_modes=("frozen", "full", "lora"),
+        paper_url="https://openreview.net/forum?id=uazfjnFL0G",
+        model_notes=(
+            "Verified base variant: embed_dim=64, num_queries=4, depth=8; "
+            "pooled latent width is 256. Supports variable channel sets."
         ),
     ),
     "eegpt": _fm_spec(

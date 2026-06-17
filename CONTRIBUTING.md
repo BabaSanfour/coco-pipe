@@ -40,9 +40,33 @@ This will check for formatting (Black), import sorting (isort), and linting (Ruf
 2.  **Make Changes**: Write your code and tests.
 
 3.  **Run Tests**: Ensure all tests pass before submitting.
+
+    The test suite needs the optional model backends installed:
+    ```bash
+    pip install -e .[full,test]
+    ```
+
+    **Standard (fast, offline) run** — this is what CI runs on every push/PR:
     ```bash
     pytest
     ```
+    Heavy tests that download real foundation checkpoints are tagged
+    `@pytest.mark.real_checkpoints` and are **deselected by default** (via
+    `addopts = -m 'not real_checkpoints'` in `pyproject.toml`), so no network
+    access or HuggingFace token is required for a normal run.
+
+    **Heavy run** — only when you actually want to validate real checkpoint
+    downloads (needs network + an HF token, see below):
+    ```bash
+    export HF_TOKEN=hf_xxx                     # never commit this
+    export COCO_PIPE_RUN_REAL_FOUNDATION=1
+    pytest -m real_checkpoints
+    ```
+    The even-heavier real-training test additionally requires a GPU and
+    `export COCO_PIPE_RUN_REAL_FOUNDATION_TRAINING=1`.
+
+    See [Running heavy foundation tests](README.md#running-heavy-foundation-tests)
+    for the HuggingFace token setup and the CI behaviour.
 
 4.  **Build Docs**: If you changed documentation, verify it builds.
     ```bash

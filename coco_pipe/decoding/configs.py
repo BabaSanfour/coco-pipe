@@ -636,6 +636,9 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     pooling: Literal["mean", "flatten"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
+    sfreq: Optional[float] = Field(None, gt=0)
+    ch_names: Optional[List[str]] = None
+    backend_kwargs: Dict[str, Any] = Field(default_factory=dict)
 
 
 class LoRAConfig(BaseModel):
@@ -715,6 +718,7 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     kind: Literal["neural_finetune"] = "neural_finetune"
     model_key: str = "dummy"
     backend: str = "auto"
+    n_outputs: Optional[int] = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
     optimizer: Dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
@@ -724,6 +728,10 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     lora: Optional[LoRAConfig] = None
     quantization: Optional[QuantizationConfig] = None
     stages: List[TrainStageConfig] = Field(default_factory=list)
+    sfreq: Optional[float] = Field(None, gt=0)
+    ch_names: Optional[List[str]] = None
+    backend_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    class_weight: Union[str, Dict[Any, float], None] = "balanced"
 
 
 class TemporalDecoderConfig(BaseEstimatorConfig):
@@ -835,6 +843,13 @@ class CVConfig(BaseModel):
     group_key: Optional[str] = Field(
         None, description="sample_metadata column used by grouped CV strategies."
     )
+    auto_reduce_n_splits: bool = Field(
+        True,
+        description=(
+            "Reduce grouped fold counts to the largest leakage-safe value supported "
+            "by the observed groups and classes."
+        ),
+    )
 
 
 class TuningConfig(BaseModel):
@@ -872,6 +887,14 @@ class FeatureSelectionConfig(BaseModel):
     method: Literal["k_best", "sfs"] = "sfs"
     n_features: Optional[int] = Field(None, gt=0, description="Number of features.")
     direction: Literal["forward", "backward"] = "forward"
+    tol: Optional[float] = Field(
+        None,
+        description=(
+            "SFS early-stopping tolerance. When set and n_features is None, the "
+            "selector uses n_features_to_select='auto' and stops once the score "
+            "stops improving by at least tol (plateau stop)."
+        ),
+    )
     cv: Optional[CVConfig] = Field(
         None,
         description=(
@@ -887,6 +910,35 @@ class FeatureSelectionConfig(BaseModel):
             "acknowledges the leakage/generalization trade-off."
         ),
     )
+
+
+class ReducerConfig(BaseModel):
+    """Fold-local dimensionality reduction for classical decoding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["pca"] = "pca"
+    n_components: Optional[Union[int, float]] = Field(
+        None,
+        description=(
+            "PCA components. Integers select a fixed count; floats in (0, 1) "
+            "select the explained-variance fraction."
+        ),
+    )
+    whiten: bool = False
+    svd_solver: Literal["auto", "full", "covariance_eigh", "arpack", "randomized"] = (
+        "auto"
+    )
+    random_state: Optional[int] = 42
+
+    @model_validator(mode="after")
+    def _validate_n_components(self) -> ReducerConfig:
+        if isinstance(self.n_components, int) and self.n_components < 1:
+            raise ValueError("Integer n_components must be at least 1.")
+        if isinstance(self.n_components, float) and not 0 < self.n_components < 1:
+            raise ValueError("Float n_components must be in the open interval (0, 1).")
+        return self
 
 
 class CalibrationConfig(BaseModel):
@@ -1006,6 +1058,7 @@ class ExperimentConfig(BaseModel):
     feature_selection: FeatureSelectionConfig = Field(
         default_factory=FeatureSelectionConfig
     )
+    reducer: ReducerConfig = Field(default_factory=ReducerConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     statistical_assessment: StatisticalAssessmentConfig = Field(
         default_factory=StatisticalAssessmentConfig,
@@ -1022,6 +1075,13 @@ class ExperimentConfig(BaseModel):
 
     use_scaler: Union[bool, str] = Field(
         True, description="Whether to scalar normalize features upstream."
+    )
+    allow_transductive_input: bool = Field(
+        False,
+        description=(
+            "Explicitly allow inputs produced by a transformation fitted on the "
+            "full dataset. Such results must be treated as exploratory."
+        ),
     )
     n_jobs: int = -1
     verbose: bool = True

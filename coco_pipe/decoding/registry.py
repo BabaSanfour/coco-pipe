@@ -396,6 +396,26 @@ def resolve_estimator_spec(config: Any) -> EstimatorSpec:
                 "FoundationEmbeddingModelConfig requires a 'model_key' "
                 f"(e.g. 'reve', 'cbramod'). Available: {list_foundation_models()}"
             )
+    elif kind == "frozen_backbone":
+        backbone_spec = resolve_estimator_spec(_get_val(config, "backbone"))
+        head_spec = resolve_estimator_spec(_get_val(config, "head"))
+        return replace(
+            backbone_spec,
+            name="FrozenBackboneDecoder",
+            input_kinds=("epoched",),
+            supports_proba=head_spec.supports_proba,
+            supports_decision_function=head_spec.supports_decision_function,
+            importance=head_spec.importance,
+        )
+    elif kind == "neural_finetune":
+        model_key = _get_val(config, "model_key")
+        base_spec = get_foundation_model_spec(model_key)
+        return replace(
+            base_spec,
+            name=f"{model_key}_{_get_val(config, 'train_mode', 'full')}",
+            supports_proba=True,
+            supports_decision_function=False,
+        )
     else:
         spec_name = kind
 

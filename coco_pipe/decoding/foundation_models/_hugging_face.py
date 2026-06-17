@@ -12,6 +12,7 @@ qlora requires ``bitsandbytes``; lora/qlora require ``peft``.
 from __future__ import annotations
 
 import importlib.util
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -148,6 +149,7 @@ class HuggingFaceBackend(BackendBase):
             lora_alpha=lora_alpha,
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
+            **kw,
         )
 
     @classmethod
@@ -165,13 +167,38 @@ class HuggingFaceBackend(BackendBase):
         lora_alpha: int,
         lora_target_modules: tuple[str, ...],
         lora_dropout: float,
+        **kw,
     ) -> "HuggingFaceBackend":
         """Load REVE from HuggingFace."""
         import torch
         import torch.nn as nn
         from transformers import AutoModel
 
-        hf_kw: dict = {"trust_remote_code": True, "token": token}
+        if not electrode_names:
+            warnings.warn(
+                "REVE uses channel names for positional encoding, but "
+                "none were provided; generic names yield incorrect "
+                "positions and invalid embeddings. Pass "
+                "signal_metadata.ch_names.",
+                stacklevel=2,
+            )
+
+        hf_kw: dict = {
+            "trust_remote_code": True,
+            "token": token,
+            **{
+                key: value
+                for key, value in kw.items()
+                if key
+                in {
+                    "revision",
+                    "cache_dir",
+                    "local_files_only",
+                    "force_download",
+                }
+                and value is not None
+            },
+        }
 
         if train_mode == "qlora":
             from transformers import BitsAndBytesConfig
@@ -185,7 +212,11 @@ class HuggingFaceBackend(BackendBase):
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
         pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **hf_kw)
-        feat_dim: int = getattr(backbone.config, "hidden_size", 1024)
+        feat_dim: int = getattr(
+            backbone.config,
+            "hidden_size",
+            metadata.embedding_dim,
+        )
         if pooling == "flatten":
             n_ch = (
                 len(electrode_names)
@@ -212,6 +243,10 @@ class HuggingFaceBackend(BackendBase):
             for param in backbone.parameters():
                 param.requires_grad = False
             backbone.eval()
+        if train_mode != "full":
+            for param in pos_bank.parameters():
+                param.requires_grad = False
+            pos_bank.eval()
 
         head = (
             nn.Linear(feat_dim, n_outputs).to(device)
@@ -245,6 +280,9 @@ class HuggingFaceBackend(BackendBase):
                 super().__init__()
                 self._backend = backend
                 self._output_dim = output_dim
+                self.backbone = backend._backbone
+                self.position_bank = backend._pos_bank
+                self.head = backend._head
 
             def forward(self, X):
                 return self._backend._reve_forward(X, return_embeddings=False)
@@ -253,6 +291,9 @@ class HuggingFaceBackend(BackendBase):
                 super().train(mode)
                 if mode and self._backend._train_mode == "frozen":
                     self._backend._backbone.eval()
+                if mode and self._backend._train_mode != "full":
+                    self._backend._pos_bank.eval()
+                return self
 
         return _REVESklearnModule
 
@@ -304,9 +345,21 @@ class HuggingFaceBackend(BackendBase):
         self._validate(X)
         with self._no_grad():
             logits = self._reve_forward(self._to_tensor(X), return_embeddings=False)
-        if getattr(self, "_task", "classification") == "regression":
+        if self._task == "regression":
             return self._from_tensor(logits).squeeze(-1)
         return self._from_tensor(logits.argmax(dim=-1))
+
+    def checkpoint_components(self) -> dict:
+        """REVE keeps backbone, position bank, and head as separate modules."""
+        return {
+            name: component
+            for name, component in {
+                "backbone": self._backbone,
+                "position_bank": self._pos_bank,
+                "head": self._head,
+            }.items()
+            if component is not None
+        }
 
     def reset_head(self, n_outputs: int) -> "HuggingFaceBackend":
         """Replace the classification head without modifying backbone weights.

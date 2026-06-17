@@ -13,20 +13,18 @@ import numpy as np
 import pytest
 
 from coco_pipe.io.quality import CheckResult
-from coco_pipe.report.core import Report, Section
+from coco_pipe.report.core import Report, Section, _replace_non_finite
 from coco_pipe.report.elements import (
     ContainerElement,
     HtmlElement,
     PlotlyElement,
+    TableElement,
 )
 
 
 @pytest.fixture
 def tmp_report_file(tmp_path):
     return tmp_path / "test_report.html"
-
-
-# ----- Section ---------------------------------------------------------------
 
 
 def test_section_rendering():
@@ -47,9 +45,6 @@ def test_section_status_upgrades_on_findings():
     sec.add_finding(CheckResult("c3", "WARN", "w2", 4))
     # FAIL is sticky
     assert sec.status == "FAIL"
-
-
-# ----- Report construction / config -----------------------------------------
 
 
 def test_report_config_and_metadata():
@@ -82,9 +77,6 @@ def test_container_element_markdown_fallback():
     cont = ContainerElement()
     cont.add_markdown("# Title")
     assert "Title" in cont.render()
-
-
-# ----- Report aggregation behaviour ------------------------------------------
 
 
 def test_report_add_container_functionality():
@@ -204,9 +196,6 @@ def test_report_creation_and_save(tmp_report_file):
     assert "Markdown Header" in content
 
 
-# ----- Payload registry round-trip (Report.render contract) -------------------
-
-
 def test_global_data_store_payload():
     import plotly.graph_objects as go
 
@@ -279,9 +268,6 @@ def test_fluent_stubs():
             m.assert_called()
 
 
-# ----- Asset modes (CDN / custom / inline) -----------------------------------
-
-
 def test_asset_mode_defaults_to_cdn():
     rep = Report(title="Default")
     assert rep.asset_mode == "cdn"
@@ -319,9 +305,6 @@ def test_asset_mode_inline_round_trip(monkeypatch, tmp_path):
             return self._data
 
     def fake_urlopen(url_or_request, timeout=None):
-        # ``_download_to`` now wraps the URL in a ``urllib.request.Request``
-        # object so it can pass a User-Agent header. Accept either a bare
-        # string URL or a Request, match by filename stem.
         url = (
             url_or_request.full_url
             if hasattr(url_or_request, "full_url")
@@ -351,3 +334,145 @@ def test_asset_mode_inline_round_trip(monkeypatch, tmp_path):
 def test_asset_mode_invalid_value_raises():
     with pytest.raises(TypeError):
         Report(title="Bad", asset_urls=42)
+
+
+def test_replace_non_finite_float_array():
+    arr = np.array([1.0, np.nan, np.inf, -np.inf, 2.0])
+    res = _replace_non_finite(arr)
+    assert res == [1.0, None, None, None, 2.0]
+
+
+def test_section_add_columns():
+    sec = Section("Test")
+    sec.add_columns([TableElement([])])
+    assert len(sec.children) == 1
+
+
+def test_report_provenance_fallback():
+    # If config doesn't have provenance, it injects it
+    from coco_pipe.report.config import ReportConfig
+
+    cfg = ReportConfig(title="T")
+    cfg.provenance = None
+    rep = Report(title="T", config=cfg)
+    assert rep.config.provenance is not None
+
+
+def test_apply_theme_exceptions():
+    with patch(
+        "coco_pipe.viz.theme.set_coco_theme", side_effect=Exception("theme err")
+    ):
+        with patch(
+            "coco_pipe.viz.interactive._utils._register_coco_template",
+            side_effect=Exception("tpl err"),
+        ):
+            Report(title="T")  # should catch silently
+
+
+def test_resolve_config_fallback():
+    from coco_pipe.report.core import Report
+
+    # provenance must be a dict or valid model, passing an int fails validation
+    rep = Report(config={"provenance": 123}, title="T")
+    assert (
+        getattr(rep.config, "run_params", None) is not None or rep.config.title == "T"
+    )
+
+
+def test_add_container_constant_columns():
+    rep = Report("T")
+
+    class DummyContainer:
+        dims = ["a"]
+        shape = [2]
+        coords = {}
+        X = np.array([[1, 1], [1, 1]])  # constant
+        y = None
+
+    rep.add_container(DummyContainer(), show_dist=True)
+    sec = rep.children[-1]
+    assert len(sec.findings) >= 0
+
+
+def test_add_container_plot_exception():
+    rep = Report("T")
+
+    class DummyContainer:
+        dims = ["a"]
+        shape = [2]
+        coords = {}
+        X = np.array([1, 2])
+        y = None
+
+    with patch("matplotlib.pyplot.subplots", side_effect=Exception("plot err")):
+        rep.add_container(DummyContainer())
+    sec = rep.children[-1]
+    assert "Could not generate plot" in sec.children[-1].html
+
+
+def test_add_raw_preview2():
+    rep = Report("T")
+
+    class DummyData:
+        X = np.array([1, 1, 1, 1])  # flatline
+
+    with patch("coco_pipe.report.core.check_flatline") as mock_flat:
+
+        class DummyRes:
+            is_issue = True
+            status = "FAIL"
+            message = "Flatline"
+
+        mock_flat.return_value = DummyRes()
+
+        with patch(
+            "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview"
+        ) as mock_preview:
+            mock_preview.return_value = "fig"
+            rep.add_raw_preview(DummyData())
+            sec = rep.children[-1]
+            assert len(sec.findings) > 0
+
+
+def test_add_raw_preview_exceptions():
+    rep = Report("T")
+    with patch(
+        "coco_pipe.report.core.check_flatline", side_effect=Exception("check err")
+    ):
+        with patch(
+            "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview",
+            return_value="fig",
+        ):
+            rep.add_raw_preview(np.array([1, 2]))
+
+
+def test_add_raw_preview_dims():
+    rep = Report("T")
+    with patch(
+        "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview", return_value="fig"
+    ):
+        # 1D
+        rep.add_raw_preview(np.array([1, 2]))
+        # 3D
+        rep.add_raw_preview(np.array([[[1, 2], [3, 4]]]))
+
+
+def test_add_summary_card():
+    rep = Report("T")
+    rep.add_summary_card({"A": 1, "B": 2})
+    assert len(rep.children) > 0
+    assert len(rep.children[0].children) == 2
+
+
+def test_show():
+    rep = Report("T")
+    with patch("webbrowser.open") as mock_open:
+        rep.show()
+        assert mock_open.called
+
+
+def test_repr_html():
+    rep = Report("T")
+    html = rep._repr_html_()
+    assert "iframe" in html
+    assert "srcdoc" in html

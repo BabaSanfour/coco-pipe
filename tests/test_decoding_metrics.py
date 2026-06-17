@@ -14,7 +14,8 @@ from coco_pipe.decoding._metrics import (
 )
 
 
-def test_all_metrics_runable():
+@pytest.mark.parametrize("name", sorted(METRIC_REGISTRY), ids=lambda n: n)
+def test_metric_is_runable(name):
     """Verify every registered metric can be called with appropriate data."""
     y_true_cls = np.array([0, 1, 0, 1])
     y_pred_cls = np.array([0, 1, 1, 1])
@@ -23,16 +24,16 @@ def test_all_metrics_runable():
     y_true_reg = np.array([1.0, 2.0, 3.0])
     y_pred_reg = np.array([1.1, 1.9, 3.2])
 
-    for name, spec in METRIC_REGISTRY.items():
-        if spec.task == "classification":
-            if spec.response_method == "predict":
-                val = spec.scorer(y_true_cls, y_pred_cls)
-            else:
-                val = spec.scorer(y_true_cls, y_proba_cls)
+    spec = METRIC_REGISTRY[name]
+    if spec.task == "classification":
+        if spec.response_method == "predict":
+            val = spec.scorer(y_true_cls, y_pred_cls)
         else:
-            val = spec.scorer(y_true_reg, y_pred_reg)
+            val = spec.scorer(y_true_cls, y_proba_cls)
+    else:
+        val = spec.scorer(y_true_reg, y_pred_reg)
 
-        assert isinstance(val, (float, np.float64, np.float32))
+    assert isinstance(val, (float, np.float64, np.float32))
 
 
 def test_pr_auc_calculation():

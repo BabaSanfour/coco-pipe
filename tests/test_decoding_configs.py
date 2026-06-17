@@ -189,18 +189,18 @@ def test_statistical_assessment_nesting():
     assert cfg_unit.custom_unit_column == "session"
 
 
-def test_every_active_sklearn_config_method_resolves():
-    for config_cls in ACTIVE_SKLEARN_CONFIGS:
-        config = config_cls()
-        assert get_estimator_cls(config.method) is not None
+@pytest.mark.parametrize("config_cls", ACTIVE_SKLEARN_CONFIGS, ids=lambda c: c.__name__)
+def test_every_active_sklearn_config_method_resolves(config_cls):
+    config = config_cls()
+    assert get_estimator_cls(config.method) is not None
 
 
-def test_every_active_sklearn_default_config_instantiates():
+@pytest.mark.parametrize("config_cls", ACTIVE_SKLEARN_CONFIGS, ids=lambda c: c.__name__)
+def test_every_active_sklearn_default_config_instantiates(config_cls):
     experiment = _experiment_for_instantiation()
-    for config_cls in ACTIVE_SKLEARN_CONFIGS:
-        config = config_cls()
-        estimator = experiment._instantiate_model(config.method, config)
-        assert estimator is not None
+    config = config_cls()
+    estimator = experiment._instantiate_model(config.method, config)
+    assert estimator is not None
 
 
 def test_experiment_config_forbids_extra_fields():

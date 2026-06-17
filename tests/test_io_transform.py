@@ -6,8 +6,6 @@ from sklearn.preprocessing import StandardScaler
 from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.transform import SklearnWrapper, SpatialWhitener
 
-# --- SklearnWrapper Tests ---
-
 
 def test_sklearn_wrapper_standard_scaler():
     """Test wrapping a simple scaler."""
@@ -51,9 +49,6 @@ def test_sklearn_wrapper_validation():
     wrapper_norm.fit(DataContainer(np.zeros((2, 2)), dims=("o", "f")))
     with pytest.raises(NotImplementedError):
         wrapper_norm.inverse_transform(DataContainer(np.zeros((2, 2)), dims=("o", "f")))
-
-
-# --- SpatialWhitener Tests ---
 
 
 def test_spatial_whitener_methods():

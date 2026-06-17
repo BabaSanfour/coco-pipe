@@ -67,7 +67,6 @@ def test_all_decoding_plots_return_fig_ax_and_respect_figsize():
     ]
     for call in calls:
         _assert_fig_ax(call(), figsize=(3, 3))
-    pytest.importorskip("mne")
     _assert_fig_ax(
         viz.plot_decoding_topomap(
             sensor_values, value="Importance", coords=coords, figsize=(3, 3)
@@ -148,3 +147,81 @@ def test_mean_curve_paths_accept_dataframes():
         }
     )
     _assert_fig_ax(viz.plot_calibration_curve(calibration_df, mean_only=True))
+
+
+def test_plot_regression_diagnostics():
+    df = pd.DataFrame(
+        {
+            "Model": ["Ridge"] * 4,
+            "Fold": [0, 0, 0, 0],
+            "y_true": [1.0, 2.0, 3.0, 4.0],
+            "y_pred": [1.1, 1.9, 3.1, 3.9],
+        }
+    )
+    # 1. Scatter
+    _assert_fig_ax(viz.plot_regression_diagnostics(df, kind="scatter"))
+    # 2. Residual
+    _assert_fig_ax(viz.plot_regression_diagnostics(df, kind="residual"))
+    # 3. Bin
+    _assert_fig_ax(viz.plot_regression_diagnostics(df, kind="bin"))
+    # 4. Invalid
+    with pytest.raises(ValueError, match="kind must be"):
+        viz.plot_regression_diagnostics(df, kind="invalid_kind")
+
+
+def test_plot_feature_stability_heatmap():
+    df_stab = pd.DataFrame(
+        {
+            "Model": ["SVM"] * 4,
+            "Fold": [0, 0, 1, 1],
+            "FeatureName": ["f1", "f2", "f1", "f2"],
+            "Selected": [1.0, 0.0, 1.0, 1.0],
+        }
+    )
+    # Heatmap stability plot
+    _assert_fig_ax(viz.plot_feature_stability(df_stab, kind="heatmap", top_n=2))
+
+    # Invalid kind
+    with pytest.raises(ValueError, match="kind must be"):
+        viz.plot_feature_stability(df_stab, kind="invalid_kind")
+
+
+def test_plot_decoding_topomap_extra():
+    coords = pd.DataFrame({"x": [0.1, -0.1], "y": [0.2, -0.2]}, index=["C1", "C2"])
+    sensor_df = pd.DataFrame(
+        {
+            "FeatureName": ["C1", "C2", "C1", "C2"],
+            "Time": [0.1, 0.1, 0.2, 0.2],
+            "Importance": [0.5, 0.2, 0.6, 0.1],
+        }
+    )
+
+    # 1. Filter by time
+    _assert_fig_ax(
+        viz.plot_decoding_topomap(
+            sensor_df, value="Importance", coords=coords, times=[0.1]
+        )
+    )
+
+    # 2. Filter by mask (length matching 4)
+    _assert_fig_ax(
+        viz.plot_decoding_topomap(
+            sensor_df,
+            value="Importance",
+            coords=coords,
+            mask=[True, True, False, False],
+        )
+    )
+
+    # 3. Mismatched mask raises ValueError
+    with pytest.raises(ValueError, match="mask length must match"):
+        viz.plot_decoding_topomap(
+            sensor_df, value="Importance", coords=coords, mask=[True, False]
+        )
+
+    # 4. Centered limits (center=0.0)
+    _assert_fig_ax(
+        viz.plot_decoding_topomap(
+            sensor_df, value="Importance", coords=coords, center=0.0
+        )
+    )

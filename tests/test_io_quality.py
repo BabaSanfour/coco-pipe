@@ -7,7 +7,9 @@ from coco_pipe.io.quality import (
     EpochDropRecord,
     QCResult,
     SubjectDropRecord,
+    _container_to_feature_df,
     _filter_observations,
+    _get_subject_ids,
     _numeric_values,
     check_constant_columns,
     check_flatline,
@@ -21,6 +23,7 @@ from coco_pipe.io.quality import (
     drop_subject_outliers,
     make_qc_flag,
     resolve_qc_status,
+    row_quality_score,
     run_qc,
 )
 from coco_pipe.io.structures import DataContainer
@@ -508,6 +511,57 @@ def test_qc_result_summary_and_retention_rate():
     }
 
 
+def test_row_scores_by_family_separates_bad_family():
+    names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
+    df = pd.DataFrame(
+        {
+            names[0]: [0.0, 0.0, 0.0, 100.0],
+            names[1]: [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+
+    result = compute_row_outlier_scores(
+        df, names, z_threshold=3.0, descriptor_names=names, group_by="family"
+    )
+
+    assert result.loc[3, "outlier_fraction_band"] == 1.0
+    assert result.loc[3, "outlier_fraction_complexity"] == 0.0
+
+
+def test_drop_subject_outliers_per_family_returns_masks():
+    names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
+    container = DataContainer(
+        X=np.asarray([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0], [100.0, 1.0]]),
+        dims=("obs", "feature"),
+        coords={"feature": names, "subject": ["s1", "s2", "s3", "s4"]},
+        ids=np.asarray(["o1", "o2", "o3", "o4"]),
+    )
+
+    masks, result = drop_subject_outliers(
+        container,
+        z_threshold=3.0,
+        outlier_fraction_threshold=0.5,
+        descriptor_names=names,
+        group_by="family",
+    )
+
+    assert masks["band"].tolist() == [True, True, True, False]
+    assert masks["complexity"].all()
+    assert result.per_family_dropped["band"][0].subject_id == "s4"
+
+
+def test_drop_epoch_outliers_min_obs_gate():
+    container = _clean_container(n_subjects=4, n_features=2)
+    container.X[-1, :] = 1000.0
+    with pytest.raises(RuntimeError, match="minimum required"):
+        drop_epoch_outliers(
+            container,
+            z_threshold=3.0,
+            outlier_fraction_threshold=0.5,
+            min_obs=4,
+        )
+
+
 def test_drop_epoch_clean_data_drops_nothing():
     container = _clean_container()
 
@@ -729,3 +783,100 @@ def test_quality_functions_require_flat_feature_container():
 
     with pytest.raises(ValueError, match="flat 2D"):
         run_qc(container)
+
+
+def test_check_missingness_extra():
+    df = pd.DataFrame({"A": [1, 2, 3]})
+    res = check_missingness(df, threshold_warn=0.1)
+    assert res.status == "OK"
+
+
+def test_check_constant_columns_extra():
+    # ndarray ndim != 2
+    res1 = check_constant_columns(np.array([1, 2, 3]))
+    assert res1 == []
+
+    # Empty numeric cols
+    df = pd.DataFrame({"A": ["a", "b"]})
+    res2 = check_constant_columns(df)
+    assert res2 == []
+
+
+def test_check_outliers_zscore_extra():
+    df = pd.DataFrame({"A": [1, 1, 1]})
+    res = check_outliers_zscore(df, sigma=1.0)
+    assert res is None  # std == 0 returns None
+
+
+def test_check_flatline_extra():
+    # Only inf
+    res = check_flatline(np.array([np.inf, -np.inf]))
+    assert res.status == "WARN"
+
+
+def test_row_quality_score_extra():
+    df = pd.DataFrame({"A": [np.nan, 2, 0], "B": [1, np.inf, 1], "C": ["x", "y", "z"]})
+
+    scores = row_quality_score(df, exclude_cols=["C"], count_zero=True, normalize=False)
+    assert list(scores) == [1, 1, 1]
+
+    scores_norm = row_quality_score(
+        df, exclude_cols=["C"], count_zero=True, normalize=True
+    )
+    assert list(scores_norm) == [0.5, 0.5, 0.5]
+
+    # no numeric
+    df2 = pd.DataFrame({"C": ["x", "y", "z"]})
+    assert list(row_quality_score(df2, normalize=False)) == [0, 0, 0]
+    assert list(row_quality_score(df2, normalize=True)) == [0.0, 0.0, 0.0]
+
+
+def test_drop_epoch_outliers_extra():
+    dc = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    with pytest.raises(ValueError):
+        drop_epoch_outliers(dc, z_threshold=0)
+
+
+def test_get_subject_ids_extra():
+    # coords bad length
+    dc = DataContainer(
+        X=np.zeros((2, 2)), dims=("obs", "feature"), coords={"subject": [1]}
+    )
+    with pytest.raises(ValueError):
+        _get_subject_ids(dc, "subject")
+
+    # ids bad length
+    dc2 = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"), ids=[1])
+    with pytest.raises(ValueError):
+        _get_subject_ids(dc2, "subject")
+
+    # fallback to index
+    dc3 = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    assert _get_subject_ids(dc3, "subject") == ["0", "1"]
+
+
+def test_container_to_feature_df_extra():
+    # Missing feature coords (auto generate)
+    dc = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    df = _container_to_feature_df(dc, None)
+    assert list(df.columns) == ["f0", "f1"]
+
+    # Bad names length
+    dc2 = DataContainer(
+        X=np.zeros((2, 2)), dims=("obs", "feature"), coords={"feature": ["f0"]}
+    )
+    with pytest.raises(ValueError):
+        _container_to_feature_df(dc2, None)
+
+    # missing required feature cols
+    dc3 = DataContainer(
+        X=np.zeros((2, 2)), dims=("obs", "feature"), coords={"feature": ["f0", "f1"]}
+    )
+    with pytest.raises(ValueError):
+        _container_to_feature_df(dc3, ["f2"])
+
+
+def test_filter_observations_extra():
+    dc = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
+    with pytest.raises(ValueError):
+        _filter_observations(dc, np.array([True]))

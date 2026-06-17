@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -822,6 +824,52 @@ def test_result_save_default_path():
     path.unlink()
 
 
+def test_result_export_records_optional_accessor_failures(tmp_path, monkeypatch):
+    X, y = _classification_data()
+    result = Experiment(_config()).run(X, y)
+
+    def fail():
+        raise RuntimeError("optional table unavailable")
+
+    monkeypatch.setattr(result, "get_feature_scores", fail)
+    written = result.export(tmp_path / "export", config={"run": "test"})
+    manifest = json.loads((tmp_path / "export" / "run_manifest.json").read_text())
+    assert "summary" in written
+    assert "feature_scores" in manifest["export_errors"]
+    assert (tmp_path / "export" / "_SUCCESS").exists()
+
+
+def test_completed_result_records_restore_accuracy_p_value(tmp_path):
+    from coco_pipe.decoding.persistence import load_completed_result_records
+
+    pd.DataFrame([{"Model": "lr", "accuracy_mean": 0.75}]).to_csv(
+        tmp_path / "summary.csv",
+        index=False,
+    )
+    pd.DataFrame([{"Model": "lr", "Metric": "accuracy", "PValue": 0.025}]).to_csv(
+        tmp_path / "statistical_assessment.csv", index=False
+    )
+
+    records = load_completed_result_records(tmp_path, context={"scope": "EO"})
+
+    assert records[0]["p_value"] == 0.025
+
+
+def test_redact_sensitive_nested_config():
+    from coco_pipe.decoding.persistence import redact_sensitive
+
+    config = {
+        "models": [{"backend_kwargs": {"token": "hf-secret", "revision": "abc"}}],
+        "api_key": "service-secret",
+    }
+
+    redacted = redact_sensitive(config)
+
+    assert redacted["models"][0]["backend_kwargs"]["token"] == "<redacted>"
+    assert redacted["models"][0]["backend_kwargs"]["revision"] == "abc"
+    assert redacted["api_key"] == "<redacted>"
+
+
 def test_compare_models_all_pairs():
     raw = {
         "m1": {
@@ -1018,3 +1066,85 @@ def test_synthetic_result_accessor_columns():
         else:
             frame = getattr(result, accessor)()
         assert columns.issubset(frame.columns), accessor
+
+
+def test_result_export_errors(tmp_path):
+    from coco_pipe.decoding.result import ExperimentResult
+
+    res = ExperimentResult({})
+
+    # 1. Force summary to fail so we hit the RuntimeError
+    def bad_summary():
+        raise ValueError("Bad summary")
+
+    res.summary = bad_summary
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="required summary table"):
+        res.export(tmp_path)
+
+
+def test_result_export_parquet_error(tmp_path):
+    import pandas as pd
+
+    from coco_pipe.decoding.result import ExperimentResult
+
+    res = ExperimentResult(
+        {"model": {"metrics": {"accuracy": {"folds": [[1]], "mean": 1, "std": 0}}}}
+    )
+
+    # Mock to_parquet to fail
+    original_to_parquet = pd.DataFrame.to_parquet
+
+    def bad_to_parquet(self, *args, **kwargs):
+        raise OSError("Disk error")
+
+    pd.DataFrame.to_parquet = bad_to_parquet
+    try:
+        res.export(tmp_path)
+        assert "export_errors" in str(
+            tmp_path.joinpath("run_manifest.json").read_text()
+        )
+    finally:
+        pd.DataFrame.to_parquet = original_to_parquet
+
+
+def test_result_summary_error_skip():
+    from coco_pipe.decoding.result import ExperimentResult
+
+    res = ExperimentResult({"bad_model": {"error": "failed"}})
+    df = res.summary()
+    assert df.empty
+
+
+@pytest.mark.parametrize(
+    "accessor",
+    [
+        pytest.param(lambda r: r.get_feature_importances(), id="feature_importances"),
+        pytest.param(lambda r: r.get_selected_features(), id="selected_features"),
+        pytest.param(lambda r: r.get_feature_scores(), id="feature_scores"),
+        pytest.param(lambda r: r.get_feature_stability(), id="feature_stability"),
+        pytest.param(lambda r: r.get_model_artifacts(), id="model_artifacts"),
+        pytest.param(
+            lambda r: r.get_statistical_assessment(), id="statistical_assessment"
+        ),
+        pytest.param(lambda r: r.get_predictions(), id="predictions"),
+    ],
+)
+def test_errored_result_accessors_are_empty(accessor):
+    res = ExperimentResult({"model": {"error": "test"}})
+    assert accessor(res).empty
+
+
+def test_result_roc_auc_missing_proba():
+    res = ExperimentResult(
+        {
+            "model": {
+                "metrics": {},
+                "predictions": [{"y_true": [0, 1], "y_pred": [0, 1]}],
+            }
+        }
+    )
+    df = res.get_roc_auc_summary()
+    assert df.empty

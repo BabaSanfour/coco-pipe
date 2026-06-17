@@ -134,6 +134,8 @@ def test_classify_empty_list():
         "scope",
         "channel",
         "measure",
+        "subfamily",
+        "descriptor",
     ]
 
 
@@ -376,3 +378,160 @@ def test_aggregate_unknown_family_columns_excluded():
     )
 
     assert result["family"].tolist() == ["band"]
+
+
+def test_classify_descriptor_columns_remainder_parsing():
+    result = classify_descriptor_columns(["CZ_band_abs_alpha"])
+    assert result.loc[0, "family"] == "band"
+    assert result.loc[0, "measure"] == "CZ_abs_alpha"
+    assert result.loc[0, "scope"] == ""
+    assert result.loc[0, "channel"] == ""
+
+
+def test_summarize_failures_empty_and_normal():
+    from coco_pipe.descriptors.qc import summarize_failures
+
+    # 1. Empty DataFrame
+    res_empty = summarize_failures(pd.DataFrame())
+    assert res_empty["by_family"].empty
+    assert res_empty["by_channel"].empty
+    assert res_empty["by_exception_type"].empty
+    assert res_empty["by_condition"].empty
+    assert res_empty["by_family_channel"].empty
+    assert res_empty["combined"].empty
+
+    # 2. DataFrame with missing columns
+    res_missing_cols = summarize_failures(pd.DataFrame({"dummy": [1]}))
+    assert res_missing_cols["by_family"].empty
+    assert res_missing_cols["combined"].empty
+
+    # 3. Normal DataFrame
+    fail_df = pd.DataFrame(
+        {
+            "family": ["band", None, "param"],
+            "channel_name": ["Fz", "Cz", None],
+            "exception_type": ["ValueError", "TypeError", "ValueError"],
+            "condition": ["rest", "task", "rest"],
+        }
+    )
+    res = summarize_failures(fail_df)
+    assert not res["by_family"].empty
+    assert not res["by_channel"].empty
+    assert not res["by_exception_type"].empty
+    assert not res["by_condition"].empty
+    assert not res["by_family_channel"].empty
+    assert not res["combined"].empty
+
+    # Verify "combined" columns
+    assert "group" in res["combined"].columns
+    assert set(res["combined"]["group"].unique()) == {
+        "family",
+        "channel",
+        "exception_type",
+        "condition",
+    }
+
+
+def test_add_family_diagnostics():
+    from coco_pipe.descriptors.qc import add_family_diagnostics
+
+    # 1. Empty input
+    empty_df = pd.DataFrame()
+    res_empty = add_family_diagnostics(empty_df, pd.DataFrame(), pd.DataFrame())
+    assert res_empty.empty
+
+    # 2. Band, Param, Complexity families
+    family_summary = pd.DataFrame(
+        [
+            {"family": "band", "missing_rate_max": 0.1, "nonfinite_rate": 0.05},
+            {"family": "param", "missing_rate_max": 0.2, "nonfinite_rate": 0.0},
+            {"family": "complexity", "missing_rate_max": 0.3, "nonfinite_rate": 0.1},
+        ]
+    )
+
+    feature_missingness = pd.DataFrame(
+        [
+            {"column": "band_abs_alpha", "family": "band", "missing_rate": 0.1},
+            {"column": "band_rel_beta", "family": "band", "missing_rate": 0.0},
+            {"column": "band_corr_rel_theta", "family": "band", "missing_rate": 0.0},
+            {"column": "ratio_gamma", "family": "band", "missing_rate": 0.2},
+            {"column": "param_r_squared_1", "family": "param", "missing_rate": 0.2},
+            {"column": "param_fit_error_1", "family": "param", "missing_rate": 0.2},
+            {"column": "peak_freq", "family": "param", "missing_rate": 0.2},
+            {"column": "alpha_peak_freq", "family": "param", "missing_rate": 0.2},
+            {
+                "column": "complexity_entropy",
+                "family": "complexity",
+                "missing_rate": 0.3,
+            },
+        ]
+    )
+
+    feature_df = pd.DataFrame(
+        {
+            "band_abs_alpha": [-0.5, 1.0, 2.0],
+            "band_rel_beta": [-0.1, 0.5, 1.2],
+            "band_corr_rel_theta": [0.1, 0.9, 1.5],
+            "ratio_gamma": [1.0, np.nan, 3.0],
+            "param_r_squared_1": [0.8, 0.9, 0.95],
+            "param_fit_error_1": [0.01, 0.05, 0.1],
+            "peak_freq": [10.0, np.nan, 12.0],
+            "alpha_peak_freq": [9.0, np.nan, 10.0],
+            "complexity_entropy": [1.2, 1.5, 1.8],
+        }
+    )
+
+    res = add_family_diagnostics(family_summary, feature_missingness, feature_df)
+    assert "band_abs_negative_rate" in res.columns
+    assert "param_r_squared_median" in res.columns
+    assert "complexity_measure_missingness_max" in res.columns
+
+
+def test_descriptor_subfamily_derivation():
+    from coco_pipe.descriptors.qc import descriptor_subfamily
+
+    # band: output type, robust to stat prefix and band suffix
+    assert descriptor_subfamily("band", "log_abs_alpha") == "log_abs"
+    assert descriptor_subfamily("band", "median_log_abs_alpha") == "log_abs"
+    assert descriptor_subfamily("band", "iqr_corr_rel_beta") == "corr_rel"
+    assert descriptor_subfamily("band", "corr_log_abs_gamma") == "corr_log_abs"
+    assert descriptor_subfamily("band", "abs_delta") == "abs"
+    assert descriptor_subfamily("band", "agg_ratio_theta_beta") == "ratio"
+    assert descriptor_subfamily("band", "agg_corr_ratio_theta_beta") == "corr_ratio"
+    # param: aperiodic / peaks / fit_quality
+    assert descriptor_subfamily("param", "offset") == "aperiodic"
+    assert descriptor_subfamily("param", "median_alpha_peak_freq") == "peaks"
+    assert descriptor_subfamily("param", "r_squared") == "fit_quality"
+    # complexity: curated 3-way map
+    assert descriptor_subfamily("complexity", "sample_entropy") == "entropy"
+    assert descriptor_subfamily("complexity", "higuchi_fd") == "fractal_complexity"
+    assert descriptor_subfamily("complexity", "hjorth_mobility") == "signal_dynamics"
+    # unknowns fall back
+    assert descriptor_subfamily(None, "x") == "unknown"
+    assert descriptor_subfamily("complexity", "made_up") == "complexity_other"
+
+
+def test_classify_adds_subfamily_column():
+    result = classify_descriptor_columns(
+        ["band_log_abs_alpha_ch-Fz", "complexity_sample_entropy_ch-Fz"]
+    )
+    assert result["subfamily"].tolist() == ["log_abs", "entropy"]
+
+
+def test_select_viable_feature_columns_row_budget():
+    from coco_pipe.descriptors.qc import select_viable_feature_columns
+
+    df = pd.DataFrame(
+        {
+            "band_log_abs_alpha_ch-Fz": [1.0, 2.0, 3.0, np.nan, 5.0],  # 20% missing
+            "band_log_abs_beta_ch-Fz": [5.0, 4.0, 3.0, 2.0, 1.0],  # clean
+        }
+    )
+    cols = list(df.columns)
+    # Without a budget the 20%-missing column survives (not over threshold)...
+    surviving, _ = select_viable_feature_columns(df, cols)
+    assert set(surviving) == set(cols)
+    # ...with budget 0 it is dropped (worst-NaN first) to preserve all rows.
+    surviving, drop_log = select_viable_feature_columns(df, cols, max_row_drop_rate=0.0)
+    assert surviving == ["band_log_abs_beta_ch-Fz"]
+    assert "row_preserving" in set(drop_log["drop_reason"])

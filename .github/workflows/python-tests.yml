@@ -6,6 +6,7 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:        # manual "Run workflow" button (enables the heavy job)
 
 jobs:
   quality:
@@ -14,7 +15,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
+        python-version: "3.11"
     - uses: pre-commit/action@v3.0.1
 
   test:
@@ -24,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v4
@@ -41,15 +42,40 @@ jobs:
         pip install -e .[full,test]
 
     - name: Test with pytest
+      # Heavy `real_checkpoints` tests are excluded automatically by the
+      # `-m 'not real_checkpoints'` default in pyproject's addopts. No token,
+      # no network downloads here. The dedicated `foundation` job runs them.
       run: |
         pytest tests/ --cov=coco_pipe/ --cov-report=xml --verbose -s
 
     - name: Upload coverage reports to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.10'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         slug: BabaSanfour/coco-pipe
+
+  foundation:
+    needs: quality
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: 'pip'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[full,test]
+    - name: Run heavy foundation tests
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        COCO_PIPE_RUN_REAL_FOUNDATION: "1"
+      run: |
+        pytest tests/ -m real_checkpoints -v
 
   docs:
     needs: quality
@@ -59,7 +85,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
+        python-version: "3.11"
         cache: 'pip'
     - name: Install dependencies
       run: |

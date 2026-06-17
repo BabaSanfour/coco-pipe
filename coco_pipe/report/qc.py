@@ -13,19 +13,58 @@ import pandas as pd
 
 from coco_pipe.io.quality import QCResult
 
-from .elements import ImageElement, TableElement
+from ._utils import _ensure_static_matplotlib_backend
+from .elements import ImageElement, InteractiveTableElement, TableElement
 
 if TYPE_CHECKING:
     from .core import Section
 
 
-def build_qc_section(qc_result: QCResult) -> "Section":
+def _add_qc_table(
+    section: "Section",
+    frame: pd.DataFrame,
+    *,
+    title: str,
+    compact: bool,
+    page_size: int,
+) -> None:
+    """Add a static or paginated QC table according to report density."""
+    if compact and title != "QC Funnel Summary" and len(frame) > page_size:
+        selectors = [
+            str(column)
+            for column in frame.columns
+            if str(column).startswith("Group (")
+            or str(column).lower()
+            in {"family", "subfamily", "measure", "channel", "reason"}
+        ]
+        section.add_element(
+            InteractiveTableElement(
+                frame,
+                title=title,
+                selector_columns=selectors,
+                page_size=page_size,
+            )
+        )
+        return
+    section.add_element(TableElement(frame, title=title))
+
+
+def build_qc_section(
+    qc_result: QCResult,
+    *,
+    compact: bool = False,
+    page_size: int = 10,
+) -> "Section":
     """Build the standardised QC drop-log report section.
 
     Parameters
     ----------
     qc_result:
         Populated result from :func:`~coco_pipe.io.quality.run_qc`.
+    compact:
+        Paginate long detail tables when ``True``.
+    page_size:
+        Number of rows shown per page in compact tables.
 
     Returns
     -------
@@ -45,7 +84,13 @@ def build_qc_section(qc_result: QCResult) -> "Section":
             for key, value in qc_result.summary().items()
         ]
     )
-    section.add_element(TableElement(summary, title="QC Funnel Summary"))
+    _add_qc_table(
+        section,
+        summary,
+        title="QC Funnel Summary",
+        compact=compact,
+        page_size=page_size,
+    )
 
     if qc_result.epochs_dropped:
         epoch_rows = pd.DataFrame(
@@ -59,11 +104,12 @@ def build_qc_section(qc_result: QCResult) -> "Section":
                 for record in qc_result.epochs_dropped
             ]
         )
-        section.add_element(
-            TableElement(
-                epoch_rows,
-                title=f"Dropped Epochs ({qc_result.n_epochs_dropped})",
-            )
+        _add_qc_table(
+            section,
+            epoch_rows,
+            title=f"Dropped Epochs ({qc_result.n_epochs_dropped})",
+            compact=compact,
+            page_size=page_size,
         )
 
     if qc_result.subjects_dropped:
@@ -77,15 +123,64 @@ def build_qc_section(qc_result: QCResult) -> "Section":
                 for record in qc_result.subjects_dropped
             ]
         )
-        section.add_element(
-            TableElement(
-                subject_rows,
-                title=f"Dropped Subjects ({qc_result.n_subjects_dropped})",
-            )
+        _add_qc_table(
+            section,
+            subject_rows,
+            title=f"Dropped Subjects ({qc_result.n_subjects_dropped})",
+            compact=compact,
+            page_size=page_size,
         )
+
+    if qc_result.per_family_dropped:
+        group_by = (qc_result.thresholds or {}).get("group_by", "family")
+        n_in = qc_result.n_obs_in
+        group_column = f"Group ({group_by})"
+        retention_rows = []
+        drop_rows = []
+        for group, records in qc_result.per_family_dropped.items():
+            dropped_ids = {
+                getattr(record, "subject_id", getattr(record, "obs_id", ""))
+                for record in records
+            }
+            retention_rows.append(
+                {
+                    group_column: group,
+                    "N In": n_in,
+                    "N Dropped": len(dropped_ids),
+                    "N Kept": (n_in - len(dropped_ids)) if n_in else None,
+                }
+            )
+            for record in records:
+                drop_rows.append(
+                    {
+                        group_column: group,
+                        "Dropped ID": getattr(
+                            record,
+                            "subject_id",
+                            getattr(record, "obs_id", ""),
+                        ),
+                        "Outlier Fraction": record.outlier_fraction,
+                    }
+                )
+        _add_qc_table(
+            section,
+            pd.DataFrame(retention_rows),
+            title=f"Per-Group Retention (group_by={group_by})",
+            compact=compact,
+            page_size=page_size,
+        )
+        if drop_rows:
+            _add_qc_table(
+                section,
+                pd.DataFrame(drop_rows),
+                title=f"Conditional Drops by {group_by}",
+                compact=compact,
+                page_size=page_size,
+            )
 
     burden = qc_result.subject_outlier_burden
     if burden is not None and not burden.empty:
+        _ensure_static_matplotlib_backend()
         import matplotlib.pyplot as plt
 
         figure, axis = plt.subplots(figsize=(6, 3))
@@ -117,11 +212,41 @@ def build_qc_section(qc_result: QCResult) -> "Section":
 
     family_qc = qc_result.family_qc
     if family_qc is not None and not family_qc.empty:
-        section.add_element(
-            TableElement(family_qc, title="Family-Level Quality Summary")
+        _add_qc_table(
+            section,
+            family_qc,
+            title="Family-Level Quality Summary",
+            compact=compact,
+            page_size=page_size,
         )
 
     missingness = qc_result.feature_missingness
-    if missingness is not None:
-        section.add_element(TableElement(missingness, title="Feature Missingness"))
+    if missingness is not None and not missingness.empty:
+        missingness = missingness.copy()
+        value_columns = [
+            column
+            for column in missingness.columns
+            if str(column).lower() == "missing"
+            or str(column).lower().startswith("missing_")
+        ]
+        if value_columns:
+            values = missingness[value_columns].apply(pd.to_numeric, errors="coerce")
+            missingness = missingness.loc[values.fillna(0).gt(0).any(axis=1)].copy()
+        if not missingness.empty:
+            _add_qc_table(
+                section,
+                missingness,
+                title="Feature Missingness",
+                compact=compact,
+                page_size=page_size,
+            )
+    dropped_columns = qc_result.feature_columns_dropped
+    if dropped_columns is not None and not dropped_columns.empty:
+        _add_qc_table(
+            section,
+            dropped_columns,
+            title="Pruned Descriptor Columns",
+            compact=compact,
+            page_size=page_size,
+        )
     return section

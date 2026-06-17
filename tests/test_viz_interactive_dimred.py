@@ -5,7 +5,8 @@ from coco_pipe.viz import interactive as viz_interactive
 
 
 def test_interactive_dimred_plots_return_figure():
-    go = pytest.importorskip("plotly.graph_objects")
+    import plotly.graph_objects as go
+
     rng = np.random.default_rng(42)
     X_emb = rng.normal(size=(60, 2))
     X_3d = rng.normal(size=(20, 5, 3))
@@ -64,14 +65,16 @@ def test_interactive_dimred_plots_args():
 
 
 def test_interactive_module_returns_plotly():
-    go = pytest.importorskip("plotly.graph_objects")
+    import plotly.graph_objects as go
+
     X_emb = np.random.rand(10, 2)
     fig_interactive = viz_interactive.plot_embedding(X_emb)
     assert isinstance(fig_interactive, go.Figure)
 
 
 def test_plot_phase_portrait_returns_figure():
-    go = pytest.importorskip("plotly.graph_objects")
+    import plotly.graph_objects as go
+
     rng = np.random.default_rng(42)
     X = rng.normal(size=(3, 20, 5))
     times = np.linspace(0.0, 1.0, 20)
@@ -88,7 +91,8 @@ def test_plot_phase_portrait_returns_figure():
 
 
 def test_plot_phase_portrait_component_idx():
-    go = pytest.importorskip("plotly.graph_objects")
+    import plotly.graph_objects as go
+
     rng = np.random.default_rng(0)
     X = rng.normal(size=(2, 15, 4))
     times = np.arange(15, dtype=float)
@@ -114,3 +118,76 @@ def test_plot_phase_portrait_invalid_inputs():
 
     with pytest.raises(ValueError, match="component_idx"):
         viz_interactive.plot_phase_portrait(X, times, ["A", "B"], component_idx=10)
+
+
+def test_plot_metrics_plot_types():
+    # 1. Dumbbell plot (requires exactly two methods)
+    import pandas as pd
+    import plotly.graph_objects as go
+
+    df_two = pd.DataFrame(
+        {
+            "Metric": [
+                "trustworthiness",
+                "continuity",
+                "trustworthiness",
+                "continuity",
+            ],
+            "Method": ["UMAP", "UMAP", "t-SNE", "t-SNE"],
+            "Value": [0.9, 0.8, 0.85, 0.75],
+            "Scope": ["global", "global", "global", "global"],
+        }
+    )
+    fig = viz_interactive.plot_metrics(df_two, plot_type="dumbbell")
+    assert isinstance(fig, go.Figure)
+
+    # Dumbbell raises if not exactly two methods
+    df_three = pd.DataFrame(
+        {
+            "Metric": ["trustworthiness", "trustworthiness", "trustworthiness"],
+            "Method": ["UMAP", "t-SNE", "PCA"],
+            "Value": [0.9, 0.85, 0.7],
+            "Scope": ["global", "global", "global"],
+        }
+    )
+    with pytest.raises(ValueError, match="two methods"):
+        viz_interactive.plot_metrics(df_three, plot_type="dumbbell")
+
+    # 2. Unsupported plot type
+    with pytest.raises(ValueError, match="Unsupported plot_type"):
+        viz_interactive.plot_metrics(df_two, plot_type="invalid_type")
+
+
+def test_plot_trajectory_sem_and_values():
+    import plotly.graph_objects as go
+
+    rng = np.random.default_rng(42)
+
+    # Shape: (n_trajectories, n_times, n_dimensions) -> (2, 20, 3)
+    X = rng.normal(size=(2, 20, 3))
+
+    # Mismatched SEM shape raises ValueError
+    sem_mismatched = rng.normal(size=(2, 10, 3))
+    with pytest.raises(ValueError, match="must match.*shape"):
+        viz_interactive.plot_trajectory(X, sem=sem_mismatched)
+
+    # Matching SEM shape and values, 3D
+    sem_matching_3d = rng.normal(size=(2, 20, 3))
+    values_matching = rng.normal(size=(2, 20))
+    fig_3d = viz_interactive.plot_trajectory(
+        X, sem=sem_matching_3d, values=values_matching, dimensions=3
+    )
+    assert isinstance(fig_3d, go.Figure)
+
+    # Matching SEM shape and values, 2D
+    X_2d = rng.normal(size=(2, 20, 2))
+    sem_matching_2d = rng.normal(size=(2, 20, 2))
+    fig_2d = viz_interactive.plot_trajectory(
+        X_2d, sem=sem_matching_2d, values=values_matching, dimensions=2
+    )
+    assert isinstance(fig_2d, go.Figure)
+
+    fig_pad = viz_interactive.plot_trajectory(
+        X_2d, sem=sem_matching_2d, smooth_window=5, dimensions=2
+    )
+    assert isinstance(fig_pad, go.Figure)

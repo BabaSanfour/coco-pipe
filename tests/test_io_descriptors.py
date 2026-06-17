@@ -4,9 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from coco_pipe.descriptors.qc import select_viable_feature_columns
 from coco_pipe.io.descriptors import (
+    check_feature_column_consistency,
     load_descriptor_table,
     parse_descriptor_feature_column,
+    save_descriptor_table,
 )
 
 KNOWN_FAMILIES = ("band", "param", "complexity")
@@ -191,6 +194,61 @@ def test_load_descriptor_table_drops_nan(descriptor_files):
     assert container.meta["n_dropped_nan_inf"] == 1
 
 
+def test_select_viable_feature_columns_and_loader_prune(tmp_path):
+    columns = [
+        "band_alpha_ch-Fz",
+        "complexity_entropy_ch-Fz",
+        "complexity_constant_ch-Fz",
+    ]
+    frame = pd.DataFrame(
+        {
+            "obs_id": ["o1", "o2", "o3"],
+            columns[0]: [1.0, 2.0, 3.0],
+            columns[1]: [np.nan, np.nan, np.nan],
+            columns[2]: [5.0, 5.0, 5.0],
+        }
+    )
+    surviving, log = select_viable_feature_columns(frame, columns)
+    assert surviving == [columns[0]]
+    assert set(log["drop_reason"]) == {"all_nan", "constant"}
+
+    table_path = tmp_path / "features.csv"
+    columns_path = tmp_path / "columns.json"
+    loader_frame = frame.copy()
+    loader_frame[columns[1]] = [np.nan, np.nan, 7.0]
+    loader_frame.to_csv(table_path, index=False)
+    columns_path.write_text(json.dumps(columns), encoding="utf-8")
+    container = load_descriptor_table(
+        table_path,
+        columns_path,
+        drop_degenerate_columns=True,
+    )
+    assert container.X.shape == (3, 1)
+    assert container.meta["n_dropped_nan_inf"] == 0
+    assert len(container.meta["dropped_feature_columns"]) == 2
+
+
+def test_select_viable_feature_columns_missingness_boundary():
+    columns = ["band_keep_ch-Fz", "band_drop_ch-Fz"]
+    frame = pd.DataFrame(
+        {
+            columns[0]: [np.nan, 1.0, 2.0, 3.0, 4.0],
+            columns[1]: [np.nan, np.nan, 2.0, 3.0, 4.0],
+        }
+    )
+
+    surviving, log = select_viable_feature_columns(
+        frame,
+        columns,
+        max_missing_rate=0.20,
+        drop_constant=False,
+    )
+
+    assert surviving == [columns[0]]
+    assert log["column"].tolist() == [columns[1]]
+    assert log["drop_reason"].tolist() == ["missing_rate"]
+
+
 def test_load_descriptor_table_drops_extreme(descriptor_files):
     table_path, columns_path, _ = descriptor_files
     table = pd.read_csv(table_path)
@@ -225,3 +283,141 @@ def test_load_descriptor_table_rejects_nonpositive_threshold(descriptor_files):
             columns_path,
             descriptor_max_abs_value=0,
         )
+
+
+def test_save_descriptor_table_extra(tmp_path):
+    df = pd.DataFrame({"a": [1]})
+    save_descriptor_table(df, tmp_path / "test", feature_columns=["a"])
+    assert (tmp_path / "test.parquet").exists()
+    assert (tmp_path / "test.csv").exists()
+    assert (tmp_path / "test_feature_columns.json").exists()
+
+
+def test_check_feature_column_consistency_extra(tmp_path):
+    d1 = tmp_path / "d1"
+    d1.mkdir()
+    (d1 / "f.json").write_text('["a"]')
+
+    acc = {}
+    check_feature_column_consistency(d1, "f.json", acc, "key1")
+    assert acc["key1"] == ["a"]
+
+    (d1 / "f2.json").write_text('["b"]')
+    with pytest.raises(ValueError):
+        check_feature_column_consistency(d1, "f2.json", acc, "key1")
+
+
+def test_parse_descriptor_feature_column_extra():
+    with pytest.raises(ValueError):
+        parse_descriptor_feature_column("not_a_family_feat_ch-s1", ("band",))
+
+
+def test_load_descriptor_table_errors(tmp_path):
+    df = pd.DataFrame({"obs_id": ["1", "2"]})
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+
+    feat_json = tmp_path / "tbl_feature_columns.json"
+    feat_json.write_text('["band_feat_ch-s1"]')
+
+    # Condition column not found
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, condition="C")
+
+    # Subject filter column not found
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, subjects=["sub-1"])
+
+    # Expected JSON list
+    feat_json.write_text("{}")
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # Columns not found
+    feat_json.write_text('["band_feat_ch-s1"]')
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # Target column not found
+    df["band_feat_ch-s1"] = [1, 2]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json, target_col="missing")
+
+    # No features matched descriptor_families
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(
+            tmp_path / "tbl.csv", feat_json, descriptor_families=["other"]
+        )
+
+    # No rows survived NaN/Inf filtering
+    df["band_feat_ch-s1"] = [np.nan, np.inf]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(tmp_path / "tbl.csv", feat_json)
+
+    # No rows survived extreme-value filtering
+    df["band_feat_ch-s1"] = [100, 200]
+    df.to_csv(tmp_path / "tbl.csv", index=False)
+    with pytest.raises(RuntimeError):
+        load_descriptor_table(
+            tmp_path / "tbl.csv", feat_json, descriptor_max_abs_value=50
+        )
+
+    # Cannot infer obs IDs
+    df_noid = pd.DataFrame({"band_feat_ch-s1": [1, 2]})
+    df_noid.to_csv(tmp_path / "tbl2.csv", index=False)
+    with pytest.raises(ValueError):
+        load_descriptor_table(tmp_path / "tbl2.csv", feat_json)
+
+
+def test_load_descriptor_table_location_statistic(tmp_path):
+    feature_columns = [
+        "mean_band_log_abs_alpha_ch-Fz",
+        "median_band_log_abs_alpha_ch-Fz",
+        "iqr_band_log_abs_alpha_ch-Fz",
+        "agg_band_ratio_theta_beta_ch-Fz",
+    ]
+    table = pd.DataFrame(
+        {
+            "obs_id": ["o1", "o2", "o3"],
+            "subject": ["1", "2", "3"],
+            "condition": ["b", "b", "b"],
+            feature_columns[0]: [1.0, 2.0, 3.0],
+            feature_columns[1]: [1.0, 2.0, 3.0],
+            feature_columns[2]: [0.1, 0.2, 0.3],
+            feature_columns[3]: [0.5, 0.6, 0.7],
+        }
+    )
+    table_path = tmp_path / "d.csv"
+    cols_path = tmp_path / "c.json"
+    table.to_csv(table_path, index=False)
+    cols_path.write_text(json.dumps(feature_columns), encoding="utf-8")
+
+    # median selected -> mean dropped; spread (iqr) and ratio kept
+    feats = (
+        load_descriptor_table(table_path, cols_path, location_statistic="median")
+        .coords["feature"]
+        .tolist()
+    )
+    assert "median_band_log_abs_alpha_ch-Fz" in feats
+    assert "mean_band_log_abs_alpha_ch-Fz" not in feats
+    assert "iqr_band_log_abs_alpha_ch-Fz" in feats
+    assert "agg_band_ratio_theta_beta_ch-Fz" in feats
+
+    # mean selected -> median dropped
+    feats_m = (
+        load_descriptor_table(table_path, cols_path, location_statistic="mean")
+        .coords["feature"]
+        .tolist()
+    )
+    assert "mean_band_log_abs_alpha_ch-Fz" in feats_m
+    assert "median_band_log_abs_alpha_ch-Fz" not in feats_m
+
+    # default (None) keeps both location statistics
+    assert (
+        len(load_descriptor_table(table_path, cols_path).coords["feature"].tolist())
+        == 4
+    )
+
+    with pytest.raises(ValueError, match="location_statistic"):
+        load_descriptor_table(table_path, cols_path, location_statistic="mode")

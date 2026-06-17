@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 import coco_pipe.io.dataset as dataset_mod
 from coco_pipe.io.config import BIDSConfig, DatasetConfig, TabularConfig
+from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 
 
 def test_dataset_config_discriminator_and_defaults(tmp_path):
@@ -280,9 +281,6 @@ def test_dataset_factory_errors(tmp_path):
         ds.load()
 
 
-# --- TabularDataset Tests ---
-
-
 def test_tabular_excel_support(monkeypatch, tmp_path):
     """Test Excel file loading path."""
     # We mock read_excel to avoid needing openpyxl/xlrd
@@ -370,9 +368,6 @@ def test_tabular_cleaning_advanced(tmp_path):
     assert "C1" in report["dropped_features"]
 
 
-# --- EmbeddingDataset Tests ---
-
-
 def test_embedding_legacy_pattern():
     """Test BIDS-like pattern construction."""
     ds = dataset_mod.EmbeddingDataset("dummy", task="rest", run="01", processing="norm")
@@ -454,9 +449,6 @@ def test_embedding_shape_mismatch(tmp_path, caplog):
     assert "Shape mismatch" in caplog.text
 
 
-# --- BIDSDataset Tests ---
-
-
 def test_bids_concatenation_failure(monkeypatch, tmp_path):
     """Test failure when subjects have different shapes."""
     monkeypatch.setattr(dataset_mod, "detect_subjects", lambda r: ["01", "02"])
@@ -530,3 +522,137 @@ def test_bids_time_warning(monkeypatch, tmp_path):
 
     with pytest.warns(RuntimeWarning, match="Dropping 1 epoch"):
         ds.load()
+
+
+def test_tabular_dataset_extra(tmp_path):
+    p = tmp_path / "missing.csv"
+    ds = TabularDataset(p)
+    with pytest.raises(FileNotFoundError):
+        ds.load()
+
+    p = tmp_path / "empty.csv"
+    pd.DataFrame().to_csv(p, index=False)
+    ds = TabularDataset(p)
+    ds.clean(pd.DataFrame(), mode="any")  # shape[1] == 0
+
+    p2 = tmp_path / "data.csv"
+    df = pd.DataFrame({"A": [1, np.nan, 3], "B": ["x", None, "z"]})
+    df.to_csv(p2, index=False)
+    ds = TabularDataset(p2)
+    # min_abs_fraction
+    c, rep = ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
+
+    with pytest.raises(ValueError):
+        ds.clean(df, mode="invalid")
+
+
+def test_embedding_dataset_extra(tmp_path):
+    import pickle
+
+    # 456-460: arr.ndim == len(self.dims) for dict content
+    p1 = tmp_path / "1.pkl"
+    with open(p1, "wb") as f:
+        pickle.dump({"seg1": [1, 2]}, f)  # dim=1
+
+    ds = EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",))
+    res = ds.load()
+    assert res.X.shape == (1, 2)
+
+    # 481-483: Exception in loop
+    p2 = tmp_path / "2.pkl"
+    p2.write_bytes(b"bad data")
+    # Will skip and log
+    ds.load()
+
+    # 490-492: Concatenate fail
+    with open(p1, "wb") as f:
+        pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
+    with pytest.raises(ValueError, match="Concatenation failed"):
+        ds.load()
+
+
+def test_bids_dataset_extra(tmp_path):
+    class DummyEpochs:
+        def get_data(self, **kwargs):
+            return np.zeros((1, 2, 10))
+
+        @property
+        def times(self):
+            return np.zeros(10)
+
+        @property
+        def ch_names(self):
+            return ["C1", "C2"]
+
+        @property
+        def info(self):
+            return {"sfreq": 100}
+
+        @property
+        def events(self):
+            return np.zeros((1, 3))
+
+    # Mocking subjects/sessions/runs parsing
+    sub_dir = tmp_path / "sub-01" / "ses-A" / "eeg"
+    sub_dir.mkdir(parents=True)
+    fpath = sub_dir / "sub-01_ses-A_task-rest_run-1_epo.fif"
+    fpath.touch()
+
+    # Also need participants.tsv
+    (tmp_path / "participants.tsv").write_text("participant_id\ttarget\nsub-01\t1")
+
+    # subject_metadata_df
+    meta_df = pd.DataFrame({"sub": ["01"], "extra": [5]})
+
+    import coco_pipe.io.dataset as dmod
+
+    orig_read = dmod.read_bids_entry
+
+    def fake_read(*args, **kwargs):
+        return np.zeros((2, 2, 10)), np.zeros(10), ["C1", "C2"], 100, np.array([1, 1])
+
+    dmod.read_bids_entry = fake_read
+
+    ds = BIDSDataset(
+        tmp_path,
+        task="rest",
+        subjects="01",  # str
+        session="A",  # str
+        runs="1",  # str
+        suffix="epo",  # triggers pre_epoched logic
+        subject_metadata_df=meta_df,
+        subject_key="sub",
+        target_col="target",
+    )
+
+    res = ds.load()
+    assert res.X.shape == (2, 2, 10)
+    assert res.y is not None
+    assert "run" in res.coords
+
+    # Bad metadata
+    with pytest.raises(ValueError):
+        BIDSDataset(tmp_path, subject_metadata_df=meta_df).load()  # no subject_key
+    with pytest.raises(ValueError):
+        BIDSDataset(tmp_path, subject_metadata_df=meta_df, subject_key="missing").load()
+
+    # Drop short epochs vs pad
+    def fake_read_short(*args, **kwargs):
+        # We will cycle shapes to simulate short epochs
+        nonlocal call_idx
+        call_idx += 1
+        if call_idx == 1:
+            return np.zeros((1, 2, 10)), np.zeros(10), ["C1", "C2"], 100, None
+        else:
+            return np.zeros((1, 2, 5)), np.zeros(5), ["C1", "C2"], 100, None
+
+    call_idx = 0
+    dmod.read_bids_entry = fake_read_short
+    ds2 = BIDSDataset(tmp_path, subjects=["01", "02"], drop_short_epochs=False)
+    # create second sub dir to get 2 calls
+    (tmp_path / "sub-02" / "eeg").mkdir(parents=True)
+
+    res2 = ds2.load()
+    assert res2.X.shape[2] == 5  # cropped to min
+
+    dmod.read_bids_entry = orig_read
