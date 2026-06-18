@@ -642,7 +642,7 @@ class DescriptorPipeline:
         ids: Sequence[Any] | np.ndarray | None = None,
         sfreq: float | None = None,
         channel_names: Sequence[str] | np.ndarray | None = None,
-    ) -> dict[str, Any]:
+    ) -> DataContainer:
         """Extract descriptors from explicit NumPy inputs.
 
         Parameters
