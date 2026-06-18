@@ -4,25 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.descriptors.qc import select_viable_feature_columns
-from coco_pipe.io.descriptors import (
+from coco_pipe.descriptors import (
     check_feature_column_consistency,
     load_descriptor_table,
-    parse_descriptor_feature_column,
+    merge_descriptor_tables,
     save_descriptor_table,
 )
-
-KNOWN_FAMILIES = ("band", "param", "complexity")
-
-
-def test_descriptor_utilities_exported_from_io():
-    import coco_pipe.io as io
-
-    assert io.load_descriptor_table is load_descriptor_table
-    assert io.parse_descriptor_feature_column is parse_descriptor_feature_column
-    assert callable(io.compute_row_outlier_scores)
-    assert io.normalize_subject_value("sub-9") == "0009"
-    assert callable(io.read_table)
+from coco_pipe.descriptors.qc import select_viable_feature_columns
 
 
 @pytest.fixture
@@ -50,58 +38,6 @@ def descriptor_files(tmp_path):
     table.to_csv(table_path, index=False)
     columns_path.write_text(json.dumps(feature_columns), encoding="utf-8")
     return table_path, columns_path, feature_columns
-
-
-def test_parse_band_ch_column():
-    parsed = parse_descriptor_feature_column(
-        "band_abs_alpha_ch-Fz",
-        KNOWN_FAMILIES,
-    )
-
-    assert parsed == {
-        "column": "band_abs_alpha_ch-Fz",
-        "family": "band",
-        "feature": "abs_alpha",
-        "scope": "sensor",
-        "sensor": "Fz",
-    }
-
-
-def test_parse_complexity_chgrp_column():
-    parsed = parse_descriptor_feature_column(
-        "complexity_sample_entropy_chgrp-front_left",
-        KNOWN_FAMILIES,
-    )
-
-    assert parsed["family"] == "complexity"
-    assert parsed["feature"] == "sample_entropy"
-    assert parsed["scope"] == "sensor_group"
-    assert parsed["sensor"] == "front_left"
-
-
-def test_parse_prefixed_complexity_column():
-    parsed = parse_descriptor_feature_column(
-        "mean_complexity_sample_entropy_chgrp-front_left",
-        KNOWN_FAMILIES,
-    )
-
-    assert parsed["family"] == "complexity"
-    assert parsed["feature"] == "mean_sample_entropy"
-
-
-def test_parse_invalid_column_raises():
-    with pytest.raises(ValueError, match="Could not parse descriptor column"):
-        parse_descriptor_feature_column("not_a_descriptor", KNOWN_FAMILIES)
-
-
-def test_parse_uses_caller_supplied_family_tokens():
-    parsed = parse_descriptor_feature_column(
-        "custom_metric_ch-Fz",
-        ("custom",),
-    )
-
-    assert parsed["family"] == "custom"
-    assert parsed["feature"] == "metric"
 
 
 def test_load_descriptor_table_flat(descriptor_files):
@@ -321,11 +257,6 @@ def test_check_feature_column_consistency_extra(tmp_path):
         check_feature_column_consistency(d1, "f2.json", acc, "key1")
 
 
-def test_parse_descriptor_feature_column_extra():
-    with pytest.raises(ValueError):
-        parse_descriptor_feature_column("not_a_family_feat_ch-s1", ("band",))
-
-
 def test_load_descriptor_table_errors(tmp_path):
     df = pd.DataFrame({"obs_id": ["1", "2"]})
     df.to_csv(tmp_path / "tbl.csv", index=False)
@@ -489,3 +420,80 @@ def test_load_descriptor_table_all_columns_degenerate(tmp_path):
     cols_path.write_text(json.dumps(feature_columns), encoding="utf-8")
     with pytest.raises(RuntimeError, match="survived column pruning"):
         load_descriptor_table(table_path, cols_path, drop_degenerate_columns=True)
+
+
+# --------------------------------------------------------------------------- #
+# Column-contract relocation (parser now lives in descriptors.naming)
+# --------------------------------------------------------------------------- #
+def test_descriptors_qc_does_not_import_io_descriptors():
+    # The relocation must break the io <-> descriptors cycle: descriptors.qc
+    # parses via the domain module, not back up through io.descriptors.
+    import inspect
+
+    import coco_pipe.descriptors.qc as qc
+
+    assert "coco_pipe.io.descriptors" not in inspect.getsource(qc)
+
+
+# --------------------------------------------------------------------------- #
+# merge_descriptor_tables
+# --------------------------------------------------------------------------- #
+def _write_shard(tmp_path, name, df, feature_columns):
+    base = tmp_path / name
+    df.to_parquet(base.with_suffix(".parquet"), index=False)
+    sidecar = tmp_path / f"{name}_feature_columns.json"
+    sidecar.write_text(json.dumps(feature_columns), encoding="utf-8")
+    return base.with_suffix(".parquet"), sidecar
+
+
+def test_merge_descriptor_tables_concats_and_saves(tmp_path):
+    cols = ["band_abs_alpha_ch-Fz"]
+    t1, s1 = _write_shard(
+        tmp_path, "shard1", pd.DataFrame({"subject": ["1"], cols[0]: [1.0]}), cols
+    )
+    t2, s2 = _write_shard(
+        tmp_path, "shard2", pd.DataFrame({"subject": ["2"], cols[0]: [2.0]}), cols
+    )
+
+    combined, feature_columns = merge_descriptor_tables(
+        [t1, t2],
+        [s1, s2],
+        out_base_path=tmp_path / "combined" / "sensor_epoch_features",
+    )
+
+    assert len(combined) == 2
+    assert feature_columns == cols
+    out = tmp_path / "combined" / "sensor_epoch_features.parquet"
+    assert out.exists()
+    assert (
+        tmp_path / "combined" / "sensor_epoch_features_feature_columns.json"
+    ).exists()
+
+
+def test_merge_descriptor_tables_without_sidecars(tmp_path):
+    df = pd.DataFrame({"subject": ["1"], "band_abs_alpha_ch-Fz": [1.0]})
+    t1, _ = _write_shard(tmp_path, "a", df, ["band_abs_alpha_ch-Fz"])
+    t2, _ = _write_shard(tmp_path, "b", df, ["band_abs_alpha_ch-Fz"])
+    combined, feature_columns = merge_descriptor_tables([t1, t2])
+    assert len(combined) == 2
+    assert feature_columns is None
+
+
+def test_merge_descriptor_tables_mismatched_sidecars_raise(tmp_path):
+    t1, s1 = _write_shard(
+        tmp_path, "a", pd.DataFrame({"x": [1.0]}), ["band_abs_alpha_ch-Fz"]
+    )
+    t2, s2 = _write_shard(
+        tmp_path, "b", pd.DataFrame({"x": [2.0]}), ["band_abs_beta_ch-Fz"]
+    )
+    with pytest.raises(ValueError, match="Feature column mismatch"):
+        merge_descriptor_tables([t1, t2], [s1, s2])
+
+
+def test_merge_descriptor_tables_validates_inputs(tmp_path):
+    with pytest.raises(ValueError, match="at least one table path"):
+        merge_descriptor_tables([])
+
+    t1, s1 = _write_shard(tmp_path, "a", pd.DataFrame({"x": [1.0]}), ["c"])
+    with pytest.raises(ValueError, match="must align"):
+        merge_descriptor_tables([t1], [s1, s1])

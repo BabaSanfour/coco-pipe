@@ -716,11 +716,8 @@ def _make_signal_data():
 
 
 def _descriptor_result_container(result):
-    return DataContainer(
-        X=result["X"],
-        dims=("obs", "feature"),
-        coords={"feature": result["descriptor_names"]},
-    )
+    # DescriptorPipeline.extract / pool_channels already return a DataContainer.
+    return result
 
 
 def test_aggregate_multiple_stats_insert_stat_dimension_in_requested_order():
@@ -1004,9 +1001,10 @@ def test_aggregate_descriptor_pipeline_output_can_be_grouped():
         stats="mean",
     )
 
-    assert all("_global" not in name for name in result["descriptor_names"])
-    assert any(name.endswith("_ch-Fz") for name in result["descriptor_names"])
-    assert agg.X.shape == (2, result["X"].shape[1])
+    names = list(result.coords["feature"])
+    assert all("_global" not in name for name in names)
+    assert any(name.endswith("_ch-Fz") for name in names)
+    assert agg.X.shape == (2, result.X.shape[1])
     assert agg.dims == ("obs", "feature")
 
 
@@ -1028,7 +1026,7 @@ def test_aggregate_descriptor_pipeline_preserves_channel_group_tokens():
         stats=["mean", "std"],
     )
 
-    assert any(name.endswith("_chgrp-Frontal") for name in result["descriptor_names"])
+    assert any(name.endswith("_chgrp-Frontal") for name in result.coords["feature"])
     assert agg.dims == ("obs", "stat", "feature")
     assert agg.coords["stat"].tolist() == ["mean", "std"]
 

@@ -1,19 +1,36 @@
-"""Descriptor table loading utilities."""
+"""Descriptor-table file IO: save, load, merge, and feature-column consistency.
+
+This is the descriptor-specific table IO layer. It builds on the generic
+:func:`coco_pipe.io._serialization.read_table` primitive but owns the
+descriptor concerns: the ``_feature_columns.json`` sidecar contract, loading a
+descriptor table into a :class:`~coco_pipe.io.structures.DataContainer` (flat or
+sensor × feature), and the cross-shard **merge** stage.
+
+Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 import pandas as pd
 
-from ._serialization import read_table
-from .structures import DataContainer
-from .utils import normalize_subject_value
+from coco_pipe.io._serialization import read_table
+from coco_pipe.io.structures import DataContainer
+from coco_pipe.io.utils import normalize_subject_value
+
+from .naming import parse_descriptor_feature_column
+
+__all__ = [
+    "save_descriptor_table",
+    "check_feature_column_consistency",
+    "merge_descriptor_tables",
+    "load_descriptor_table",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -110,46 +127,89 @@ def check_feature_column_consistency(
         )
 
 
-def parse_descriptor_feature_column(
-    column: str,
-    known_families: tuple[str, ...],
-) -> dict[str, str]:
-    """Strictly parse one descriptor column into its constituent parts."""
-    scope_re = re.compile(r"(?P<body>.+)_(?P<scope>chgrp|ch)-(?P<sensor>.+)$")
-    match = scope_re.match(str(column))
-    if match is None:
-        raise ValueError(
-            f"Could not parse descriptor column '{column}'. "
-            "Expected format: '{family}_{feature}_{chgrp|ch}-{sensor}'."
+def merge_descriptor_tables(
+    table_paths: Sequence[Path | str],
+    feature_columns_paths: Sequence[Path | str] | None = None,
+    *,
+    out_base_path: Path | str | None = None,
+    formats: Sequence[str] = ("parquet",),
+) -> tuple[pd.DataFrame, list[str] | None]:
+    """Merge per-shard tables of one *table kind* into a single table.
+
+    The cross-shard **merge** stage. A "table kind" is one descriptor output
+    table — e.g. ``sensor_epoch`` / ``sensor_subject`` / ``pooled_subject`` —
+    written once per shard; this row-concatenates that kind across shards. (It
+    is not about the band/param/complexity descriptor *family*.) Each shard is
+    read, its feature-column sidecar is optionally checked against the first, the
+    rows are concatenated, and the combined table (plus sidecar) is optionally
+    written via :func:`save_descriptor_table`. Discovery, manifests, and
+    dataset-level QC are deliberately left to the caller, which calls this once
+    per table kind.
+
+    Parameters
+    ----------
+    table_paths
+        Per-shard table files (``.csv`` / ``.parquet``) for one table kind, in
+        the desired row order.
+    feature_columns_paths
+        Optional per-shard feature-column JSON sidecars, aligned with
+        *table_paths*. When given, cross-shard consistency is enforced via
+        :func:`check_feature_column_consistency` and the agreed column list is
+        used as the combined sidecar.
+    out_base_path
+        Optional output path without suffix. When set, the combined table is
+        written there via :func:`save_descriptor_table`.
+    formats
+        Output formats forwarded to :func:`save_descriptor_table` (default
+        parquet only).
+
+    Returns
+    -------
+    tuple
+        ``(combined_df, feature_columns)`` where ``feature_columns`` is the
+        validated column list when *feature_columns_paths* was provided, else
+        ``None``.
+
+    Raises
+    ------
+    ValueError
+        If *table_paths* is empty, the sidecar list is misaligned, or a shard's
+        feature columns differ from the first shard.
+    """
+    table_paths = [Path(path) for path in table_paths]
+    if not table_paths:
+        raise ValueError("merge_descriptor_tables requires at least one table path.")
+
+    sidecars: list[Path] | None = None
+    if feature_columns_paths is not None:
+        sidecars = [Path(path) for path in feature_columns_paths]
+        if len(sidecars) != len(table_paths):
+            raise ValueError(
+                "feature_columns_paths must align with table_paths "
+                f"({len(sidecars)} != {len(table_paths)})."
+            )
+
+    accumulated: dict[str, list[str] | None] = {"features": None}
+    frames: list[pd.DataFrame] = []
+    for index, table_path in enumerate(table_paths):
+        # Preserve every column exactly so shards stay aligned on concat.
+        frames.append(read_table(table_path, drop_all_empty=False))
+        if sidecars is not None:
+            sidecar = sidecars[index]
+            check_feature_column_consistency(
+                sidecar.parent, sidecar.name, accumulated, "features"
+            )
+
+    combined = pd.concat(frames, ignore_index=True)
+    feature_columns = accumulated["features"]
+    if out_base_path is not None:
+        save_descriptor_table(
+            combined,
+            out_base_path,
+            feature_columns=feature_columns,
+            formats=formats,
         )
-
-    body = match.group("body")
-    family = feature = None
-    for family_name in known_families:
-        if body.startswith(f"{family_name}_"):
-            family = family_name
-            feature = body[len(f"{family_name}_") :]
-            break
-        token = f"_{family_name}_"
-        if token in body:
-            prefix, remainder = body.split(token, 1)
-            family = family_name
-            feature = f"{prefix}_{remainder}"
-            break
-
-    if family is None or feature is None:
-        raise ValueError(
-            f"Column '{column}' does not contain a known family token. "
-            f"Known: {known_families}."
-        )
-
-    return {
-        "column": str(column),
-        "family": family,
-        "feature": feature,
-        "scope": "sensor_group" if match.group("scope") == "chgrp" else "sensor",
-        "sensor": match.group("sensor"),
-    }
+    return combined, feature_columns
 
 
 def load_descriptor_table(
@@ -241,7 +301,7 @@ def load_descriptor_table(
             )
 
     if exclude_subfamilies:
-        from coco_pipe.descriptors.qc import descriptor_subfamily
+        from .qc import descriptor_subfamily
 
         excluded = {str(value).strip() for value in exclude_subfamilies}
         parsed = [
@@ -259,7 +319,7 @@ def load_descriptor_table(
     feature_df = df.loc[:, feature_cols].replace([np.inf, -np.inf], np.nan)
     dropped_feature_columns = pd.DataFrame()
     if drop_degenerate_columns:
-        from coco_pipe.descriptors.qc import select_viable_feature_columns
+        from .qc import select_viable_feature_columns
 
         feature_cols, dropped_feature_columns = select_viable_feature_columns(
             feature_df,
@@ -360,7 +420,7 @@ def load_descriptor_table(
             meta=meta_base,
         )
 
-    from coco_pipe.descriptors.qc import descriptor_identity, descriptor_subfamily
+    from .qc import descriptor_identity, descriptor_subfamily
 
     sensors = list(dict.fromkeys(item["sensor"] for item in parsed))
     features = list(dict.fromkeys(item["feature"] for item in parsed))

@@ -13,68 +13,23 @@ import numpy as np
 import pandas as pd
 
 from coco_pipe.descriptors._constants import (
+    _AGG_STAT_PREFIXES,
+    _BAND_SUBFAMILY_PATTERNS,
     _CLASSIFICATION_COLUMNS,
+    _COMPLEXITY_SUBFAMILY,
     _CONSTANT_COLUMNS,
     _FAILURE_FAMILY_ALIASES,
     _FAMILY_QC_COLUMNS,
     _MISSINGNESS_COLUMNS,
+    _PARAM_SUBFAMILY,
     KNOWN_FAMILY_TOKENS,
 )
-from coco_pipe.io.descriptors import parse_descriptor_feature_column
 from coco_pipe.io.quality import (
     compute_constant_feature_summary,
     compute_feature_missingness,
 )
 
-# Aggregation-stat tokens that may prefix a subject-level measure
-# (e.g. ``median_log_abs_alpha``); stripped before sub-family derivation.
-_AGG_STAT_PREFIXES = frozenset(
-    {"mean", "median", "iqr", "mad", "std", "var", "min", "max"}
-)
-
-# Band output-type patterns, longest/corrected first so e.g. ``corr_log_abs``
-# matches before ``log_abs`` and ``abs``.
-_BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("corr_log_abs", "corr_log_abs"),
-    ("corr_rel", "corr_rel"),
-    ("corr_ratio", "corr_ratio"),
-    ("corr_abs", "corr_abs"),
-    ("log_abs", "log_abs"),
-    ("ratio", "ratio"),
-    ("rel", "rel"),
-    ("abs", "abs"),
-)
-
-_PARAM_SUBFAMILY: dict[str, str] = {
-    "offset": "aperiodic",
-    "exponent": "aperiodic",
-    "knee": "aperiodic",
-    "r_squared": "fit_quality",
-    "fit_error": "fit_quality",
-    "peak_count": "peaks",
-    "peak_freq_dom": "peaks",
-    "peak_power_dom": "peaks",
-    "peak_bandwidth_dom": "peaks",
-    "alpha_peak_freq": "peaks",
-    "alpha_peak_power": "peaks",
-}
-
-_COMPLEXITY_SUBFAMILY: dict[str, str] = {
-    "sample_entropy": "entropy",
-    "perm_entropy": "entropy",
-    "spectral_entropy": "entropy",
-    "svd_entropy": "entropy",
-    "fuzzy_entropy": "entropy",
-    "dispersion_entropy": "entropy",
-    "higuchi_fd": "fractal_complexity",
-    "petrosian_fd": "fractal_complexity",
-    "hurst_exponent": "fractal_complexity",
-    "lziv_complexity": "fractal_complexity",
-    "hjorth_mobility": "signal_dynamics",
-    "hjorth_complexity": "signal_dynamics",
-    "kurtosis": "signal_dynamics",
-    "zero_crossings": "signal_dynamics",
-}
+from .naming import parse_descriptor_feature_column, split_family_token
 
 
 def _strip_stat_prefix(measure: str) -> str:
@@ -143,24 +98,9 @@ def _classify_cached(
             channel = parsed["sensor"]
             measure = parsed["feature"]
         else:
-            family = next(
-                (
-                    family_name
-                    for family_name in known_families
-                    if column.startswith(f"{family_name}_")
-                    or f"_{family_name}_" in column
-                ),
-                None,
-            )
+            family, measure = split_family_token(column, known_families)
             scope = ""
             channel = ""
-            if family is None:
-                measure = column
-            elif column.startswith(f"{family}_"):
-                measure = column[len(family) + 1 :]
-            else:
-                prefix, remainder = column.split(f"_{family}_", 1)
-                measure = f"{prefix}_{remainder}"
 
         rows.append(
             {

@@ -7,6 +7,26 @@ import pytest
 import coco_pipe.descriptors.core as descriptors_core
 from coco_pipe.descriptors import DescriptorPipeline
 from coco_pipe.descriptors.extractors.complexity import ComplexityDescriptorExtractor
+from coco_pipe.io import DataContainer
+
+
+def _names(container):
+    """Descriptor column names from an extract/pool container."""
+    return list(container.coords["feature"])
+
+
+def _failures(container):
+    """Failure records carried in the container meta."""
+    return container.meta["failures"]
+
+
+def _pool_input(X, names, *, dims=("obs", "feature")):
+    """Build a descriptor container to feed pool_channels in reject tests."""
+    return DataContainer(
+        X=np.asarray(X, dtype=float),
+        dims=dims,
+        coords={"feature": np.asarray(names, dtype=object)},
+    )
 
 
 def test_empty_pipeline_returns_explicit_result_structure():
@@ -14,9 +34,11 @@ def test_empty_pipeline_returns_explicit_result_structure():
     pipe = DescriptorPipeline({})
     result = pipe.extract(X=X, sfreq=128.0)
 
-    assert set(result) == {"X", "descriptor_names", "failures"}
-    assert result["X"].shape == (5, 0)
-    assert result["descriptor_names"] == []
+    assert isinstance(result, DataContainer)
+    assert result.dims == ("obs", "feature")
+    assert result.X.shape == (5, 0)
+    assert _names(result) == []
+    assert result.meta["failures"] == []
 
 
 def test_band_pipeline_smoke_sensor_level():
@@ -29,13 +51,11 @@ def test_band_pipeline_smoke_sensor_level():
     )
     result = pipe.extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
-    assert result["X"].shape[0] == 6
-    assert result["X"].shape[1] == len(result["descriptor_names"])
-    assert "band_abs_alpha_ch-Fz" in result["descriptor_names"]
-    assert "band_abs_alpha_ch-Cz" in result["descriptor_names"]
-    assert not any(
-        name.endswith("chgrp-Frontal") for name in result["descriptor_names"]
-    )
+    assert result.X.shape[0] == 6
+    assert result.X.shape[1] == len(_names(result))
+    assert "band_abs_alpha_ch-Fz" in _names(result)
+    assert "band_abs_alpha_ch-Cz" in _names(result)
+    assert not any(name.endswith("chgrp-Frontal") for name in _names(result))
 
 
 def test_pool_channels_replaces_sensor_columns_with_grouped_columns():
@@ -53,29 +73,28 @@ def test_pool_channels_replaces_sensor_columns_with_grouped_columns():
     )
     pooled = pipe.pool_channels(result, {"Frontal": ["Fz", "Cz"]})
 
-    assert "band_abs_alpha_chgrp-Frontal" in pooled["descriptor_names"]
-    assert "band_abs_alpha_ch-Fz" not in pooled["descriptor_names"]
-    fz_idx = result["descriptor_names"].index("band_abs_alpha_ch-Fz")
-    cz_idx = result["descriptor_names"].index("band_abs_alpha_ch-Cz")
-    grp_idx = pooled["descriptor_names"].index("band_abs_alpha_chgrp-Frontal")
-    expected = np.nanmean(result["X"][:, [fz_idx, cz_idx]], axis=1)
+    assert "band_abs_alpha_chgrp-Frontal" in _names(pooled)
+    assert "band_abs_alpha_ch-Fz" not in _names(pooled)
+    fz_idx = _names(result).index("band_abs_alpha_ch-Fz")
+    cz_idx = _names(result).index("band_abs_alpha_ch-Cz")
+    grp_idx = _names(pooled).index("band_abs_alpha_chgrp-Frontal")
+    expected = np.nanmean(result.X[:, [fz_idx, cz_idx]], axis=1)
 
-    assert np.allclose(pooled["X"][:, grp_idx], expected, equal_nan=True)
+    assert np.allclose(pooled.X[:, grp_idx], expected, equal_nan=True)
 
 
 def test_pool_channels_preserves_non_channel_features():
     pipe = DescriptorPipeline({})
-    result = {
-        "X": np.array([[1.0, 2.0, 3.0], [4.0, np.nan, 6.0]], dtype=float),
-        "descriptor_names": ["global_metric", "toy_mean_ch-Fz", "toy_mean_ch-Cz"],
-        "failures": [],
-    }
+    result = _pool_input(
+        np.array([[1.0, 2.0, 3.0], [4.0, np.nan, 6.0]], dtype=float),
+        ["global_metric", "toy_mean_ch-Fz", "toy_mean_ch-Cz"],
+    )
 
     pooled = pipe.pool_channels(result, {"Frontal": ["Fz", "Cz"]})
 
-    assert pooled["descriptor_names"] == ["global_metric", "toy_mean_chgrp-Frontal"]
-    assert np.allclose(pooled["X"][:, 0], result["X"][:, 0], equal_nan=True)
-    assert np.allclose(pooled["X"][:, 1], [2.5, 6.0], equal_nan=True)
+    assert _names(pooled) == ["global_metric", "toy_mean_chgrp-Frontal"]
+    assert np.allclose(pooled.X[:, 0], result.X[:, 0], equal_nan=True)
+    assert np.allclose(pooled.X[:, 1], [2.5, 6.0], equal_nan=True)
 
 
 def test_complexity_can_omit_sfreq_when_config_disables_it():
@@ -93,7 +112,7 @@ def test_complexity_can_omit_sfreq_when_config_disables_it():
     )
     result = pipe.extract(X=X, channel_names=["Fz", "Cz"])
 
-    assert result["X"].shape == (4, 2)
+    assert result.X.shape == (4, 2)
 
 
 def test_output_precision_is_respected():
@@ -112,7 +131,7 @@ def test_output_precision_is_respected():
     )
     result = pipe.extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz"])
 
-    assert result["X"].dtype == np.float64
+    assert result.X.dtype == np.float64
 
 
 def test_missing_sfreq_is_explicit_error():
@@ -192,102 +211,67 @@ def test_pool_channels_reject_overlapping_assignments():
 
 
 @pytest.mark.parametrize(
-    "result, groups, match",
+    "container, groups, match",
     [
         pytest.param(
-            {"X": np.zeros((2, 2, 2)), "descriptor_names": ["a", "b"], "failures": []},
+            _pool_input(
+                np.zeros((2, 2, 2)), ["a", "b"], dims=("obs", "feature", "time")
+            ),
             {"G": ["ch1"]},
             "2D",
             id="non_2d_x",
         ),
         pytest.param(
-            {"X": np.zeros((2, 1)), "descriptor_names": ["a", "b"], "failures": []},
+            _pool_input(np.zeros((2, 1)), ["a", "b"]),
             {"G": ["ch1"]},
-            r"align with result\['X'\]",
+            r"align with X columns",
             id="mismatched_names_and_columns",
         ),
         pytest.param(
-            {
-                "X": np.zeros((2, 2)),
-                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
-                "failures": [],
-            },
+            _pool_input(np.zeros((2, 2)), ["a_ch-Fz", "b_ch-Cz"]),
             {},
             "at least one group",
             id="empty_groups",
         ),
         pytest.param(
-            {
-                "X": np.zeros((2, 2)),
-                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
-                "failures": [],
-            },
+            _pool_input(np.zeros((2, 2)), ["a_ch-Fz", "b_ch-Cz"]),
             {"": ["Fz"]},
             "non-empty strings",
             id="empty_group_name",
         ),
         pytest.param(
-            {
-                "X": np.zeros((2, 2)),
-                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
-                "failures": [],
-            },
+            _pool_input(np.zeros((2, 2)), ["a_ch-Fz", "b_ch-Cz"]),
             {"G": []},
             "at least one channel",
             id="empty_channel_list",
         ),
         pytest.param(
-            {
-                "X": np.zeros((2, 2)),
-                "descriptor_names": ["a_ch-Fz", "b_ch-Cz"],
-                "failures": [],
-            },
+            _pool_input(np.zeros((2, 2)), ["a_ch-Fz", "b_ch-Cz"]),
             {"G": ["Fz", "Fz"]},
             "not contain duplicates",
             id="duplicate_channels",
         ),
         pytest.param(
-            {
-                "X": np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]], dtype=float),
-                "descriptor_names": [
-                    "toy_mean_ch-Fz",
-                    "other_mean_ch-Fz",
-                    "other_mean_ch-Cz",
-                ],
-                "failures": [],
-            },
+            _pool_input(
+                np.array([[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]], dtype=float),
+                ["toy_mean_ch-Fz", "other_mean_ch-Fz", "other_mean_ch-Cz"],
+            ),
             {"Frontal": ["Fz", "Cz"]},
             "could not form group",
             id="incomplete_grouped_feature_base",
         ),
         pytest.param(
-            {"X": np.ones((2, 2))},
-            {"G1": ["Fz"]},
-            "'X', 'descriptor_names', and 'failures'",
-            id="missing_result_keys",
-        ),
-        pytest.param(
-            {
-                "X": np.ones((2, 1)),
-                "descriptor_names": ["global_metric"],
-                "failures": [],
-            },
+            _pool_input(np.ones((2, 1)), ["global_metric"]),
             {"G1": ["Fz"]},
             "sensor-level descriptor names",
             id="global_only_names",
         ),
-        pytest.param(
-            {"X": np.zeros((2, 2)), "descriptor_names": ["a_ch-Fz"], "failures": []},
-            {"G": ["Fz"]},
-            r"align with result\['X'\] columns",
-            id="mismatched_columns",
-        ),
     ],
 )
-def test_pool_channels_rejects(result, groups, match):
+def test_pool_channels_rejects(container, groups, match):
     pipe = DescriptorPipeline({})
     with pytest.raises(ValueError, match=match):
-        pipe.pool_channels(result, groups)
+        pipe.pool_channels(container, groups)
 
 
 def test_require_channel_names_flag_is_enforced():
@@ -323,9 +307,9 @@ def test_complexity_collects_short_segment_failures():
     )
     result = pipe.extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz"])
 
-    assert result["X"].shape == (4, 2)
-    assert np.isnan(result["X"]).all()
-    assert result["failures"]
+    assert result.X.shape == (4, 2)
+    assert np.isnan(result.X).all()
+    assert _failures(result)
 
 
 def test_bands_collect_short_window_resolution_failures():
@@ -344,10 +328,10 @@ def test_bands_collect_short_window_resolution_failures():
 
     result = pipe.extract(X=X, sfreq=160.0, channel_names=["C3", "C4"])
 
-    assert result["X"].shape == (3, 20)
+    assert result.X.shape == (3, 20)
     assert any(
         failure["exception_type"] == "BandResolutionError"
-        for failure in result["failures"]
+        for failure in _failures(result)
     )
 
 
@@ -368,7 +352,7 @@ def test_warn_policy_emits_aggregate_warning():
     with pytest.warns(UserWarning, match="Collected"):
         result = pipe.extract(X=X, sfreq=160.0, channel_names=["C3", "C4"])
 
-    assert result["failures"]
+    assert _failures(result)
 
 
 def test_raise_policy_reraises_runtime_failure():
@@ -404,8 +388,8 @@ def test_complexity_collects_nonfinite_output_as_nan():
     )
     result = pipe.extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz"])
 
-    assert np.isnan(result["X"]).all()
-    assert result["failures"]
+    assert np.isnan(result.X).all()
+    assert _failures(result)
 
 
 def test_complexity_raise_policy_reraises_nonfinite_output():
@@ -441,8 +425,8 @@ def test_constant_signal_parametric_skip_collects_failures():
     )
     result = pipe.extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz"])
 
-    assert result["failures"]
-    assert np.isnan(result["X"]).all()
+    assert _failures(result)
+    assert np.isnan(result.X).all()
 
 
 def test_missing_antropy_dependency_has_clear_install_hint(monkeypatch):
@@ -501,8 +485,8 @@ def test_multi_family_scale_smoke():
         channel_names=["Fz", "Cz", "Pz", "Oz"],
     )
 
-    assert result["X"].shape[0] == 24
-    assert result["X"].shape[1] == len(result["descriptor_names"])
+    assert result.X.shape[0] == 24
+    assert result.X.shape[1] == len(_names(result))
 
 
 def test_multi_family_parallel_matches_sequential():
@@ -534,8 +518,8 @@ def test_multi_family_parallel_matches_sequential():
         }
     ).extract(X=X, sfreq=128.0, channel_names=channel_names)
 
-    assert sequential["descriptor_names"] == parallel["descriptor_names"]
-    assert np.allclose(sequential["X"], parallel["X"], equal_nan=True)
+    assert _names(sequential) == _names(parallel)
+    assert np.allclose(sequential.X, parallel.X, equal_nan=True)
 
 
 def test_parametric_parallel_matches_sequential():
@@ -569,8 +553,8 @@ def test_parametric_parallel_matches_sequential():
         }
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
-    assert sequential["descriptor_names"] == parallel["descriptor_names"]
-    assert np.allclose(sequential["X"], parallel["X"], equal_nan=True)
+    assert _names(sequential) == _names(parallel)
+    assert np.allclose(sequential.X, parallel.X, equal_nan=True)
 
 
 def test_multi_chunk_row_order_matches_unchunked():
@@ -595,8 +579,8 @@ def test_multi_chunk_row_order_matches_unchunked():
         channel_names=["Fz", "Cz", "Pz"],
     )
 
-    assert unchunked["descriptor_names"] == chunked["descriptor_names"]
-    assert np.allclose(unchunked["X"], chunked["X"], equal_nan=True)
+    assert _names(unchunked) == _names(chunked)
+    assert np.allclose(unchunked.X, chunked.X, equal_nan=True)
 
 
 def test_n_jobs_one_skips_joblib_loading(monkeypatch):
@@ -629,7 +613,7 @@ def test_n_jobs_one_skips_joblib_loading(monkeypatch):
         }
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz"])
 
-    assert result["X"].shape == (4, len(result["descriptor_names"]))
+    assert result.X.shape == (4, len(_names(result)))
     assert joblib_imports == 0
 
 
@@ -662,7 +646,7 @@ def test_parametric_parallel_n_jobs_all_cores_smoke():
         }
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
-    assert result["X"].shape == (4, 6)
+    assert result.X.shape == (4, 6)
 
 
 def test_shared_psd_reuses_one_compute_per_batch_for_same_method(monkeypatch):
@@ -741,7 +725,7 @@ def test_corrected_bands_and_parametric_share_one_fit_batch_per_psd_group(monkey
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
     assert calls == 2
-    assert "band_corr_abs_alpha_ch-Fz" in result["descriptor_names"]
+    assert "band_corr_abs_alpha_ch-Fz" in _names(result)
 
 
 def test_shared_psd_splits_groups_by_method(monkeypatch):
@@ -841,25 +825,21 @@ def test_shared_union_psd_matches_separate_family_outputs():
         channel_names=channel_names,
     )
 
-    band_names = [
-        name for name in combined["descriptor_names"] if name.startswith("band_")
-    ]
-    param_names = [
-        name for name in combined["descriptor_names"] if name.startswith("param_")
-    ]
-    band_indices = [combined["descriptor_names"].index(name) for name in band_names]
-    param_indices = [combined["descriptor_names"].index(name) for name in param_names]
+    band_names = [name for name in _names(combined) if name.startswith("band_")]
+    param_names = [name for name in _names(combined) if name.startswith("param_")]
+    band_indices = [_names(combined).index(name) for name in band_names]
+    param_indices = [_names(combined).index(name) for name in param_names]
 
-    assert band_names == bands_only["descriptor_names"]
-    assert param_names == param_only["descriptor_names"]
+    assert band_names == _names(bands_only)
+    assert param_names == _names(param_only)
     assert np.allclose(
-        combined["X"][:, band_indices],
-        bands_only["X"],
+        combined.X[:, band_indices],
+        bands_only.X,
         equal_nan=True,
     )
     assert np.allclose(
-        combined["X"][:, param_indices],
-        param_only["X"],
+        combined.X[:, param_indices],
+        param_only.X,
         equal_nan=True,
     )
 
@@ -912,16 +892,16 @@ def test_obs_batch_parallel_disables_parametric_inner_joblib(monkeypatch):
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
     exponent_indices = [
-        idx for idx, name in enumerate(result["descriptor_names"]) if "exponent" in name
+        idx for idx, name in enumerate(_names(result)) if "exponent" in name
     ]
     offset_indices = [
-        idx for idx, name in enumerate(result["descriptor_names"]) if "offset" in name
+        idx for idx, name in enumerate(_names(result)) if "offset" in name
     ]
 
     assert exponent_indices
     assert offset_indices
-    assert np.all(result["X"][:, exponent_indices] > 0)
-    assert np.all(np.isfinite(result["X"][:, offset_indices]))
+    assert np.all(result.X[:, exponent_indices] > 0)
+    assert np.all(np.isfinite(result.X[:, offset_indices]))
     assert joblib_imports >= 1
 
 
@@ -977,28 +957,28 @@ def test_validation_edge_cases_runtime():
 
 def test_pool_channels_handles_mixture_of_sensor_and_global_features():
     pipe = DescriptorPipeline({})
-    result = {
-        "X": np.array([[1.0, 10.0, 20.0], [2.0, 30.0, 40.0]], dtype=float),
-        "descriptor_names": ["global", "val_ch-Fz", "val_ch-Cz"],
-        "failures": [],
-    }
+    result = _pool_input(
+        np.array([[1.0, 10.0, 20.0], [2.0, 30.0, 40.0]], dtype=float),
+        ["global", "val_ch-Fz", "val_ch-Cz"],
+    )
     # Pool Fz, Cz -> 15, 35
     # Result: global=1,2, grouped=15,35
     pooled = pipe.pool_channels(result, {"Group": ["Fz", "Cz"]})
-    assert pooled["descriptor_names"] == ["global", "val_chgrp-Group"]
-    assert np.allclose(pooled["X"][:, 0], [1.0, 2.0])
-    assert np.allclose(pooled["X"][:, 1], [15.0, 35.0])
+    assert _names(pooled) == ["global", "val_chgrp-Group"]
+    assert np.allclose(pooled.X[:, 0], [1.0, 2.0])
+    assert np.allclose(pooled.X[:, 1], [15.0, 35.0])
 
 
 def test_pool_channels_preserves_failures():
     pipe = DescriptorPipeline({})
-    result = {
-        "X": np.zeros((2, 2)),
-        "descriptor_names": ["a_ch-Fz", "a_ch-Cz"],
-        "failures": [{"family": "toy", "message": "boom"}],
-    }
+    result = DataContainer(
+        X=np.zeros((2, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": np.asarray(["a_ch-Fz", "a_ch-Cz"], dtype=object)},
+        meta={"failures": [{"family": "toy", "message": "boom"}]},
+    )
     pooled = pipe.pool_channels(result, {"G": ["Fz"]})
-    assert pooled["failures"] == result["failures"]
+    assert _failures(pooled) == _failures(result)
 
 
 def test_pipeline_instantiation_validates_fit_range_coverage():
@@ -1022,13 +1002,11 @@ def test_pipeline_instantiation_validates_fit_range_coverage():
 
 def test_pipeline_precision_is_propagated_to_pooled_output():
     pipe = DescriptorPipeline({"precision": "float32"})
-    result = {
-        "X": np.array([[1.0, 2.0]], dtype=np.float64),
-        "descriptor_names": ["a_ch-Fz", "a_ch-Cz"],
-        "failures": [],
-    }
+    result = _pool_input(
+        np.array([[1.0, 2.0]], dtype=np.float64), ["a_ch-Fz", "a_ch-Cz"]
+    )
     pooled = pipe.pool_channels(result, {"G": ["Fz", "Cz"]})
-    assert pooled["X"].dtype == np.float32
+    assert pooled.X.dtype == np.float32
 
 
 def test_empty_work_unit_parallel_smoke():
@@ -1041,4 +1019,4 @@ def test_empty_work_unit_parallel_smoke():
     )
     X = np.zeros((2, 1, 64))
     result = pipe.extract(X, sfreq=100.0, channel_names=["ch1"])
-    assert result["X"].shape[0] == 2
+    assert result.X.shape[0] == 2

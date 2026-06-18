@@ -15,12 +15,6 @@ from .config import (
     EmbeddingConfig,
     TabularConfig,
 )
-from .descriptors import (
-    check_feature_column_consistency,
-    load_descriptor_table,
-    parse_descriptor_feature_column,
-    save_descriptor_table,
-)
 from .embeddings import (
     discover_embedding_derivatives,
     embedding_sidecar_path,
@@ -57,10 +51,6 @@ __all__ = [
     "SklearnWrapper",
     "SpatialWhitener",
     "load_data",
-    "load_descriptor_table",
-    "parse_descriptor_feature_column",
-    "save_descriptor_table",
-    "check_feature_column_consistency",
     "discover_embedding_derivatives",
     "embedding_sidecar_path",
     "load_embedding_derivatives",

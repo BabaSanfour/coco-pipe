@@ -509,6 +509,18 @@ def test_descriptor_subfamily_derivation():
     # unknowns fall back
     assert descriptor_subfamily(None, "x") == "unknown"
     assert descriptor_subfamily("complexity", "made_up") == "complexity_other"
+    assert descriptor_subfamily("band", "made_up") == "band_other"
+    assert descriptor_subfamily("param", "made_up") == "param_other"
+    # an entirely unknown family echoes back as its own label
+    assert descriptor_subfamily("custom", "anything") == "custom"
+
+
+def test_select_viable_feature_columns_rejects_bad_missing_rate():
+    from coco_pipe.descriptors.qc import select_viable_feature_columns
+
+    frame = pd.DataFrame({"band_a_ch-Fz": [1.0, 2.0]})
+    with pytest.raises(ValueError, match="max_missing_rate"):
+        select_viable_feature_columns(frame, ["band_a_ch-Fz"], max_missing_rate=1.5)
 
 
 def test_classify_adds_subfamily_column():

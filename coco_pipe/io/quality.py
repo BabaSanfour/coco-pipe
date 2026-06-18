@@ -3,7 +3,7 @@
 Four QC levels are defined:
 
 * **Level 1** — NaN / Inf / extreme-value row drops at load time (handled by
-  :func:`~coco_pipe.io.descriptors.load_descriptor_table`; counts surfaced via
+  :func:`~coco_pipe.descriptors.load_descriptor_table`; counts surfaced via
   container meta).
 * **Level 2** — Epoch-level MAD outlier rejection (:func:`drop_epoch_outliers`).
 * **Level 3** — Subject-level outlier rejection (:func:`drop_subject_outliers`).
@@ -64,7 +64,7 @@ class QCResult:
     Fields are populated by ``run_qc`` and, for the Level-1 counts
     (``n_rows_entering_qc``, ``n_dropped_nan_inf``, ``n_dropped_extreme``),
     read from the container's ``meta`` dict written by
-    :func:`~coco_pipe.io.descriptors.load_descriptor_table`.
+    :func:`~coco_pipe.descriptors.load_descriptor_table`.
 
     ``family_qc`` is **not** populated by ``run_qc`` — the caller computes it
     via :func:`~coco_pipe.descriptors.qc.aggregate_family_qc` and attaches it
