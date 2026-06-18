@@ -1392,3 +1392,188 @@ def test_concat_extra():
     dc_shape = DataContainer(X=np.zeros((2, 3)), dims=("obs", "feature"))
     with pytest.raises(ValueError, match="matching non-obs dimensions"):
         DataContainer.concat([dc_obs, dc_shape])
+
+
+def test_isel_does_not_misslice_obs_coord_when_dims_share_length(data_container_cls):
+    """An obs-aligned aux coord must survive indexing of a same-length dim.
+
+    Regression: ``isel`` previously matched aux coords by length per indexer,
+    so slicing ``channel`` would also slice an obs-aligned coord when ``obs``
+    and ``channel`` happened to share a length.
+    """
+    X = np.arange(3 * 3).reshape(3, 3)  # obs=3, channel=3 share a length
+    container = data_container_cls(
+        X=X,
+        dims=("obs", "channel"),
+        coords={
+            "channel": ["c0", "c1", "c2"],
+            "subject": np.array(["s0", "s1", "s2"]),  # obs-aligned aux coord
+        },
+        ids=np.array(["o0", "o1", "o2"]),
+    )
+
+    sub = container.isel(channel=[0, 1])
+
+    # channel sliced to 2; obs (and its aligned aux coord/ids) untouched.
+    assert sub.X.shape == (3, 2)
+    assert list(sub.coords["channel"]) == ["c0", "c1"]
+    np.testing.assert_array_equal(sub.coords["subject"], ["s0", "s1", "s2"])
+    np.testing.assert_array_equal(sub.ids, ["o0", "o1", "o2"])
+
+
+def _cov_container_2d():
+    return DataContainer(np.random.randn(6, 3), dims=("obs", "feature"))
+
+
+def _cov_feature_container():
+    return DataContainer(
+        X=np.random.rand(4, 3),
+        dims=("obs", "feature"),
+        coords={"feature": np.array(["band_a", "band_b", "param_c"], dtype=object)},
+        y=np.array([0, 0, 1, 1]),
+    )
+
+
+def test_balance_without_y_raises():
+    with pytest.raises(ValueError, match="no y data"):
+        _cov_container_2d().balance(target="y")
+
+
+def test_isel_no_indexers_returns_self():
+    container = _cov_container_2d()
+    assert container.isel() is container
+
+
+def test_aggregate_groups_requires_feature_dim():
+    container = DataContainer(np.random.rand(4, 2, 2), dims=("obs", "channel", "time"))
+    with pytest.raises(ValueError, match="requires a 'feature' dimension"):
+        container.aggregate_groups(
+            by=np.array([0, 0, 1, 1]), groups=[{"stats": "mean"}]
+        )
+
+
+def test_aggregate_groups_requires_feature_coord():
+    container = DataContainer(np.random.rand(4, 3), dims=("obs", "feature"))
+    with pytest.raises(ValueError, match="requires a 'feature' coordinate"):
+        container.aggregate_groups(
+            by=np.array([0, 0, 1, 1]), groups=[{"stats": "mean"}]
+        )
+
+
+def test_aggregate_groups_empty_groups():
+    with pytest.raises(ValueError, match="must not be empty"):
+        _cov_feature_container().aggregate_groups(by="y", groups=[])
+
+
+def test_aggregate_groups_entry_not_dict():
+    with pytest.raises(ValueError, match="must be a dict"):
+        _cov_feature_container().aggregate_groups(by="y", groups=[["nope"]])
+
+
+def test_aggregate_groups_unknown_keys():
+    with pytest.raises(ValueError, match="Unknown aggregate_groups keys"):
+        _cov_feature_container().aggregate_groups(
+            by="y", groups=[{"stats": "mean", "bogus": 1}]
+        )
+
+
+def test_aggregate_groups_missing_stats():
+    with pytest.raises(ValueError, match="must include `stats`"):
+        _cov_feature_container().aggregate_groups(
+            by="y", groups=[{"prefixes": ["band"]}]
+        )
+
+
+def test_aggregate_groups_empty_stats():
+    with pytest.raises(ValueError, match="at least one stat"):
+        _cov_feature_container().aggregate_groups(
+            by="y", groups=[{"stats": [], "prefixes": ["band"]}]
+        )
+
+
+def test_aggregate_groups_string_selector():
+    # A string selector (not a list) exercises the scalar->tuple normalization.
+    out = _cov_feature_container().aggregate_groups(
+        by="y", groups=[{"stats": "mean", "prefixes": "band"}]
+    )
+    assert [str(f) for f in out.coords["feature"]] == ["mean_band_a", "mean_band_b"]
+
+
+def test_observation_frame_and_flatten_noop():
+    container = DataContainer(
+        X=np.random.rand(3, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "subject": np.array(["a", "b", "c"])},
+        ids=np.array(["o0", "o1", "o2"]),
+    )
+    frame = container.observation_frame()
+    assert list(frame["subject"]) == ["a", "b", "c"]
+    assert list(frame["sample_id"]) == ["o0", "o1", "o2"]
+
+    # flatten with nothing to collapse returns the same container.
+    assert container.flatten(preserve=["obs", "feature"]) is container
+
+
+def test_concat_skips_non_1d_aux_coord():
+    container = DataContainer(
+        X=np.zeros((2, 3)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b", "c"], "twod": np.zeros((2, 2))},
+    )
+    out = DataContainer.concat([container, container])
+    assert out.X.shape[0] == 4
+    assert "twod" not in out.coords  # 2-D aux coord is not propagated
+
+
+def test_balance_stratified_single_class_strata_fallback():
+    # Each stratum is single-class -> stratified path falls back to global balance.
+    container = DataContainer(
+        X=np.random.rand(4, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "cov": np.array(["a", "a", "b", "b"])},
+        y=np.array([0, 0, 1, 1]),
+    )
+    balanced = container.balance(target="y", covariates=["cov"], strategy="undersample")
+    _, counts = np.unique(balanced.y, return_counts=True)
+    assert counts[0] == counts[1]
+
+
+def test_balance_on_coordinate_target():
+    container = DataContainer(
+        X=np.random.rand(6, 2),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["f0", "f1"],
+            "group": np.array(["a", "a", "a", "a", "b", "b"]),
+        },
+    )
+    balanced = container.balance(target="group", strategy="undersample")
+    _, counts = np.unique(balanced.coords["group"], return_counts=True)
+    assert counts[0] == counts[1]
+
+
+def test_select_on_aux_coordinate():
+    container = DataContainer(
+        X=np.arange(8).reshape(4, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "group": np.array(["a", "a", "b", "b"])},
+    )
+    assert container.select(group=["a"]).X.shape[0] == 2
+
+
+def test_select_unknown_key_is_ignored():
+    container = DataContainer(np.arange(8).reshape(4, 2), dims=("obs", "feature"))
+    # Unknown selection key is warned and ignored, leaving the container intact.
+    assert container.select(nonexistent=["x"]).X.shape == (4, 2)
+
+
+def test_stack_dim_without_coordinate_uses_range():
+    container = DataContainer(
+        X=np.arange(6).reshape(2, 3),
+        dims=("obs", "time"),
+        coords={"obs": np.array(["o0", "o1"])},  # no 'time' coord
+        ids=np.array(["o0", "o1"]),
+    )
+    stacked = container.stack(dims=("obs", "time"), new_dim="obs")
+    assert stacked.X.shape == (6,)
+    assert len(stacked.ids) == 6

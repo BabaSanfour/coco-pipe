@@ -41,8 +41,8 @@ from typing import Any
 
 import numpy as np
 
-from coco_pipe.io.structures import (
-    DataContainer,  # same package — absolute import kept for clarity
+from .structures import (
+    DataContainer,
 )
 
 __all__ = ["iter_analysis_units"]
@@ -58,24 +58,41 @@ def iter_analysis_units(
 
     Each returned dict has the keys:
 
-    - ``unit_type`` — ``"global"`` | ``"sensor"`` | ``"family"``
+    - ``unit_type`` — one of ``"global"``, ``"sensor"``, ``"family"``,
+      ``"subfamily"``, ``"feature"``, or ``"descriptor"``
     - ``unit_name`` — human-readable identifier (e.g. ``"Fz"``, ``"band"``)
     - ``unit_key``  — filesystem-safe unique key (e.g. ``"band_Fz"``)
     - ``family``    — descriptor family name, or ``None``
+    - ``subfamily`` — descriptor sub-family name, or ``None``
     - ``container`` — the sliced/flattened :class:`DataContainer` for this unit
 
-    The container's ``meta`` dict is also updated in-place with the same
-    four fields so that downstream functions can read the unit context from
-    the container without needing to carry the dict separately.
+    The container's ``meta`` dict is also updated in-place with the
+    ``unit_type``/``unit_name``/``unit_key``/``family``/``subfamily`` fields so
+    that downstream functions can read the unit context from the container
+    without needing to carry the dict separately.
 
     Parameters
     ----------
     container:
         Full data container for one analysis scope/condition.
     analysis_mode:
-        One of ``"flat"``, ``"sensor"``, ``"family"``,
-        ``"sensor_within_family"``, ``"feature"``, or
-        ``"feature_within_family"``.
+        The unit granularity. ``"flat"`` and ``"sensor"`` work for both input
+        modes; the remaining modes require descriptor inputs:
+
+        - ``"flat"`` — one unit for the whole container.
+        - ``"sensor"`` — one unit per sensor/channel.
+        - ``"family"`` — one unit per descriptor feature family.
+        - ``"subfamily"`` — one unit per sub-family (needs a
+          ``feature_subfamily`` coord).
+        - ``"sensor_within_family"`` — one unit per (sensor, family).
+        - ``"sensor_within_subfamily"`` — one unit per (sensor, sub-family)
+          (needs a ``feature_subfamily`` coord).
+        - ``"feature"`` — one unit per feature across all sensors.
+        - ``"feature_within_family"`` — one unit per (feature, family).
+        - ``"descriptor"`` — one unit per descriptor across all sensors
+          (needs a ``feature_descriptor`` coord).
+        - ``"descriptor_sensor"`` — one unit per (descriptor, sensor)
+          (needs a ``feature_descriptor`` coord).
     input_mode:
         ``"raw"`` or ``"descriptors"``.  Controls which container dimension is
         sliced for the ``"sensor"`` mode.

@@ -839,6 +839,27 @@ def test_result_export_records_optional_accessor_failures(tmp_path, monkeypatch)
     assert (tmp_path / "export" / "_SUCCESS").exists()
 
 
+def test_result_export_formats(tmp_path):
+    X, y = _classification_data()
+    result = Experiment(_config()).run(X, y)
+
+    # Default: csv only (parquet is opt-in).
+    out = tmp_path / "csv_only"
+    result.export(out)
+    assert (out / "summary.csv").exists()
+    assert not (out / "summary.parquet").exists()
+
+    # Opt in to both formats.
+    out_both = tmp_path / "both"
+    written = result.export(out_both, formats=("csv", "parquet"))
+    assert (out_both / "summary.csv").exists()
+    assert (out_both / "summary.parquet").exists()
+    assert "summary_parquet" in written
+
+    with pytest.raises(ValueError, match="csv"):
+        result.export(tmp_path / "bad", formats=())
+
+
 def test_completed_result_records_restore_accuracy_p_value(tmp_path):
     from coco_pipe.decoding.persistence import load_completed_result_records
 

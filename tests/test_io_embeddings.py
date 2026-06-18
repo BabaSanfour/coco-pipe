@@ -326,3 +326,22 @@ def test_load_embeddings_window(tmp_path):
 def test_load_embeddings_empty_dir(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_embedding_derivatives(tmp_path)
+
+
+def test_load_embedding_derivatives_aggregate_by(tmp_path):
+    result = FoundationEmbeddingResult(
+        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
+        recording_embedding=np.arange(4, dtype=float),
+        window_start=np.array([0, 100, 200]),
+        window_stop=np.array([100, 200, 300]),
+        window_index=np.arange(3),
+        metadata={"model_key": "cbramod", "recording_id": "sub-01", "subject": "01"},
+    )
+    path = tmp_path / "sub-01" / "eeg" / "sub-01_desc-x_embedding.npz"
+    save_embedding_derivative(result, path)
+
+    # Three windows, all subject "01" -> aggregating by subject yields one row.
+    agg = load_embedding_derivatives(
+        tmp_path, representation="window", aggregate_by="subject"
+    )
+    assert agg.X.shape[0] == 1

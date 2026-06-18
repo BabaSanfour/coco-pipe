@@ -11,8 +11,9 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
+from ._serialization import read_table
 from .structures import DataContainer
-from .utils import normalize_subject_value, read_table
+from .utils import normalize_subject_value
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +22,16 @@ def save_descriptor_table(
     df: pd.DataFrame,
     base_path: Path | str,
     feature_columns: Sequence[str] | None = None,
+    formats: Sequence[str] = ("parquet",),
 ) -> None:
-    """Write a descriptor table as parquet + csv, with an optional feature-column
-    sidecar.
+    """Write a descriptor table, with an optional feature-column sidecar.
 
-    This is the canonical on-disk layout consumed by :func:`load_descriptor_table`:
-    ``{base_path}.parquet``, ``{base_path}.csv``, and (if *feature_columns* is
-    given) ``{base_path.name}_feature_columns.json`` listing the descriptor
-    feature columns.
+    :func:`load_descriptor_table` reads whichever single file it is pointed at,
+    so by default only the canonical ``{base_path}.parquet`` is written.  Pass
+    ``formats=("parquet", "csv")`` to additionally emit a human-readable
+    ``{base_path}.csv`` (doubles the on-disk footprint).  A
+    ``{base_path.name}_feature_columns.json`` sidecar is written when
+    *feature_columns* is given.
 
     Parameters
     ----------
@@ -39,11 +42,28 @@ def save_descriptor_table(
     feature_columns
         Optional ordered list of descriptor feature-column names written to
         a ``_feature_columns.json`` sidecar alongside the table.
+    formats
+        Table formats to write. Any subset of ``{"parquet", "csv"}``; defaults
+        to parquet only.
+
+    Raises
+    ------
+    ValueError
+        If *formats* is empty or contains an unsupported format.
     """
     base_path = Path(base_path)
+    requested = tuple(formats)
+    unsupported = sorted(set(requested) - {"parquet", "csv"})
+    if not requested or unsupported:
+        raise ValueError(
+            "formats must be a non-empty subset of {'parquet', 'csv'}; "
+            f"got {list(requested)}."
+        )
     base_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(base_path.with_suffix(".parquet"), index=False)
-    df.to_csv(base_path.with_suffix(".csv"), index=False)
+    if "parquet" in requested:
+        df.to_parquet(base_path.with_suffix(".parquet"), index=False)
+    if "csv" in requested:
+        df.to_csv(base_path.with_suffix(".csv"), index=False)
     if feature_columns is not None:
         (base_path.parent / f"{base_path.name}_feature_columns.json").write_text(
             json.dumps(list(feature_columns), indent=2),
@@ -205,8 +225,7 @@ def load_descriptor_table(
         parsed = [item for item in parsed if item["family"] in allowed]
         if not parsed:
             raise RuntimeError(
-                "No features matched "
-                f"descriptor_families={list(descriptor_families)}."
+                f"No features matched descriptor_families={list(descriptor_families)}."
             )
 
     if location_statistic is not None:
@@ -285,7 +304,7 @@ def load_descriptor_table(
         if extreme_mask.any():
             dropped_extreme = int(extreme_mask.sum())
             logger.warning(
-                "Dropping %d row(s) with abs(feature) > %g from %s " "(condition=%r).",
+                "Dropping %d row(s) with abs(feature) > %g from %s (condition=%r).",
                 dropped_extreme,
                 max_abs,
                 table_path,
@@ -295,8 +314,7 @@ def load_descriptor_table(
             feature_df = feature_df.loc[~extreme_mask].copy()
         if df.empty:
             raise RuntimeError(
-                "No rows survived extreme-value filtering for "
-                f"condition={condition!r}."
+                f"No rows survived extreme-value filtering for condition={condition!r}."
             )
 
     metadata_df = df.drop(columns=selected_feature_cols)

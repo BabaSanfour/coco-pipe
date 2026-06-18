@@ -12,15 +12,8 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from ._constants import REQUIRED_ARRAYS
 from .structures import DataContainer
-
-REQUIRED_ARRAYS = {
-    "window_embeddings",
-    "recording_embedding",
-    "window_start",
-    "window_stop",
-    "window_index",
-}
 
 
 def _json_value(value: Any) -> Any:

@@ -15,16 +15,15 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from ._serialization import default_id_extractor, smart_reader
 from .structures import DataContainer
 from .utils import (
     _get_bids_path,
-    default_id_extractor,
     detect_runs,
     detect_sessions,
     detect_subjects,
     load_participants_tsv,
     read_bids_entry,
-    smart_reader,
     split_column,
 )
 

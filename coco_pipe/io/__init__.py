@@ -1,3 +1,13 @@
+from ._serialization import (
+    default_id_extractor,
+    load_object,
+    read_json,
+    read_table,
+    save_npz,
+    save_object,
+    smart_reader,
+    write_json,
+)
 from .config import (
     BaseDatasetConfig,
     BIDSConfig,
@@ -40,7 +50,7 @@ from .quality import (
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
 from .units import iter_analysis_units
-from .utils import normalize_subject_value, read_table
+from .utils import normalize_subject_value
 
 __all__ = [
     "DataContainer",
@@ -74,6 +84,13 @@ __all__ = [
     "run_qc",
     "normalize_subject_value",
     "read_table",
+    "smart_reader",
+    "default_id_extractor",
+    "read_json",
+    "write_json",
+    "save_object",
+    "load_object",
+    "save_npz",
     "iter_analysis_units",
     "BIDSDataset",
     "TabularDataset",
@@ -88,11 +105,9 @@ __all__ = [
 
 def __getattr__(name):
     if name in {"BIDSDataset", "EmbeddingDataset", "TabularDataset"}:
-        from .dataset import (  # noqa: F401
-            BIDSDataset,
-            EmbeddingDataset,
-            TabularDataset,
-        )
+        # Delegate to load's lazy resolver so dataset-class resolution (and
+        # test monkeypatching) lives in a single place.
+        from .load import _resolve_dataset_class
 
-        return locals()[name]
+        return _resolve_dataset_class(name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

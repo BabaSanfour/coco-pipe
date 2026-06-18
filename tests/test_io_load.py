@@ -60,7 +60,8 @@ def test_load_data_explicit_modes():
             col_sep="_",
             meta_columns=None,
             clean=False,
-            clean_kwargs=None,
+            clean_kwargs={},
+            select_kwargs={},
         )
 
     # BIDS
@@ -71,11 +72,17 @@ def test_load_data_explicit_modes():
             mode="epochs",
             task="rest",
             session=None,
+            runs=None,
             datatype="eeg",
             suffix=None,
             target_col=None,
             window_length=None,
             stride=None,
+            event_id=None,
+            tmin=-0.2,
+            tmax=0.5,
+            baseline=None,
+            drop_short_epochs=True,
             subject_metadata_df=None,
             subject_key=None,
             subjects=None,
@@ -89,6 +96,9 @@ def test_load_data_explicit_modes():
             pattern="*.npy",
             dims=("obs", "feature"),
             coords=None,
+            task=None,
+            run=None,
+            processing=None,
             reader=None,
             id_fn=None,
             subjects=None,
@@ -228,3 +238,75 @@ def test_io_import_is_lightweight(monkeypatch):
         for module_name, module_obj in cached_modules.items():
             if module_obj is not None:
                 sys.modules[module_name] = module_obj
+
+
+# --------------------------------------------------------------------------- #
+# config <-> load_data wiring
+# --------------------------------------------------------------------------- #
+def _write_tabular_csv(tmp_path):
+    import pandas as pd
+
+    path = tmp_path / "feat.csv"
+    pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "y": [0, 1, 0]}).to_csv(
+        path, index=False
+    )
+    return path
+
+
+def test_load_data_config_object_matches_kwargs(tmp_path):
+    """The config= path produces the same container as the kwargs path."""
+    from coco_pipe.io.config import DatasetConfig, TabularConfig
+
+    path = _write_tabular_csv(tmp_path)
+
+    via_kwargs = load_mod.load_data(path, mode="tabular", sep=",", target_col="y")
+    via_config = load_mod.load_data(
+        config=TabularConfig(path=path, sep=",", target_col="y")
+    )
+    via_wrapper = load_mod.load_data(
+        config=DatasetConfig(
+            dataset={
+                "mode": "tabular",
+                "path": str(path),
+                "sep": ",",
+                "target_col": "y",
+            }
+        )
+    )
+
+    for container in (via_kwargs, via_config, via_wrapper):
+        assert container.dims == ("obs", "feature")
+        assert list(container.coords["feature"]) == ["a", "b"]
+        np.testing.assert_array_equal(container.y, [0, 1, 0])
+
+
+def test_load_data_invalid_kwargs_raise_validation_error(tmp_path):
+    from pydantic import ValidationError
+
+    path = _write_tabular_csv(tmp_path)
+    with pytest.raises(ValidationError):
+        load_mod.load_data(path, mode="tabular", clean_kwargs="not_a_dict")
+
+
+def test_load_data_requires_path_without_config():
+    with pytest.raises(ValueError, match="`path` is required"):
+        load_mod.load_data(mode="tabular")
+
+
+def test_load_data_auto_embedding_dir(tmp_path):
+    """A non-BIDS directory with blob files is inferred as embedding."""
+    import pickle
+
+    (tmp_path / "rec01_emb.pkl").write_bytes(pickle.dumps(np.ones((1, 4))))
+    container = load_mod.load_data(tmp_path, mode="auto", dims=("feature",))
+    assert container.dims == ("obs", "feature")
+
+
+def test_load_data_tabular_index_col(tmp_path):
+    """``index_col`` is surfaced as the obs coordinate."""
+    import pandas as pd
+
+    path = tmp_path / "t.csv"
+    pd.DataFrame({"id": ["a", "b"], "f0": [1.0, 2.0]}).to_csv(path, index=False)
+    container = load_mod.load_data(path, mode="tabular", sep=",", index_col="id")
+    assert list(container.coords["obs"]) == ["a", "b"]

@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 
+from coco_pipe.io import load_object, read_json, save_object, write_json
+
 from ._constants import RESULT_SCHEMA_VERSION
 from ._diagnostics import (
     confusion_matrix_frame,
@@ -157,15 +159,9 @@ class ExperimentResult:
             path.parent.mkdir(parents=True, exist_ok=True)
 
         if path.suffix == ".json":
-            import json
-
-            payload = self.to_payload(serializable=True)
-            with open(path, "w") as f:
-                json.dump(payload, f, indent=indent)
+            write_json(path, self.to_payload(serializable=True), indent=indent)
         else:
-            import joblib
-
-            joblib.dump(self.to_payload(), path)
+            save_object(self.to_payload(), path)
 
         return path
 
@@ -173,17 +169,36 @@ class ExperimentResult:
         self,
         output_dir: Union[str, Path],
         config: Optional[Dict[str, Any]] = None,
+        formats: Sequence[str] = ("csv",),
     ) -> Dict[str, str]:
         """Export the result object and all available tidy tables.
 
         Individual optional table failures are recorded in the run manifest
         rather than invalidating an otherwise complete experiment.
-        """
-        import json
 
+        Parameters
+        ----------
+        output_dir : str or Path
+            Destination directory for the result object and tidy tables.
+        config : dict, optional
+            Effective run config recorded alongside the export.
+        formats : sequence of str, default=("csv",)
+            Table formats to write, any subset of ``{"csv", "parquet"}``.
+            Defaults to CSV only; CSV is required for resuming a run, so keep it
+            in the set unless you only need parquet. Add ``"parquet"`` for a
+            columnar copy at the cost of doubling the number of table files.
+        """
         import yaml
 
         from .persistence import config_hash, redact_sensitive
+
+        requested = tuple(formats)
+        unsupported = sorted(set(requested) - {"csv", "parquet"})
+        if not requested or unsupported:
+            raise ValueError(
+                "formats must be a non-empty subset of {'csv', 'parquet'}; "
+                f"got {list(requested)}."
+            )
 
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
@@ -212,19 +227,23 @@ class ExperimentResult:
                     table = pd.DataFrame(table)
                 if name == "summary":
                     table = table.reset_index()
-                csv_path = output / f"{name}.csv"
-                table.to_csv(csv_path, index=False)
-                written[name] = str(csv_path)
-                try:
-                    parquet_path = output / f"{name}.parquet"
-                    table.to_parquet(parquet_path, index=False)
-                    written[f"{name}_parquet"] = str(parquet_path)
-                except (ImportError, ValueError, TypeError, OSError) as exc:
-                    export_errors[f"{name}_parquet"] = f"{type(exc).__name__}: {exc}"
+                for fmt in requested:
+                    target = output / f"{name}.{fmt}"
+                    key = name if fmt == "csv" else f"{name}_{fmt}"
+                    try:
+                        if fmt == "csv":
+                            table.to_csv(target, index=False)
+                        else:
+                            table.to_parquet(target, index=False)
+                    except (ImportError, ValueError, TypeError, OSError) as exc:
+                        export_errors[key] = f"{type(exc).__name__}: {exc}"
+                        continue
+                    written[key] = str(target)
             except Exception as exc:
                 export_errors[name] = f"{type(exc).__name__}: {exc}"
 
-        if "summary" not in written:
+        summary_written = any(key in ("summary", "summary_parquet") for key in written)
+        if not summary_written:
             raise RuntimeError(
                 "Experiment result export failed to produce the required summary table."
             )
@@ -238,10 +257,7 @@ class ExperimentResult:
             "artifacts": written,
             "export_errors": export_errors,
         }
-        (output / "run_manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        write_json(output / "run_manifest.json", manifest, indent=2, sort_keys=True)
         (output / "_SUCCESS").write_text("", encoding="utf-8")
         return written
 
@@ -279,14 +295,9 @@ class ExperimentResult:
             raise FileNotFoundError(f"Result file not found: {path}")
 
         if path.suffix == ".json":
-            import json
-
-            with open(path, "r") as f:
-                payload = json.load(f)
+            payload = read_json(path)
         else:
-            import joblib
-
-            payload = joblib.load(path)
+            payload = load_object(path)
 
         return cls(
             raw_results=payload["results"],

@@ -15,8 +15,14 @@ EmbeddingConfig
 DatasetConfig
     Union container for any dataset configuration.
 
-Author: Antigravity
-Date: 2026-01-16
+These schemas mirror the keyword arguments accepted by
+:func:`coco_pipe.io.load.load_data` and the dataset classes in
+:mod:`coco_pipe.io.dataset`. Only serializable, scalar parameters live here;
+callables and in-memory tables (``reader``, ``id_fn``, ``subject_metadata_df``,
+``subject_key``) are passed to ``load_data`` directly and are intentionally not
+part of the config schema.
+
+Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
 
 from pathlib import Path
@@ -42,7 +48,7 @@ class TabularConfig(BaseDatasetConfig):
     )
     sep: str = Field("\t", description="Separator for text files.")
     header: Optional[Union[int, List[int]]] = 0
-    sheet_name: Union[str, int] = 0
+    sheet_name: Optional[Union[str, int]] = 0
     columns_to_dims: Optional[List[str]] = Field(
         None, description="Reshape columns into dimensions."
     )
@@ -63,14 +69,25 @@ class BIDSConfig(BaseDatasetConfig):
     mode: Literal["bids"] = "bids"
     task: Optional[str] = None
     session: Optional[Union[str, List[str]]] = None
+    runs: Optional[Union[str, List[str]]] = None
     datatype: str = "eeg"
     suffix: Optional[str] = None
     loading_mode: str = Field(
         "epochs",
         description="Loading strategy: 'epochs', 'continuous', 'load_existing'.",
     )
+    target_col: Optional[str] = Field(
+        None, description="Metadata coordinate to expose as target `y`."
+    )
     window_length: Optional[float] = None
     stride: Optional[float] = None
+    event_id: Optional[Union[Dict[str, int], str, List[str]]] = Field(
+        None, description="Event selection for annotation-based epoching."
+    )
+    tmin: float = -0.2
+    tmax: float = 0.5
+    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None
+    drop_short_epochs: bool = True
 
 
 class EmbeddingConfig(BaseDatasetConfig):

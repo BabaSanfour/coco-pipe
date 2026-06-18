@@ -30,8 +30,9 @@ from typing import (
     Union,
 )
 
-import joblib
 import numpy as np
+
+from coco_pipe.io import load_object, save_object
 
 # Type alias for array-like objects
 ArrayLike = Union[np.ndarray, list]
@@ -366,11 +367,7 @@ class BaseReducer(ABC):
         `joblib.dump`. Custom reducers should either remain joblib-serializable
         or override this method and `load` with a custom persistence strategy.
         """
-        filepath = str(filepath)
-        out_dir = os.path.dirname(filepath)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        joblib.dump(self, filepath)
+        save_object(self, filepath)
 
     @property
     def capabilities(self) -> Dict[str, Any]:
@@ -529,7 +526,7 @@ class BaseReducer(ABC):
         This method assumes the reducer was serialized with `save` or a
         compatible `joblib.dump` call.
         """
-        reducer = joblib.load(str(filepath))
+        reducer = load_object(filepath)
         if not isinstance(reducer, BaseReducer):
             raise TypeError("Loaded object is not a BaseReducer")
         return reducer

@@ -1,6 +1,5 @@
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -18,7 +17,6 @@ from coco_pipe.io.utils import (
     load_participants_tsv,
     make_strata,
     sample_indices,
-    smart_reader,
 )
 
 
@@ -113,108 +111,6 @@ def test_split_column():
 )
 def test_normalize_subject_value(value, expected):
     assert utils_mod.normalize_subject_value(value) == expected
-
-
-def test_read_table_csv(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text("subject;feature\nsub-1;1.5\nsub-2;2.5\n", encoding="utf-8")
-
-    table = utils_mod.read_table(path)
-
-    assert table.to_dict(orient="records") == [
-        {"subject": "sub-1", "feature": 1.5},
-        {"subject": "sub-2", "feature": 2.5},
-    ]
-
-
-def test_read_table_parquet(monkeypatch, tmp_path):
-    path = tmp_path / "features.parquet"
-    expected = pd.DataFrame({"subject": ["sub-1"], "feature": [1.5]})
-    read_parquet = MagicMock(return_value=expected)
-    monkeypatch.setattr(utils_mod.pd, "read_parquet", read_parquet)
-
-    table = utils_mod.read_table(path)
-
-    read_parquet.assert_called_once_with(path)
-    pd.testing.assert_frame_equal(table, expected)
-
-
-def test_read_table_drops_unnamed_and_empty_columns(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text(
-        "subject,feature,Unnamed: 2,empty\nsub-1,1.5,,\n",
-        encoding="utf-8",
-    )
-
-    table = utils_mod.read_table(path)
-
-    assert table.columns.tolist() == ["subject", "feature"]
-
-
-def test_read_table_explicit_separator(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text("subject|feature\nsub-1|1.5\n", encoding="utf-8")
-
-    table = utils_mod.read_table(path, sep="|")
-
-    assert table.to_dict(orient="records") == [{"subject": "sub-1", "feature": 1.5}]
-
-
-def test_read_table_unsupported_format_raises(tmp_path):
-    path = tmp_path / "features.tsv"
-    path.touch()
-
-    with pytest.raises(ValueError, match="Expected .csv or .parquet"):
-        utils_mod.read_table(path)
-
-
-def test_default_id_extractor(tmp_path):
-    """Test ID extraction heuristics."""
-    # BIDS-like
-    p1 = tmp_path / "sub-01_task-rest.pkl"
-    assert utils_mod.default_id_extractor(p1) == "01"
-
-    # Plain
-    p2 = tmp_path / "patient_x.pkl"
-    assert utils_mod.default_id_extractor(p2) == "patient_x"
-
-
-def test_smart_reader(tmp_path):
-    """Test smart file reader."""
-    # Pickle
-    import pickle
-
-    p_pkl = tmp_path / "test.pkl"
-    with open(p_pkl, "wb") as f:
-        pickle.dump({"a": 1}, f)
-    assert utils_mod.smart_reader(p_pkl) == {"a": 1}
-
-    # NPY
-    p_npy = tmp_path / "test.npy"
-    np.save(p_npy, np.array([1, 2]))
-    assert np.array_equal(utils_mod.smart_reader(p_npy), [1, 2])
-
-    # JSON
-
-    p_json = tmp_path / "test.json"
-    p_json.write_text('{"key": "val"}')
-    assert utils_mod.smart_reader(p_json) == {"key": "val"}
-
-    # Unsupported
-    p_bad = tmp_path / "test.xyz"
-    p_bad.touch()
-    with pytest.raises(ValueError, match="Unsupported extension"):
-        utils_mod.smart_reader(p_bad)
-
-    # H5 (Mocked to avoid dep)
-    p_h5 = tmp_path / "test.h5"
-    p_h5.touch()
-    with patch.dict(sys.modules, {"h5py": MagicMock()}):
-        m_h5 = sys.modules["h5py"]
-        m_file = m_h5.File.return_value.__enter__.return_value
-        m_file.keys.return_value = ["data"]
-        m_file.__getitem__.return_value.__getitem__.return_value = "h5_data"
-        assert utils_mod.smart_reader(p_h5) == "h5_data"
 
 
 def test_read_bids_entry(monkeypatch, tmp_path):
@@ -510,36 +406,6 @@ def test_detect_runs(tmp_path):
         utils_mod.BIDSPath = orig
 
 
-def test_smart_reader_h5(tmp_path):
-    import h5py
-
-    p1 = tmp_path / "test1.h5"
-    with h5py.File(p1, "w") as f:
-        f.create_dataset("embeddings", data=np.array([1, 2]))
-    assert len(smart_reader(p1)) == 2
-
-    p2 = tmp_path / "test2.h5"
-    with h5py.File(p2, "w") as f:
-        f.create_dataset("data", data=np.array([1, 2]))
-    assert len(smart_reader(p2)) == 2
-
-    p3 = tmp_path / "test3.h5"
-    with h5py.File(p3, "w") as f:
-        f.create_dataset("random", data=np.array([1, 2]))
-    assert len(smart_reader(p3)) == 2
-
-    p4 = tmp_path / "test4.h5"
-    with h5py.File(p4, "w") as f:
-        f.create_dataset("a", data=np.array([1]))
-        f.create_dataset("b", data=np.array([2]))
-    with pytest.raises(ValueError):
-        smart_reader(p4)
-
-    p5 = tmp_path / "test5.unknown"
-    with pytest.raises(ValueError):
-        smart_reader(p5)
-
-
 def test_get_bids_path():
     utils_mod.BIDSPath = None
     assert _get_bids_path() is not None
@@ -732,3 +598,9 @@ def test_io_init_getattr():
     # 2. Invalid attribute raises AttributeError
     with pytest.raises(AttributeError, match="has no attribute 'invalid_attr'"):
         _ = coco_io.invalid_attr
+
+
+def test_load_participants_tsv_without_participant_id(tmp_path):
+    """participants.tsv lacking a participant_id column yields an empty lookup."""
+    (tmp_path / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
+    assert load_participants_tsv(tmp_path) == {}

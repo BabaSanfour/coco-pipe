@@ -28,13 +28,15 @@ def test_save_and_load_fit_artifact(tmp_path):
 
     save_fit_artifact(tmp_path, embedding, ids, fit_payload, metrics, diagnostics)
 
-    assert (tmp_path / "test_fit_embedding.npy").exists()
-    assert (tmp_path / "test_fit_ids.npy").exists()
-    assert (tmp_path / "test_fit_fit.json").exists()
-    assert (tmp_path / "test_fit_metrics.json").exists()
-    assert (tmp_path / "test_fit_diagnostics.npz").exists()
-    assert (tmp_path / "artifact_manifest.json").exists()
+    # Compact three-file layout.
+    assert (tmp_path / "fit.npz").exists()
+    assert (tmp_path / "fit.json").exists()
     assert (tmp_path / "_SUCCESS").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "_SUCCESS",
+        "fit.json",
+        "fit.npz",
+    ]
 
     loaded = load_fit_artifact(tmp_path)
     np.testing.assert_allclose(loaded["embedding"], embedding)
@@ -48,31 +50,33 @@ def test_save_and_load_fit_artifact(tmp_path):
     assert loaded["path"] == tmp_path
 
 
-def test_load_fit_artifact_fallbacks(tmp_path):
-    # Test loading when manifest is missing but files exist
+def test_load_fit_artifact_legacy_layout(tmp_path):
+    # Artifacts written by the previous seven-file layout must still load.
     embedding = np.random.rand(10, 2)
     ids = np.arange(10)
-    fit_payload = {"reducer": "PCA", "artifact_stem": "test_fallback"}
-    metrics = {"trustworthiness": 0.8}
-    diagnostics = {"loss": 0.1}
-
-    save_fit_artifact(tmp_path, embedding, ids, fit_payload, metrics, diagnostics)
-
-    # delete manifest
-    (tmp_path / "artifact_manifest.json").unlink()
+    np.save(tmp_path / "old_embedding.npy", embedding)
+    np.save(tmp_path / "old_ids.npy", np.asarray(ids, dtype=object))
+    (tmp_path / "old_fit.json").write_text(json.dumps({"reducer": "PCA"}))
+    (tmp_path / "old_metrics.json").write_text(json.dumps({"trustworthiness": 0.8}))
+    np.savez_compressed(
+        tmp_path / "old_diagnostics.npz",
+        payload=np.asarray([{"loss": 0.1}], dtype=object),
+    )
 
     loaded = load_fit_artifact(tmp_path)
     np.testing.assert_allclose(loaded["embedding"], embedding)
-    assert loaded["fit"] == fit_payload
+    assert loaded["fit"] == {"reducer": "PCA"}
+    assert loaded["metrics"] == {"trustworthiness": 0.8}
+    assert loaded["diagnostics"]["loss"] == 0.1
 
 
 def test_save_and_load_eval_artifact(tmp_path):
     eval_payload = {"score": 0.95, "artifact_stem": "my_eval"}
     save_eval_artifact(tmp_path, eval_payload)
 
-    assert (tmp_path / "my_eval_eval.json").exists()
-    assert (tmp_path / "artifact_manifest.json").exists()
+    assert (tmp_path / "eval.json").exists()
     assert (tmp_path / "_SUCCESS").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["_SUCCESS", "eval.json"]
 
     loaded = _load_eval_payload(tmp_path)
     assert loaded == eval_payload

@@ -110,7 +110,7 @@ class DataContainer:
                 f"but `dims` has {len(self.dims)} labels {self.dims}."
             )
 
-        # Check coords lengths
+        # Check coords lengths.
         for dim, labels in self.coords.items():
             if dim in self.dims:
                 axis = self.dims.index(dim)
@@ -124,6 +124,24 @@ class DataContainer:
     def shape(self) -> Tuple[int, ...]:
         return self.X.shape
 
+    def _coord_axis(self, name: str, labels: Any, obs_dim_idx: int) -> int:
+        """Resolve the data axis a coordinate aligns to, or ``-1`` if none.
+
+        A coordinate named exactly like a dimension aligns to that dimension.
+        Otherwise alignment is inferred by length, preferring the ``obs`` axis
+        when several dimensions share the same length so that observation-level
+        metadata is never mis-assigned to another axis.
+        """
+        if name in self.dims:
+            return self.dims.index(name)
+        length = len(labels)
+        if obs_dim_idx != -1 and length == self.X.shape[obs_dim_idx]:
+            return obs_dim_idx
+        for axis, dim_len in enumerate(self.X.shape):
+            if length == dim_len:
+                return axis
+        return -1
+
     def save(self, path: Union[str, Any]) -> None:
         """
         Save the DataContainer to disk using joblib.
@@ -133,14 +151,10 @@ class DataContainer:
         path : str or Path
             Destination file path.
         """
-        from pathlib import Path
+        from ._serialization import save_object
 
-        import joblib
-
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, p)
-        logger.info(f"DataContainer saved to {p}")
+        saved = save_object(self, path)
+        logger.info(f"DataContainer saved to {saved}")
 
     def observation_frame(self) -> pd.DataFrame:
         """Return observation-aligned coordinates and stable sample IDs."""
@@ -172,19 +186,9 @@ class DataContainer:
         -------
         DataContainer
         """
-        from pathlib import Path
+        from ._serialization import load_object
 
-        import joblib
-
-        p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"File not found: {p}")
-
-        obj = joblib.load(p)
-        if not isinstance(obj, cls):
-            raise TypeError(f"Loaded object is {type(obj)}, expected {cls.__name__}")
-
-        return obj
+        return load_object(path, expected_type=cls)
 
     @classmethod
     def concat(
@@ -462,44 +466,30 @@ class DataContainer:
             return self
 
         slices = [slice(None)] * self.X.ndim
-
-        self.X.shape[0] if "obs" in self.dims else 0
         obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
 
-        new_coords = self.coords.copy()
-
-        # Apply slicers
+        # Build the per-axis slicers from the requested indexers.
         for dim_name, indices in indexers.items():
             if dim_name not in self.dims:
                 logger.warning(
                     f"Dimension {dim_name} not in {self.dims}, skipping isel."
                 )
                 continue
-
-            d_idx = self.dims.index(dim_name)
-
-            # Normalize int to list to preserve dimension
+            # Normalize int to list to preserve the dimension.
             if isinstance(indices, int):
                 indices = [indices]
+            slices[self.dims.index(dim_name)] = indices
 
-            # Update specific dim slice
-            slices[d_idx] = indices
-
-            # Handle metadata alignment
-            dim_len_old = self.X.shape[d_idx]
-
-            # We must be careful not to update coords twice if orthogonal slicing
-            # But here we just prepare new_coords values
-
-            for k, v in self.coords.items():
-                if dim_name in self.dims and k == dim_name:
-                    # This IS the coordinate for this dimension
-                    new_coords[k] = np.array(v)[indices]
-                elif (
-                    len(v) == dim_len_old and k not in self.dims
-                ):  # Don't overwrite other dim labels
-                    # Heuristic match
-                    new_coords[k] = np.array(v)[indices]
+        # Re-slice each coordinate exactly once, using its resolved axis. This
+        # avoids mis-slicing aux coordinates when two dimensions share a length.
+        new_coords = self.coords.copy()
+        for name, labels in self.coords.items():
+            axis = self._coord_axis(name, labels, obs_dim_idx)
+            if axis == -1:
+                continue
+            sl = slices[axis]
+            if not (isinstance(sl, slice) and sl == slice(None)):
+                new_coords[name] = np.array(labels)[sl]
 
         # Orthogonal Application
         try:
@@ -669,7 +659,7 @@ class DataContainer:
             tmp = df_meta.assign(__strata__=strata_s)
             indices_parts = []
 
-            for _, g in tmp.groupby("__strata__"):
+            for _, g in tmp.groupby("__strata__", observed=False):
                 sc = g[target].value_counts()
                 if len(sc) <= 1:
                     # Cannot balance within a single-class stratum
@@ -795,8 +785,6 @@ class DataContainer:
         >>> sub = container.select(ids=first_n)
         """
         slices = [slice(None)] * self.X.ndim
-        self.coords.copy()
-
         obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
 
         for key, query in selections.items():
@@ -967,38 +955,13 @@ class DataContainer:
             indexer[axis] = sl
             X_new = X_new[tuple(indexer)]
 
-        # Update coordinates to match new X
+        # Update coordinates to match new X. Each coord is mapped to its axis
+        # once (obs-priority on ties); coords matching no axis are dropped.
         final_coords = {}
         for coord_name, labels in self.coords.items():
-            # Check if coordinate aligns with any dimension
-            aligned_dim_idx = -1
-
-            if coord_name in self.dims:
-                aligned_dim_idx = self.dims.index(coord_name)
-            else:
-                # Heuristic: Find matching dimension length
-                # Note: Ambiguity if multiple dims have same length.
-                # We prioritize 'obs' if length matches, then others.
-
-                # Check obs first
-                if obs_dim_idx != -1 and len(labels) == self.X.shape[obs_dim_idx]:
-                    aligned_dim_idx = obs_dim_idx
-                else:
-                    for d_i, d_len in enumerate(self.X.shape):
-                        if len(labels) == d_len:
-                            aligned_dim_idx = d_i
-                            break
-
+            aligned_dim_idx = self._coord_axis(coord_name, labels, obs_dim_idx)
             if aligned_dim_idx != -1:
-                sl = slices[aligned_dim_idx]
-                if isinstance(sl, slice):
-                    final_coords[coord_name] = np.array(labels)[sl]
-                else:
-                    final_coords[coord_name] = np.array(labels)[sl]
-            else:
-                # Coordinate didn't match any dimension? Drop it to be safe, or keep?
-                # If validation passes, this shouldn't happen unless corrupt.
-                pass
+                final_coords[coord_name] = np.array(labels)[slices[aligned_dim_idx]]
 
         # Update y/ids
         y_new = self.y

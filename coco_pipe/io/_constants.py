@@ -34,3 +34,11 @@ GROUP_BY_COLUMN: dict[str, str] = {
 """Maps a ``group_by`` granularity to the ``classify_descriptor_columns`` column
 that carries its label. Shared by the QC drop path and downstream callers so the
 set of valid ``group_by`` values lives in one place."""
+
+REQUIRED_ARRAYS = {
+    "window_embeddings",
+    "recording_embedding",
+    "window_start",
+    "window_stop",
+    "window_index",
+}

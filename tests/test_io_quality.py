@@ -880,3 +880,120 @@ def test_filter_observations_extra():
     dc = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
     with pytest.raises(ValueError):
         _filter_observations(dc, np.array([True]))
+
+
+def _cov_flat_container():
+    return DataContainer(
+        X=np.random.rand(6, 4),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["f0", "f1", "f2", "f3"],
+            "subject": np.array(["a", "a", "b", "b", "c", "c"]),
+        },
+        ids=np.arange(6).astype(str),
+    )
+
+
+def test_qcresult_retention_rate_zero_input():
+    assert np.isnan(QCResult().retention_rate)
+
+
+def test_qcresult_summary_reports_dropped_columns():
+    result = QCResult(feature_columns_dropped=pd.DataFrame({"column": ["a", "b"]}))
+    assert result.summary()["n_feature_columns_dropped"] == 2
+
+
+def test_check_constant_columns_non_2d_array():
+    assert check_constant_columns(np.array([1, 2, 3])) == []
+
+
+def test_check_constant_columns_2d_no_constant():
+    assert check_constant_columns(np.array([[1.0, 2.0], [3.0, 4.0]])) == []
+
+
+def test_check_outliers_zscore_zero_std():
+    assert check_outliers_zscore(np.ones((4, 2))) is None
+
+
+def test_check_outliers_zscore_no_outlier():
+    assert check_outliers_zscore(np.array([[1.0, 2.0], [1.1, 2.1], [0.9, 1.9]])) is None
+
+
+def test_compute_row_outlier_scores_descriptor_names_misaligned():
+    df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
+    with pytest.raises(ValueError, match="descriptor_names must align"):
+        compute_row_outlier_scores(
+            df, ["a", "b"], group_by="family", descriptor_names=["only_one"]
+        )
+
+
+def test_drop_epoch_outliers_invalid_group_by():
+    with pytest.raises(ValueError, match="group_by must be"):
+        drop_epoch_outliers(_cov_flat_container(), group_by="bogus")
+
+
+def test_drop_epoch_outliers_invalid_min_obs():
+    with pytest.raises(ValueError, match="min_obs"):
+        drop_epoch_outliers(_cov_flat_container(), min_obs=0)
+
+
+def test_drop_epoch_outliers_group_by_feature():
+    masks, result = drop_epoch_outliers(_cov_flat_container(), group_by="feature")
+    assert isinstance(masks, dict)
+    assert result.thresholds["group_by"] == "feature"
+
+
+def test_drop_epoch_outliers_group_by_min_obs_raises():
+    with pytest.raises(RuntimeError, match="remain for family"):
+        drop_epoch_outliers(_cov_flat_container(), group_by="feature", min_obs=999)
+
+
+def test_drop_epoch_outliers_group_by_records_drop():
+    # One strong per-feature outlier is dropped, exercising record dedup.
+    X = np.ones((6, 2))
+    X[0, 0] = 1000.0
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "subject": np.array(["a"] * 6)},
+        ids=np.arange(6).astype(str),
+    )
+    _, result = drop_epoch_outliers(
+        container, group_by="feature", outlier_fraction_threshold=0.0
+    )
+    assert result.n_epochs_dropped >= 1
+    assert result.epochs_dropped[0].obs_index == 0
+
+
+def test_run_qc_without_subject_ids_uses_range():
+    # No subject coord and no ids -> subject ids fall back to positional range.
+    container = DataContainer(
+        X=np.random.rand(4, 3),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1", "f2"]},
+    )
+    _, result = run_qc(container, subject_z_threshold=None, epoch_z_threshold=None)
+    assert result.n_subjects_in == 4
+
+
+def test_run_qc_subject_ids_from_container_ids():
+    # No subject coord but ids present -> subject ids come from container.ids.
+    container = DataContainer(
+        X=np.random.rand(4, 2),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"]},
+        ids=np.array(["s1", "s1", "s2", "s2"]),
+    )
+    _, result = run_qc(container, subject_z_threshold=None, epoch_z_threshold=None)
+    assert result.n_subjects_in == 2
+
+
+def test_run_qc_with_feature_cols_subset():
+    container = _cov_flat_container()
+    cleaned, _ = run_qc(
+        container,
+        epoch_z_threshold=None,
+        subject_z_threshold=None,
+        feature_cols=["f0", "f1"],
+    )
+    assert cleaned.X.shape[0] == container.X.shape[0]

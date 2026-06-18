@@ -8,9 +8,10 @@ import warnings
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple
 
-import joblib
 import numpy as np
 import pandas as pd
+
+from coco_pipe.io import load_object, save_object
 
 from .geometry import (
     trajectory_acceleration,
@@ -352,14 +353,12 @@ class TrajectoryResult:
 
     def save(self, path: str | Path):
         """Save the TrajectoryResult object to disk."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path)
+        save_object(self, path)
 
     @classmethod
     def load(cls, path: str | Path) -> "TrajectoryResult":
         """Load a TrajectoryResult object from disk."""
-        res = joblib.load(path)
+        res = load_object(path)
         if not isinstance(res, cls):
             raise TypeError(
                 f"Loaded object is not a TrajectoryResult. Got {type(res)}."
@@ -450,14 +449,12 @@ class EmbeddingQualityResult:
 
     def save(self, path: str | Path):
         """Save the EmbeddingQualityResult object to disk."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path)
+        save_object(self, path)
 
     @classmethod
     def load(cls, path: str | Path) -> "EmbeddingQualityResult":
         """Load an EmbeddingQualityResult object from disk."""
-        res = joblib.load(path)
+        res = load_object(path)
         if not isinstance(res, cls):
             raise TypeError(
                 f"Loaded object is not an EmbeddingQualityResult. Got {type(res)}."
@@ -515,14 +512,12 @@ class VelocityResult:
 
     def save(self, path: str | Path):
         """Save the VelocityResult object to disk."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, path)
+        save_object(self, path)
 
     @classmethod
     def load(cls, path: str | Path) -> "VelocityResult":
         """Load a VelocityResult object from disk."""
-        res = joblib.load(path)
+        res = load_object(path)
         if not isinstance(res, cls):
             raise TypeError(f"Loaded object is not a VelocityResult. Got {type(res)}.")
         return res

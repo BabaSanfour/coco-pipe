@@ -287,10 +287,24 @@ def test_load_descriptor_table_rejects_nonpositive_threshold(descriptor_files):
 
 def test_save_descriptor_table_extra(tmp_path):
     df = pd.DataFrame({"a": [1]})
+    # Default writes parquet only (csv is opt-in to halve the footprint).
     save_descriptor_table(df, tmp_path / "test", feature_columns=["a"])
     assert (tmp_path / "test.parquet").exists()
-    assert (tmp_path / "test.csv").exists()
+    assert not (tmp_path / "test.csv").exists()
     assert (tmp_path / "test_feature_columns.json").exists()
+
+    # Opt in to the human-readable csv alongside parquet.
+    save_descriptor_table(df, tmp_path / "both", formats=("parquet", "csv"))
+    assert (tmp_path / "both.parquet").exists()
+    assert (tmp_path / "both.csv").exists()
+
+
+def test_save_descriptor_table_rejects_bad_formats(tmp_path):
+    df = pd.DataFrame({"a": [1]})
+    with pytest.raises(ValueError, match="parquet"):
+        save_descriptor_table(df, tmp_path / "x", formats=())
+    with pytest.raises(ValueError, match="parquet"):
+        save_descriptor_table(df, tmp_path / "x", formats=("feather",))
 
 
 def test_check_feature_column_consistency_extra(tmp_path):
@@ -421,3 +435,57 @@ def test_load_descriptor_table_location_statistic(tmp_path):
 
     with pytest.raises(ValueError, match="location_statistic"):
         load_descriptor_table(table_path, cols_path, location_statistic="mode")
+
+
+def test_load_descriptor_table_exclude_subfamilies_partial(descriptor_files):
+    from coco_pipe.descriptors.qc import descriptor_subfamily
+
+    table_path, columns_path, _ = descriptor_files
+    drop = descriptor_subfamily("complexity", "sample_entropy")
+    container = load_descriptor_table(
+        table_path, columns_path, exclude_subfamilies=[drop]
+    )
+    features = [str(f) for f in container.coords["feature"]]
+    assert all("sample_entropy" not in f for f in features)
+    assert any("abs_alpha" in f for f in features)
+
+
+def test_load_descriptor_table_exclude_all_subfamilies_raises(descriptor_files):
+    from coco_pipe.descriptors.qc import descriptor_subfamily
+
+    table_path, columns_path, _ = descriptor_files
+    excluded = [
+        descriptor_subfamily("band", "abs_alpha"),
+        descriptor_subfamily("complexity", "sample_entropy"),
+    ]
+    with pytest.raises(RuntimeError, match="excluding sub-families"):
+        load_descriptor_table(table_path, columns_path, exclude_subfamilies=excluded)
+
+
+def test_load_descriptor_table_missing_id_column(tmp_path):
+    feature_columns = ["band_abs_alpha_ch-Fz"]
+    table = pd.DataFrame({"condition": ["x", "y"], feature_columns[0]: [1.0, 2.0]})
+    table_path = tmp_path / "no_id.csv"
+    cols_path = tmp_path / "no_id_cols.json"
+    table.to_csv(table_path, index=False)
+    cols_path.write_text(json.dumps(feature_columns), encoding="utf-8")
+    with pytest.raises(ValueError, match="Cannot infer obs IDs"):
+        load_descriptor_table(table_path, cols_path)
+
+
+def test_load_descriptor_table_all_columns_degenerate(tmp_path):
+    feature_columns = ["band_abs_alpha_ch-Fz", "band_abs_beta_ch-Fz"]
+    table = pd.DataFrame(
+        {
+            "obs_id": ["o1", "o2", "o3"],
+            "subject": ["1", "2", "3"],
+            feature_columns[0]: [1.0, 1.0, 1.0],  # constant -> degenerate
+            feature_columns[1]: [2.0, 2.0, 2.0],  # constant -> degenerate
+        }
+    )
+    table_path = tmp_path / "degenerate.csv"
+    cols_path = tmp_path / "degenerate_cols.json"
+    table.to_csv(table_path, index=False)
+    cols_path.write_text(json.dumps(feature_columns), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="survived column pruning"):
+        load_descriptor_table(table_path, cols_path, drop_degenerate_columns=True)
