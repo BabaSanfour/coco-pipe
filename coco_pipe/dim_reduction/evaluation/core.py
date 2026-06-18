@@ -41,6 +41,7 @@ from sklearn.linear_model import LogisticRegression
 if TYPE_CHECKING:
     from ..core import DimReduction
 
+from ..config import EvaluationConfig
 from ._supervised import _cross_validate_score
 from .geometry import (
     trajectory_acceleration,
@@ -452,7 +453,8 @@ def evaluate_embedding(
     random_state: Optional[int] = None,
     n_neighbors: int = 5,
     k_values: Optional[Sequence[int]] = None,
-    separation_method: str = "centroid",
+    separation_method: Optional[str] = None,
+    config: Optional[EvaluationConfig] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate an already computed embedding.
@@ -493,10 +495,16 @@ def evaluate_embedding(
     n_neighbors : int, default=5
         Neighborhood size for single-score standard metrics.
     k_values : sequence of int, optional
-        Neighborhood sizes for benchmark sweeps.
-    separation_method : str, default="centroid"
+        Neighborhood sizes for benchmark sweeps. Explicit values take precedence
+        over ``config``.
+    separation_method : str, optional
         Separation definition passed to ``trajectory_separation`` when
-        trajectory labels are available.
+        trajectory labels are available. ``None`` defers to ``config`` and
+        otherwise falls back to ``"centroid"``.
+    config : EvaluationConfig, optional
+        Typed evaluation configuration. Supplies ``metrics``, ``k_values`` (from
+        ``config.k_range``), and ``separation_method`` for any of those left
+        unset by an explicit argument. Explicit arguments always win.
 
     Returns
     -------
@@ -556,6 +564,17 @@ def evaluate_embedding(
     >>> "trajectory_speed_mean" in result["metrics"]
     True
     """
+    if config is not None:
+        score_kwargs = config.to_score_kwargs()
+        if metrics is None:
+            metrics = score_kwargs["metrics"]
+        if k_values is None:
+            k_values = score_kwargs["k_values"]
+        if separation_method is None:
+            separation_method = score_kwargs["separation_method"]
+    if separation_method is None:
+        separation_method = "centroid"
+
     X_emb = np.asarray(X_emb)
     if X is not None:
         X = np.asarray(X)

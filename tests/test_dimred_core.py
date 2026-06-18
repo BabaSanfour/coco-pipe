@@ -15,6 +15,7 @@ from coco_pipe.dim_reduction.evaluation._supervised import (
     _make_splitter,
 )
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
+from coco_pipe.io.structures import DataContainer
 
 
 def _install_fake_trca(monkeypatch, n_channels: int = 5):
@@ -87,6 +88,76 @@ def test_fit_transform_pca():
     dr = DimReduction("PCA", n_components=2)
     emb = dr.fit_transform(X)
     assert emb.shape == (20, 2)
+
+
+def test_fit_transform_datacontainer_in_out():
+    # A DataContainer in yields an embedding DataContainer out, preserving
+    # ids, obs-coords, y, and meta; an ndarray in still yields an ndarray.
+    X = np.random.rand(20, 5)
+    ids = np.array([f"r{i}" for i in range(20)], dtype=object)
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        ids=ids,
+        y=np.arange(20),
+        coords={"feature": np.arange(5), "cond": np.array(["a"] * 20)},
+        meta={"source": "unit-test"},
+    )
+
+    dr = DimReduction("PCA", n_components=2)
+    emb = dr.fit_transform(container)
+    assert isinstance(emb, DataContainer)
+    assert emb.dims == ("obs", "component")
+    assert emb.shape == (20, 2)
+    np.testing.assert_array_equal(emb.ids, ids)
+    np.testing.assert_array_equal(emb.y, np.arange(20))
+    assert list(emb.coords["component"]) == ["component_1", "component_2"]
+    assert list(emb.coords["cond"]) == ["a"] * 20
+    assert emb.meta["source"] == "unit-test"
+
+    # transform() on a fitted reducer is likewise container-in/out.
+    emb2 = dr.transform(container)
+    assert isinstance(emb2, DataContainer)
+    assert emb2.dims == ("obs", "component")
+
+    # ndarray in -> ndarray out (back-compat with the numeric path).
+    arr_emb = DimReduction("PCA", n_components=2).fit_transform(X)
+    assert isinstance(arr_emb, np.ndarray)
+    assert arr_emb.shape == (20, 2)
+
+
+def test_score_accepts_datacontainer_and_config():
+    from coco_pipe.dim_reduction.config import EvaluationConfig
+
+    X = np.random.rand(50, 10)
+    ids = np.array([f"r{i}" for i in range(50)], dtype=object)
+    container = DataContainer(
+        X=X, dims=("obs", "feature"), ids=ids, coords={"feature": np.arange(10)}
+    )
+    dr = DimReduction("PCA", n_components=2)
+    emb_container = dr.fit_transform(container)
+
+    # score accepts DataContainer for X_emb and X.
+    scores = dr.score(emb_container, X=container)
+    assert "trustworthiness" in scores["metrics"]
+
+    # A config drives the same scoring inputs as the explicit kwargs would,
+    # producing identical tidy records (sweep mode via k_range).
+    cfg = EvaluationConfig(metrics=["trustworthiness", "continuity"], k_range=[10, 20])
+    via_config = dr.score(emb_container, X=container, config=cfg)
+    via_kwargs = dr.score(
+        emb_container,
+        X=container,
+        metrics=cfg.metrics,
+        k_values=cfg.k_range,
+        separation_method=cfg.separation_method,
+    )
+    assert via_config["metrics"] == via_kwargs["metrics"]
+    assert len(dr.metric_records_) > 0
+    ks = {
+        r["scope_value"] for r in dr.metric_records_ if r["metric"] == "trustworthiness"
+    }
+    assert ks == {10, 20}
 
 
 def test_score():
@@ -322,13 +393,13 @@ def test_validate_input_errors():
     dr = DimReduction("TRCA", n_components=2)
     X_2d = np.zeros((10, 5))
     with pytest.raises(ValueError, match="requires 3D input"):
-        dr._validate_input(X_2d)
+        dr._prepare_input(X_2d)
 
     # Test 2D method with 3D data
     dr2 = DimReduction("PCA", n_components=2)
     X_3d = np.zeros((10, 5, 2))
     with pytest.raises(ValueError, match="requires 2D input"):
-        dr2._validate_input(X_3d)
+        dr2._prepare_input(X_3d)
 
 
 def test_score_errors_and_edge_cases(monkeypatch):

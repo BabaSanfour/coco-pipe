@@ -9,6 +9,7 @@ from coco_pipe.dim_reduction.artifacts import (
     _build_eval_record,
     _build_fit_record,
     _build_result_record,
+    _embedding_container,
     _load_eval_payload,
     _write_run_status,
     load_fit_artifact,
@@ -17,6 +18,7 @@ from coco_pipe.dim_reduction.artifacts import (
     save_fit_artifact,
     update_runs,
 )
+from coco_pipe.io.structures import DataContainer
 
 
 def test_save_and_load_fit_artifact(tmp_path):
@@ -49,6 +51,16 @@ def test_save_and_load_fit_artifact(tmp_path):
     assert loaded["manifest"]["artifact_stem"] == "test_fit"
     assert loaded["path"] == tmp_path
 
+    # The embedding is also exposed as a DataContainer view (carry structure),
+    # while the raw embedding/ids arrays remain for direct access.
+    container = loaded["embedding_container"]
+    assert isinstance(container, DataContainer)
+    assert container.dims == ("obs", "component")
+    np.testing.assert_allclose(container.X, embedding)
+    np.testing.assert_array_equal(container.ids, ids)
+    assert list(container.coords["component"]) == ["component_1", "component_2"]
+    assert container.meta["fit"] == fit_payload
+
 
 def test_load_fit_artifact_legacy_layout(tmp_path):
     # Artifacts written by the previous seven-file layout must still load.
@@ -68,6 +80,14 @@ def test_load_fit_artifact_legacy_layout(tmp_path):
     assert loaded["fit"] == {"reducer": "PCA"}
     assert loaded["metrics"] == {"trustworthiness": 0.8}
     assert loaded["diagnostics"]["loss"] == 0.1
+    assert isinstance(loaded["embedding_container"], DataContainer)
+    np.testing.assert_allclose(loaded["embedding_container"].X, embedding)
+
+
+def test_embedding_container_returns_none_for_non_2d():
+    # Native trajectory tensors do not map onto a component axis.
+    traj = np.zeros((4, 10, 2))
+    assert _embedding_container(traj, np.arange(4), {"reducer": "PCA"}) is None
 
 
 def test_save_and_load_eval_artifact(tmp_path):

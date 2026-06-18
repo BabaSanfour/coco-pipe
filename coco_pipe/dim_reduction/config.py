@@ -646,6 +646,27 @@ class EvaluationConfig(_StrictConfigModel):
             )
         return self
 
+    def to_score_kwargs(self) -> dict[str, Any]:
+        """Return scoring keyword arguments for ``evaluate_embedding``.
+
+        Maps the config's evaluation fields onto the keyword arguments consumed
+        by :func:`coco_pipe.dim_reduction.evaluation.core.evaluate_embedding`
+        (and :meth:`coco_pipe.dim_reduction.core.DimReduction.score`). Ranking
+        fields (``selection_metric``, ``selection_k``, ``tie_breakers``) are not
+        included here — they drive
+        :meth:`coco_pipe.dim_reduction.evaluation.core.MethodSelector.rank_methods`.
+
+        Returns
+        -------
+        dict
+            Mapping with ``metrics``, ``k_values``, and ``separation_method``.
+        """
+        return {
+            "metrics": list(self.metrics),
+            "k_values": list(self.k_range),
+            "separation_method": self.separation_method,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Eval-spec helpers

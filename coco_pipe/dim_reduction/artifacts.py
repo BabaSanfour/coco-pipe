@@ -41,14 +41,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import numpy as np
 
 from coco_pipe.io import read_json, save_npz, write_json
-
-if TYPE_CHECKING:
-    from coco_pipe.io.structures import DataContainer
+from coco_pipe.io.structures import DataContainer
 
 __all__ = [
     # Persistence
@@ -216,6 +214,33 @@ def _load_eval_payload(path: Path) -> dict[str, Any]:
     raise FileNotFoundError(f"No eval payload found in {path}")
 
 
+def _embedding_container(
+    embedding: np.ndarray, ids: np.ndarray, fit: dict[str, Any]
+) -> Optional[DataContainer]:
+    """Reconstruct the embedding as a ``DataContainer`` from artifact arrays.
+
+    Returns a ``('obs', 'component')`` container carrying the observation ids,
+    a ``component`` coordinate, and the fit payload under ``meta['fit']``. The
+    obs-level coordinates from the original fit container are not persisted in
+    the compact artifact layout, so they are intentionally absent here; eval
+    sources its labels/groups from a fresh container instead.
+
+    Returns ``None`` for non-2D embeddings (e.g. native trajectory tensors),
+    which do not map onto a ``component`` axis.
+    """
+    embedding = np.asarray(embedding)
+    if embedding.ndim != 2:
+        return None
+    names = [f"component_{i + 1}" for i in range(embedding.shape[1])]
+    return DataContainer(
+        X=embedding,
+        dims=("obs", "component"),
+        coords={"component": np.asarray(names)},
+        ids=np.asarray(ids),
+        meta={"fit": dict(fit)},
+    )
+
+
 def load_fit_artifact(path: Path) -> dict[str, Any]:
     """Load a fit artifact directory into a dict.
 
@@ -233,7 +258,10 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
     -------
     dict with keys:
         ``embedding``, ``ids``, ``fit``, ``metrics``, ``diagnostics``,
-        ``manifest``, ``path``.
+        ``manifest``, ``path``, and ``embedding_container``. The
+        ``embedding_container`` is a :class:`~coco_pipe.io.structures.DataContainer`
+        view of the embedding (or ``None`` for non-2D embeddings); the
+        ``embedding`` and ``ids`` arrays remain for direct array access.
     """
     arrays_path = path / FIT_ARRAYS_NAME
     meta_path = path / FIT_META_NAME
@@ -245,14 +273,16 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
             diagnostics = (
                 dict(npz["diagnostics"][0]) if "diagnostics" in npz.files else {}
             )
+        fit = meta.get("fit", {})
         return {
             "embedding": embedding,
             "ids": ids,
-            "fit": meta.get("fit", {}),
+            "fit": fit,
             "metrics": meta.get("metrics", {}),
             "diagnostics": diagnostics,
             "manifest": {"artifact_stem": meta.get("artifact_stem")},
             "path": path,
+            "embedding_container": _embedding_container(embedding, ids, fit),
         }
 
     # --- Legacy seven-file layout fallback ---
@@ -292,14 +322,17 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
 
     fit = read_json(fit_path)
     metrics = read_json(metrics_path)
+    embedding = np.load(embedding_path, allow_pickle=True)
+    ids = np.load(ids_path, allow_pickle=True)
     return {
-        "embedding": np.load(embedding_path, allow_pickle=True),
-        "ids": np.load(ids_path, allow_pickle=True),
+        "embedding": embedding,
+        "ids": ids,
         "fit": fit,
         "metrics": metrics,
         "diagnostics": diagnostics,
         "manifest": manifest,
         "path": path,
+        "embedding_container": _embedding_container(embedding, ids, fit),
     }
 
 

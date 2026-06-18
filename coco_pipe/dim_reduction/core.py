@@ -17,8 +17,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
+from coco_pipe.io.structures import DataContainer
+
 from .analysis import interpret_features
-from .config import BaseReducerConfig, get_reducer_class
+from .config import BaseReducerConfig, EvaluationConfig, get_reducer_class
 from .evaluation.core import evaluate_embedding
 from .reducers.base import BaseReducer
 
@@ -160,41 +162,83 @@ class DimReduction:
         self.interpretation_ = {}
         self.interpretation_records_ = []
 
-    def _validate_input(self, X: Any) -> np.ndarray:
+    def _prepare_input(self, X: Any) -> tuple[np.ndarray, Optional[DataContainer]]:
         """
-        Validate reducer input shape and coerce to a NumPy array.
+        Validate reducer input shape and unwrap it to a NumPy array.
 
         Parameters
         ----------
-        X : array-like or MNE object
-            Input data accepted by the reducer. Objects exposing ``get_data()``
-            are unwrapped before validation.
+        X : DataContainer, array-like, or MNE object
+            Input data accepted by the reducer. A ``DataContainer`` is unwrapped
+            to its ``X`` array and remembered so the embedding can be re-wrapped
+            as a container; objects exposing ``get_data()`` (e.g. MNE) are
+            unwrapped to arrays.
 
         Returns
         -------
-        X : np.ndarray
+        data : np.ndarray
             Validated reducer input.
+        source : DataContainer or None
+            The source container when ``X`` was a ``DataContainer``, else
+            ``None``.
 
         Raises
         ------
         ValueError
             If the input dimensionality does not match the reducer contract.
         """
-        if hasattr(X, "get_data"):  # Handle MNE objects
-            X = X.get_data()
+        source = X if isinstance(X, DataContainer) else None
+        if source is not None:
+            data = source.X
+        elif hasattr(X, "get_data"):  # Handle MNE objects
+            data = X.get_data()
+        else:
+            data = X
 
-        X = np.asarray(X)
+        data = np.asarray(data)
 
         caps = self.reducer.capabilities
         expected_ndim = caps.get("input_ndim", 2)
 
-        if X.ndim != expected_ndim:
+        if data.ndim != expected_ndim:
             raise ValueError(
                 f"Method '{self.method}' requires {expected_ndim}D input; "
-                f"got shape {X.shape}."
+                f"got shape {data.shape}."
             )
 
-        return X
+        return data, source
+
+    def _wrap_embedding(
+        self, embedding: np.ndarray, source: Optional[DataContainer]
+    ) -> Any:
+        """
+        Re-attach an embedding to its source container when possible.
+
+        Parameters
+        ----------
+        embedding : np.ndarray
+            Reduced representation returned by the reducer.
+        source : DataContainer or None
+            Source container from :meth:`_prepare_input`, or ``None`` when the
+            call was made with a raw array.
+
+        Returns
+        -------
+        DataContainer or np.ndarray
+            An embedding ``DataContainer`` with a ``component`` axis when
+            ``source`` is a container and the embedding shares its observation
+            layout (the standard 2-D case); otherwise the raw embedding array.
+            Native 3-D trajectory embeddings stay as arrays.
+        """
+        embedding = np.asarray(embedding)
+        if (
+            source is None
+            or embedding.ndim != source.X.ndim
+            or embedding.shape[:-1] != source.X.shape[:-1]
+        ):
+            return embedding
+        names = [f"component_{i + 1}" for i in range(embedding.shape[-1])]
+        return source.with_features(embedding, names=names, new_dim_name="component")
 
     def fit(self, X: Any, y: Optional[Any] = None) -> "DimReduction":
         """
@@ -202,7 +246,7 @@ class DimReduction:
 
         Parameters
         ----------
-        X : array-like or MNE object
+        X : DataContainer, array-like, or MNE object
             Input data in the reducer's native layout.
         y : array-like, optional
             Optional supervision forwarded to the reducer.
@@ -212,47 +256,53 @@ class DimReduction:
         self : DimReduction
             The fitted reducer.
         """
-        X_arr = self._validate_input(X)
+        X_arr, _ = self._prepare_input(X)
         self._reset_cached_outputs()
         self.reducer.fit(X_arr, y=y)
         return self
 
-    def transform(self, X: Any) -> np.ndarray:
+    def transform(self, X: Any) -> Any:
         """
         Transform new data with a fitted reducer.
 
         Parameters
         ----------
-        X : array-like or MNE object
+        X : DataContainer, array-like, or MNE object
             Input data in the reducer's native layout.
 
         Returns
         -------
-        X_emb : np.ndarray
-            Reduced representation returned by the reducer.
+        X_emb : DataContainer or np.ndarray
+            Reduced representation. A ``DataContainer`` input yields an embedding
+            ``DataContainer`` (``component`` axis, ids/coords/meta preserved) for
+            standard 2-D embeddings; array input yields an array.
         """
-        X = self._validate_input(X)
-        return self.reducer.transform(X)
+        X_arr, source = self._prepare_input(X)
+        embedding = self.reducer.transform(X_arr)
+        return self._wrap_embedding(embedding, source)
 
-    def fit_transform(self, X: Any, y: Optional[Any] = None) -> np.ndarray:
+    def fit_transform(self, X: Any, y: Optional[Any] = None) -> Any:
         """
         Fit the reducer and return the reduced representation.
 
         Parameters
         ----------
-        X : array-like or MNE object
+        X : DataContainer, array-like, or MNE object
             Input data in the reducer's native layout.
         y : array-like, optional
             Optional supervision forwarded to the reducer.
 
         Returns
         -------
-        X_emb : np.ndarray
-            Reduced representation returned by the reducer.
+        X_emb : DataContainer or np.ndarray
+            Reduced representation. A ``DataContainer`` input yields an embedding
+            ``DataContainer`` (``component`` axis, ids/coords/meta preserved) for
+            standard 2-D embeddings; array input yields an array.
         """
-        X = self._validate_input(X)
+        X_arr, source = self._prepare_input(X)
         self._reset_cached_outputs()
-        return self.reducer.fit_transform(X, y=y)
+        embedding = self.reducer.fit_transform(X_arr, y=y)
+        return self._wrap_embedding(embedding, source)
 
     def get_components(self) -> np.ndarray:
         """
@@ -272,7 +322,7 @@ class DimReduction:
 
     def score(
         self,
-        X_emb: np.ndarray,
+        X_emb: Any,
         X: Any = None,
         n_neighbors: int = 5,
         metrics: Optional[List[str]] = None,
@@ -280,26 +330,31 @@ class DimReduction:
         labels: Optional[np.ndarray] = None,
         groups: Optional[np.ndarray] = None,
         times: Optional[np.ndarray] = None,
-        separation_method: str = "centroid",
+        separation_method: Optional[str] = None,
+        config: Optional[EvaluationConfig] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Evaluate an explicit embedding against the original data.
 
         Parameters
         ----------
-        X_emb : array-like
-            Embedded data to evaluate.
-        X : array-like, optional
+        X_emb : DataContainer or array-like
+            Embedded data to evaluate. A ``DataContainer`` is unwrapped to its
+            ``X`` array.
+        X : DataContainer or array-like, optional
             Original high-dimensional data in evaluation-ready layout. This is
             required for standard 2D metrics and optional for native 3D
-            trajectory metrics.
+            trajectory metrics. A ``DataContainer`` is unwrapped to its ``X``
+            array.
         n_neighbors : int, default=5
             K-nearest neighbors size for metric computation.
         metrics : list of str, optional
             Metric selectors to compute. ``None`` evaluates all metric families
-            available for the embedding shape.
+            available for the embedding shape. Explicit values take precedence
+            over ``config``.
         k_values : list of int, optional
             Neighborhood sizes used for multi-scale standard metric evaluation.
+            Explicit values take precedence over ``config``.
         labels : np.ndarray, optional
             Optional labels aligned with the embedding. Used for trajectory
             separation when ``X_emb`` is 3D and for explicit supervised 2D
@@ -311,9 +366,15 @@ class DimReduction:
         times : np.ndarray, optional
             Optional trajectory time coordinates aligned with the trajectory
             length axis.
-        separation_method : str, default="centroid"
+        separation_method : str, optional
             Separation definition passed to trajectory evaluation when labels
-            are available for native 3D trajectory embeddings.
+            are available for native 3D trajectory embeddings. ``None`` defers to
+            ``config`` and otherwise falls back to ``"centroid"``.
+        config : EvaluationConfig, optional
+            Typed evaluation configuration. Supplies ``metrics``, ``k_values``
+            (from ``config.k_range``), and ``separation_method`` when those are
+            not passed explicitly. Mirrors how ``DimReduction.__init__`` accepts
+            a ``BaseReducerConfig``.
 
         Returns
         -------
@@ -327,6 +388,10 @@ class DimReduction:
         ``X_emb`` explicitly. ``X`` is only required when the requested
         evaluation path needs the original high-dimensional samples.
         """
+        if isinstance(X_emb, DataContainer):
+            X_emb = X_emb.X
+        if isinstance(X, DataContainer):
+            X = X.X
         payload = evaluate_embedding(
             X_emb=X_emb,
             X=X,
@@ -341,6 +406,7 @@ class DimReduction:
             n_neighbors=n_neighbors,
             k_values=k_values,
             separation_method=separation_method,
+            config=config,
         )
 
         metrics_payload = payload["metrics"]

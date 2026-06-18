@@ -119,6 +119,20 @@ def test_evaluation_config():
     assert eval_conf_sep.separation_method == "within_between_ratio"
 
 
+def test_evaluation_config_to_score_kwargs():
+    """to_score_kwargs maps the config onto evaluate_embedding kwargs."""
+    cfg = EvaluationConfig(
+        metrics=["trustworthiness", "continuity"],
+        k_range=[5, 10],
+        separation_method="mahalanobis",
+    )
+    assert cfg.to_score_kwargs() == {
+        "metrics": ["trustworthiness", "continuity"],
+        "k_values": [5, 10],
+        "separation_method": "mahalanobis",
+    }
+
+
 def test_tsne_config_validation():
     # Valid
     cfg = TSNEConfig(method="TSNE", perplexity=30, max_iter=750)

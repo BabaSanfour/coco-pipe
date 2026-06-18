@@ -151,6 +151,23 @@ def test_run_eval(tmp_path, dummy_container):
     )
     assert record2["status"] == "success"
 
+    # run_eval is tolerant of a DataContainer embedding in the fit artifact.
+    assert isinstance(fit_artifact["embedding_container"], DataContainer)
+    container_artifact = {
+        **fit_artifact,
+        "embedding": fit_artifact["embedding_container"],
+    }
+    record3 = run_eval(
+        fit_payload,
+        container_artifact,
+        dummy_container,
+        eval_spec,
+        tmp_path / "eval_out_container",
+        tmp_path,
+        overwrite=True,
+    )
+    assert record3["status"] == "success"
+
 
 def test_build_auto_pooled_eval_spec():
     assert build_auto_pooled_eval_spec(["cond1"], True) is None

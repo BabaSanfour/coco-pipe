@@ -80,6 +80,13 @@ POOLED_CONDITION: str = "pooled_all"
 """Canonical condition name used for the pooled (multi-condition) container."""
 
 
+def _as_array(value: Any) -> np.ndarray:
+    """Return the embedding array from an ndarray or a ``DataContainer``."""
+    if isinstance(value, DataContainer):
+        return np.asarray(value.X)
+    return np.asarray(value)
+
+
 # ---------------------------------------------------------------------------
 # Core fit / eval
 # ---------------------------------------------------------------------------
@@ -142,8 +149,9 @@ def run_fit(
     reducer = DimReduction(
         method=fit_payload["reducer"], n_components=fit_payload["n_components"]
     )
-    embedding = reducer.fit_transform(X)
-    score_payload = reducer.score(embedding, X=X)
+    embedding_container = reducer.fit_transform(container)
+    embedding = np.asarray(embedding_container.X)
+    score_payload = reducer.score(embedding_container, X=container)
     score_metrics = dict(reducer.get_metrics())
     metrics_payload = {
         metric_name: (
@@ -258,7 +266,7 @@ def run_eval(
         ).encode("utf-8")
     ).hexdigest()[:16]
 
-    embedding = np.asarray(fit_artifact["embedding"])[selected_index.to_numpy()]
+    embedding = _as_array(fit_artifact["embedding"])[selected_index.to_numpy()]
     if embedding.ndim != 2:
         raise ValueError("run_eval expects a 2D embedding artifact.")
 
