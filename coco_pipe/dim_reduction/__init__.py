@@ -5,11 +5,14 @@ from .artifacts import (
     FIT_METRIC_COLUMNS,
     FIT_RUN_KEY_FIELDS,
     SEPARATION_METRIC_KEY,
+    build_availability_record,
+    build_record,
     load_fit_artifact,
     load_fit_runs,
     save_eval_artifact,
     save_fit_artifact,
     update_runs,
+    write_run_status,
 )
 from .config import DEFAULT_EVAL_GROUP_COL, METHODS, parse_eval_specs
 from .core import DimReduction
@@ -43,8 +46,13 @@ from .evaluation.velocity import compute_velocity_fields
 from .pipeline import (
     POOLED_CONDITION,
     build_auto_pooled_eval_spec,
+    build_eval_request,
+    build_fit_request,
+    prepare_eval_inputs,
     run_eval,
     run_fit,
+    valid_component_sweep,
+    valid_n_components_for_container,
 )
 from .preprocessing import apply_pca_score_baseline, flip_pc_scores_for_consistency
 from .reducers import (
@@ -69,6 +77,9 @@ __all__ = [
     "load_fit_artifact",
     "load_fit_runs",
     "update_runs",
+    "write_run_status",
+    "build_availability_record",
+    "build_record",
     # Artifact constants
     "SEPARATION_METRIC_KEY",
     "FIT_METRIC_COLUMNS",
@@ -79,6 +90,11 @@ __all__ = [
     "POOLED_CONDITION",
     "run_fit",
     "run_eval",
+    "build_fit_request",
+    "build_eval_request",
+    "prepare_eval_inputs",
+    "valid_n_components_for_container",
+    "valid_component_sweep",
     "build_auto_pooled_eval_spec",
     "parse_eval_specs",
     "DEFAULT_EVAL_GROUP_COL",

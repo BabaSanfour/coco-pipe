@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from coco_pipe.utils import stable_hash
 
 _SENSITIVE_KEY_PARTS = ("token", "password", "secret", "api_key", "apikey")
 
@@ -31,8 +32,7 @@ def redact_sensitive(value: Any) -> Any:
 
 def config_hash(config: Mapping[str, Any]) -> str:
     """Return a stable short hash for a run configuration."""
-    encoded = json.dumps(config, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:16]
+    return stable_hash(config, length=16)
 
 
 def completed_for_config(

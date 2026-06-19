@@ -5,7 +5,9 @@ This module holds small helpers that are not specific to one subpackage.
 """
 
 import datetime as dt
+import hashlib
 import importlib.metadata
+import json
 import os
 import platform
 import re
@@ -60,10 +62,28 @@ __all__ = [
     "get_git_revision_hash",
     "get_package_version",
     "import_optional_dependency",
-    "_slug",
-    "_resolve_n_jobs",
-    "_run_task_batch",
+    "stable_hash",
+    "slug",
+    "resolve_n_jobs",
+    "run_task_batch",
 ]
+
+
+def stable_hash(value: Any, *, length: int = 64) -> str:
+    """Return a deterministic SHA-256 prefix for a JSON-compatible value.
+
+    Dictionaries are serialized with sorted keys and compact separators. Values
+    such as paths that are not directly JSON serializable fall back to ``str``.
+    """
+    if not 1 <= length <= 64:
+        raise ValueError("length must be between 1 and 64.")
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:length]
 
 
 def import_optional_dependency(
@@ -165,7 +185,7 @@ def get_environment_info(
     }
 
 
-def _slug(value: object, *, max_len: int = 80) -> str:
+def slug(value: object, *, max_len: int = 80) -> str:
     """Return a filesystem-safe slug from an arbitrary value.
 
     Collapses runs of non-alphanumeric characters (except ``.``, ``_``, ``=``,
@@ -187,7 +207,7 @@ def _slug(value: object, *, max_len: int = 80) -> str:
     return text[:max_len]
 
 
-def _resolve_n_jobs(n_jobs: int) -> int:
+def resolve_n_jobs(n_jobs: int) -> int:
     """Resolve ``n_jobs`` to a concrete positive integer.
 
     ``-1`` maps to ``os.cpu_count()`` (minimum 1).  Any other value must
@@ -200,7 +220,7 @@ def _resolve_n_jobs(n_jobs: int) -> int:
     return n_jobs
 
 
-def _run_task_batch(
+def run_task_batch(
     tasks: Sequence[Any],
     worker_fn: Callable[[Any], Any],
     max_workers: int,

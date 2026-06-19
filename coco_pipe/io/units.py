@@ -3,7 +3,7 @@ Analysis-unit enumeration for multi-mode EEG pipelines.
 
 An *analysis unit* is a (container-slice, metadata) pair that feeds one
 independent analysis run (dim-reduction, decoding, connectivity, …).
-The six supported modes are:
+The supported modes are:
 
 ``flat``
     One unit per scope — the entire container is used as-is.
@@ -41,11 +41,11 @@ from typing import Any
 
 import numpy as np
 
-from .structures import (
-    DataContainer,
-)
+from .structures import DataContainer
 
-__all__ = ["iter_analysis_units"]
+__all__ = [
+    "iter_analysis_units",
+]
 
 
 def iter_analysis_units(

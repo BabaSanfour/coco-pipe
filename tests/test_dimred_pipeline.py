@@ -1,38 +1,18 @@
 import numpy as np
 import pytest
 
+from coco_pipe.dim_reduction.artifacts import load_fit_artifact
 from coco_pipe.dim_reduction.pipeline import (
-    _build_eval_task,
-    _build_fit_task,
-    _execute_eval_task,
-    _execute_fit_task,
-    _prepare_eval_inputs,
-    _valid_component_sweep,
-    _valid_n_components_for_container,
     build_auto_pooled_eval_spec,
+    build_eval_request,
+    build_fit_request,
+    prepare_eval_inputs,
     run_eval,
     run_fit,
+    valid_component_sweep,
+    valid_n_components_for_container,
 )
 from coco_pipe.io.structures import DataContainer
-
-
-class MockArgs:
-    def __init__(self, **kwargs):
-        self.input_mode = "raw"
-        self.representation = "power"
-        self.analysis_mode = "single"
-        self.balance_target = False
-        self.bids_root = "/tmp/bids"
-        self.use_derivatives = False
-        self.segment_duration = 1.0
-        self.overlap = 0.0
-        self.desc = None
-        self.filter_col = []
-        self.filter_val = []
-        self.overwrite = True
-        self.subject_col = "subject"
-        for k, v in kwargs.items():
-            setattr(self, k, v)
 
 
 @pytest.fixture
@@ -93,6 +73,15 @@ def test_run_fit_errors(tmp_path):
             tmp_path,
             True,
         )
+    record = run_fit(
+        {"reducer": "PCA", "n_components": 2},
+        DataContainer(X=np.zeros(10), dims=("obs",)),
+        out_path,
+        tmp_path,
+        True,
+        errors="record",
+    )
+    assert record["status"] == "failed"
 
 
 def test_run_eval(tmp_path, dummy_container):
@@ -113,8 +102,6 @@ def test_run_eval(tmp_path, dummy_container):
     fit_out = tmp_path / "fit_out"
     run_fit(fit_payload, dummy_container, fit_out, tmp_path, True)
 
-    from coco_pipe.dim_reduction.artifacts import load_fit_artifact
-
     fit_artifact = load_fit_artifact(fit_out)
 
     eval_spec = {
@@ -128,7 +115,6 @@ def test_run_eval(tmp_path, dummy_container):
 
     # Run eval
     record = run_eval(
-        fit_payload,
         fit_artifact,
         dummy_container,
         eval_spec,
@@ -141,7 +127,6 @@ def test_run_eval(tmp_path, dummy_container):
 
     # Run eval without overwrite
     record2 = run_eval(
-        fit_payload,
         fit_artifact,
         dummy_container,
         eval_spec,
@@ -158,7 +143,6 @@ def test_run_eval(tmp_path, dummy_container):
         "embedding": fit_artifact["embedding_container"],
     }
     record3 = run_eval(
-        fit_payload,
         container_artifact,
         dummy_container,
         eval_spec,
@@ -167,6 +151,17 @@ def test_run_eval(tmp_path, dummy_container):
         overwrite=True,
     )
     assert record3["status"] == "success"
+
+    bad_record = run_eval(
+        fit_artifact,
+        dummy_container,
+        {**eval_spec, "target_col": "missing_col"},
+        tmp_path / "eval_out_failed",
+        tmp_path,
+        overwrite=True,
+        errors="record",
+    )
+    assert bad_record["status"] == "failed"
 
 
 def test_build_auto_pooled_eval_spec():
@@ -177,7 +172,7 @@ def test_build_auto_pooled_eval_spec():
     assert spec["name"] == "condition_separation"
 
 
-def test_prepare_eval_inputs(dummy_container):
+def testprepare_eval_inputs(dummy_container):
     fit_ids = dummy_container.ids.copy()
     eval_spec = {
         "name": "test",
@@ -186,7 +181,7 @@ def test_prepare_eval_inputs(dummy_container):
         "filters": [{"column": "subject", "values": ["sub1"]}],
         "label_map": {"A": "Class_A"},
     }
-    idx, sel_ids, labels, groups = _prepare_eval_inputs(
+    idx, sel_ids, labels, groups = prepare_eval_inputs(
         dummy_container, fit_ids, eval_spec
     )
     assert len(sel_ids) == 2
@@ -194,67 +189,140 @@ def test_prepare_eval_inputs(dummy_container):
 
     # Test errors
     with pytest.raises(ValueError, match="missing_col"):
-        _prepare_eval_inputs(
+        prepare_eval_inputs(
             dummy_container,
             fit_ids,
             {**eval_spec, "filters": [{"column": "missing_col", "values": ["1"]}]},
         )
 
     with pytest.raises(RuntimeError, match="could not be aligned"):
-        _prepare_eval_inputs(dummy_container, np.array(["missing_id"]), eval_spec)
+        prepare_eval_inputs(dummy_container, np.array(["missing_id"]), eval_spec)
 
 
 def test_valid_component_sweep(dummy_container):
-    assert _valid_n_components_for_container(dummy_container, 2) is True
+    assert valid_n_components_for_container(dummy_container, 2) is True
     assert (
-        _valid_n_components_for_container(dummy_container, 10) is False
+        valid_n_components_for_container(dummy_container, 10) is False
     )  # X is 10x5, max is 5
     assert (
-        _valid_n_components_for_container(
+        valid_n_components_for_container(
             DataContainer(X=np.zeros(10), dims=("obs",)), 2
         )
         is False
     )
     assert (
-        _valid_n_components_for_container(
+        valid_n_components_for_container(
             DataContainer(X=np.zeros(10), dims=("obs",)), 2
         )
         is False
     )
 
-    valid = _valid_component_sweep(dummy_container, [2, 10])
+    valid = valid_component_sweep(dummy_container, [2, 10])
     assert valid == [2]
 
 
-def test_execute_fit_task(tmp_path, dummy_container):
-    args = MockArgs()
+def test_build_fit_request(tmp_path, dummy_container):
     unit_spec = {
         "unit_type": "all",
         "unit_name": "all",
         "unit_key": "all",
         "container": dummy_container,
     }
+    input_signature = {
+        "input_mode": "raw",
+        "representation": "power",
+        "analysis_mode": "single",
+    }
 
-    task = _build_fit_task(args, "test", "test", unit_spec, "PCA", 2, tmp_path)
-    res = _execute_fit_task(task)
+    request = build_fit_request(
+        container=dummy_container,
+        scope="test",
+        condition="test",
+        unit_spec=unit_spec,
+        reducer="PCA",
+        n_components=2,
+        input_signature=input_signature,
+        output_root=tmp_path,
+        overwrite=True,
+        subject_col="subject",
+    )
+    assert request["out_path"].parent == tmp_path / "artifacts" / "fits"
+    assert request["fit_payload"]["input_mode"] == "raw"
+    assert request["fit_payload"]["container_signature"]["matrix_shape"] == [100, 5]
+    res = run_fit(**request)
     assert res["status"] == "success"
 
-    # test failure
-    task["fit_payload"]["n_components"] = -1
-    res2 = _execute_fit_task(task)
+    request["fit_payload"]["n_components"] = -1
+    res2 = run_fit(**request, errors="record")
     assert res2["status"] == "failed"
 
 
-def test_execute_eval_task(tmp_path, dummy_container):
-    args = MockArgs()
+def test_build_fit_request_identity_tracks_container_and_unit(
+    tmp_path, dummy_container
+):
+    input_signature = {
+        "input_mode": "descriptors",
+        "representation": "features",
+        "analysis_mode": "descriptor_sensor",
+    }
+
+    def fit_id(container, unit_key, subfamily=None):
+        request = build_fit_request(
+            container=container,
+            scope="condition",
+            condition="EO",
+            unit_spec={
+                "unit_type": "descriptor",
+                "unit_name": "alpha",
+                "unit_key": unit_key,
+                "family": "band",
+                "subfamily": subfamily,
+                "container": container,
+            },
+            reducer="PCA",
+            n_components=2,
+            input_signature=input_signature,
+            output_root=tmp_path,
+        )
+        return request["fit_payload"]["fit_id"]
+
+    changed = DataContainer(
+        X=np.asarray(dummy_container.X, dtype=float) + 1.0,
+        dims=dummy_container.dims,
+        coords=dummy_container.coords,
+        ids=dummy_container.ids,
+    )
+    baseline = fit_id(dummy_container, "alpha_Fz")
+    assert baseline != fit_id(changed, "alpha_Fz")
+    assert baseline != fit_id(dummy_container, "alpha_Cz")
+    assert baseline != fit_id(dummy_container, "alpha_Fz", "log_abs")
+
+
+def test_build_eval_request(tmp_path, dummy_container):
     unit_spec = {
         "unit_type": "all",
         "unit_name": "all",
         "unit_key": "all",
         "container": dummy_container,
     }
-    fit_task = _build_fit_task(args, "test", "test", unit_spec, "PCA", 2, tmp_path)
-    fit_res = _execute_fit_task(fit_task)
+    fit_request = build_fit_request(
+        container=dummy_container,
+        scope="test",
+        condition="test",
+        unit_spec=unit_spec,
+        reducer="PCA",
+        n_components=2,
+        input_signature={
+            "input_mode": "raw",
+            "representation": "power",
+            "analysis_mode": "single",
+        },
+        output_root=tmp_path,
+        overwrite=True,
+        subject_col="subject",
+    )
+    fit_res = run_fit(**fit_request)
+    fit_artifact = load_fit_artifact(fit_request["out_path"])
 
     eval_spec = {
         "name": "test_eval",
@@ -264,30 +332,47 @@ def test_execute_eval_task(tmp_path, dummy_container):
         "label_map": {},
     }
 
-    task = _build_eval_task(fit_res, eval_spec, dummy_container, tmp_path, True)
-    res = _execute_eval_task(task)
+    request = build_eval_request(
+        fit_record=fit_res,
+        fit_artifact=fit_artifact,
+        eval_spec=eval_spec,
+        container=dummy_container,
+        output_root=tmp_path,
+        overwrite=True,
+    )
+    assert request["out_path"].parent == tmp_path / "artifacts" / "evals"
+    res = run_eval(**request)
     assert res["status"] == "success"
 
-    # Test failure
-    task["eval_spec"]["target_col"] = "missing_col"
-    res2 = _execute_eval_task(task)
+    request["eval_spec"] = {**eval_spec, "target_col": "missing_col"}
+    request["out_path"] = tmp_path / "eval_out_failed"
+    res2 = run_eval(**request, errors="record")
     assert res2["status"] == "failed"
 
-    # Test with descriptor mode args
-    args_desc = MockArgs(
-        input_mode="descriptors",
-        descriptor_table_path="a",
-        descriptor_feature_columns_path="b",
+    descriptor_request = build_fit_request(
+        container=dummy_container,
+        scope="test",
+        condition="test",
+        unit_spec=unit_spec,
+        reducer="PCA",
+        n_components=2,
+        input_signature={
+            "input_mode": "descriptors",
+            "representation": "features",
+            "analysis_mode": "single",
+            "descriptor_table_path": "a",
+            "descriptor_feature_columns_path": "b",
+        },
+        output_root=tmp_path,
+        overwrite=True,
+        subject_col="subject",
     )
-    task_desc = _build_fit_task(
-        args_desc, "test", "test", unit_spec, "PCA", 2, tmp_path
-    )
-    assert task_desc["fit_payload"]["input_mode"] == "descriptors"
+    assert descriptor_request["fit_payload"]["input_mode"] == "descriptors"
 
 
 def test_prepare_eval_inputs_no_ids():
     with pytest.raises(ValueError, match="ids to be present"):
-        _prepare_eval_inputs(
+        prepare_eval_inputs(
             DataContainer(X=np.zeros((5, 5)), dims=("obs", "feat")), np.array([]), {}
         )
 

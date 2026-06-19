@@ -4,19 +4,18 @@ import numpy as np
 import pytest
 
 from coco_pipe.dim_reduction.artifacts import (
+    EVAL_METRIC_COLUMNS,
     FIT_METRIC_COLUMNS,
-    _availability_record,
-    _build_eval_record,
-    _build_fit_record,
-    _build_result_record,
     _embedding_container,
     _load_eval_payload,
-    _write_run_status,
+    build_availability_record,
+    build_record,
     load_fit_artifact,
     load_fit_runs,
     save_eval_artifact,
     save_fit_artifact,
     update_runs,
+    write_run_status,
 )
 from coco_pipe.io.structures import DataContainer
 
@@ -157,8 +156,8 @@ def test_build_records(tmp_path):
     payload = {"fit_id": "1", "metrics": {"trust": 0.9}, "artifacts": ["file"]}
     metrics_payload = {"trustworthiness": 0.95}
 
-    # Test _build_result_record success
-    rec = _build_result_record(
+    # Fit record success
+    rec = build_record(
         payload, tmp_path / "art", tmp_path, FIT_METRIC_COLUMNS, metrics_payload
     )
     assert rec["status"] == "success"
@@ -167,17 +166,20 @@ def test_build_records(tmp_path):
     assert "metrics" not in rec
     assert "artifacts" not in rec
 
-    # Test _build_fit_record with error
-    rec2 = _build_fit_record(payload, tmp_path / "art", tmp_path, None, error="failed")
+    # Fit record with error
+    rec2 = build_record(
+        payload, tmp_path / "art", tmp_path, FIT_METRIC_COLUMNS, None, error="failed"
+    )
     assert rec2["status"] == "failed"
     assert rec2["error"] == "failed"
     assert np.isnan(rec2["trustworthiness"])
 
-    # Test _build_eval_record
-    rec3 = _build_eval_record(
+    # Eval record
+    rec3 = build_record(
         payload,
         tmp_path / "art",
         tmp_path,
+        EVAL_METRIC_COLUMNS,
         {"separation_logreg_balanced_accuracy": 0.8},
     )
     assert rec3["separation_logreg_balanced_accuracy"] == 0.8
@@ -191,17 +193,20 @@ def test_write_run_status(tmp_path):
     update_runs(fit_runs, {"fit_id": "1", "status": "success"}, ["fit_id"])
     update_runs(eval_runs, {"fit_id": "1", "status": "failed"}, ["fit_id"])
 
-    _write_run_status(tmp_path, fit_runs, eval_runs, run_metadata={"foo": "bar"})
+    payload = write_run_status(
+        tmp_path, fit_runs, eval_runs, run_metadata={"foo": "bar"}
+    )
 
     assert (tmp_path / "run_summary.json").exists()
     summary = json.loads((tmp_path / "run_summary.json").read_text())
+    assert payload == summary
     assert summary["status"] == "partial"
     assert summary["foo"] == "bar"
     assert (tmp_path / "_RUN_PARTIAL").exists()
     assert not (tmp_path / "_RUN_SUCCESS").exists()
 
     # Test full fail
-    _write_run_status(
+    write_run_status(
         tmp_path, tmp_path / "none.json", tmp_path / "none.json", fatal_error="err"
     )
     assert (tmp_path / "_RUN_FAILED").exists()
@@ -210,8 +215,12 @@ def test_write_run_status(tmp_path):
     fit_runs.unlink()
     eval_runs.unlink()
     update_runs(fit_runs, {"fit_id": "1", "status": "success"}, ["fit_id"])
-    _write_run_status(tmp_path, fit_runs, eval_runs)
+    write_run_status(tmp_path, fit_runs, eval_runs)
     assert (tmp_path / "_RUN_SUCCESS").exists()
+
+    custom_summary = tmp_path / "runs" / "run_summary.json"
+    write_run_status(tmp_path, fit_runs, eval_runs, run_summary_path=custom_summary)
+    assert custom_summary.exists()
 
 
 def test_availability_record():
@@ -220,7 +229,7 @@ def test_availability_record():
             self.X = X
 
     container = DummyContainer(np.zeros((10, 5)))
-    rec = _availability_record(
+    rec = build_availability_record(
         scope="all",
         condition="cond",
         unit_spec={"unit_type": "all", "unit_name": "all", "unit_key": "all"},

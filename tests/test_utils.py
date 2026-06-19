@@ -4,14 +4,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from coco_pipe.utils import (
-    _resolve_n_jobs,
-    _run_task_batch,
-    _slug,
     get_environment_info,
     get_git_revision_hash,
     get_package_version,
     import_optional_dependency,
+    resolve_n_jobs,
+    run_task_batch,
+    slug,
+    stable_hash,
 )
+
+
+def test_stable_hash():
+    assert stable_hash({"b": 2, "a": 1}, length=16) == stable_hash(
+        {"a": 1, "b": 2}, length=16
+    )
+    assert stable_hash({"a": 1}) != stable_hash({"a": 2})
+    with pytest.raises(ValueError, match="between 1 and 64"):
+        stable_hash({}, length=0)
 
 
 def test_import_optional_dependency():
@@ -104,32 +114,32 @@ def test_get_environment_info(mock_get_version, mock_get_git):
 
 def test_slug():
     # Regular slugification
-    assert _slug("hello world") == "hello-world"
-    assert _slug("hello_world-1.0=2") == "hello_world-1.0=2"
+    assert slug("hello world") == "hello-world"
+    assert slug("hello_world-1.0=2") == "hello_world-1.0=2"
     # Strips leading/trailing punctuation and handles empty case
-    assert _slug("!!!") == "none"
-    assert _slug("") == "none"
-    assert _slug("a" * 100, max_len=10) == "a" * 10
+    assert slug("!!!") == "none"
+    assert slug("") == "none"
+    assert slug("a" * 100, max_len=10) == "a" * 10
 
 
 def test_resolve_n_jobs():
     import os
 
     # n_jobs = -1
-    assert _resolve_n_jobs(-1) == max(os.cpu_count() or 1, 1)
+    assert resolve_n_jobs(-1) == max(os.cpu_count() or 1, 1)
     # n_jobs >= 1
-    assert _resolve_n_jobs(4) == 4
+    assert resolve_n_jobs(4) == 4
     # ValueError on < 1 (except -1)
     with pytest.raises(ValueError, match="n_jobs must be -1 or a positive integer"):
-        _resolve_n_jobs(0)
+        resolve_n_jobs(0)
     with pytest.raises(ValueError, match="n_jobs must be -1 or a positive integer"):
-        _resolve_n_jobs(-2)
+        resolve_n_jobs(-2)
 
 
 def test_run_task_batch():
     # Empty tasks
-    assert _run_task_batch([], lambda x: x, 4) == []
+    assert run_task_batch([], lambda x: x, 4) == []
     # Sequential execution (max_workers = 1)
-    assert _run_task_batch([1, 2, 3], lambda x: x * 2, 1) == [2, 4, 6]
+    assert run_task_batch([1, 2, 3], lambda x: x * 2, 1) == [2, 4, 6]
     # Parallel execution (max_workers > 1)
-    assert _run_task_batch([1, 2, 3], lambda x: x * 2, 2) == [2, 4, 6]
+    assert run_task_batch([1, 2, 3], lambda x: x * 2, 2) == [2, 4, 6]

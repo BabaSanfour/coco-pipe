@@ -45,6 +45,16 @@ from typing import Any, Optional
 
 import numpy as np
 
+from coco_pipe.dim_reduction._constants import (
+    EVAL_METRIC_COLUMNS,
+    EVAL_NAME,
+    EVAL_RUN_KEY_FIELDS,
+    FIT_ARRAYS_NAME,
+    FIT_META_NAME,
+    FIT_METRIC_COLUMNS,
+    FIT_RUN_KEY_FIELDS,
+    SEPARATION_METRIC_KEY,
+)
 from coco_pipe.io import read_json, save_npz, write_json
 from coco_pipe.io.structures import DataContainer
 
@@ -61,52 +71,12 @@ __all__ = [
     "EVAL_METRIC_COLUMNS",
     "FIT_RUN_KEY_FIELDS",
     "EVAL_RUN_KEY_FIELDS",
-    # Record builders
-    "_build_result_record",
-    "_build_fit_record",
-    "_build_eval_record",
+    # Record builder
+    "build_record",
     # Run-level helpers
-    "_write_run_status",
-    "_availability_record",
+    "write_run_status",
+    "build_availability_record",
 ]
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-SEPARATION_METRIC_KEY: str = "separation_logreg_balanced_accuracy"
-"""Canonical key for the logistic-regression separation metric."""
-
-FIT_METRIC_COLUMNS: list[str] = [
-    "trustworthiness",
-    "continuity",
-    "lcmc",
-    "shepard_correlation",
-    "mrre_intrusion",
-    "mrre_extrusion",
-    "mrre_total",
-]
-"""Geometry quality metrics recorded in fit run inventory rows."""
-
-EVAL_METRIC_COLUMNS: list[str] = [SEPARATION_METRIC_KEY]
-"""Eval metrics recorded in eval run inventory rows."""
-
-FIT_RUN_KEY_FIELDS: tuple[str, ...] = ("fit_id",)
-"""Fields that uniquely identify a fit run entry."""
-
-EVAL_RUN_KEY_FIELDS: tuple[str, ...] = (
-    "fit_id",
-    "eval_name",
-    "target_col",
-    "group_col",
-)
-"""Fields that uniquely identify an eval run entry."""
-
-
-FIT_ARRAYS_NAME = "fit.npz"
-"""Compact fit artifact: arrays bundle (embedding + ids + diagnostics)."""
-FIT_META_NAME = "fit.json"
-"""Compact fit artifact: metadata bundle (fit payload + metrics)."""
 
 
 def save_fit_artifact(
@@ -159,10 +129,6 @@ def save_fit_artifact(
         indent=2,
     )
     (path / "_SUCCESS").write_text("ok\n", encoding="utf-8")
-
-
-EVAL_NAME = "eval.json"
-"""Compact eval artifact: the single eval payload file."""
 
 
 def save_eval_artifact(path: Path, eval_payload: dict[str, Any]) -> None:
@@ -408,7 +374,7 @@ def update_runs(path: Path, record: dict[str, Any], key_fields: Sequence[str]) -
     write_json(path, runs, indent=2)
 
 
-def _build_result_record(
+def build_record(
     payload: dict[str, Any],
     artifact_path: Path,
     output_root: Path,
@@ -417,6 +383,9 @@ def _build_result_record(
     error: Optional[str] = None,
 ) -> dict[str, Any]:
     """Build a flat run-inventory record from an artifact payload dict.
+
+    Used for both fit and eval records — pass :data:`FIT_METRIC_COLUMNS` or
+    :data:`EVAL_METRIC_COLUMNS` as *metric_columns*.
 
     Strips bulky sub-dicts (``metrics``, ``records``, ``metadata``,
     ``artifacts``) from *payload*, adds a relative ``artifact_path``,
@@ -441,59 +410,16 @@ def _build_result_record(
     return record
 
 
-def _build_fit_record(
-    fit_payload: dict[str, Any],
-    artifact_path: Path,
-    output_root: Path,
-    metrics_payload: Optional[dict[str, Any]] = None,
-    error: Optional[str] = None,
-) -> dict[str, Any]:
-    """Build a fit run-inventory record from *fit_payload*.
-
-    Thin wrapper around :func:`_build_result_record` that pre-fills
-    *metric_columns* with :data:`FIT_METRIC_COLUMNS`.
-    """
-    return _build_result_record(
-        fit_payload,
-        artifact_path,
-        output_root,
-        FIT_METRIC_COLUMNS,
-        metrics_payload,
-        error,
-    )
-
-
-def _build_eval_record(
-    eval_payload: dict[str, Any],
-    artifact_path: Path,
-    output_root: Path,
-    metrics_payload: Optional[dict[str, Any]] = None,
-    error: Optional[str] = None,
-) -> dict[str, Any]:
-    """Build an eval run-inventory record from *eval_payload*.
-
-    Thin wrapper around :func:`_build_result_record` that pre-fills
-    *metric_columns* with :data:`EVAL_METRIC_COLUMNS`.
-    """
-    return _build_result_record(
-        eval_payload,
-        artifact_path,
-        output_root,
-        EVAL_METRIC_COLUMNS,
-        metrics_payload,
-        error,
-    )
-
-
-def _write_run_status(
+def write_run_status(
     output_root: Path,
     fit_runs_path: Path,
     eval_runs_path: Path,
     *,
+    run_summary_path: Optional[Path] = None,
     fatal_error: Optional[str] = None,
     report_path: Optional[Path] = None,
     run_metadata: Optional[dict[str, Any]] = None,
-) -> None:
+) -> dict[str, Any]:
     """Write ``run_summary.json`` and a run-marker sentinel to *output_root*.
 
     The marker file is one of ``_RUN_SUCCESS``, ``_RUN_PARTIAL``, or
@@ -514,12 +440,20 @@ def _write_run_status(
         Path to the fit runs JSON inventory (may not exist yet).
     eval_runs_path:
         Path to the eval runs JSON inventory (may not exist yet).
+    run_summary_path:
+        Optional explicit path for the summary JSON. Defaults to
+        ``output_root / "run_summary.json"``.
     fatal_error:
         If set, the run is marked as at least partially failed.
     report_path:
         Path to the generated HTML report, if any.
     run_metadata:
         Extra key/value pairs merged into the summary payload.
+
+    Returns
+    -------
+    dict
+        The summary payload written to disk.
     """
     fit_runs = read_json(fit_runs_path) if fit_runs_path.exists() else []
     eval_runs = read_json(eval_runs_path) if eval_runs_path.exists() else []
@@ -556,7 +490,8 @@ def _write_run_status(
     if run_metadata:
         summary_payload.update(run_metadata)
 
-    write_json(output_root / "run_summary.json", summary_payload, indent=2)
+    summary_path = run_summary_path or (output_root / "run_summary.json")
+    write_json(summary_path, summary_payload, indent=2)
 
     for marker_name in ("_RUN_SUCCESS", "_RUN_PARTIAL", "_RUN_FAILED"):
         marker = output_root / marker_name
@@ -569,9 +504,10 @@ def _write_run_status(
         "failed": "_RUN_FAILED",
     }[run_status]
     (output_root / marker_name).write_text("ok\n", encoding="utf-8")
+    return summary_payload
 
 
-def _availability_record(
+def build_availability_record(
     *,
     scope: str,
     condition: str,

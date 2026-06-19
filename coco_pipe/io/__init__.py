@@ -1,3 +1,7 @@
+from ._constants import (
+    ANALYSIS_MODES,
+    DESCRIPTOR_ONLY_ANALYSIS_MODES,
+)
 from ._serialization import (
     default_id_extractor,
     load_object,
@@ -25,6 +29,7 @@ from .embeddings import (
     write_embedding_manifest,
 )
 from .load import load_data
+from .provenance import fingerprint_container
 from .quality import (
     CheckResult,
     EpochDropRecord,
@@ -48,6 +53,8 @@ from .utils import normalize_subject_value
 
 __all__ = [
     "DataContainer",
+    "ANALYSIS_MODES",
+    "DESCRIPTOR_ONLY_ANALYSIS_MODES",
     "SklearnWrapper",
     "SpatialWhitener",
     "load_data",
@@ -82,6 +89,7 @@ __all__ = [
     "load_object",
     "save_npz",
     "iter_analysis_units",
+    "fingerprint_container",
     "BIDSDataset",
     "TabularDataset",
     "EmbeddingDataset",

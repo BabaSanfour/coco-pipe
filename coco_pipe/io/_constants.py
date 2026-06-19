@@ -42,3 +42,18 @@ REQUIRED_ARRAYS = {
     "window_stop",
     "window_index",
 }
+
+ANALYSIS_MODES = (
+    "flat",
+    "sensor",
+    "family",
+    "subfamily",
+    "sensor_within_family",
+    "sensor_within_subfamily",
+    "feature",
+    "feature_within_family",
+    "descriptor",
+    "descriptor_sensor",
+)
+
+DESCRIPTOR_ONLY_ANALYSIS_MODES = frozenset(ANALYSIS_MODES) - {"flat", "sensor"}
