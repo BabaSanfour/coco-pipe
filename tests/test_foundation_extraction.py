@@ -52,6 +52,47 @@ def test_extractor_normalizes_channels_pools_and_records_provenance():
     assert normalize_channel_names(["T5", "T6"]) == ["P7", "P8"]
 
 
+def test_extractor_caches_window_embeddings_without_changing_output():
+    X = np.arange(4 * 2 * 10, dtype=np.float32).reshape(4, 2, 10)
+    meta = SignalMetadata(sfreq=200.0, ch_names=["T3", "T4"])
+
+    plain = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=FakeFoundationModel(),
+        normalize_embeddings=False,
+        resample=False,
+    )
+    expected = plain.extract(X, signal_metadata=meta).window_embeddings
+
+    model = FakeFoundationModel()
+    rows_seen = {"n": 0}
+    real_transform = model.transform
+
+    def counting_transform(batch):
+        rows_seen["n"] += len(batch)
+        return real_transform(batch)
+
+    model.transform = counting_transform
+    cached = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=model,
+        normalize_embeddings=False,
+        resample=False,
+        cache_embeddings=True,
+    )
+    first = cached.extract(X, signal_metadata=meta).window_embeddings
+    assert rows_seen["n"] == len(X)
+    np.testing.assert_allclose(first, expected, rtol=1e-6)
+
+    second = cached.extract(X, signal_metadata=meta).window_embeddings
+    assert rows_seen["n"] == len(X)  # second pass fully served from cache
+    np.testing.assert_allclose(second, expected, rtol=1e-6)
+
+    cached.clear_cache()
+    cached.extract(X, signal_metadata=meta)
+    assert rows_seen["n"] == 2 * len(X)
+
+
 def test_labram_channel_adaptation_reports_real_19_to_128_mapping():
     source = [f"src-{index}" for index in range(19)]
     target = [f"target-{index}" for index in range(128)]

@@ -6,7 +6,11 @@ Pretrained EEG/MEG foundation model backends and loading utilities.
 
 from ._loader import load, register_backend, unregister_backend
 from ._prepare import normalize_channel_names
-from .estimators import FoundationClassifier, FrozenBackboneTransformer
+from .estimators import (
+    FoundationClassifier,
+    FrozenBackboneTransformer,
+    clear_frozen_embedding_cache,
+)
 from .extraction import (
     CapabilityResult,
     FoundationEmbeddingExtractor,
@@ -27,4 +31,5 @@ __all__ = [
     "unregister_backend",
     "FoundationClassifier",
     "FrozenBackboneTransformer",
+    "clear_frozen_embedding_cache",
 ]

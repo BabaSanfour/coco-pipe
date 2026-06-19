@@ -305,6 +305,7 @@ class Experiment:
                 pooling=_get_val(backbone, "pooling", "mean"),
                 sfreq=_get_val(backbone, "sfreq"),
                 ch_names=_get_val(backbone, "ch_names"),
+                cache_embeddings=_get_val(backbone, "cache_embeddings", True),
                 backend_kwargs=_get_val(backbone, "backend_kwargs", {}),
             )
             head_spec = resolve_estimator_spec(head_config)

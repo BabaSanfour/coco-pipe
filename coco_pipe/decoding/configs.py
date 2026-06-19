@@ -693,17 +693,6 @@ class TrainerConfig(BaseModel):
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
 
 
-class TrainStageConfig(BaseModel):
-    """Single stage in a multi-stage training schedule."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    epochs: int = Field(..., ge=1)
-    train_backbone: bool = False
-    train_head: bool = True
-
-
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
     """Config for a frozen backbone followed by a classical decoding head."""
 
@@ -727,7 +716,6 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
     lora: Optional[LoRAConfig] = None
     quantization: Optional[QuantizationConfig] = None
-    stages: List[TrainStageConfig] = Field(default_factory=list)
     sfreq: Optional[float] = Field(None, gt=0)
     ch_names: Optional[List[str]] = None
     backend_kwargs: Dict[str, Any] = Field(default_factory=dict)
@@ -1075,13 +1063,6 @@ class ExperimentConfig(BaseModel):
 
     use_scaler: Union[bool, str] = Field(
         True, description="Whether to scalar normalize features upstream."
-    )
-    allow_transductive_input: bool = Field(
-        False,
-        description=(
-            "Explicitly allow inputs produced by a transformation fitted on the "
-            "full dataset. Such results must be treated as exploratory."
-        ),
     )
     n_jobs: int = -1
     verbose: bool = True

@@ -44,19 +44,6 @@ def test_luna_registered_and_neural_configs_resolve():
     assert frozen.supports_proba
 
 
-def test_experiment_config_records_transductive_input_policy():
-    config = ExperimentConfig(
-        models={
-            "lr": ClassicalModelConfig(
-                estimator="LogisticRegression",
-                params={"max_iter": 100},
-            )
-        },
-        allow_transductive_input=True,
-    )
-    assert config.allow_transductive_input is True
-
-
 def test_fold_local_pca_is_part_of_each_classical_pipeline():
     config = ExperimentConfig(
         models={

@@ -197,37 +197,3 @@ class NeuralTrainable(Protocol):
             A serializable dictionary containing history, model card, and checkpoints.
         """
         ...  # pragma: no cover
-
-
-@runtime_checkable
-class StagedTrainable(Protocol):
-    """
-    Interface for estimators that support multi-stage training schedules.
-    """
-
-    def set_train_stage(self, stage: str) -> StagedTrainable:
-        """
-        Configure the active training stage (e.g., 'pretrain', 'finetune').
-
-        Parameters
-        ----------
-        stage : str
-            The name of the training stage to activate.
-
-        Returns
-        -------
-        self : StagedTrainable
-            The estimator instance.
-        """
-        ...  # pragma: no cover
-
-    def get_train_stage(self) -> str:
-        """
-        Get the name of the currently active training stage.
-
-        Returns
-        -------
-        stage : str
-            The active stage name.
-        """
-        ...  # pragma: no cover

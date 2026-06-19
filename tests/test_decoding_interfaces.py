@@ -2,7 +2,6 @@ from coco_pipe.decoding.interfaces import (
     DecoderEstimator,
     EmbeddingExtractor,
     NeuralTrainable,
-    StagedTrainable,
 )
 
 
@@ -78,19 +77,3 @@ def test_neural_trainable_protocol():
 
     assert isinstance(ValidNeural(), NeuralTrainable)
     assert not isinstance(PartialNeural(), NeuralTrainable)
-
-
-def test_staged_trainable_protocol():
-    class ValidStaged:
-        def set_train_stage(self, stage: str):
-            return self
-
-        def get_train_stage(self):
-            return "pretrain"
-
-    class InvalidStaged:
-        def something_else(self):
-            pass
-
-    assert isinstance(ValidStaged(), StagedTrainable)
-    assert not isinstance(InvalidStaged(), StagedTrainable)

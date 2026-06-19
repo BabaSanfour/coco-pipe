@@ -16,6 +16,7 @@ from coco_pipe.decoding.configs import ClassicalModelConfig, TrainerConfig
 from coco_pipe.decoding.foundation_models import (
     FoundationClassifier,
     FrozenBackboneTransformer,
+    clear_frozen_embedding_cache,
     register_backend,
     unregister_backend,
 )
@@ -204,6 +205,42 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
     assert not set(fitted.backend_._training_groups_) & set(
         fitted.backend_._validation_groups_
     )
+
+
+def test_frozen_backbone_embedding_cache_matches_uncached_and_memoizes():
+    X, _, _ = _data()
+    clear_frozen_embedding_cache()
+    cached = FrozenBackboneTransformer(
+        "cbramod",
+        backend="fake",
+        sfreq=200,
+        ch_names=["C3", "C4"],
+        cache_embeddings=True,
+    ).fit(X, None)
+
+    # Ground truth from the SAME fitted backend, bypassing the cache (the fake
+    # backbone has random weights, so a second instance would differ).
+    expected = np.asarray(cached.backend_.transform(cached.prepared_.adapt(X))).reshape(
+        len(X), -1
+    )
+
+    call_count = {"n": 0}
+    real_transform = cached.backend_.transform
+
+    def counting_transform(batch):
+        call_count["n"] += len(batch)
+        return real_transform(batch)
+
+    cached.backend_.transform = counting_transform
+
+    first = cached.transform(X)
+    assert call_count["n"] == len(X)  # every window is a cache miss the first pass
+    np.testing.assert_allclose(first, expected, rtol=1e-6)
+
+    second = cached.transform(X)
+    assert call_count["n"] == len(X)  # second pass served entirely from the cache
+    np.testing.assert_allclose(second, expected, rtol=1e-6)
+    clear_frozen_embedding_cache()
 
 
 def test_experiment_dispatches_frozen_and_trainable_paths(tmp_path):

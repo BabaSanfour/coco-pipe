@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import warnings
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import numpy as np
 
+from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from ._loader import _BACKEND_MAP
@@ -227,6 +229,7 @@ class FoundationEmbeddingExtractor:
         recording_pooling: str = "mean",
         normalize_embeddings: bool = True,
         resample: bool = True,
+        cache_embeddings: bool = False,
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
     ) -> None:
@@ -239,8 +242,72 @@ class FoundationEmbeddingExtractor:
         self.recording_pooling = recording_pooling
         self.normalize_embeddings = normalize_embeddings
         self.resample = resample
+        self.cache_embeddings = cache_embeddings
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
+        self._embedding_cache: dict[str, np.ndarray] = {}
+
+    def clear_cache(self) -> None:
+        """Drop all memoized window embeddings."""
+        self._embedding_cache.clear()
+
+    def _embed_windows(self, model: Any, model_input: np.ndarray) -> np.ndarray:
+        """Run the backbone forward pass and pool/normalize to 2-D rows."""
+        embeddings = np.asarray(model.transform(model_input), dtype=np.float32)
+        if embeddings.ndim > 2:
+            if self.pooling == "flatten":
+                embeddings = embeddings.reshape(len(embeddings), -1)
+            else:
+                embeddings = embeddings.mean(axis=tuple(range(1, embeddings.ndim - 1)))
+        if self.normalize_embeddings and embeddings.ndim == 2:
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            embeddings = np.divide(
+                embeddings,
+                norms,
+                out=np.zeros_like(embeddings),
+                where=norms > 0,
+            )
+        return embeddings
+
+    def _backbone_fingerprint(self, prepared: Any) -> str:
+        """Stable identity of the deterministic window->embedding mapping."""
+        return "|".join(
+            str(part)
+            for part in (
+                self.model_key,
+                getattr(prepared, "backend_name", self.backend),
+                self.pooling,
+                self.normalize_embeddings,
+                float(getattr(prepared, "target_sfreq", 0.0)),
+                tuple(getattr(prepared, "ch_names", ()) or ()),
+            )
+        )
+
+    def _embed_windows_cached(
+        self, model: Any, model_input: np.ndarray, prepared: Any
+    ) -> np.ndarray:
+        """Embed windows, reusing memoized rows for previously seen content."""
+        backbone_fp = self._backbone_fingerprint(prepared)
+        keys = [
+            make_feature_cache_key(
+                [hashlib.sha256(np.ascontiguousarray(row).tobytes()).hexdigest()],
+                [],
+                "embed",
+                backbone_fp,
+                sort_ids=False,
+            )
+            for row in model_input
+        ]
+        missing = [i for i, key in enumerate(keys) if key not in self._embedding_cache]
+        if missing:
+            computed = self._embed_windows(model, model_input[missing])
+            if computed.ndim != 2 or len(computed) != len(missing):
+                raise ValueError(
+                    "Foundation backend must return one 2-D embedding row per window."
+                )
+            for offset, index in enumerate(missing):
+                self._embedding_cache[keys[index]] = computed[offset]
+        return np.stack([self._embedding_cache[key] for key in keys])
 
     def extract(
         self,
@@ -280,23 +347,13 @@ class FoundationEmbeddingExtractor:
             )
         model_input = prepared.adapt(X) if self.resample else X
         resampled = self.resample and prepared.source_sfreq != prepared.target_sfreq
-        embeddings = np.asarray(model.transform(model_input), dtype=np.float32)
-        if embeddings.ndim > 2:
-            if self.pooling == "flatten":
-                embeddings = embeddings.reshape(len(embeddings), -1)
-            else:
-                embeddings = embeddings.mean(axis=tuple(range(1, embeddings.ndim - 1)))
+        if self.cache_embeddings:
+            embeddings = self._embed_windows_cached(model, model_input, prepared)
+        else:
+            embeddings = self._embed_windows(model, model_input)
         if embeddings.ndim != 2 or len(embeddings) != len(X):
             raise ValueError(
                 "Foundation backend must return one 2-D embedding row per window."
-            )
-        if self.normalize_embeddings:
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            embeddings = np.divide(
-                embeddings,
-                norms,
-                out=np.zeros_like(embeddings),
-                where=norms > 0,
             )
         reducer = {
             "mean": np.mean,

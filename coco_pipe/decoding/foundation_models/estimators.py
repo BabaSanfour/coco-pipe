@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -10,7 +11,15 @@ import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
+from .._cache import make_feature_cache_key
 from ._prepare import prepare_backend
+
+_FROZEN_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
+
+
+def clear_frozen_embedding_cache() -> None:
+    """Empty the shared frozen-backbone embedding cache."""
+    _FROZEN_EMBEDDING_CACHE.clear()
 
 
 class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
@@ -27,6 +36,7 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         pooling: str = "mean",
         sfreq: float | None = None,
         ch_names: list[str] | None = None,
+        cache_embeddings: bool = False,
         backend_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self.model_key = model_key
@@ -35,6 +45,7 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         self.pooling = pooling
         self.sfreq = sfreq
         self.ch_names = ch_names
+        self.cache_embeddings = cache_embeddings
         self.backend_kwargs = backend_kwargs
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None):
@@ -53,10 +64,45 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         self.backend_ = self.prepared_.backend
         return self
 
+    def _fingerprint(self) -> str:
+        """Stable identity of this deterministic window->embedding mapping."""
+        return "|".join(
+            str(part)
+            for part in (
+                self.model_key,
+                self.pooling,
+                float(getattr(self.prepared_, "target_sfreq", 0.0)),
+                tuple(getattr(self.prepared_, "ch_names", ()) or ()),
+            )
+        )
+
     def transform(self, X: np.ndarray) -> np.ndarray:
         check_is_fitted(self)
-        values = np.asarray(self.backend_.transform(self.prepared_.adapt(X)))
-        return values.reshape(len(values), -1)
+        adapted = self.prepared_.adapt(X)
+        if not self.cache_embeddings:
+            values = np.asarray(self.backend_.transform(adapted))
+            return values.reshape(len(values), -1)
+
+        fingerprint = self._fingerprint()
+        keys = [
+            make_feature_cache_key(
+                [hashlib.sha256(np.ascontiguousarray(row).tobytes()).hexdigest()],
+                [],
+                "frozen_backbone",
+                fingerprint,
+                sort_ids=False,
+            )
+            for row in adapted
+        ]
+        missing = [
+            i for i, key in enumerate(keys) if key not in _FROZEN_EMBEDDING_CACHE
+        ]
+        if missing:
+            computed = np.asarray(self.backend_.transform(adapted[missing]))
+            computed = computed.reshape(len(computed), -1)
+            for offset, index in enumerate(missing):
+                _FROZEN_EMBEDDING_CACHE[keys[index]] = computed[offset]
+        return np.stack([_FROZEN_EMBEDDING_CACHE[key] for key in keys])
 
 
 class FoundationClassifier(BaseEstimator, ClassifierMixin):

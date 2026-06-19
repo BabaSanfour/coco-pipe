@@ -24,7 +24,6 @@ from .configs import (
     StatisticalAssessmentConfig,
     TemporalDecoderConfig,
     TrainerConfig,
-    TrainStageConfig,
     TuningConfig,
 )
 from .experiment import Experiment
@@ -68,7 +67,6 @@ __all__ = [
     "DeviceConfig",
     "CheckpointConfig",
     "TrainerConfig",
-    "TrainStageConfig",
     "ReducerConfig",
     "StatisticalAssessmentConfig",
     "CVConfig",
