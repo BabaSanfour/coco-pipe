@@ -9,10 +9,12 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from .._utils import (
+    _is_raw_importance_sequence,
     prepare_confusion_matrix,
     prepare_curve_group_data,
     prepare_decoding_curve_frame,
     prepare_decoding_score_data,
+    prepare_feature_importance_series,
     prepare_feature_score_series,
     prepare_feature_stability_series,
     prepare_fit_diagnostics_frame,
@@ -35,6 +37,7 @@ __all__ = [
     "plot_calibration_curve",
     "plot_confusion_matrix",
     "plot_decoding_scores",
+    "plot_feature_importance",
     "plot_feature_scores",
     "plot_feature_stability",
     "plot_fit_diagnostics",
@@ -1665,5 +1668,94 @@ def plot_feature_scores(
         title=title or "Feature Scores",
         xaxis_title="Score",
         height=max(400, len(scores) * 22 + 100),
+    )
+    return fig
+
+
+def plot_feature_importance(
+    result: Any,
+    model: Optional[str] = None,
+    top_n: Optional[int] = 25,
+    signed: bool = False,
+    absolute: bool = False,
+    title: Optional[str] = None,
+) -> go.Figure:
+    """
+    Plot ranked feature importances interactively.
+
+    Parameters
+    ----------
+    result
+        Experiment result with ``get_feature_importances()``, a feature
+        importance DataFrame, or a mapping/sequence coercible to a numeric
+        Series. Non-numeric sequences are delegated to the dimensionality
+        reduction feature-importance plot.
+    model
+        Optional model name used to filter importances.
+    top_n
+        Optional number of highest-magnitude features to display.
+    signed
+        If True, color bars by sign (diverging) instead of a single color.
+    absolute
+        If True, rank and display absolute importance values.
+    title
+        Optional figure title. Defaults to ``"Feature Importance"``.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive feature-importance horizontal bar chart.
+
+    See Also
+    --------
+    coco_pipe.viz.decoding.plot_feature_importance : Static Matplotlib version.
+    plot_feature_stability : Feature-selection stability across folds.
+    plot_feature_scores : Univariate feature-selector scores.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from coco_pipe.viz.interactive import decoding as viz
+    >>> df = pd.DataFrame(
+    ...     {"Model": ["SVM"] * 3, "FeatureName": ["f1", "f2", "f3"],
+    ...      "Mean": [0.5, 0.3, 0.1]}
+    ... )
+    >>> fig = viz.plot_feature_importance(df)
+    """
+    try:
+        series = prepare_feature_importance_series(
+            result, model=model, top_n=top_n, absolute=absolute
+        ).sort_values()
+    except (TypeError, ValueError):
+        if _is_raw_importance_sequence(result):
+            from .dim_reduction import (
+                plot_feature_importance as plot_reduction_feature_importance,
+            )
+
+            return plot_reduction_feature_importance(
+                result, title=title or "Feature Importance", top_n=top_n or 20
+            )
+        raise
+    if signed and not absolute:
+        marker_color = [
+            _COLORBLIND_COLORS[0] if value >= 0 else _COLORBLIND_COLORS[1]
+            for value in series.values
+        ]
+    else:
+        marker_color = _COLORBLIND_COLORS[0]
+    fig = go.Figure(
+        go.Bar(
+            x=series.values.tolist(),
+            y=series.index.astype(str).tolist(),
+            orientation="h",
+            name="Importance",
+            marker_color=marker_color,
+        )
+    )
+    _apply_layout(
+        fig,
+        title=title or "Feature Importance",
+        xaxis_title="Importance",
+        height=max(400, len(series) * 22 + 100),
     )
     return fig

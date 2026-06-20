@@ -46,6 +46,10 @@ _LAZY_EXPORTS = {
         "coco_pipe.report.decoding_comparison",
         "build_result_tabs",
     ),
+    "make_experiment_results_report": (
+        "coco_pipe.report.decoding_comparison",
+        "make_experiment_results_report",
+    ),
     "make_foundation_embedding_report": (
         "coco_pipe.report.foundation",
         "make_foundation_embedding_report",

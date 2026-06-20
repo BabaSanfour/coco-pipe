@@ -21,6 +21,7 @@ from .decoding import (
     plot_calibration_curve,
     plot_confusion_matrix,
     plot_decoding_scores,
+    plot_feature_importance,
     plot_feature_scores,
     plot_feature_stability,
     plot_fit_diagnostics,
@@ -44,7 +45,6 @@ from .dim_reduction import (
     plot_coranking_matrix,
     plot_embedding,
     plot_feature_correlation_heatmap,
-    plot_feature_importance,
     plot_loss_history,
     plot_metrics,
     plot_phase_portrait,
@@ -56,6 +56,9 @@ from .dim_reduction import (
     plot_trajectory,
     plot_trajectory_metric_series,
     plot_trajectory_separation,
+)
+from .dim_reduction import (
+    plot_feature_importance as plot_reduction_feature_importance,
 )
 
 __all__ = [
@@ -73,7 +76,7 @@ __all__ = [
     "plot_scree",
     "plot_embedding",
     "plot_feature_correlation_heatmap",
-    "plot_feature_importance",
+    "plot_reduction_feature_importance",
     "plot_loss_history",
     "plot_metrics",
     "plot_phase_portrait",
@@ -88,6 +91,7 @@ __all__ = [
     "plot_calibration_curve",
     "plot_confusion_matrix",
     "plot_decoding_scores",
+    "plot_feature_importance",
     "plot_feature_scores",
     "plot_feature_stability",
     "plot_fit_diagnostics",

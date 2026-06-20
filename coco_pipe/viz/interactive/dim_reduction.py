@@ -12,7 +12,10 @@ from matplotlib import colors as mcolors
 
 from .._utils import (
     filter_metric_frame,
+    metric_heatmap_frame,
+    metric_scope_series,
     prepare_component_loadings_frame,
+    prepare_coranking_matrix,
     prepare_eigenvalue_curves,
     prepare_embedding_frame,
     prepare_feature_scores,
@@ -380,17 +383,7 @@ def plot_metrics(
         )
 
     elif plot_type == "heatmap":
-        scope_values = df["ScopeValue"].astype(str).nunique()
-        if scope_values > 1 and df["Metric"].nunique() == 1:
-            heatmap_df = df.pivot_table(
-                index="Method", columns="ScopeValue", values="Value", aggfunc="mean"
-            )
-            x_title = df["Scope"].iloc[0].replace("_", " ").title()
-        else:
-            heatmap_df = df.pivot_table(
-                index="Method", columns="Metric", values="Value", aggfunc="mean"
-            )
-            x_title = "Metric"
+        heatmap_df, x_title = metric_heatmap_frame(df)
         fig.add_trace(
             go.Heatmap(
                 z=heatmap_df.values,
@@ -405,36 +398,20 @@ def plot_metrics(
         )
 
     elif plot_type == "line":
-        group_cols = ["Method"]
-        if df["Metric"].nunique() > 1:
-            group_cols.append("Metric")
-        summary = (
-            df.groupby(group_cols + ["Scope", "ScopeValue"], dropna=False)["Value"]
-            .agg(["mean", "std", "count"])
-            .reset_index()
-        )
-        for keys, sub_df in summary.groupby(group_cols, dropna=False):
-            keys = (keys,) if not isinstance(keys, tuple) else keys
-            label = " / ".join(str(k) for k in keys)
-            sub_df = sub_df.copy()
-            sub_df["scope_numeric"] = pd.to_numeric(
-                sub_df["ScopeValue"], errors="coerce"
-            )
-            use_numeric = sub_df["scope_numeric"].notna().all()
-            sort_col = "scope_numeric" if use_numeric else "ScopeValue"
-            sub_df = sub_df.sort_values(sort_col)
-            x_vals = (
-                sub_df["scope_numeric"]
-                if use_numeric
-                else sub_df["ScopeValue"].astype(str)
-            )
+        series, x_title = metric_scope_series(df)
+        for curve in series:
             fig.add_trace(
-                go.Scatter(x=x_vals, y=sub_df["mean"], mode="lines+markers", name=label)
+                go.Scatter(
+                    x=curve["x"],
+                    y=curve["mean"],
+                    mode="lines+markers",
+                    name=curve["label"],
+                )
             )
         _apply_layout(
             fig,
             title=title,
-            xaxis_title=df["Scope"].iloc[0].replace("_", " ").title(),
+            xaxis_title=x_title,
             yaxis_title="Score",
             height=420,
         )
@@ -1675,13 +1652,7 @@ def plot_coranking_matrix(
     >>> from coco_pipe.viz.interactive import dim_reduction as viz
     >>> fig = viz.plot_coranking_matrix(np.eye(8))
     """
-    if coranking_matrix is None:
-        raise ValueError("coranking_matrix is required.")
-    matrix = np.asarray(coranking_matrix)
-    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        raise ValueError("coranking_matrix must be a 2D square array.")
-    k = min(matrix.shape[0], 50 if max_k is None else max_k)
-    matrix = matrix[:k, :k]
+    matrix = prepare_coranking_matrix(coranking_matrix, max_k)
     fig = go.Figure(
         go.Heatmap(
             z=matrix,

@@ -14,6 +14,7 @@ from .elements import (
     CodeBlockElement,
     DownloadAssetElement,
     ImageElement,
+    PlotlyElement,
     TableElement,
     TabsElement,
 )
@@ -62,18 +63,30 @@ def _csv_download(
     )
 
 
+def _plotly_element(figure: Any) -> PlotlyElement:
+    """Wrap a Plotly figure (or ``(fig, ...)`` tuple) in a ``PlotlyElement``."""
+    return PlotlyElement(figure[0] if isinstance(figure, tuple) else figure)
+
+
 def _plot_or_none(
     plotter: Callable[..., Any],
     *args: Any,
     caption: str,
+    as_plotly: bool = False,
     **kwargs: Any,
-) -> ImageElement | None:
-    """Render a plot to an element, returning ``None`` if it cannot be drawn."""
+) -> ImageElement | PlotlyElement | None:
+    """Render a plot to an element, returning ``None`` if it cannot be drawn.
+
+    With ``as_plotly=True`` the plotter is expected to return a Plotly figure,
+    wrapped in a :class:`PlotlyElement`; otherwise a Matplotlib figure is encoded
+    to a PNG :class:`ImageElement`.
+    """
     try:
-        return _figure_element(plotter(*args, **kwargs), caption)
+        result = plotter(*args, **kwargs)
     except (ImportError, TypeError, ValueError) as exc:
         logger.debug("%s skipped: %s", caption, exc)
         return None
+    return _plotly_element(result) if as_plotly else _figure_element(result, caption)
 
 
 def _add_tabs_or_single(

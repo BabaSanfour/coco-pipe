@@ -406,6 +406,7 @@ def build_result_tabs(
     feature_metadata: pd.DataFrame | None = None,
     info: Any = None,
     coords: Any = None,
+    interactive: bool = False,
     on_error: str = "warn",
 ) -> TabsElement | AccordionElement | None:
     """Build nested compact per-result sections from a collection."""
@@ -420,6 +421,7 @@ def build_result_tabs(
             feature_metadata=feature_metadata,
             info=info,
             coords=coords,
+            interactive=interactive,
             on_error=on_error,
         ):
             content.add_element(section)
@@ -432,6 +434,54 @@ def build_result_tabs(
     return None
 
 
+def _showcase_specs(by: Sequence[str]) -> list[dict[str, Any]]:
+    """Return the multi-view comparison spec set for the ``"showcase"`` preset.
+
+    Renders a model comparison plus per-axis heatmap / score-spread / metric-matrix
+    views keyed on the first context axis, so a multi-experiment sweep (e.g. across
+    cohorts, sensors, or feature spaces) is navigable in a single report.
+    """
+    specs: list[dict[str, Any]] = [
+        {
+            "kind": "model_bars",
+            "axis": "Model",
+            "title": "Model Comparison",
+            "include_table": True,
+        }
+    ]
+    axis = next(iter(by), None)
+    if axis is not None:
+        specs += [
+            {
+                "kind": "axis_heatmap",
+                "row": axis,
+                "column": "Model",
+                "title": f"{axis} × Model",
+            },
+            {"kind": "spread", "axis": axis, "title": f"Score Spread by {axis}"},
+            {
+                "kind": "metric_matrix",
+                "axis": axis,
+                "title": f"Metric Matrix by {axis}",
+            },
+        ]
+    return specs
+
+
+def _resolve_comparison_specs(
+    comparisons: str | Sequence[Mapping[str, Any]],
+    by: Sequence[str],
+) -> Sequence[Mapping[str, Any]]:
+    """Resolve the ``comparisons`` argument to a list of comparison specs."""
+    if comparisons == "default":
+        return _showcase_specs(by)[:1]
+    if comparisons == "showcase":
+        return _showcase_specs(by)
+    if isinstance(comparisons, str):
+        return [{"kind": comparisons}]
+    return comparisons
+
+
 def make_experiment_results_report(
     items: Iterable[tuple[Mapping[str, Any], Any]],
     *,
@@ -442,6 +492,7 @@ def make_experiment_results_report(
     feature_metadata: pd.DataFrame | None = None,
     info: Any = None,
     coords: Any = None,
+    interactive: bool = False,
     title: str = "Decoding Comparison",
     config: Mapping[str, Any] | None = None,
     asset_urls: Mapping[str, str] | str | None = None,
@@ -449,11 +500,23 @@ def make_experiment_results_report(
     output_path: str | Path | None = None,
     on_error: str = "warn",
 ) -> Report:
-    """Build a comparison report over many labelled decoding results."""
+    """Build a comparison report over many labelled decoding results.
+
+    Parameters
+    ----------
+    comparisons
+        ``"default"`` (a single model-comparison view), ``"showcase"`` (model
+        comparison plus per-axis heatmap, score spread, and metric matrix keyed
+        on the first ``by`` axis), a single comparison ``kind`` string, or an
+        explicit sequence of comparison specs.
+    interactive
+        If True, per-result diagnostic sections render interactive Plotly figures
+        (cross-result comparison figures remain static Matplotlib images).
+    """
     collection = collect_results(items, by=by)
     report = Report(
         title=title,
-        config=dict(config or {}),
+        config=config,
         asset_urls=asset_urls,
     )
     if qc_result is not None:
@@ -473,20 +536,7 @@ def make_experiment_results_report(
         section.add_element(InteractiveTableElement(failed, title="Load Failures"))
         report.add_section(section)
 
-    specs: Sequence[Mapping[str, Any]]
-    if comparisons == "default":
-        specs = [
-            {
-                "kind": "model_bars",
-                "axis": "Model",
-                "title": "Model Comparison",
-                "include_table": True,
-            }
-        ]
-    elif isinstance(comparisons, str):
-        specs = [{"kind": comparisons}]
-    else:
-        specs = comparisons
+    specs = _resolve_comparison_specs(comparisons, by)
     for spec in specs:
         section = build_comparison_section(
             collection,
@@ -504,6 +554,7 @@ def make_experiment_results_report(
             feature_metadata=feature_metadata,
             info=info,
             coords=coords,
+            interactive=interactive,
             on_error=on_error,
         )
         if nested is not None:

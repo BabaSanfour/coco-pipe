@@ -383,7 +383,7 @@ def add_reduction_interpretation(
 
     See Also
     --------
-    coco_pipe.viz.dim_reduction.plot_interpretation
+    coco_pipe.viz.dim_reduction.plot_feature_importance
 
     Examples
     --------
@@ -391,11 +391,13 @@ def add_reduction_interpretation(
     """
     if not interpretation:
         return self
-    from coco_pipe.viz.dim_reduction import plot_interpretation
+    from coco_pipe.viz.dim_reduction import plot_feature_importance
 
     sec = Section(title=name)
     try:
-        plot_result = plot_interpretation(interpretation, analysis=analysis)
+        plot_result = plot_feature_importance(
+            interpretation, analysis=analysis, title=name
+        )
         sec.add_element(
             ImageElement(
                 plot_result[0] if isinstance(plot_result, tuple) else plot_result,

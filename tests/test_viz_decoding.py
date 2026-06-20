@@ -103,6 +103,31 @@ def test_decoding_plots_raise_on_missing_data():
         )
 
 
+def test_feature_importance_dataframe_missing_columns_raises():
+    with pytest.raises(ValueError):
+        viz.plot_feature_importance(pd.DataFrame({"Other": [1, 2]}))
+
+
+def test_feature_importance_delegates_non_numeric_sequence():
+    payload = [
+        {
+            "Method": "PCA",
+            "Feature": "x",
+            "Dimension": "PC1",
+            "Analysis": "loadings",
+            "Value": 0.5,
+        },
+        {
+            "Method": "PCA",
+            "Feature": "y",
+            "Dimension": "PC1",
+            "Analysis": "loadings",
+            "Value": 0.2,
+        },
+    ]
+    _assert_fig_ax(viz.plot_feature_importance(payload))
+
+
 def test_temporal_single_panel_plots_require_single_model_metric():
     result = make_synthetic_result()
     with pytest.raises(ValueError, match="requires a single model/metric selection"):
@@ -225,3 +250,67 @@ def test_plot_decoding_topomap_extra():
             sensor_df, value="Importance", coords=coords, center=0.0
         )
     )
+
+
+def test_plot_head_to_head_and_paired_delta_branches():
+    frame = pd.DataFrame(
+        {
+            "label": ["A", "B", "C"],
+            "mean": [0.6, 0.7, 0.65],
+            "std": [0.02, 0.03, 0.01],
+        }
+    )
+    # error + reference branches
+    _assert_fig_ax(
+        viz.plot_head_to_head(
+            frame, label="label", value="mean", error="std", reference=0.5
+        )
+    )
+    # no error series
+    _assert_fig_ax(viz.plot_head_to_head(frame, label="label", value="mean"))
+
+    delta_frame = pd.DataFrame(
+        {
+            "comparison": ["A-B", "A-C"],
+            "delta": [0.05, -0.02],
+            "ci_lower": [0.0, -0.05],
+            "ci_upper": [0.1, 0.01],
+        }
+    )
+    # with CI band
+    _assert_fig_ax(
+        viz.plot_paired_delta(
+            delta_frame,
+            label="comparison",
+            delta="delta",
+            lower="ci_lower",
+            upper="ci_upper",
+        )
+    )
+    # without CI
+    _assert_fig_ax(
+        viz.plot_paired_delta(delta_frame, label="comparison", delta="delta")
+    )
+
+
+def test_decoding_plot_alternate_kinds_and_options():
+    result = make_synthetic_result()
+    # score-distribution kinds
+    _assert_fig_ax(viz.plot_decoding_scores(result, kind="box"))
+    _assert_fig_ax(viz.plot_decoding_scores(result, kind="bar"))
+    # fit diagnostics kinds + warnings annotation
+    _assert_fig_ax(viz.plot_fit_diagnostics(result, kind="box"))
+    _assert_fig_ax(viz.plot_fit_diagnostics(result, kind="bar", show_warnings=True))
+    with pytest.raises(ValueError, match="kind must be"):
+        viz.plot_fit_diagnostics(result, kind="invalid")
+    # feature stability heatmap variant
+    _assert_fig_ax(viz.plot_feature_stability(result, kind="heatmap"))
+    # temporal score curve with smoothing
+    _assert_fig_ax(
+        viz.plot_temporal_score_curve(
+            result, model="model_1", metric="temporal_accuracy", smooth_window=3
+        )
+    )
+    # subject diagnostics rejects non-accuracy metrics
+    with pytest.raises(ValueError, match="accuracy"):
+        viz.plot_subject_diagnostics(result, metric="roc_auc")

@@ -23,6 +23,7 @@ from coco_pipe.viz.base import (
     plot_hexbin,
     plot_histogram,
     plot_line,
+    plot_roi_sensors,
     plot_scatter2d,
     plot_scatter3d,
     plot_streamfield,
@@ -717,3 +718,41 @@ def test_plot_error_points_with_reference_style():
         reference_style={"color": "red"},
     )
     plt.close(fig)
+
+
+def test_plot_roi_sensors_highlights_regions():
+    from types import SimpleNamespace
+
+    container = SimpleNamespace(
+        coords={"channel": ["Fz", "Cz", "Pz", "Oz", "C3", "C4"]}
+    )
+    rois = {"central": ["Cz", "C3", "C4"], "posterior": ["Pz", "Oz"]}
+    fig, axes = plot_roi_sensors(container, rois)
+    assert isinstance(fig, plt.Figure)
+    assert len(axes) == len(rois)
+    plt.close(fig)
+
+
+def test_coerce_sensor_layout_from_info_dataframe_and_array():
+    import mne
+
+    from coco_pipe.viz._utils import coerce_sensor_layout
+
+    info = mne.create_info(["Fz", "Cz", "Pz"], sfreq=100, ch_types="eeg")
+    info.set_montage(mne.channels.make_standard_montage("standard_1005"))
+    layout = coerce_sensor_layout(info=info, names=["Cz", "Pz"])
+    assert set(layout.names) == {"Cz", "Pz"}
+    assert layout.positions.shape == (2, 2)
+
+    # DataFrame with explicit Sensor column
+    df = pd.DataFrame({"Sensor": ["E1", "E2"], "x": [0.0, 0.1], "y": [0.2, 0.3]})
+    layout_df = coerce_sensor_layout(coords=df, names=["E2"])
+    assert layout_df.names == ["E2"]
+
+    # Nx2 array with names
+    layout_arr = coerce_sensor_layout(
+        coords=np.array([[0.0, 0.1], [0.2, 0.3]]), names=["a", "b"]
+    )
+    assert layout_arr.names == ["a", "b"]
+    with pytest.raises(ValueError, match="Nx2"):
+        coerce_sensor_layout(coords=np.array([1.0, 2.0, 3.0]))

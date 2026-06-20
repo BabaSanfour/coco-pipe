@@ -364,8 +364,8 @@ def from_experiment_result(
     sections : list of str or ``{"compact", "default", "full"}``
         Ordered section keys or a named report preset.
     interactive : bool
-        Interactive decoding plots are not implemented; passing ``True`` raises
-        ``NotImplementedError``.
+        If True, chart-like sections render interactive Plotly figures; topomap
+        and sensor-map sections remain static Matplotlib images.
     theme : str
         Matplotlib theme preset (``"paper"`` | ``"notebook"`` | ``"poster"``).
     title : str
@@ -432,6 +432,7 @@ def from_experiment_results(
     feature_metadata=None,
     info=None,
     coords=None,
+    interactive=False,
     title="Decoding Comparison",
     config=None,
     asset_urls=None,
@@ -451,6 +452,7 @@ def from_experiment_results(
         feature_metadata=feature_metadata,
         info=info,
         coords=coords,
+        interactive=interactive,
         title=title,
         config=config,
         asset_urls=asset_urls,

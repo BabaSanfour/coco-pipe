@@ -10,6 +10,7 @@ import pandas as pd
 
 from ._utils import (
     _importance_with_metadata,
+    _is_raw_importance_sequence,
     coerce_decoding_frame,
     finalize_axes,
     get_figure,
@@ -17,6 +18,7 @@ from ._utils import (
     prepare_curve_group_data,
     prepare_decoding_curve_frame,
     prepare_decoding_score_data,
+    prepare_feature_importance_series,
     prepare_feature_stability_series,
     prepare_fit_diagnostics_frame,
     prepare_fold_score_data,
@@ -1786,12 +1788,12 @@ def plot_feature_importance(
     >>> fig, ax = viz.plot_feature_importance(df)
     """
     with coco_theme():
-        if isinstance(
-            result, (pd.Series, dict, list, tuple, np.ndarray)
-        ) and not isinstance(result, pd.DataFrame):
-            try:
-                series = pd.Series(result).astype(float)
-            except (TypeError, ValueError):
+        try:
+            plot_values = prepare_feature_importance_series(
+                result, model=model, top_n=top_n, absolute=absolute
+            )
+        except (TypeError, ValueError):
+            if _is_raw_importance_sequence(result):
                 from coco_pipe.viz.dim_reduction import (
                     plot_feature_importance as plot_reduction_feature_importance,
                 )
@@ -1803,21 +1805,7 @@ def plot_feature_importance(
                     figsize=figsize,
                     ax=ax,
                 )
-        else:
-            frame = coerce_decoding_frame(result, accessor="get_feature_importances")
-            frame = select_rows(frame, model=model)
-            value_col = "Mean" if "Mean" in frame.columns else "Importance"
-            require_columns(
-                frame, ["FeatureName", value_col], context="get_feature_importances"
-            )
-            require_non_empty(frame, "feature importance")
-            series = frame.groupby("FeatureName")[value_col].mean()
-        plot_values = series.abs() if absolute else series
-        plot_values = plot_values.reindex(
-            plot_values.abs().sort_values(ascending=False).index
-        )
-        if top_n is not None:
-            plot_values = plot_values.head(top_n)
+            raise
         fig, ax = plot_bar(
             plot_values.sort_values(),
             cmap=_palette_for(signed and not absolute),

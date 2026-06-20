@@ -15,7 +15,10 @@ from ._utils import (
     coerce_reduction_frame,
     finalize_axes,
     get_figure,
+    metric_heatmap_frame,
+    metric_scope_series,
     prepare_component_loadings_frame,
+    prepare_coranking_matrix,
     prepare_eigenvalue_curves,
     prepare_embedding_frame,
     prepare_feature_scores,
@@ -292,21 +295,7 @@ def _plot_metric_distribution(
 def _plot_metric_heatmap(
     metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
 ) -> None:
-    has_scope_axis = (
-        "ScopeValue" in metrics_df.columns
-        and metrics_df["ScopeValue"].astype(str).nunique() > 1
-    )
-    has_single_metric = metrics_df["Metric"].nunique() == 1
-    if has_scope_axis and has_single_metric:
-        heatmap_df = metrics_df.pivot_table(
-            index="Method", columns="ScopeValue", values="Value", aggfunc="mean"
-        )
-        x_label = str(metrics_df["Scope"].iloc[0]).replace("_", " ").title()
-    else:
-        heatmap_df = metrics_df.pivot_table(
-            index="Method", columns="Metric", values="Value", aggfunc="mean"
-        )
-        x_label = "Metric"
+    heatmap_df, x_label = metric_heatmap_frame(metrics_df)
     plot_heatmap(
         heatmap_df,
         cmap=SEQUENTIAL,
@@ -324,37 +313,25 @@ def _plot_metric_heatmap(
 def _plot_metric_lines(
     metrics_df: pd.DataFrame, title: str, ax: plt.Axes, axes_kws: dict | None = None
 ) -> None:
-    group_cols = ["Method"] + (["Metric"] if metrics_df["Metric"].nunique() > 1 else [])
-    summary = (
-        metrics_df.groupby(group_cols + ["Scope", "ScopeValue"], dropna=False)["Value"]
-        .agg(["mean", "std", "count"])
-        .reset_index()
-    )
-    for keys, sub_df in summary.groupby(group_cols, dropna=False):
-        keys = keys if isinstance(keys, tuple) else (keys,)
-        label = " / ".join(str(k) for k in keys)
-        sub_df = sub_df.copy()
-        sub_df["scope_numeric"] = pd.to_numeric(sub_df["ScopeValue"], errors="coerce")
-        use_numeric = sub_df["scope_numeric"].notna().all()
-        sub_df = sub_df.sort_values("scope_numeric" if use_numeric else "ScopeValue")
-        x_vals = sub_df["scope_numeric"] if use_numeric else sub_df["ScopeValue"]
+    series, x_label = metric_scope_series(metrics_df)
+    for curve in series:
         yerr = (
-            sub_df["std"].fillna(0)
-            if use_numeric and sub_df["count"].max() > 1
+            curve["std"].fillna(0)
+            if curve["numeric"] and curve["count"].max() > 1
             else None
         )
         plot_line(
-            x_vals,
-            sub_df["mean"],
+            curve["x"],
+            curve["mean"],
             yerr=yerr,
             marker="o",
-            label=label,
+            label=curve["label"],
             ax=ax,
         )
     finalize_axes(
         ax,
         title=title,
-        xlabel=str(metrics_df["Scope"].iloc[0]).replace("_", " ").title(),
+        xlabel=x_label,
         ylabel="Score",
         legend=True,
         legend_title="Series",
@@ -1368,13 +1345,7 @@ def plot_coranking_matrix(
     >>> Q = np.random.default_rng(42).integers(0, 10, size=(15, 15)).astype(float)
     >>> fig, ax = viz.plot_coranking_matrix(Q)
     """
-    if coranking_matrix is None:
-        raise ValueError("coranking_matrix is required.")
-    matrix = np.asarray(coranking_matrix)
-    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        raise ValueError("coranking_matrix must be a 2D square array.")
-    k = min(matrix.shape[0], 50 if max_k is None else max_k)
-    matrix = matrix[:k, :k]
+    matrix = prepare_coranking_matrix(coranking_matrix, max_k)
     with coco_theme():
         fig, ax = plot_heatmap(
             matrix,
@@ -1681,12 +1652,12 @@ def plot_scree(
     with coco_theme():
         fig, ax1 = get_figure(ax, figsize, (8, 10))
 
-        components = np.arange(1, len(evr) + 1)
-        cumulative = np.cumsum(evr)
+        curve = prepare_eigenvalue_curves(evr)[0]
+        components = curve["components"]
 
         ax1.bar(
             components,
-            evr,
+            curve["mean"],
             width=0.8,
             alpha=0.8,
             color=bar_color,
@@ -1698,7 +1669,7 @@ def plot_scree(
         ax2 = ax1.twinx()
         plot_line(
             components,
-            cumulative,
+            curve["cumulative"],
             marker="o",
             color=line_color,
             linewidth=4,

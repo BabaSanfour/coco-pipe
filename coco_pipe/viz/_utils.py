@@ -873,6 +873,67 @@ def filter_metric_frame(
     return df
 
 
+def metric_heatmap_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Return ``(pivoted heatmap frame, x-axis label)`` for a tidy metric frame.
+
+    Uses a ``Method × ScopeValue`` grid when a single metric varies across a
+    scope axis; otherwise a ``Method × Metric`` grid. Shared by the static and
+    interactive ``plot_metrics`` heatmap renderers.
+    """
+    has_scope_axis = (
+        "ScopeValue" in frame.columns and frame["ScopeValue"].astype(str).nunique() > 1
+    )
+    if has_scope_axis and frame["Metric"].nunique() == 1:
+        heatmap_df = frame.pivot_table(
+            index="Method", columns="ScopeValue", values="Value", aggfunc="mean"
+        )
+        x_label = str(frame["Scope"].iloc[0]).replace("_", " ").title()
+    else:
+        heatmap_df = frame.pivot_table(
+            index="Method", columns="Metric", values="Value", aggfunc="mean"
+        )
+        x_label = "Metric"
+    return heatmap_df, x_label
+
+
+def metric_scope_series(
+    frame: pd.DataFrame,
+) -> tuple[list[dict[str, Any]], str]:
+    """Return ``(per-series scope curves, x-axis label)`` for a tidy metric frame.
+
+    Each series dict carries ``label``, ``x`` (numeric when the scope axis parses
+    as numeric, else categorical), ``mean``, ``std``, ``count``, and ``numeric``.
+    Series are grouped by ``Method`` (and ``Metric`` when several metrics are
+    present). Shared by the static and interactive ``plot_metrics`` line renderers.
+    """
+    group_cols = ["Method"] + (["Metric"] if frame["Metric"].nunique() > 1 else [])
+    summary = (
+        frame.groupby(group_cols + ["Scope", "ScopeValue"], dropna=False)["Value"]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+    )
+    series: list[dict[str, Any]] = []
+    for keys, sub_df in summary.groupby(group_cols, dropna=False):
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        label = " / ".join(str(key) for key in keys)
+        sub_df = sub_df.copy()
+        sub_df["scope_numeric"] = pd.to_numeric(sub_df["ScopeValue"], errors="coerce")
+        use_numeric = sub_df["scope_numeric"].notna().all()
+        sub_df = sub_df.sort_values("scope_numeric" if use_numeric else "ScopeValue")
+        series.append(
+            {
+                "label": label,
+                "x": sub_df["scope_numeric"] if use_numeric else sub_df["ScopeValue"],
+                "mean": sub_df["mean"],
+                "std": sub_df["std"],
+                "count": sub_df["count"],
+                "numeric": use_numeric,
+            }
+        )
+    x_label = str(frame["Scope"].iloc[0]).replace("_", " ").title()
+    return series, x_label
+
+
 def prepare_trajectory_metric_series(
     series: Any,
     times: Sequence[float] | np.ndarray | None = None,
@@ -1487,6 +1548,47 @@ def prepare_feature_score_series(
     return scores
 
 
+def _is_raw_importance_sequence(result: Any) -> bool:
+    """True for mapping/sequence inputs that are not a DataFrame."""
+    return isinstance(
+        result, (pd.Series, dict, list, tuple, np.ndarray)
+    ) and not isinstance(result, pd.DataFrame)
+
+
+def prepare_feature_importance_series(
+    result: Any,
+    model: str | None = None,
+    top_n: int | None = 25,
+    absolute: bool = False,
+) -> pd.Series:
+    """Return ranked feature importances as a Series sorted by magnitude.
+
+    Accepts an ``ExperimentResult`` (via ``get_feature_importances()``), a
+    feature-importance DataFrame, or a numeric mapping/sequence. Non-numeric
+    sequences raise ``TypeError``/``ValueError`` so callers can delegate to the
+    dimensionality-reduction feature-importance plot (see
+    :func:`_is_raw_importance_sequence`).
+    """
+    if _is_raw_importance_sequence(result):
+        series = pd.Series(result).astype(float)
+    else:
+        frame = coerce_decoding_frame(result, accessor="get_feature_importances")
+        frame = select_rows(frame, model=model)
+        value_col = "Mean" if "Mean" in frame.columns else "Importance"
+        require_columns(
+            frame, ["FeatureName", value_col], context="get_feature_importances"
+        )
+        require_non_empty(frame, "feature importance")
+        series = frame.groupby("FeatureName")[value_col].mean()
+    plot_values = series.abs() if absolute else series
+    plot_values = plot_values.reindex(
+        plot_values.abs().sort_values(ascending=False).index
+    )
+    if top_n is not None:
+        plot_values = plot_values.head(top_n)
+    return plot_values
+
+
 def prepare_trajectory_data(
     X: np.ndarray,
     times: Sequence[float] | np.ndarray | None = None,
@@ -1625,6 +1727,23 @@ def prepare_eigenvalue_curves(
             }
         )
     return records
+
+
+def prepare_coranking_matrix(
+    coranking_matrix: np.ndarray | None, max_k: int | None = None
+) -> np.ndarray:
+    """Validate a square co-ranking matrix and crop to the top-left ``k × k`` corner.
+
+    ``k`` defaults to ``min(n, 50)``. Shared by the static and interactive
+    co-ranking matrix renderers.
+    """
+    if coranking_matrix is None:
+        raise ValueError("coranking_matrix is required.")
+    matrix = np.asarray(coranking_matrix)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("coranking_matrix must be a 2D square array.")
+    k = min(matrix.shape[0], 50 if max_k is None else max_k)
+    return matrix[:k, :k]
 
 
 def prepare_shepard_distances(

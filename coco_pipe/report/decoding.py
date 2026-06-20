@@ -141,6 +141,38 @@ def _result_frame(
     return frame
 
 
+def _resolve_decoding_plotter(
+    name: str, interactive: bool
+) -> tuple[Callable[..., Any], bool]:
+    """Return ``(plotter, as_plotly)`` for *name*, preferring the interactive twin.
+
+    When ``interactive`` is requested but no Plotly twin exists (topomap and
+    sensor-profile plots are Matplotlib-only), the static plotter is returned and
+    rendered as an image, so an interactive report degrades gracefully per plot.
+    """
+    if interactive:
+        from coco_pipe.viz.interactive import decoding as interactive_viz
+
+        plotter = getattr(interactive_viz, name, None)
+        if plotter is not None:
+            return plotter, True
+    from coco_pipe.viz import decoding as static_viz
+
+    return getattr(static_viz, name), False
+
+
+def _decoding_plot(
+    *args: Any,
+    name: str,
+    interactive: bool,
+    caption: str,
+    **kwargs: Any,
+) -> Any:
+    """Resolve and render a decoding plotter, returning ``None`` if it can't draw."""
+    plotter, as_plotly = _resolve_decoding_plotter(name, interactive)
+    return _plot_or_none(plotter, *args, caption=caption, as_plotly=as_plotly, **kwargs)
+
+
 def build_decoding_overview_section(
     result: Any,
     *,
@@ -186,10 +218,9 @@ def build_cv_section(
     model: str | None = None,
     name: str = "Cross-Validation",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Build fold scores and score dispersion only."""
-    from coco_pipe.viz.decoding import plot_fold_score_dispersion
-
     scores = _result_frame(
         result,
         "get_detailed_scores",
@@ -211,9 +242,10 @@ def build_cv_section(
     )
     if include_tables:
         section.add_element(TableElement(scores, title="Fold Scores"))
-    image = _plot_or_none(
-        plot_fold_score_dispersion,
+    image = _decoding_plot(
         scores,
+        name="plot_fold_score_dispersion",
+        interactive=interactive,
         metric=metric,
         model=model,
         caption="Fold score dispersion",
@@ -229,15 +261,9 @@ def build_probability_section(
     model: str | None = None,
     name: str = "Confusion and Probability",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Build confusion, ROC, precision-recall, and calibration diagnostics."""
-    from coco_pipe.viz.decoding import (
-        plot_calibration_curve,
-        plot_confusion_matrix,
-        plot_pr_curve,
-        plot_roc_curve,
-    )
-
     confusion = _result_frame(
         result, "get_confusion_matrices", required=False, model=model
     )
@@ -267,31 +293,35 @@ def build_probability_section(
         label = str(model_name or "Model")
         block = AccordionElement(label, open=len(models) <= 1)
         images = {
-            "Confusion Matrix": _plot_or_none(
-                plot_confusion_matrix,
+            "Confusion Matrix": _decoding_plot(
                 confusion,
+                name="plot_confusion_matrix",
+                interactive=interactive,
                 model=model_name,
                 caption=f"Confusion matrix for {label}",
             )
             if not confusion.empty
             else None,
-            "ROC Curve": _plot_or_none(
-                plot_roc_curve,
+            "ROC Curve": _decoding_plot(
                 result,
+                name="plot_roc_curve",
+                interactive=interactive,
                 model=model_name,
                 mean_only=True,
                 caption=f"ROC curve for {label}",
             ),
-            "Precision-Recall": _plot_or_none(
-                plot_pr_curve,
+            "Precision-Recall": _decoding_plot(
                 result,
+                name="plot_pr_curve",
+                interactive=interactive,
                 model=model_name,
                 mean_only=True,
                 caption=f"Precision-recall curve for {label}",
             ),
-            "Calibration": _plot_or_none(
-                plot_calibration_curve,
+            "Calibration": _decoding_plot(
                 result,
+                name="plot_calibration_curve",
+                interactive=interactive,
                 model=model_name,
                 mean_only=True,
                 caption=f"Calibration curve for {label}",
@@ -317,6 +347,7 @@ def build_decoding_diagnostics_section(
     model: str | None = None,
     name: str = "Decoding Diagnostics",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Combine the now-separated CV and probability blocks into one section.
 
@@ -333,11 +364,16 @@ def build_decoding_diagnostics_section(
                 "metric": metric,
                 "model": model,
                 "include_tables": include_tables,
+                "interactive": interactive,
             },
         ),
         (
             build_probability_section,
-            {"model": model, "include_tables": include_tables},
+            {
+                "model": model,
+                "include_tables": include_tables,
+                "interactive": interactive,
+            },
         ),
     )
     for builder, kwargs in builders:
@@ -360,13 +396,9 @@ def build_statistical_section(
     metric: str | None = None,
     model: str | None = None,
     name: str = "Statistical Assessment",
+    interactive: bool = False,
 ) -> Section:
     """Build finite-sample and temporal statistical assessment."""
-    from coco_pipe.viz.decoding import (
-        plot_null_interval_summary,
-        plot_temporal_statistical_assessment,
-    )
-
     assessment = _result_frame(
         result,
         "get_statistical_assessment",
@@ -390,17 +422,19 @@ def build_statistical_section(
     section.add_element(
         TableElement(assessment, title="Finite-Sample Statistical Assessment")
     )
-    null_image = _plot_or_none(
-        plot_null_interval_summary,
+    null_image = _decoding_plot(
         assessment,
+        name="plot_null_interval_summary",
+        interactive=interactive,
         caption="Null interval summary",
     )
     if null_image is not None:
         section.add_element(null_image)
     if "Time" in assessment and assessment["Time"].notna().any():
-        temporal_image = _plot_or_none(
-            plot_temporal_statistical_assessment,
+        temporal_image = _decoding_plot(
             assessment,
+            name="plot_temporal_statistical_assessment",
+            interactive=interactive,
             metric=metric,
             model=model,
             caption="Temporal statistical assessment",
@@ -417,13 +451,9 @@ def build_temporal_section(
     model: str | None = None,
     name: str = "Temporal Decoding",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Build temporal score and generalization diagnostics when applicable."""
-    from coco_pipe.viz.decoding import (
-        plot_temporal_generalization_matrix,
-        plot_temporal_score_curve,
-    )
-
     summary = _result_frame(
         result,
         "get_temporal_score_summary",
@@ -454,9 +484,10 @@ def build_temporal_section(
     if model:
         section.add_element(BadgeElement(f"Model: {model}", "blue"))
     if has_time:
-        image = _plot_or_none(
-            plot_temporal_score_curve,
+        image = _decoding_plot(
             summary,
+            name="plot_temporal_score_curve",
+            interactive=interactive,
             metric=metric,
             model=model,
             caption="Temporal score curve",
@@ -464,9 +495,10 @@ def build_temporal_section(
         if image is not None:
             section.add_element(image)
     if has_generalization:
-        image = _plot_or_none(
-            plot_temporal_generalization_matrix,
+        image = _decoding_plot(
             summary,
+            name="plot_temporal_generalization_matrix",
+            interactive=interactive,
             metric=metric,
             model=model,
             caption="Temporal generalization matrix",
@@ -481,24 +513,25 @@ def build_performance_section(
     *,
     metric: str | None = None,
     name: str = "Performance",
+    interactive: bool = False,
 ) -> Section:
     """Build aggregate score and paired model-comparison figures."""
-    from coco_pipe.viz.decoding import plot_decoding_scores, plot_model_comparison
-
     scores = _result_frame(result, "get_detailed_scores", context="Performance")
     images = {
-        "Score Distribution": _plot_or_none(
-            plot_decoding_scores,
+        "Score Distribution": _decoding_plot(
             scores,
+            name="plot_decoding_scores",
+            interactive=interactive,
             metric=metric,
             caption="Decoding scores",
         )
     }
     models = list(dict.fromkeys(scores["Model"])) if "Model" in scores else []
     if len(models) > 1:
-        images["Model Comparison"] = _plot_or_none(
-            plot_model_comparison,
+        images["Model Comparison"] = _decoding_plot(
             result,
+            name="plot_model_comparison",
+            interactive=interactive,
             metric=metric or "accuracy",
             caption="Paired model comparison",
         )
@@ -521,14 +554,9 @@ def build_features_section(
     top_n: int = 20,
     name: str = "Features",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Build feature importance, stability, and sensor-family summaries."""
-    from coco_pipe.viz.decoding import (
-        plot_feature_importance,
-        plot_feature_stability,
-        plot_sensor_feature_heatmap,
-    )
-
     importances = _result_frame(
         result, "get_feature_importances", required=False, model=model
     )
@@ -580,27 +608,30 @@ def build_features_section(
             if model_name is not None and "Model" in stability
             else stability
         )
-        images: dict[str, ImageElement | None] = {}
+        images: dict[str, Any] = {}
         if not model_importances.empty:
-            images["Importance"] = _plot_or_none(
-                plot_feature_importance,
+            images["Importance"] = _decoding_plot(
                 model_importances,
+                name="plot_feature_importance",
+                interactive=interactive,
                 model=model_name,
                 top_n=top_n,
                 caption=f"Top feature importances for {label}",
             )
             required = {"FeatureName", "Sensor", "FeatureFamily"}
             if required.issubset(metadata.columns):
-                images["Sensor x Family"] = _plot_or_none(
-                    plot_sensor_feature_heatmap,
+                images["Sensor x Family"] = _decoding_plot(
                     model_importances,
+                    name="plot_sensor_feature_heatmap",
+                    interactive=interactive,
                     feature_metadata=metadata,
                     caption=f"Sensor-by-feature-family importance for {label}",
                 )
         if not model_stability.empty:
-            images["Stability"] = _plot_or_none(
-                plot_feature_stability,
+            images["Stability"] = _decoding_plot(
                 model_stability,
+                name="plot_feature_stability",
+                interactive=interactive,
                 model=model_name,
                 caption=f"Feature-selection stability for {label}",
             )
@@ -669,10 +700,9 @@ def build_fit_diagnostics_section(
     name: str = "Fit Diagnostics",
     include_tables: bool = False,
     supplementary: bool = True,
+    interactive: bool = False,
 ) -> Section:
     """Build timing and warning diagnostics as supplementary content."""
-    from coco_pipe.viz.decoding import plot_fit_diagnostics
-
     diagnostics = _result_frame(
         result,
         "get_fit_diagnostics",
@@ -697,9 +727,10 @@ def build_fit_diagnostics_section(
     )
     if include_tables:
         target.add_element(TableElement(diagnostics, title="Fit Diagnostics"))
-    image = _plot_or_none(
-        plot_fit_diagnostics,
+    image = _decoding_plot(
         diagnostics,
+        name="plot_fit_diagnostics",
+        interactive=interactive,
         caption="Fit timing diagnostics",
     )
     if image is not None:
@@ -727,10 +758,9 @@ def build_tuning_section(
     name: str = "Hyperparameter Tuning",
     include_tables: bool = False,
     supplementary: bool = True,
+    interactive: bool = False,
 ) -> Section:
     """Build best-parameter and search-result diagnostics."""
-    from coco_pipe.viz.decoding import plot_search_results
-
     search = _result_frame(result, "get_search_results", context="Tuning")
     if model is not None and "Model" in search:
         search = search[search["Model"] == model]
@@ -754,9 +784,10 @@ def build_tuning_section(
         target.add_element(TableElement(search, title="Search Results"))
         if not best.empty:
             target.add_element(TableElement(best, title="Best Parameters"))
-    image = _plot_or_none(
-        plot_search_results,
+    image = _decoding_plot(
         search,
+        name="plot_search_results",
+        interactive=interactive,
         model=model,
         top_n=20,
         caption="Top hyperparameter-search candidates",
@@ -772,10 +803,9 @@ def build_neural_section(
     model: str | None = None,
     name: str = "Neural Artifacts",
     include_tables: bool = False,
+    interactive: bool = False,
 ) -> Section:
     """Build neural training artifacts when available."""
-    from coco_pipe.viz.decoding import plot_training_history
-
     artifacts = _result_frame(result, "get_model_artifacts", context="Neural artifacts")
     if model is not None and "Model" in artifacts:
         artifacts = artifacts[artifacts["Model"] == model]
@@ -787,9 +817,10 @@ def build_neural_section(
     )
     if include_tables:
         section.add_element(TableElement(artifacts, title="Model Artifacts"))
-    image = _plot_or_none(
-        plot_training_history,
+    image = _decoding_plot(
         artifacts,
+        name="plot_training_history",
+        interactive=interactive,
         model=model,
         caption="Training history",
     )
@@ -905,6 +936,18 @@ DECODING_SECTION_BUILDERS: dict[str, Callable[..., Section]] = {
 }
 VALID_SECTIONS = set(DECODING_SECTION_BUILDERS) | set(_SECTION_ALIASES)
 
+_INTERACTIVE_AWARE_SECTIONS = {
+    "cv",
+    "probability",
+    "statistical",
+    "temporal",
+    "performance",
+    "features",
+    "fit_diagnostics",
+    "tuning",
+    "neural",
+}
+
 
 def _resolve_decoding_sections(
     sections: str | Sequence[str],
@@ -930,6 +973,7 @@ def _builder_kwargs(
     info: Any,
     coords: Any,
     verbose: bool,
+    interactive: bool,
     section_options: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     kwargs = dict(section_options.get(key, {}))
@@ -948,6 +992,8 @@ def _builder_kwargs(
         "neural",
     }:
         kwargs.setdefault("include_tables", verbose)
+    if key in _INTERACTIVE_AWARE_SECTIONS:
+        kwargs.setdefault("interactive", interactive)
     return kwargs
 
 
@@ -959,10 +1005,13 @@ def build_decoding_sections(
     info: Any = None,
     coords: Any = None,
     verbose: bool | None = None,
+    interactive: bool = False,
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[Section]:
     """Build ordered decoding sections without creating or mutating a report."""
+    # Even interactive reports embed Matplotlib images for static-only plots
+    # (topomaps, sensor maps), so the headless backend is always required.
     _ensure_static_matplotlib_backend()
     if on_error not in {"raise", "warn", "placeholder"}:
         raise ValueError("on_error must be 'raise', 'warn', or 'placeholder'.")
@@ -978,6 +1027,7 @@ def build_decoding_sections(
             info=info,
             coords=coords,
             verbose=include_tables,
+            interactive=interactive,
             section_options=options,
         )
         try:
@@ -1020,11 +1070,11 @@ def make_decoding_report(
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Report:
-    """Build a decoding report from one ``ExperimentResult``."""
-    if interactive:
-        raise NotImplementedError(
-            "interactive decoding reports are not implemented; pass interactive=False."
-        )
+    """Build a decoding report from one ``ExperimentResult``.
+
+    With ``interactive=True``, chart-like sections render Plotly figures; topomap
+    and sensor-map sections remain Matplotlib images (no Plotly twin exists).
+    """
     run_config = {"theme": theme, **(config or {})}
     report = Report(title=title, config=run_config, theme=theme, asset_urls=asset_urls)
     if qc_result is not None:
@@ -1036,6 +1086,7 @@ def make_decoding_report(
         info=info,
         coords=coords,
         verbose=verbose,
+        interactive=interactive,
         on_error=on_error,
         section_options=section_options,
     ):

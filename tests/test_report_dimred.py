@@ -233,6 +233,24 @@ def test_reduction_report_empty_edge_cases():
     assert len(report.children) == 0
 
 
+def test_add_reduction_interpretation_renders_section():
+    """The rewired interpretation path renders via plot_feature_importance."""
+    interpretation = [
+        {
+            "Method": "PCA",
+            "Feature": f"F{idx}",
+            "Dimension": "PC1",
+            "Analysis": "loadings",
+            "Value": 0.5 - 0.1 * idx,
+        }
+        for idx in range(4)
+    ]
+    report = Report("Interp")
+    report.add_reduction_interpretation(interpretation, analysis="loadings")
+    assert len(report.children) == 1
+    assert report.children[0].title == "Interpretation"
+
+
 def test_reduction_full_coverage():
     import numpy as np
 
@@ -454,12 +472,12 @@ class MockReducerForExceptions:
             id="diagnostics",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_interpretation",
+            "coco_pipe.viz.dim_reduction.plot_feature_importance",
             lambda rep: add_reduction_interpretation(
                 rep, {"loadings": np.ones((2, 2))}, analysis="loadings"
             ),
             "Interpretation section skipped: %s",
-            {"create": True},
+            {},
             id="interpretation",
         ),
         pytest.param(
