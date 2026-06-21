@@ -86,7 +86,7 @@ def test_plot_phase_portrait_returns_figure():
 
     assert isinstance(fig, go.Figure)
     assert len(fig.data) == 3
-    for trace, label in zip(fig.data, labels):
+    for trace, label in zip(fig.data, labels, strict=False):
         assert trace.name == label
         assert len(trace.x) == 20
         assert len(trace.y) == 20
@@ -170,7 +170,7 @@ def test_plot_trajectory_sem_and_values():
 
     # Mismatched SEM shape raises ValueError
     sem_mismatched = rng.normal(size=(2, 10, 3))
-    with pytest.raises(ValueError, match="must match.*shape"):
+    with pytest.raises(ValueError, match=r"must match.*shape"):
         viz_interactive.plot_trajectory(X, sem=sem_mismatched)
 
     # Matching SEM shape and values, 3D
@@ -370,7 +370,7 @@ def test_plot_shepard_fallback_few_points():
     import plotly.graph_objects as go
 
     rng = np.random.default_rng(22)
-    # Very small dataset – most points will be outside the window, triggering fallback
+    # Very small dataset - most points will be outside the window, triggering fallback
     X_orig = rng.normal(size=(10, 3))
     X_emb = rng.normal(size=(10, 2))
     fig = viz_interactive.plot_shepard_diagram(

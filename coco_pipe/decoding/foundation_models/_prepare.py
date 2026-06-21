@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -36,9 +37,7 @@ class PreparedBackend:
         if self.source_sfreq != self.target_sfreq:
             from scipy.signal import resample
 
-            n_times = int(
-                round(values.shape[-1] * self.target_sfreq / self.source_sfreq)
-            )
+            n_times = round(values.shape[-1] * self.target_sfreq / self.source_sfreq)
             values = resample(values, n_times, axis=-1).astype(np.float32)
         if (
             self.spec.pretrained_n_times is not None
@@ -90,8 +89,8 @@ def prepare_backend(
     )
     source_sfreq = float(sfreq or spec.pretrained_sfreq)
     target_sfreq = float(spec.pretrained_sfreq)
-    model_n_times = spec.pretrained_n_times or int(
-        round(values.shape[-1] * target_sfreq / source_sfreq)
+    model_n_times = spec.pretrained_n_times or round(
+        values.shape[-1] * target_sfreq / source_sfreq
     )
     kwargs = dict(backend_kwargs or {})
     kwargs.setdefault("sfreq", target_sfreq)

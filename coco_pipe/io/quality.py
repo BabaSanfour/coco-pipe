@@ -182,7 +182,7 @@ class CheckResult:
         return self.status in {"WARN", "FAIL"}
 
     @classmethod
-    def from_flag_dict(cls, flag: dict[str, Any]) -> "CheckResult":
+    def from_flag_dict(cls, flag: dict[str, Any]) -> CheckResult:
         """Construct a CheckResult from a :func:`make_qc_flag` record."""
         level_map = {"pass": "OK", "warn": "WARN", "fail": "FAIL"}
         status = level_map.get(str(flag.get("level", "pass")), "OK")
@@ -713,7 +713,7 @@ def row_quality_score(
 
 
 def drop_epoch_outliers(
-    container: "DataContainer",
+    container: DataContainer,
     z_threshold: float = 5.0,
     outlier_fraction_threshold: float = 0.30,
     subject_col: str = "subject",
@@ -721,7 +721,7 @@ def drop_epoch_outliers(
     descriptor_names: list[str] | None = None,
     group_by: str | None = None,
     min_obs: int | None = None,
-) -> tuple["DataContainer" | dict[str, np.ndarray], QCResult]:
+) -> tuple[DataContainer | dict[str, np.ndarray], QCResult]:
     """Drop observations with a high fraction of MAD-based feature outliers.
 
     ``group_by=None`` makes one global drop decision across all features. When
@@ -835,14 +835,14 @@ def drop_epoch_outliers(
 
 
 def drop_subject_outliers(
-    container: "DataContainer",
+    container: DataContainer,
     z_threshold: float = 5.0,
     outlier_fraction_threshold: float = 0.20,
     subject_col: str = "subject",
     feature_cols: list[str] | None = None,
     descriptor_names: list[str] | None = None,
     group_by: str | None = None,
-) -> tuple["DataContainer" | dict[str, np.ndarray], QCResult]:
+) -> tuple[DataContainer | dict[str, np.ndarray], QCResult]:
     """Drop subjects with a high cohort-level feature outlier burden.
 
     ``group_by=None`` makes one global decision across all features. When set
@@ -964,7 +964,7 @@ def drop_subject_outliers(
 
 
 def run_qc(
-    container: "DataContainer",
+    container: DataContainer,
     epoch_z_threshold: float | None = 5.0,
     epoch_outlier_fraction_threshold: float = 0.30,
     subject_z_threshold: float | None = 5.0,
@@ -972,7 +972,7 @@ def run_qc(
     subject_col: str = "subject",
     feature_cols: list[str] | None = None,
     compute_missingness: bool = True,
-) -> tuple["DataContainer", QCResult]:
+) -> tuple[DataContainer, QCResult]:
     """Run epoch QC followed by subject QC and return a merged result."""
     _validate_container(container)
     n_obs_in = container.X.shape[0]
@@ -1044,7 +1044,7 @@ def run_qc(
     )
 
 
-def _validate_container(container: "DataContainer") -> None:
+def _validate_container(container: DataContainer) -> None:
     if container.X.ndim != 2 or tuple(container.dims) != ("obs", "feature"):
         raise ValueError(
             "Quality functions require a flat 2D DataContainer with dims "
@@ -1083,14 +1083,14 @@ def _deduplicate_subject_records(
 
 
 def _count_unique_subjects(
-    container: "DataContainer",
+    container: DataContainer,
     subject_col: str,
 ) -> int:
     return len(set(_get_subject_ids(container, subject_col)))
 
 
 def _get_subject_ids(
-    container: "DataContainer",
+    container: DataContainer,
     subject_col: str,
 ) -> list[str]:
     if subject_col in (container.coords or {}):
@@ -1109,7 +1109,7 @@ def _get_subject_ids(
 
 
 def _container_to_feature_df(
-    container: "DataContainer",
+    container: DataContainer,
     feature_cols: list[str] | None,
 ) -> pd.DataFrame:
     _validate_container(container)
@@ -1139,9 +1139,9 @@ def _clean_filter_meta(meta: dict) -> dict:
 
 
 def _filter_observations(
-    container: "DataContainer",
+    container: DataContainer,
     keep_mask: np.ndarray,
-) -> "DataContainer":
+) -> DataContainer:
     from .structures import DataContainer
 
     keep_mask = np.asarray(keep_mask, dtype=bool)

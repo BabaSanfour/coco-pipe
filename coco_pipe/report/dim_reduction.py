@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,7 @@ from .qc import build_qc_section
 logger = logging.getLogger(__name__)
 
 
-def _get_reducer_summary(reducer: Any) -> Dict[str, Any]:
+def _get_reducer_summary(reducer: Any) -> dict[str, Any]:
     """Collect the strict summary payload from a reduction-like object."""
     if not hasattr(reducer, "get_summary"):
         raise TypeError(
@@ -53,8 +53,8 @@ def _get_reducer_summary(reducer: Any) -> Dict[str, Any]:
 
 
 def _trajectory_times(
-    diagnostics: Dict[str, Any], times: Optional[np.ndarray]
-) -> Optional[np.ndarray]:
+    diagnostics: dict[str, Any], times: np.ndarray | None
+) -> np.ndarray | None:
     """Return the explicit trajectory time axis when it aligns with diagnostics."""
     if times is not None:
         time_values = np.asarray(times).reshape(-1)
@@ -84,7 +84,7 @@ VALID_REDUCTION_SECTIONS = set(DEFAULT_REDUCTION_SECTIONS)
 
 
 def _metrics_summary_table(metrics: Any) -> pd.DataFrame:
-    """Reduce metric observations to a method × metric summary table.
+    """Reduce metric observations to a method x metric summary table.
 
     Lives in this submodule (rather than ``core``) because it depends on
     :mod:`coco_pipe.viz._utils.prepare_metrics_frame` — keeping the viz
@@ -182,7 +182,7 @@ def add_reduction_embedding(
     self : Report
         Target report.
     X_emb : array-like
-        2-D or 3-D embedding array of shape ``(n_samples, n_components)``.
+        2-D or 3-D embedding array of shape ``(n_samples, n_dims)``.
     labels : array-like, optional
         Class labels aligned with *X_emb* rows.
     metadata : dict, optional
@@ -317,7 +317,7 @@ def add_reduction_diagnostics(
     X_orig : array-like
         Original high-dimensional data of shape ``(n_samples, n_features)``.
     X_emb : array-like
-        Low-dimensional embedding of shape ``(n_samples, n_components)``.
+        Low-dimensional embedding of shape ``(n_samples, n_dims)``.
     name : str
         Section title.
 
@@ -489,7 +489,7 @@ def add_reduction_components(
     self : Report
         Target report.
     components : array-like
-        Component matrix of shape ``(n_components, n_features)``.
+        Component matrix of shape ``(n_dims, n_features)``.
     feature_names : list of str, optional
         Column labels for the feature axis.
     name : str
@@ -544,7 +544,7 @@ def add_reduction_trajectory(
     self : Report
         Target report.
     X : array-like
-        3-D embedding of shape ``(n_times, n_samples, n_components)``.
+        3-D embedding of shape ``(n_times, n_samples, n_dims)``.
     times : array-like, optional
         Time axis values aligned with ``X[0]``.
     labels : array-like, optional
@@ -909,12 +909,12 @@ def _add_embedding_and_shepard(
 def add_reduction(
     self: Report,
     reducer: Any,
-    name: Optional[str] = None,
+    name: str | None = None,
     *,
-    X_emb: Optional[np.ndarray] = None,
-    labels: Optional[np.ndarray] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    times: Optional[np.ndarray] = None,
+    X_emb: np.ndarray | None = None,
+    labels: np.ndarray | None = None,
+    metadata: dict[str, Any] | None = None,
+    times: np.ndarray | None = None,
 ) -> Report:
     """
     Add one scored and optionally interpreted reduction result to *self*.
@@ -1060,7 +1060,7 @@ def add_reduction(
                 go.Heatmap(
                     z=np.asarray(coranking),
                     colorscale="Viridis",
-                    colorbar=dict(title="Count"),
+                    colorbar={"title": "Count"},
                 )
             ]
         )
@@ -1068,7 +1068,7 @@ def add_reduction(
             title="Co-Ranking Matrix",
             xaxis_title="Embedded Rank",
             yaxis_title="Original Rank",
-            margin=dict(l=40, r=40, b=40, t=40),
+            margin={"l": 40, "r": 40, "b": 40, "t": 40},
             template="plotly_white",
         )
         sec.add_element(PlotlyElement(fig_coranking, height="420px"))
@@ -1189,15 +1189,15 @@ def add_comparison(
 
 __all__ = [
     "DEFAULT_REDUCTION_SECTIONS",
-    "add_reduction",
     "add_comparison",
-    "add_reduction_overview",
-    "add_reduction_embedding",
-    "add_reduction_metrics",
-    "add_reduction_diagnostics",
-    "add_reduction_interpretation",
-    "add_reduction_coranking",
+    "add_reduction",
     "add_reduction_components",
+    "add_reduction_coranking",
+    "add_reduction_diagnostics",
+    "add_reduction_embedding",
+    "add_reduction_interpretation",
+    "add_reduction_metrics",
+    "add_reduction_overview",
     "add_reduction_trajectory",
     "add_reduction_trajectory_separation",
     "make_reduction_report",

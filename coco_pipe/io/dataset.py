@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -84,18 +84,18 @@ class TabularDataset(BaseDataset):
 
     def __init__(
         self,
-        path: Union[str, Path],
-        target_col: Optional[str] = None,
-        index_col: Optional[Union[str, int]] = None,
+        path: str | Path,
+        target_col: str | None = None,
+        index_col: str | int | None = None,
         sep: str = "\t",
-        header: Optional[Union[int, List[int]]] = 0,
-        sheet_name: Optional[Union[str, int]] = 0,
-        columns_to_dims: Optional[List[str]] = None,
+        header: int | list[int] | None = 0,
+        sheet_name: str | int | None = 0,
+        columns_to_dims: list[str] | None = None,
         col_sep: str = "_",
-        meta_columns: Optional[List[str]] = None,
+        meta_columns: list[str] | None = None,
         clean: bool = False,
-        clean_kwargs: Optional[Dict[str, Any]] = None,
-        select_kwargs: Optional[Dict[str, Any]] = None,
+        clean_kwargs: dict[str, Any] | None = None,
+        select_kwargs: dict[str, Any] | None = None,
     ):
         self.path = Path(path)
         self.target_col = target_col
@@ -236,9 +236,9 @@ class TabularDataset(BaseDataset):
                 )
 
             # Reshape: (N_obs, Dim1, Dim2, ...)
-            new_shape = (n_obs,) + tuple(dim_sizes)
+            new_shape = (n_obs, *tuple(dim_sizes))
             X_final = X_sorted.values.reshape(new_shape)
-            dims = tuple(["obs"] + self.columns_to_dims)
+            dims = ("obs", *self.columns_to_dims)
 
         else:
             # Default 2D
@@ -260,9 +260,9 @@ class TabularDataset(BaseDataset):
         sep: str = "_",
         reverse: bool = False,
         verbose: bool = False,
-        min_abs_value: Optional[float] = None,
+        min_abs_value: float | None = None,
         min_abs_fraction: float = 0.0,
-    ) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
+    ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
         """
         Remove invalid feature columns containing NaN, ±Inf, and optionally very
         small values.
@@ -338,7 +338,7 @@ class TabularDataset(BaseDataset):
 
 
 class EmbeddingDataset(BaseDataset):
-    """
+    r"""
     Generic Dataset for loading embedding files (Pickle, NPY, JSON, H5).
 
     This class decouples file discovery (via patterns and IDs) from content reading.
@@ -349,8 +349,8 @@ class EmbeddingDataset(BaseDataset):
     ----------
     path : str or Path
         Root directory containing the embedding files.
-    pattern : str, default='*.pkl'
-        Glob pattern to match files (e.g., "*.npy", "sub-*_emb.pkl").
+    pattern : str, default=r'\*.pkl'
+        Glob pattern to match files (e.g., ``*.npy``, ``sub-*_emb.pkl``).
     dims : tuple of str, default=('obs', 'feature')
         Dimension labels for the data arrays (excluding the observation dimension if
         implicit). Typically ('feature',) or ('layer', 'feature').
@@ -381,16 +381,16 @@ class EmbeddingDataset(BaseDataset):
 
     def __init__(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         pattern: str = "*.pkl",
-        dims: Tuple[str, ...] = ("obs", "feature"),
-        coords: Optional[Dict[str, Union[List, np.ndarray]]] = None,
-        reader: Optional[Any] = None,
-        id_fn: Optional[Any] = None,
-        task: Optional[str] = None,
-        run: Optional[str] = None,
-        processing: Optional[str] = None,
-        subjects: Optional[Union[int, List[int]]] = None,
+        dims: tuple[str, ...] = ("obs", "feature"),
+        coords: dict[str, list | np.ndarray] | None = None,
+        reader: Any | None = None,
+        id_fn: Any | None = None,
+        task: str | None = None,
+        run: str | None = None,
+        processing: str | None = None,
+        subjects: int | list[int] | None = None,
     ):
         self.path = Path(path)
         self.subjects = subjects
@@ -416,7 +416,7 @@ class EmbeddingDataset(BaseDataset):
 
     def load(self) -> DataContainer:
         # Find files
-        files = sorted(list(self.path.rglob(self.pattern)))
+        files = sorted(self.path.rglob(self.pattern))
 
         if not files:
             raise FileNotFoundError(
@@ -428,7 +428,7 @@ class EmbeddingDataset(BaseDataset):
             if isinstance(self.subjects, int):
                 files = files[: self.subjects]
             else:
-                target_ids = set(str(s) for s in self.subjects)
+                target_ids = {str(s) for s in self.subjects}
                 files = [f for f in files if self.id_fn(f) in target_ids]
 
         data_list = []
@@ -491,7 +491,7 @@ class EmbeddingDataset(BaseDataset):
             raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
 
         # Obs Dim + User Dims
-        final_dims = ("obs",) + self.dims
+        final_dims = ("obs", *self.dims)
 
         # Build coordinates
         coords = {}
@@ -552,23 +552,23 @@ class BIDSDataset(BaseDataset):
 
     def __init__(
         self,
-        root: Union[str, Path],
-        task: Optional[str] = None,
-        session: Optional[Union[str, List[str]]] = None,
+        root: str | Path,
+        task: str | None = None,
+        session: str | list[str] | None = None,
         datatype: str = "eeg",
-        suffix: Optional[str] = None,
+        suffix: str | None = None,
         mode: str = "epochs",
-        target_col: Optional[str] = None,
-        window_length: Optional[float] = None,
-        stride: Optional[float] = None,
-        subjects: Optional[Union[str, List[str]]] = None,
-        runs: Optional[Union[str, List[str]]] = None,
-        event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
-        subject_metadata_df: Optional[pd.DataFrame] = None,
-        subject_key: Optional[str] = None,
+        target_col: str | None = None,
+        window_length: float | None = None,
+        stride: float | None = None,
+        subjects: str | list[str] | None = None,
+        runs: str | list[str] | None = None,
+        event_id: dict[str, int] | str | list[str] | None = None,
+        subject_metadata_df: pd.DataFrame | None = None,
+        subject_key: str | None = None,
         tmin: float = -0.2,
         tmax: float = 0.5,
-        baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
+        baseline: tuple[float | None, float | None] | None = None,
         drop_short_epochs: bool = True,
     ):
         self.root = Path(root)
@@ -637,9 +637,7 @@ class BIDSDataset(BaseDataset):
         session_per_trial: list[str] = []
         run_per_trial: list[str] = []
         meta_columns = (
-            {k: [] for k in next(iter(meta_lookup.values())).keys()}
-            if meta_lookup
-            else {}
+            {k: [] for k in next(iter(meta_lookup.values()))} if meta_lookup else {}
         )
         labels_list = []
 
@@ -836,22 +834,26 @@ class BIDSDataset(BaseDataset):
                     if labels_list
                     else labels_list
                 )
-                ids_list = [v for v, k in zip(ids_list, epoch_keep) if k]
+                ids_list = [v for v, k in zip(ids_list, epoch_keep, strict=False) if k]
                 subject_per_trial = [
-                    v for v, k in zip(subject_per_trial, epoch_keep) if k
+                    v for v, k in zip(subject_per_trial, epoch_keep, strict=False) if k
                 ]
                 session_per_trial = [
-                    v for v, k in zip(session_per_trial, epoch_keep) if k
+                    v for v, k in zip(session_per_trial, epoch_keep, strict=False) if k
                 ]
-                run_per_trial = [v for v, k in zip(run_per_trial, epoch_keep) if k]
+                run_per_trial = [
+                    v for v, k in zip(run_per_trial, epoch_keep, strict=False) if k
+                ]
                 for col in meta_columns:
                     meta_columns[col] = [
-                        v for v, k in zip(meta_columns[col], epoch_keep) if k
+                        v
+                        for v, k in zip(meta_columns[col], epoch_keep, strict=False)
+                        if k
                     ]
             else:
                 t_min = min(t_lengths)
                 _warnings.warn(
-                    f"Variable epoch lengths detected ({t_min}–{t_expected} samples). "
+                    f"Variable epoch lengths detected ({t_min}-{t_expected} samples). "
                     f"Cropping all epochs to {t_min} samples "
                     f"(pass drop_short_epochs=True to drop short epochs instead).",
                     RuntimeWarning,

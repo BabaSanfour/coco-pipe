@@ -45,7 +45,7 @@ def test_simple_split_stratify():
 
     # Stratify = True (uses y)
     ss = SimpleSplit(test_size=0.2, stratify=True)
-    train_idx, test_idx = next(ss.split(X, y))
+    _train_idx, test_idx = next(ss.split(X, y))
     assert y[test_idx].sum() == 1  # 20% of 5 is 1
 
     # Stratify = False
@@ -167,7 +167,7 @@ def test_simple_split_shuffle_false():
     X = np.zeros((10, 2))
     y = np.zeros(10)
     ss = SimpleSplit(shuffle=False, random_state=42)
-    train, test = next(ss.split(X, y))
+    _train, test = next(ss.split(X, y))
     assert np.all(test == [8, 9])  # Deterministic split from the end
 
 

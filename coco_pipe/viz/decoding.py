@@ -94,9 +94,11 @@ def plot_confusion_matrix(
     >>> import pandas as pd
     >>> from coco_pipe.viz import decoding as viz
     >>> df = pd.DataFrame(
-    ...     {"TrueLabel": list("AABB"),
-    ...                           "PredictedLabel": list("ABAB"),
-    ...                           "Value": [5, 1, 2, 4]}
+    ...     {
+    ...         "TrueLabel": list("AABB"),
+    ...         "PredictedLabel": list("ABAB"),
+    ...         "Value": [5, 1, 2, 4],
+    ...     }
     ... )
     >>> fig, ax = viz.plot_confusion_matrix(df)
     """
@@ -187,9 +189,11 @@ def plot_roc_curve(
     >>> import numpy as np, pandas as pd
     >>> from coco_pipe.viz import decoding as viz
     >>> df = pd.DataFrame(
-    ...     {"Model": "SVM",
-    ...                           "FPR": np.linspace(0, 1, 10),
-    ...                           "TPR": np.linspace(0, 1, 10) ** 0.5}
+    ...     {
+    ...         "Model": "SVM",
+    ...         "FPR": np.linspace(0, 1, 10),
+    ...         "TPR": np.linspace(0, 1, 10) ** 0.5,
+    ...     }
     ... )
     >>> fig, ax = viz.plot_roc_curve(df)
     """
@@ -502,7 +506,7 @@ def plot_temporal_score_curve(
     --------
     coco_pipe.viz.interactive.decoding.plot_temporal_score_curve :
         Interactive Plotly version.
-    plot_temporal_generalization_matrix : Train-time × test-time heatmap.
+    plot_temporal_generalization_matrix : Train-time x test-time heatmap.
     plot_temporal_statistical_assessment : Temporal curve with permutation null band.
     plot_null_interval_summary : Scalar null-interval summary per model.
 
@@ -619,11 +623,13 @@ def plot_temporal_generalization_matrix(
     >>> from coco_pipe.viz import decoding as viz
     >>> times = np.linspace(0, 0.5, 5)
     >>> rows = [
-    ...     {"Model": "SVM",
-    ...                           "Metric": "accuracy",
-    ...                           "TrainTime": t1,
-    ...                           "TestTime": t2,
-    ...                           "Mean": 0.7}
+    ...     {
+    ...         "Model": "SVM",
+    ...         "Metric": "accuracy",
+    ...         "TrainTime": t1,
+    ...         "TestTime": t2,
+    ...         "Mean": 0.7,
+    ...     }
     ...     for t1 in times
     ...     for t2 in times
     ... ]
@@ -907,9 +913,11 @@ def plot_training_history(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.viz import decoding as viz
-    >>> history = {"epoch": [1, 2, 3],
-    ...                           "loss": [0.9, 0.7, 0.5],
-    ...                           "val_loss": [1.0, 0.8, 0.65]}
+    >>> history = {
+    ...     "epoch": [1, 2, 3],
+    ...     "loss": [0.9, 0.7, 0.5],
+    ...     "val_loss": [1.0, 0.8, 0.65],
+    ... }
     >>> df = pd.DataFrame(
     ...     {
     ...         "Model": ["DNN"],
@@ -1690,9 +1698,11 @@ def plot_search_results(
     >>> import pandas as pd
     >>> from coco_pipe.viz import decoding as viz
     >>> df = pd.DataFrame(
-    ...     {"Model": ["SVM"] * 3,
-    ...                           "Rank": [1, 2, 3],
-    ...                           "MeanTestScore": [0.80, 0.78, 0.75]}
+    ...     {
+    ...         "Model": ["SVM"] * 3,
+    ...         "Rank": [1, 2, 3],
+    ...         "MeanTestScore": [0.80, 0.78, 0.75],
+    ...     }
     ... )
     >>> fig, ax = viz.plot_search_results(df)
     """
@@ -2011,7 +2021,7 @@ def plot_feature_scores(
             pvals = (
                 frame.groupby("FeatureName")[p_col].mean().reindex(plot_scores.index)
             )
-            for patch, pval in zip(ax.patches, pvals):
+            for patch, pval in zip(ax.patches, pvals, strict=False):
                 if pd.notna(pval):
                     ax.text(
                         patch.get_width(),
@@ -2082,8 +2092,9 @@ def plot_decoding_topomap(
     >>> import numpy as np, pandas as pd
     >>> from coco_pipe.viz import decoding as viz
     >>> names = [f"EEG{i:03d}" for i in range(5)]
-    >>> df = pd.DataFrame({"FeatureName": names,
-    ...                           "Importance": np.linspace(0.1, 0.9, 5)})
+    >>> df = pd.DataFrame(
+    ...     {"FeatureName": names, "Importance": np.linspace(0.1, 0.9, 5)}
+    ... )
     >>> coords = pd.DataFrame(
     ...     {
     ...         "ch_name": names,
@@ -2281,10 +2292,9 @@ def plot_sensor_feature_profile(
     >>> feat_meta = pd.DataFrame(
     ...     {"FeatureName": ["f1", "f2", "f3"], "Sensor": ["S1", "S1", "S1"]}
     ... )
-    >>> importance = pd.DataFrame({"FeatureName": ["f1",
-    ...                           "f2",
-    ...                           "f3"],
-    ...                           "Mean": [0.5, 0.3, 0.1]})
+    >>> importance = pd.DataFrame(
+    ...     {"FeatureName": ["f1", "f2", "f3"], "Mean": [0.5, 0.3, 0.1]}
+    ... )
     >>> fig, ax = viz.plot_sensor_feature_profile(importance, feat_meta, sensor="S1")
     """
     with coco_theme():
@@ -2370,12 +2380,12 @@ def plot_feature_sensor_profile(
     ...     }
     ... )
     >>> importance = pd.DataFrame({"FeatureName": ["f1", "f2"], "Mean": [0.5, 0.3]})
-    >>> coords = pd.DataFrame({"ch_name": ["S1",
-    ...                           "S2"],
-    ...                           "x": [0.1, -0.1],
-    ...                           "y": [0.1, -0.1]})
-    >>> fig, ax = viz.plot_feature_sensor_profile(importance, feat_meta,
-    ...                           "band1", coords=coords)
+    >>> coords = pd.DataFrame(
+    ...     {"ch_name": ["S1", "S2"], "x": [0.1, -0.1], "y": [0.1, -0.1]}
+    ... )
+    >>> fig, ax = viz.plot_feature_sensor_profile(
+    ...     importance, feat_meta, "band1", coords=coords
+    ... )
     """
     with coco_theme():
         if info is None and coords is None:

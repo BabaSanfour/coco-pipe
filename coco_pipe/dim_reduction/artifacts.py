@@ -39,9 +39,9 @@ EVAL_RUN_KEY_FIELDS
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -59,23 +59,23 @@ from coco_pipe.io import read_json, save_npz, write_json
 from coco_pipe.io.structures import DataContainer
 
 __all__ = [
-    # Persistence
-    "save_fit_artifact",
-    "save_eval_artifact",
-    "load_fit_artifact",
-    "load_fit_runs",
-    "update_runs",
+    "EVAL_METRIC_COLUMNS",
+    "EVAL_RUN_KEY_FIELDS",
+    "FIT_METRIC_COLUMNS",
+    "FIT_RUN_KEY_FIELDS",
     # Constants
     "SEPARATION_METRIC_KEY",
-    "FIT_METRIC_COLUMNS",
-    "EVAL_METRIC_COLUMNS",
-    "FIT_RUN_KEY_FIELDS",
-    "EVAL_RUN_KEY_FIELDS",
+    "build_availability_record",
     # Record builder
     "build_record",
+    "load_fit_artifact",
+    "load_fit_runs",
+    "save_eval_artifact",
+    # Persistence
+    "save_fit_artifact",
+    "update_runs",
     # Run-level helpers
     "write_run_status",
-    "build_availability_record",
 ]
 
 
@@ -104,7 +104,7 @@ def save_fit_artifact(
     path:
         Target directory.  Created (including parents) if it does not exist.
     embedding:
-        Array of shape ``(n_obs, n_components)``.
+        Array of shape ``(n_obs, n_dims)``.
     ids:
         1-D array of observation identifiers aligned with *embedding*.
     fit_payload:
@@ -182,8 +182,8 @@ def _load_eval_payload(path: Path) -> dict[str, Any]:
 
 def _embedding_container(
     embedding: np.ndarray, ids: np.ndarray, fit: dict[str, Any]
-) -> Optional[DataContainer]:
-    """Reconstruct the embedding as a ``DataContainer`` from artifact arrays.
+) -> DataContainer | None:
+    """Reconstruct the embedding as a ``~coco_pipe.io.DataContainer`` from artifact arrays.
 
     Returns a ``('obs', 'component')`` container carrying the observation ids,
     a ``component`` coordinate, and the fit payload under ``meta['fit']``. The
@@ -361,7 +361,8 @@ def update_runs(path: Path, record: dict[str, Any], key_fields: Sequence[str]) -
     else:
         runs.append(dict(record))
 
-    sort_fields = list(key_fields) + [
+    sort_fields = [
+        *list(key_fields),
         "scope",
         "condition",
         "analysis_mode",
@@ -379,8 +380,8 @@ def build_record(
     artifact_path: Path,
     output_root: Path,
     metric_columns: Sequence[str],
-    metrics_payload: Optional[dict[str, Any]] = None,
-    error: Optional[str] = None,
+    metrics_payload: dict[str, Any] | None = None,
+    error: str | None = None,
 ) -> dict[str, Any]:
     """Build a flat run-inventory record from an artifact payload dict.
 
@@ -415,10 +416,10 @@ def write_run_status(
     fit_runs_path: Path,
     eval_runs_path: Path,
     *,
-    run_summary_path: Optional[Path] = None,
-    fatal_error: Optional[str] = None,
-    report_path: Optional[Path] = None,
-    run_metadata: Optional[dict[str, Any]] = None,
+    run_summary_path: Path | None = None,
+    fatal_error: str | None = None,
+    report_path: Path | None = None,
+    run_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write ``run_summary.json`` and a run-marker sentinel to *output_root*.
 
@@ -476,7 +477,7 @@ def write_run_status(
 
     summary_payload: dict[str, Any] = {
         "status": run_status,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "fit_total": len(fit_runs),
         "fit_success": fit_success,
         "fit_failed": fit_failed,
@@ -511,8 +512,8 @@ def build_availability_record(
     *,
     scope: str,
     condition: str,
-    unit_spec: Optional[dict[str, Any]],
-    container: "DataContainer",
+    unit_spec: dict[str, Any] | None,
+    container: DataContainer,
     requested_components: Sequence[int],
     valid_components: Sequence[int],
 ) -> dict[str, Any]:

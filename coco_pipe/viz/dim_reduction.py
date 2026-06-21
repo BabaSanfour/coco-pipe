@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -278,7 +278,7 @@ def _plot_metric_distribution(
     if ax.legend_ is not None:
         handles, labels = ax.get_legend_handles_labels()
         if hue_col is not None and handles:
-            dedup = dict(zip(labels, handles))
+            dedup = dict(zip(labels, handles, strict=False))
             ax.legend(dedup.values(), dedup.keys(), title="Method", frameon=False)
         else:
             ax.legend_.remove()
@@ -400,7 +400,7 @@ def plot_metrics(
         Visualization style. ``"bar"`` / ``"grouped_bar"`` / ``"lollipop"``
         aggregate to global scalars; ``"box"`` / ``"boxen"`` / ``"violin"`` /
         ``"raincloud"`` / ``"strip"`` / ``"swarm"`` show per-observation
-        distributions; ``"heatmap"`` produces a method × metric grid;
+        distributions; ``"heatmap"`` produces a method x metric grid;
         ``"line"`` plots metrics across a numeric scope axis; ``"dumbbell"``
         / ``"slopegraph"`` require exactly two methods.
     metric
@@ -876,10 +876,9 @@ def plot_feature_correlation_heatmap(
     Examples
     --------
     >>> from coco_pipe.viz import dim_reduction as viz
-    >>> payload = {"correlation": {"D1": {"F1": 0.6,
-    ...                           "F2": -0.3},
-    ...                           "D2": {"F1": 0.1,
-    ...                           "F2": 0.8}}}
+    >>> payload = {
+    ...     "correlation": {"D1": {"F1": 0.6, "F2": -0.3}, "D2": {"F1": 0.1, "F2": 0.8}}
+    ... }
     >>> fig, ax = viz.plot_feature_correlation_heatmap(payload)
     """
     if top_n is not None and top_n < 1:
@@ -1138,7 +1137,7 @@ def plot_trajectory(
             else:
                 unique = list(dict.fromkeys(np.asarray(labels).tolist()))
                 colors = sns.color_palette("deep", len(unique))
-                label_colors = dict(zip(unique, colors))
+                label_colors = dict(zip(unique, colors, strict=False))
 
         norm = None
         colorbar_added = False
@@ -1267,7 +1266,7 @@ def plot_trajectory(
         ax_labels = (
             axis_labels
             if axis_labels
-            else [f"Dimension {i+1}" for i in range(dimensions)]
+            else [f"Dimension {i + 1}" for i in range(dimensions)]
         )
 
         finalize_axes(
@@ -1297,7 +1296,7 @@ def plot_trajectory(
         if showlegend and labels is not None:
             handles, legend_labels = ax.get_legend_handles_labels()
             if handles:
-                dedup = dict(zip(legend_labels, handles))
+                dedup = dict(zip(legend_labels, handles, strict=False))
                 ax.legend(dedup.values(), dedup.keys(), title="Label", frameon=False)
         return fig, ax
 
@@ -1318,7 +1317,7 @@ def plot_coranking_matrix(
     title
         Axes title.
     max_k
-        Crop the matrix to the top-left ``max_k × max_k`` corner. Defaults
+        Crop the matrix to the top-left ``max_k x max_k`` corner. Defaults
         to ``min(n, 50)``.
     ax
         Existing Matplotlib axes to draw into.
@@ -1409,9 +1408,10 @@ def plot_trajectory_separation(
     --------
     >>> import numpy as np
     >>> from coco_pipe.viz import dim_reduction as viz
-    >>> sep = {("A",
-    ...                           "B"): np.linspace(0.1, 0.9, 20), ("A",
-    ...                           "C"): np.linspace(0.3, 0.6, 20)}
+    >>> sep = {
+    ...     ("A", "B"): np.linspace(0.1, 0.9, 20),
+    ...     ("A", "C"): np.linspace(0.3, 0.6, 20),
+    ... }
     >>> fig, ax = viz.plot_trajectory_separation(sep)
     """
     items = prepare_trajectory_separation_series(

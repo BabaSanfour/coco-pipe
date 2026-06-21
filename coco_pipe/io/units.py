@@ -64,7 +64,7 @@ def iter_analysis_units(
     - ``unit_key``  — filesystem-safe unique key (e.g. ``"band_Fz"``)
     - ``family``    — descriptor family name, or ``None``
     - ``subfamily`` — descriptor sub-family name, or ``None``
-    - ``container`` — the sliced/flattened :class:`DataContainer` for this unit
+    - ``container`` — the sliced/flattened :class:`~coco_pipe.io.DataContainer` for this unit
 
     The container's ``meta`` dict is also updated in-place with the
     ``unit_type``/``unit_name``/``unit_key``/``family``/``subfamily`` fields so

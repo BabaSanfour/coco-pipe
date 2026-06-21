@@ -5,7 +5,7 @@ Stateful transformers compatible with DataContainer.
 Wraps scikit-learn transformers and implements M/EEG-specific whitening.
 
 This module provides classes that adhere to the Scikit-Learn Transformer API
-but operate natively on `DataContainer` objects, preserving metadata (IDs,
+but operate natively on `~coco_pipe.io.DataContainer` objects, preserving metadata (IDs,
 coordinates) throughout the transformation pipeline.
 """
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Optional, Union
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -43,7 +42,7 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
     Generic wrapper for ANY scikit-learn transformer (Scaler, PCA, etc.).
 
     This wrapper applies a standard scikit-learn transformer to the `.X` data
-    matrix of a `DataContainer`, ensuring that the resulting container has
+    matrix of a `~coco_pipe.io.DataContainer`, ensuring that the resulting container has
     correctly updated data while checking for dimension compatibility.
 
     Parameters
@@ -103,6 +102,21 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
         return _rebuild_container(container, X_new)  # Use Helper
 
     def fit_transform(self, container: DataContainer, y=None):
+        """
+        Fit the wrapped estimator and transform the data.
+
+        Parameters
+        ----------
+        container : DataContainer
+            Input data to transform.
+        y : array-like, optional
+            Target values.
+
+        Returns
+        -------
+        DataContainer
+            Transformed data with the same dimensions.
+        """
         return self.fit(container, y).transform(container)
 
     def inverse_transform(self, container: DataContainer) -> DataContainer:
@@ -129,13 +143,14 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     standard PCA, ZCA (Zero-phase Component Analysis which preserves topography),
     and robust shrinkage covariance estimation (OAS).
 
-    It requires a dimension named 'channel' in the input `DataContainer`.
+    It requires a dimension named 'channel' in the input `~coco_pipe.io.DataContainer`.
     The operation is performed spatially: :math:`X_{white} = X \\cdot W^T`
 
     Parameters
     ----------
     method : {'pca', 'zca', 'shrinkage'}, default='pca'
         Shape of the transformation:
+
         - 'pca': Principal Component Analysis. Rotates data to principal axes and
           scales to unit variance.
         - 'zca': Zero-phase Component Analysis. Rotates, scales, and rotates back.
@@ -149,7 +164,7 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     Attributes
     ----------
     whitener_ : np.ndarray
-        The estimated whitening matrix (W). Shape (n_components, n_channels).
+        The estimated whitening matrix (W). Shape (n_dims, n_channels).
     mean_ : np.ndarray
         Per-channel mean vector.
     inverse_whitener_ : np.ndarray
@@ -170,12 +185,10 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
     >>> sensor_data = whitener.inverse_transform(white_data)
     """
 
-    def __init__(
-        self, method: str = "pca", n_components: Optional[Union[int, float]] = None
-    ):
+    def __init__(self, method: str = "pca", n_components: int | float | None = None):
         self.method = method
         self.n_components = n_components
-        self.whitener_ = None  # W matrix (n_components, n_channels)
+        self.whitener_ = None  # W matrix (n_dims, n_channels)
         self.mean_ = None  # Mean vector (n_channels,)
         self.inverse_whitener_ = None  # W_inv matrix (n_channels, n_components)
 
@@ -255,6 +268,21 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
         return _rebuild_container(container, X_new)  # Use Helper
 
     def fit_transform(self, container: DataContainer, y=None):
+        """
+        Fit the whitener to the data and then transform it.
+
+        Parameters
+        ----------
+        container : DataContainer
+            Input data to transform. Must contain a 'channel' dimension.
+        y : array-like, optional
+            Target values (ignored for unsupervised transformation).
+
+        Returns
+        -------
+        DataContainer
+            Transformed data with the same dimensions.
+        """
         return self.fit(container, y).transform(container)
 
     def inverse_transform(self, container: DataContainer) -> DataContainer:
@@ -271,7 +299,7 @@ class SpatialWhitener(BaseEstimator, TransformerMixin):
         return _rebuild_container(container, X_final)  # Use Helper
 
     def _apply_linear_op(
-        self, container: DataContainer, W: np.ndarray, mean: Optional[np.ndarray]
+        self, container: DataContainer, W: np.ndarray, mean: np.ndarray | None
     ) -> np.ndarray:
         # Internal optimized linear operator logic (X @ W.T)
         if "channel" not in container.dims:

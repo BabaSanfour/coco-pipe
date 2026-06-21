@@ -122,10 +122,10 @@ The statistical assessment machinery uses this aggregation automatically:
 
    eval_cfg = StatisticalAssessmentConfig(
        enabled=True,
+       unit_of_inference="group_mean",
        chance=ChanceAssessmentConfig(
            method="permutation",
            n_permutations=1000,
-           unit_of_inference="group_mean",
        ),
    )
 
@@ -178,8 +178,6 @@ supports:
   permutation distribution, yielding family-wise error rate (FWER) control.
   Recommended for temporal decoding with moderate-to-high correlations.
 - ``temporal_correction="fdr_bh"``: Benjamini-Hochberg FDR control.
-- ``temporal_correction="fdr_by"``: Benjamini-Yekutieli FDR control (more
-  conservative, valid under positive dependence).
 - ``temporal_correction="none"``: no correction (exploratory use only).
 
 .. math::

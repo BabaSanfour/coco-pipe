@@ -10,7 +10,7 @@ This module is intentionally thin: heavy quality logic lives in
 import importlib
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -62,7 +62,7 @@ def _get_read_raw_bids():
 
 def make_strata(
     df: "pd.DataFrame",
-    covariates: List[str],
+    covariates: list[str],
     n_bins: int = 5,
     binning: str = "quantile",
 ) -> "pd.Series":
@@ -95,11 +95,11 @@ def make_strata(
 def sample_indices(
     df: "pd.DataFrame",
     target: str,
-    size_map: Dict[Any, int],
+    size_map: dict[Any, int],
     rng,
     replace: bool,
     prefer_clean: bool,
-    exclude: List[str],
+    exclude: list[str],
 ) -> "pd.Index":
     """
     Sample indices for each class based on size_map.
@@ -145,15 +145,14 @@ def sample_indices(
     return pd.Index(combined.values)
 
 
-def split_column(name: str, sep: str, reverse: bool) -> Tuple[str, str]:
+def split_column(name: str, sep: str, reverse: bool) -> tuple[str, str]:
     """Split a column into (unit, feature) using `sep` and `reverse`."""
     if sep not in name:
         return "", name
     left, right = name.split(sep, 1)
     if reverse:
         return right, left
-    else:
-        return left, right
+    return left, right
 
 
 def read_bids_entry(
@@ -161,13 +160,13 @@ def read_bids_entry(
     is_pre_epoched: bool,
     is_evoked: bool,
     mode: str,
-    window_length: Optional[float],
-    stride: Optional[float],
-    event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+    window_length: float | None,
+    stride: float | None,
+    event_id: dict[str, int] | str | list[str] | None = None,
     tmin: float = -0.2,
     tmax: float = 0.5,
-    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
-) -> Tuple[np.ndarray, np.ndarray, List[str], float, Optional[np.ndarray]]:
+    baseline: tuple[float | None, float | None] | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str], float, np.ndarray | None]:
     mne_mod = _get_mne()
     if is_pre_epoched:
         # Load existing Epochs
@@ -215,7 +214,7 @@ def read_bids_entry(
             epochs.events[:, -1],
         )
 
-    elif is_evoked:
+    if is_evoked:
         # Load Evoked
         fpath = bids_path.fpath
         if not fpath.exists():
@@ -235,56 +234,55 @@ def read_bids_entry(
             labels,
         )
 
-    else:
-        # Load Raw (default)
-        raw = _get_read_raw_bids()(bids_path, verbose=False)
-        raw.load_data()
-        raw.pick_types(eeg=True, meg=True, eog=False)
+    # Load Raw (default)
+    raw = _get_read_raw_bids()(bids_path, verbose=False)
+    raw.load_data()
+    raw.pick_types(eeg=True, meg=True, eog=False)
 
-        if mode == "continuous":
-            data_raw = raw.get_data()  # (C, T)
-            data = data_raw[np.newaxis, :, :]  # (1, C, T)
+    if mode == "continuous":
+        data_raw = raw.get_data()  # (C, T)
+        data = data_raw[np.newaxis, :, :]  # (1, C, T)
+        times = raw.times
+        labels = None
+    elif event_id is not None:
+        # Event-Based Epoching (Annotation aware)
+        events, event_id_map = mne_mod.events_from_annotations(
+            raw, event_id=event_id, verbose=False
+        )
+        epochs = mne_mod.Epochs(
+            raw,
+            events=events,
+            event_id=event_id_map,
+            tmin=tmin,
+            tmax=tmax,
+            baseline=baseline,
+            preload=True,
+            verbose=False,
+        )
+        data = epochs.get_data(copy=False)
+        times = epochs.times
+        labels = epochs.events[:, -1]
+    else:
+        # Raw -> Fixed Length Epochs
+        if window_length is None:
+            data_raw = raw.get_data()
+            data = data_raw[np.newaxis, :, :]
             times = raw.times
             labels = None
-        elif event_id is not None:
-            # Event-Based Epoching (Annotation aware)
-            events, event_id_map = mne_mod.events_from_annotations(
-                raw, event_id=event_id, verbose=False
-            )
-            epochs = mne_mod.Epochs(
-                raw,
-                events=events,
-                event_id=event_id_map,
-                tmin=tmin,
-                tmax=tmax,
-                baseline=baseline,
-                preload=True,
-                verbose=False,
+        else:
+            dur_s = window_length
+            stride_s = stride if stride else dur_s
+            epochs = mne_mod.make_fixed_length_epochs(
+                raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
             )
             data = epochs.get_data(copy=False)
             times = epochs.times
             labels = epochs.events[:, -1]
-        else:
-            # Raw -> Fixed Length Epochs
-            if window_length is None:
-                data_raw = raw.get_data()
-                data = data_raw[np.newaxis, :, :]
-                times = raw.times
-                labels = None
-            else:
-                dur_s = window_length
-                stride_s = stride if stride else dur_s
-                epochs = mne_mod.make_fixed_length_epochs(
-                    raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
-                )
-                data = epochs.get_data(copy=False)
-                times = epochs.times
-                labels = epochs.events[:, -1]
 
-        return data, times, raw.ch_names, raw.info["sfreq"], labels
+    return data, times, raw.ch_names, raw.info["sfreq"], labels
 
 
-def load_participants_tsv(root: Path) -> Dict[str, Dict[str, Any]]:
+def load_participants_tsv(root: Path) -> dict[str, dict[str, Any]]:
     """
     Reads participants.tsv and returns dict: {sub_id: {col: val, ...}}.
     """
@@ -316,11 +314,11 @@ def load_participants_tsv(root: Path) -> Dict[str, Dict[str, Any]]:
         return {}
 
 
-def detect_subjects(root: Path) -> List[str]:
+def detect_subjects(root: Path) -> list[str]:
     return [d.name.replace("sub-", "") for d in root.glob("sub-*") if d.is_dir()]
 
 
-def detect_sessions(root: Path, subject: str) -> List[str]:
+def detect_sessions(root: Path, subject: str) -> list[str]:
     sub_dir = root / f"sub-{subject}"
     if not sub_dir.exists():
         return []
@@ -332,10 +330,10 @@ def detect_sessions(root: Path, subject: str) -> List[str]:
 def detect_runs(
     root: Path,
     subject: str,
-    session: Optional[str] = None,
-    task: Optional[str] = None,
+    session: str | None = None,
+    task: str | None = None,
     datatype: str = "eeg",
-) -> List[str]:
+) -> list[str]:
     """
     Detect available runs for a given subject/session/task.
     """
@@ -352,7 +350,7 @@ def detect_runs(
     for m in matches:
         if m.run is not None:
             runs.add(m.run)
-    return sorted(list(runs))
+    return sorted(runs)
 
 
 def normalize_subject_value(value: object) -> str:

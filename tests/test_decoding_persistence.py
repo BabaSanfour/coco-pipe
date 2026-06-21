@@ -37,9 +37,11 @@ def test_completed_for_config_hash_mismatch(tmp_path):
     (tmp_path / "run_manifest.json").write_text(json.dumps(manifest))
     from unittest.mock import patch
 
-    with patch("coco_pipe.decoding.persistence.config_hash", return_value="dummyhash"):
-        with pytest.raises(RuntimeError, match="Config hash mismatch"):
-            completed_for_config(tmp_path, {"a": 1})
+    with (
+        patch("coco_pipe.decoding.persistence.config_hash", return_value="dummyhash"),
+        pytest.raises(RuntimeError, match="Config hash mismatch"),
+    ):
+        completed_for_config(tmp_path, {"a": 1})
 
 
 def test_load_completed_result_records_success(tmp_path):

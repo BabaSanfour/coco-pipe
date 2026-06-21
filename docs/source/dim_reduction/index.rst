@@ -1,8 +1,8 @@
 .. _dim-reduction:
 
-==========================================================
-Dimensionality Reduction Module — Scientific User Guide
-==========================================================
+========================
+Dimensionality Reduction
+========================
 
 The ``coco_pipe.dim_reduction`` module provides a unified, reproducible framework
 for dimensionality reduction across linear, manifold, neighbor-graph,
@@ -82,39 +82,12 @@ Compare multiple reducers post-hoc:
 
 .. toctree::
    :maxdepth: 2
-   :caption: Core Concepts
+   :caption: User Guide
 
    concepts
-   configs
-   core
+   guide
    reducers
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Evaluation and Interpretation
-
    evaluation
    trajectories
-   interpretation
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Visualization and Reports
-
    visualization
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Advanced Topics
-
-   advanced/custom_reducers
-   advanced/dependencies
-   advanced/vision.md
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Worked Examples
-
-   examples/basic_pca
-   examples/compare_methods
-   examples/trajectory_eeg
+   advanced

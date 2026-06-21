@@ -199,8 +199,8 @@ def test_group_leakage_guard_raises_error():
     with pytest.raises(
         ValueError,
         match=(
-            "Outer CV strategy is group-based, but tuning.cv strategy "
-            "'stratified' is not"
+            r"Outer CV strategy is group-based, but tuning.cv strategy "
+            r"'stratified' is not"
         ),
     ):
         Experiment(config).run(X, y, groups=groups)
@@ -305,7 +305,7 @@ def test_experiment_config_validation_errors():
 
 
 def test_resolve_metadata_and_groups_mismatch():
-    X, y = _classification_data(n_samples=10)
+    _X, _y = _classification_data(n_samples=10)
     exp = Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}
@@ -344,7 +344,7 @@ def test_resolve_metadata_auto_fills_subject_session_from_groups():
 
 
 def test_feature_names_alignment():
-    X, y = _classification_data(n_samples=10, n_features=2)
+    X, _y = _classification_data(n_samples=10, n_features=2)
     exp = Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}
@@ -417,7 +417,7 @@ def test_wrap_with_tuning_grid_invalid_key():
 
 
 def test_build_result_meta_time_axis_mismatch():
-    X, y = _classification_data(n_samples=10, n_features=5)
+    _X, y = _classification_data(n_samples=10, n_features=5)
     exp = Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}
@@ -429,7 +429,7 @@ def test_build_result_meta_time_axis_mismatch():
 
 
 def test_importance_aggregation_shape_mismatch_recovery():
-    X, y = _classification_data()
+    _X, _y = _classification_data()
     Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}

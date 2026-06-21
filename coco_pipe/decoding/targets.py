@@ -16,7 +16,7 @@ def prepare_target(
     target_spec: Mapping[str, Any],
     group_col: str = "patient_group_id",
 ) -> tuple[DataContainer, np.ndarray, np.ndarray, pd.DataFrame]:
-    """Resolve labels and leakage-safe groups from a ``DataContainer``.
+    """Resolve labels and leakage-safe groups from a ``~coco_pipe.io.DataContainer``.
 
     Binary targets require an explicit ``positive_class``. This prevents
     alphabetical class ordering from silently changing ROC-AUC, precision,
@@ -107,7 +107,6 @@ def safe_group_n_splits(
     n_splits = min(int(requested), available)
     if n_splits < 2:
         raise ValueError(
-            "Grouped decoding requires at least two independent groups "
-            "in every class."
+            "Grouped decoding requires at least two independent groups in every class."
         )
     return n_splits

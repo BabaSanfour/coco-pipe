@@ -29,4 +29,20 @@ class SubjectStandardScaler(BaseEstimator, TransformerMixin):
         return X_scaled - means.values
 
     def fit_transform(self, X, y=None, groups=None):
+        """Fit the scaler to the data and then transform it.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input data.
+        y : array-like of shape (n_samples,), default=None
+            Target values (ignored).
+        groups : array-like of shape (n_samples,), default=None
+            Group labels for per-subject centering.
+
+        Returns
+        -------
+        X_scaled : array-like of shape (n_samples, n_features)
+            Scaled and centered data.
+        """
         return self.fit(X, y, groups).transform(X, groups=groups)

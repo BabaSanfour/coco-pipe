@@ -38,9 +38,11 @@ def test_theme_globals_and_helpers(tmp_path):
 
 
 def test_coco_theme_invalid_mode():
-    with pytest.raises(ValueError, match="Unknown coco theme mode"):
-        with coco_theme(mode="invalid_mode"):
-            pass
+    with (
+        pytest.raises(ValueError, match="Unknown coco theme mode"),
+        coco_theme(mode="invalid_mode"),
+    ):
+        pass
 
 
 def test_coco_theme_colorblind():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,13 +21,13 @@ def _register_coco_template() -> None:
     """Register a 'coco' Plotly template that mirrors the static matplotlib theme."""
     base = copy.deepcopy(pio.templates["plotly_white"])
     base.layout.update(
-        font=dict(family="Arial, DejaVu Sans, Liberation Sans, sans-serif", size=12),
+        font={"family": "Arial, DejaVu Sans, Liberation Sans, sans-serif", "size": 12},
         colorway=list(_COLORBLIND_COLORS),
-        colorscale=dict(
-            sequential=SEQUENTIAL,
-            diverging=DIVERGING,
-            sequentialminus=SEQUENTIAL,
-        ),
+        colorscale={
+            "sequential": SEQUENTIAL,
+            "diverging": DIVERGING,
+            "sequentialminus": SEQUENTIAL,
+        },
     )
     base.layout.xaxis.update(gridcolor="rgba(0,0,0,0.12)")
     base.layout.yaxis.update(gridcolor="rgba(0,0,0,0.12)")
@@ -50,7 +50,7 @@ def _apply_layout(
     """Apply common layout settings to a Plotly figure."""
     kwargs: dict[str, Any] = {
         "template": template,
-        "margin": dict(l=50, r=40, b=50, t=55),
+        "margin": {"l": 50, "r": 40, "b": 50, "t": 55},
     }
     if title is not None:
         kwargs["title"] = title
@@ -63,15 +63,19 @@ def _apply_layout(
     if barmode is not None:
         kwargs["barmode"] = barmode
     if legend_horizontal:
-        kwargs["legend"] = dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        )
+        kwargs["legend"] = {
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "right",
+            "x": 1,
+        }
     fig.update_layout(**kwargs)
     return fig
 
 
 def _discrete_colorscale(
-    categories: Sequence[Any], palette: Optional[str | Sequence[str]] = None
+    categories: Sequence[Any], palette: str | Sequence[str] | None = None
 ) -> tuple[list[str], list[list[Any]]]:
     """Build a discrete Plotly colorscale from category values."""
     if palette is None:
@@ -116,7 +120,7 @@ def _marker_payload(
     df: pd.DataFrame,
     column: str,
     cmap: str,
-    palette: Optional[str | Sequence[str]],
+    palette: str | Sequence[str] | None,
     color_kind: ColorKind,
     restyle: bool,
 ):

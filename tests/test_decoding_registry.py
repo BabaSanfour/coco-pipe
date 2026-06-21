@@ -129,7 +129,7 @@ def test_missing_class_in_module():
         task=("regression",),
     )
     register_estimator_spec(new_spec)
-    with pytest.raises(Exception):  # EstimatorNotFoundError
+    with pytest.raises(Exception, match=r".*"):  # EstimatorNotFoundError
         get_estimator_cls("MissingClass")
 
 
@@ -234,7 +234,6 @@ def test_register_spec_overwrite_warning():
         name="OverwriteModel", import_path="fake", family="linear", task=("regression",)
     )
     register_estimator_spec(spec)
-    pass
 
 
 def test_get_estimator_cls_import_error():
@@ -294,7 +293,7 @@ def test_get_metadata_unknown_raises_with_hint():
 
 def test_metadata_is_frozen():
     m = get_estimator_spec("reve")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match=r".*"):
         m.embedding_dim = 999  # type: ignore[misc]
 
 

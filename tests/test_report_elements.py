@@ -96,7 +96,7 @@ def test_plotly_element_binary_decoding():
     registry = {}
     el.collect_payload(registry)
 
-    payload = list(registry.values())[0]
+    payload = next(iter(registry.values()))
     assert np.allclose(payload["data"][0]["x"], [1.0, 2.0])
 
 

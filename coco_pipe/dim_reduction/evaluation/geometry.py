@@ -36,26 +36,25 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 from __future__ import annotations
 
 import itertools
-from typing import Dict, Optional, Tuple
 
 import numpy as np
 
 __all__ = [
     "moving_average",
     "trajectory_acceleration",
-    "trajectory_jerk",
-    "trajectory_speed",
+    "trajectory_auc_speed",
+    "trajectory_cohesion",
     "trajectory_curvature",
-    "trajectory_path_length",
+    "trajectory_dispersion",
     "trajectory_displacement",
+    "trajectory_distance_from_center",
+    "trajectory_intra_spread",
+    "trajectory_jerk",
+    "trajectory_path_length",
+    "trajectory_separation",
+    "trajectory_speed",
     "trajectory_tortuosity",
     "trajectory_turning_angle",
-    "trajectory_dispersion",
-    "trajectory_separation",
-    "trajectory_distance_from_center",
-    "trajectory_cohesion",
-    "trajectory_intra_spread",
-    "trajectory_auc_speed",
 ]
 
 
@@ -72,9 +71,9 @@ def _validate_trajectory_array(traj: np.ndarray, min_timepoints: int = 2) -> np.
 
 def _validate_trial_trajectory_labels(
     traj: np.ndarray,
-    labels: Optional[np.ndarray] = None,
+    labels: np.ndarray | None = None,
     min_unique_labels: int = 0,
-) -> tuple[np.ndarray, Optional[np.ndarray], np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
     """Validate trial-wise trajectories and optional trial labels."""
     traj = np.asarray(traj, dtype=float)
     if traj.ndim != 3:
@@ -132,7 +131,7 @@ def _pairwise_label_timecourses(
     labels: np.ndarray,
     pair_reducer,
     **kwargs,
-) -> Dict[Tuple[str, str], np.ndarray]:
+) -> dict[tuple[str, str], np.ndarray]:
     """Apply a pairwise reducer to each label pair across time."""
     traj, labels, unique_labels = _validate_trial_trajectory_labels(
         traj,
@@ -400,7 +399,7 @@ def trajectory_jerk(traj: np.ndarray, dt: float = 1.0) -> np.ndarray:
 def trajectory_speed(
     traj: np.ndarray,
     dt: float = 1.0,
-    time: Optional[np.ndarray] = None,
+    time: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Calculate instantaneous trajectory speed.
@@ -609,7 +608,7 @@ def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.
     if cumulative:
         safe = np.nan_to_num(segment_lengths, nan=0.0)
         cumulative_lengths = np.cumsum(safe, axis=-1)
-        zeros = np.zeros(cumulative_lengths.shape[:-1] + (1,), dtype=float)
+        zeros = np.zeros((*cumulative_lengths.shape[:-1], 1), dtype=float)
         return np.concatenate([zeros, cumulative_lengths], axis=-1)
     return np.nansum(segment_lengths, axis=-1)
 
@@ -750,8 +749,8 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
 
 
 def trajectory_dispersion(
-    traj: np.ndarray, labels: Optional[np.ndarray] = None
-) -> Dict[str, np.ndarray] | np.ndarray:
+    traj: np.ndarray, labels: np.ndarray | None = None
+) -> dict[str, np.ndarray] | np.ndarray:
     """
     Calculate within-group trajectory dispersion across time.
 
@@ -803,7 +802,7 @@ def trajectory_separation(
     labels: np.ndarray,
     method: str = "centroid",
     **kwargs,
-) -> Dict[Tuple[str, str], np.ndarray]:
+) -> dict[tuple[str, str], np.ndarray]:
     """
     Calculate time-resolved separation between labeled trajectory groups.
 
@@ -985,7 +984,7 @@ def trajectory_intra_spread(traj: np.ndarray) -> np.ndarray:
 def trajectory_auc_speed(
     traj: np.ndarray,
     dt: float = 1.0,
-    time: Optional[np.ndarray] = None,
+    time: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Area under the instantaneous speed curve (trapezoidal integration).

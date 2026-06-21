@@ -2,6 +2,8 @@
 Tests for Dim-Red Components
 """
 
+import contextlib
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -189,7 +191,7 @@ def test_report_add_reduction_requires_summary_contract():
 
 def test_make_reduction_report_static_sections():
     class StaticReducer(MockReducer):
-        diagnostics_ = {"coranking_matrix_": np.eye(5)}
+        diagnostics_: ClassVar[dict] = {"coranking_matrix_": np.eye(5)}
 
         def get_summary(self):
             summary = super().get_summary()
@@ -592,7 +594,7 @@ def test_add_embedding_and_shepard_with_exceptions():
     with patch(
         "coco_pipe.viz.dim_reduction.plot_shepard_diagram", side_effect=ValueError
     ):
-        try:
+        with contextlib.suppress(Exception):
             _add_embedding_and_shepard(
                 rep,
                 reducer,
@@ -600,6 +602,4 @@ def test_add_embedding_and_shepard_with_exceptions():
                 prefix="Test",
                 diagnostics={"X_orig": np.random.randn(10, 5)},
             )
-        except Exception:
-            pass
         assert len(rep.children) >= 0

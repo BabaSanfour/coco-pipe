@@ -6,25 +6,25 @@ from .neighbor import TSNEReducer
 # Define Core exports
 __all__ = [
     "BaseReducer",
-    "PCAReducer",
+    "DMDReducer",
+    # Optional Reducers (Lazy)
+    "DaskPCAReducer",
+    "DaskTruncatedSVDReducer",
+    "IVISReducer",
     "IncrementalPCAReducer",
     "IsomapReducer",
     "LLEReducer",
     "MDSReducer",
-    "SpectralEmbeddingReducer",
-    "TSNEReducer",
-    # Optional Reducers (Lazy)
-    "DaskPCAReducer",
-    "DaskTruncatedSVDReducer",
-    "UMAPReducer",
-    "ParametricUMAPReducer",
-    "PacmapReducer",
-    "TrimapReducer",
+    "PCAReducer",
     "PHATEReducer",
-    "DMDReducer",
+    "PacmapReducer",
+    "ParametricUMAPReducer",
+    "SpectralEmbeddingReducer",
     "TRCAReducer",
-    "IVISReducer",
+    "TSNEReducer",
     "TopologicalAEReducer",
+    "TrimapReducer",
+    "UMAPReducer",
 ]
 
 # Map optional class names to their module paths

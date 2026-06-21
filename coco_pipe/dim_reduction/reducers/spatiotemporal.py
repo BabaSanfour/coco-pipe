@@ -3,7 +3,7 @@ Spatiotemporal dimensionality reduction reducers.
 
 This module provides reducers for structured signals where time, trials, or
 snapshots are part of the data layout. These reducers follow the shared
-`BaseReducer` contract while declaring nonstandard input layouts through the
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract while declaring nonstandard input layouts through the
 `capabilities` mapping.
 
 Classes
@@ -15,21 +15,19 @@ TRCAReducer
 
 References
 ----------
-.. [1] Schmid, P. J. (2010). "Dynamic mode decomposition of numerical and
+[1] Schmid, P. J. (2010). "Dynamic mode decomposition of numerical and
        experimental data". Journal of Fluid Mechanics, 656, 5-28.
-.. [2] PyDMD documentation:
+[2] PyDMD documentation:
        https://github.com/mathLab/PyDMD
-.. [3] Nakanishi, M., Wang, Y., Chen, X., Wang, Y.-T., Gao, X., and Jung, T.-P.
+[3] Nakanishi, M., Wang, Y., Chen, X., Wang, Y.-T., Gao, X., and Jung, T.-P.
        (2018). "Enhancing detection of SSVEPs for a high-speed brain speller
        using task-related component analysis". IEEE Transactions on Biomedical
        Engineering, 65(1), 104-112.
-.. [4] MEEGkit documentation:
+[4] MEEGkit documentation:
        https://github.com/nbara/python-meegkit
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
-
-from typing import Optional
 
 import numpy as np
 
@@ -137,7 +135,7 @@ class DMDReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.force_transpose = force_transpose
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DMDReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "DMDReducer":
         """
         Fit DMD on the input snapshot matrix.
 
@@ -197,7 +195,7 @@ class DMDReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_snapshots, n_components)
+        np.ndarray of shape (n_snapshots, n_dims)
             Time-evolution amplitudes projected onto the fitted modes.
         """
         model = self._require_fitted()
@@ -221,7 +219,7 @@ class DMDReducer(BaseReducer):
         return self.n_components
 
     @property
-    def n_modes_(self) -> Optional[int]:
+    def n_modes_(self) -> int | None:
         """
         Return the number of fitted DMD modes.
 
@@ -279,7 +277,7 @@ class DMDReducer(BaseReducer):
         Returns
         -------
         np.ndarray
-            Mode matrix transposed to `(n_components, n_features)`.
+            Mode matrix transposed to `(n_dims, n_features)`.
         """
         return self.modes_.T
 
@@ -386,7 +384,7 @@ class TRCAReducer(BaseReducer):
         self,
         n_components: int = 1,
         sfreq: float = 250.0,
-        filterbank: Optional[list] = None,
+        filterbank: list | None = None,
         **kwargs,
     ):
         """
@@ -420,7 +418,7 @@ class TRCAReducer(BaseReducer):
         return len(self.filterbank)
 
     @property
-    def n_classes(self) -> Optional[int]:
+    def n_classes(self) -> int | None:
         """
         Return the number of classes identified by TRCA.
 
@@ -433,7 +431,7 @@ class TRCAReducer(BaseReducer):
             return int(np.asarray(self.model.coef_).shape[1])
         return None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TRCAReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "TRCAReducer":
         """
         Fit TRCA on labeled trial data.
 
@@ -508,8 +506,8 @@ class TRCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_trials, n_components, n_times)
-            Projected trial signals, truncated to `n_components`.
+        np.ndarray of shape (n_trials, n_dims, n_times)
+            Projected trial signals, truncated to `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
 
         Raises
         ------

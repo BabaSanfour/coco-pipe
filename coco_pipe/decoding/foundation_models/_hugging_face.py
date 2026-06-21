@@ -88,7 +88,7 @@ class HuggingFaceBackend(BackendBase):
         lora_target_modules: tuple[str, ...] = ("query", "value"),
         lora_dropout: float = 0.05,
         **kw,
-    ) -> "HuggingFaceBackend":
+    ) -> HuggingFaceBackend:
         """Load a pretrained HuggingFace model and return an initialised backend.
 
         Parameters
@@ -168,7 +168,7 @@ class HuggingFaceBackend(BackendBase):
         lora_target_modules: tuple[str, ...],
         lora_dropout: float,
         **kw,
-    ) -> "HuggingFaceBackend":
+    ) -> HuggingFaceBackend:
         """Load REVE from HuggingFace."""
         import torch
         import torch.nn as nn
@@ -361,7 +361,7 @@ class HuggingFaceBackend(BackendBase):
             if component is not None
         }
 
-    def reset_head(self, n_outputs: int) -> "HuggingFaceBackend":
+    def reset_head(self, n_outputs: int) -> HuggingFaceBackend:
         """Replace the classification head without modifying backbone weights.
 
         Parameters
@@ -380,7 +380,7 @@ class HuggingFaceBackend(BackendBase):
         self._n_outputs = n_outputs
         return self
 
-    def configure_peft(self, lora_config: dict) -> "HuggingFaceBackend":
+    def configure_peft(self, lora_config: dict) -> HuggingFaceBackend:
         """Apply LoRA adapters to the backbone post-hoc.
 
         Parameters

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -60,9 +60,9 @@ __all__ = [
 
 def plot_confusion_matrix(
     result_or_matrix: Any,
-    model: Optional[str] = None,
-    fold: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    fold: int | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot an aggregated confusion matrix interactively.
@@ -114,10 +114,10 @@ def plot_confusion_matrix(
             x=matrix.columns.astype(str).tolist(),
             y=matrix.index.astype(str).tolist(),
             colorscale=SEQUENTIAL,
-            colorbar=dict(title="Count"),
+            colorbar={"title": "Count"},
             text=text,
             texttemplate="%{text}",
-            textfont=dict(size=12),
+            textfont={"size": 12},
         )
     )
     _apply_layout(
@@ -152,7 +152,7 @@ def _add_curve_band(
             y=np.concatenate([upper, lower[::-1]]),
             fill="toself",
             fillcolor=fillcolor,
-            line=dict(color="rgba(255,255,255,0)"),
+            line={"color": "rgba(255,255,255,0)"},
             showlegend=False,
             hoverinfo="skip",
         )
@@ -161,9 +161,9 @@ def _add_curve_band(
 
 def plot_roc_curve(
     result_or_curve: Any,
-    model: Optional[str] = None,
-    fold: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    fold: int | None = None,
+    title: str | None = None,
     mean_only: bool = False,
 ) -> go.Figure:
     """
@@ -200,10 +200,9 @@ def plot_roc_curve(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
-    >>> df = pd.DataFrame({"Model": ["SVM",
-    ...                           "SVM"],
-    ...                           "FPR": [0.0, 1.0],
-    ...                           "TPR": [0.0, 1.0]})
+    >>> df = pd.DataFrame(
+    ...     {"Model": ["SVM", "SVM"], "FPR": [0.0, 1.0], "TPR": [0.0, 1.0]}
+    ... )
     >>> fig = viz.plot_roc_curve(df)
     """
     frame = prepare_decoding_curve_frame(
@@ -222,7 +221,7 @@ def plot_roc_curve(
                 y=curve["y"],
                 name=curve["label"],
                 mode="lines",
-                line=dict(width=2 if curve["kind"] == "mean" else 1),
+                line={"width": 2 if curve["kind"] == "mean" else 1},
                 opacity=1.0 if curve["kind"] == "mean" else 0.55,
             )
         )
@@ -233,7 +232,7 @@ def plot_roc_curve(
             x=[0, 1],
             y=[0, 1],
             mode="lines",
-            line=dict(color="gray", dash="dash"),
+            line={"color": "gray", "dash": "dash"},
             showlegend=False,
         )
     )
@@ -249,9 +248,9 @@ def plot_roc_curve(
 
 def plot_pr_curve(
     result_or_curve: Any,
-    model: Optional[str] = None,
-    fold: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    fold: int | None = None,
+    title: str | None = None,
     mean_only: bool = False,
 ) -> go.Figure:
     """
@@ -308,7 +307,7 @@ def plot_pr_curve(
                 y=curve["y"],
                 name=curve["label"],
                 mode="lines",
-                line=dict(width=2 if curve["kind"] == "mean" else 1),
+                line={"width": 2 if curve["kind"] == "mean" else 1},
                 opacity=1.0 if curve["kind"] == "mean" else 0.55,
             )
         )
@@ -326,9 +325,9 @@ def plot_pr_curve(
 
 def plot_calibration_curve(
     result_or_curve: Any,
-    model: Optional[str] = None,
-    fold: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    fold: int | None = None,
+    title: str | None = None,
     mean_only: bool = False,
 ) -> go.Figure:
     """
@@ -392,7 +391,7 @@ def plot_calibration_curve(
                 y=curve["y"],
                 name=curve["label"],
                 mode="lines",
-                line=dict(width=2 if curve["kind"] == "mean" else 1),
+                line={"width": 2 if curve["kind"] == "mean" else 1},
                 opacity=1.0 if curve["kind"] == "mean" else 0.55,
             )
         )
@@ -403,7 +402,7 @@ def plot_calibration_curve(
             x=[0, 1],
             y=[0, 1],
             mode="lines",
-            line=dict(color="gray", dash="dash"),
+            line={"color": "gray", "dash": "dash"},
             showlegend=False,
         )
     )
@@ -419,9 +418,9 @@ def plot_calibration_curve(
 
 def plot_fold_score_dispersion(
     result_or_scores: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    metric: str | None = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot fold-level scalar score distributions by model and metric interactively.
@@ -487,11 +486,11 @@ def plot_fold_score_dispersion(
 
 def plot_temporal_score_curve(
     result_or_scores: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
-    colors: Optional[dict] = None,
-    smooth_window: Optional[int] = None,
+    metric: str | None = None,
+    model: str | None = None,
+    title: str | None = None,
+    colors: dict | None = None,
+    smooth_window: int | None = None,
 ) -> go.Figure:
     """
     Plot mean temporal decoding score curves interactively.
@@ -573,7 +572,7 @@ def plot_temporal_score_curve(
                 y=y_vals,
                 mode="lines",
                 name=f"{model_name} / {metric_name}",
-                line=dict(width=2, color=line_color),
+                line={"width": 2, "color": line_color},
             )
         )
         if std_vals is not None:
@@ -593,9 +592,9 @@ def plot_temporal_score_curve(
 
 def plot_temporal_generalization_matrix(
     result_or_scores: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    metric: str | None = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot a train-time by test-time temporal generalization matrix interactively.
@@ -651,7 +650,7 @@ def plot_temporal_generalization_matrix(
             x=matrix.columns.astype(str).tolist(),
             y=matrix.index.astype(str).tolist(),
             colorscale=SEQUENTIAL,
-            colorbar=dict(title="Value"),
+            colorbar={"title": "Value"},
         )
     )
     _apply_layout(
@@ -666,9 +665,9 @@ def plot_temporal_generalization_matrix(
 
 def plot_temporal_statistical_assessment(
     result_or_assessment: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    metric: str | None = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot temporal statistical assessment results interactively.
@@ -728,7 +727,7 @@ def plot_temporal_statistical_assessment(
             y=observed,
             mode="lines+markers",
             name="Observed",
-            line=dict(width=2),
+            line={"width": 2},
         )
     )
     if {"NullLower", "NullUpper"}.issubset(frame.columns):
@@ -743,7 +742,7 @@ def plot_temporal_statistical_assessment(
                     y=np.concatenate([u_vals, l_vals[::-1]]),
                     fill="toself",
                     fillcolor="rgba(128,128,128,0.2)",
-                    line=dict(color="rgba(255,255,255,0)"),
+                    line={"color": "rgba(255,255,255,0)"},
                     name="Permutation null band",
                 )
             )
@@ -755,7 +754,7 @@ def plot_temporal_statistical_assessment(
                     x=x_vals[sig],
                     y=observed[sig],
                     mode="markers",
-                    marker=dict(symbol="square", color="black", size=10),
+                    marker={"symbol": "square", "color": "black", "size": 10},
                     name="Significant",
                 )
             )
@@ -771,9 +770,9 @@ def plot_temporal_statistical_assessment(
 
 def plot_null_interval_summary(
     result_or_assessment: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    metric: str | None = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot observed scalar scores against null interval summaries interactively.
@@ -828,7 +827,7 @@ def plot_null_interval_summary(
             x=labels,
             y=frame["Observed"].astype(float).tolist(),
             mode="markers",
-            marker=dict(size=9),
+            marker={"size": 9},
             name="Observed",
         )
     )
@@ -843,11 +842,11 @@ def plot_null_interval_summary(
                 x=labels,
                 y=center.tolist(),
                 mode="markers",
-                error_y=dict(
-                    type="data",
-                    array=error_plus.tolist(),
-                    arrayminus=error_minus.tolist(),
-                ),
+                error_y={
+                    "type": "data",
+                    "array": error_plus.tolist(),
+                    "arrayminus": error_minus.tolist(),
+                },
                 name="Null band",
             )
         )
@@ -857,7 +856,7 @@ def plot_null_interval_summary(
                 x=labels,
                 y=frame["NullMedian"].astype(float).tolist(),
                 mode="markers",
-                marker=dict(symbol="x", size=9),
+                marker={"symbol": "x", "size": 9},
                 name="Null median",
             )
         )
@@ -872,8 +871,8 @@ def plot_null_interval_summary(
 
 def plot_training_history(
     result_or_artifacts: Any,
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot neural training-history artifacts interactively.
@@ -948,10 +947,10 @@ def plot_training_history(
 
 def plot_decoding_scores(
     result: Any,
-    metric: Optional[str] = None,
-    model: Optional[str] = None,
+    metric: str | None = None,
+    model: str | None = None,
     aggregate: Literal["mean", "median"] = "mean",
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot aggregate scalar decoding scores by model and metric interactively.
@@ -1006,10 +1005,10 @@ def plot_decoding_scores(
         go.Bar(
             x=labels.tolist(),
             y=summary["center"].astype(float).tolist(),
-            error_y=dict(
-                type="data",
-                array=summary["sem"].astype(float).tolist(),
-            ),
+            error_y={
+                "type": "data",
+                "array": summary["sem"].astype(float).tolist(),
+            },
             name="Score",
         )
     )
@@ -1025,9 +1024,9 @@ def plot_decoding_scores(
 def plot_model_comparison(
     result: Any,
     metric: str = "accuracy",
-    reference: Optional[str] = None,
+    reference: str | None = None,
     paired: bool = True,
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot model-comparison score differences interactively.
@@ -1084,18 +1083,18 @@ def plot_model_comparison(
     if {"CILower", "CIUpper"}.issubset(comp.columns):
         lower = comp["CILower"].astype(float).to_numpy()[order]
         upper = comp["CIUpper"].astype(float).to_numpy()[order]
-        error_x = dict(
-            type="data",
-            array=(upper - diffs).tolist(),
-            arrayminus=(diffs - lower).tolist(),
-        )
+        error_x = {
+            "type": "data",
+            "array": (upper - diffs).tolist(),
+            "arrayminus": (diffs - lower).tolist(),
+        }
     fig = go.Figure(
         go.Scatter(
             x=diffs.tolist(),
             y=labels,
             mode="markers",
             error_x=error_x,
-            marker=dict(color="black", size=9),
+            marker={"color": "black", "size": 9},
             name="Difference",
         )
     )
@@ -1113,7 +1112,7 @@ def plot_fit_diagnostics(
     result: Any,
     by: Literal["Model", "Fold"] = "Model",
     show_warnings: bool = True,
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot fit-time diagnostics by model or fold interactively.
@@ -1145,10 +1144,9 @@ def plot_fit_diagnostics(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
-    >>> df = pd.DataFrame({"Model": ["SVM",
-    ...                           "LDA"],
-    ...                           "Fold": [0, 0],
-    ...                           "TotalTime": [1.2, 0.4]})
+    >>> df = pd.DataFrame(
+    ...     {"Model": ["SVM", "LDA"], "Fold": [0, 0], "TotalTime": [1.2, 0.4]}
+    ... )
     >>> fig = viz.plot_fit_diagnostics(df)
     """
     frame, data = prepare_fit_diagnostics_frame(result, by=by)
@@ -1184,9 +1182,9 @@ def plot_fit_diagnostics(
 
 def plot_probability_diagnostics(
     result: Any,
-    model: Optional[str] = None,
-    metric: Optional[str] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    metric: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot probability-quality diagnostics interactively.
@@ -1253,8 +1251,8 @@ def plot_subject_diagnostics(
     result: Any,
     unit: str = "Subject",
     metric: str = "accuracy",
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot per-unit prediction accuracy diagnostics interactively.
@@ -1332,8 +1330,8 @@ def plot_group_summary(
     result: Any,
     group: str = "Group",
     metric: str = "accuracy",
-    model: Optional[str] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot group-level prediction accuracy summaries interactively.
@@ -1406,9 +1404,9 @@ def plot_group_summary(
 
 def plot_regression_diagnostics(
     result: Any,
-    model: Optional[str] = None,
-    fold: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    fold: int | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot regression prediction diagnostics interactively.
@@ -1441,8 +1439,9 @@ def plot_regression_diagnostics(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
-    >>> df = pd.DataFrame({"y_true": [1.0, 2.0, 3.0, 4.0],
-    ...                           "y_pred": [1.1, 1.9, 3.2, 3.8]})
+    >>> df = pd.DataFrame(
+    ...     {"y_true": [1.0, 2.0, 3.0, 4.0], "y_pred": [1.1, 1.9, 3.2, 3.8]}
+    ... )
     >>> fig = viz.plot_regression_diagnostics(df)
     """
     y_true, y_pred = prepare_regression_prediction_data(
@@ -1461,7 +1460,7 @@ def plot_regression_diagnostics(
             y=y_pred.tolist(),
             mode="markers",
             opacity=0.7,
-            marker=dict(size=5),
+            marker={"size": 5},
             name="Predictions",
         )
     )
@@ -1470,7 +1469,7 @@ def plot_regression_diagnostics(
             x=lims,
             y=lims,
             mode="lines",
-            line=dict(color="gray", dash="dash"),
+            line={"color": "gray", "dash": "dash"},
             name="Ideal",
         )
     )
@@ -1486,9 +1485,9 @@ def plot_regression_diagnostics(
 
 def plot_search_results(
     result: Any,
-    model: Optional[str] = None,
-    top_n: Optional[int] = None,
-    title: Optional[str] = None,
+    model: str | None = None,
+    top_n: int | None = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot compact hyperparameter-search results interactively.
@@ -1521,9 +1520,11 @@ def plot_search_results(
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
     >>> df = pd.DataFrame(
-    ...     {"Model": ["SVM"] * 3,
-    ...                           "Rank": [1, 2, 3],
-    ...                           "MeanTestScore": [0.88, 0.85, 0.82]}
+    ...     {
+    ...         "Model": ["SVM"] * 3,
+    ...         "Rank": [1, 2, 3],
+    ...         "MeanTestScore": [0.88, 0.85, 0.82],
+    ...     }
     ... )
     >>> fig = viz.plot_search_results(df)
     """
@@ -1555,9 +1556,9 @@ def plot_search_results(
 
 def plot_feature_stability(
     result: Any,
-    model: Optional[str] = None,
-    top_n: Optional[int] = 25,
-    title: Optional[str] = None,
+    model: str | None = None,
+    top_n: int | None = 25,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot feature-selection stability interactively.
@@ -1614,9 +1615,9 @@ def plot_feature_stability(
 
 def plot_feature_scores(
     result: Any,
-    model: Optional[str] = None,
-    top_n: Optional[int] = 25,
-    title: Optional[str] = None,
+    model: str | None = None,
+    top_n: int | None = 25,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot univariate feature-selector scores interactively.
@@ -1647,10 +1648,9 @@ def plot_feature_scores(
     --------
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
-    >>> df = pd.DataFrame({"FeatureName": ["F1",
-    ...                           "F2",
-    ...                           "F3"],
-    ...                           "Score": [0.72, 0.55, 0.31]})
+    >>> df = pd.DataFrame(
+    ...     {"FeatureName": ["F1", "F2", "F3"], "Score": [0.72, 0.55, 0.31]}
+    ... )
     >>> fig = viz.plot_feature_scores(df)
     """
     scores = prepare_feature_score_series(result, model=model, top_n=top_n)
@@ -1674,11 +1674,11 @@ def plot_feature_scores(
 
 def plot_feature_importance(
     result: Any,
-    model: Optional[str] = None,
-    top_n: Optional[int] = 25,
+    model: str | None = None,
+    top_n: int | None = 25,
     signed: bool = False,
     absolute: bool = False,
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
     """
     Plot ranked feature importances interactively.
@@ -1717,8 +1717,11 @@ def plot_feature_importance(
     >>> import pandas as pd
     >>> from coco_pipe.viz.interactive import decoding as viz
     >>> df = pd.DataFrame(
-    ...     {"Model": ["SVM"] * 3, "FeatureName": ["f1", "f2", "f3"],
-    ...      "Mean": [0.5, 0.3, 0.1]}
+    ...     {
+    ...         "Model": ["SVM"] * 3,
+    ...         "FeatureName": ["f1", "f2", "f3"],
+    ...         "Mean": [0.5, 0.3, 0.1],
+    ...     }
     ... )
     >>> fig = viz.plot_feature_importance(df)
     """

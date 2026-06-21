@@ -555,7 +555,7 @@ def test_save_load_json_roundtrip(tmp_path):
     assert loaded.raw.keys() == result.raw.keys()
 
     # Verify it was indeed JSON
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         import json
 
         data = json.load(f)

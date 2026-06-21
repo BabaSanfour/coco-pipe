@@ -109,11 +109,11 @@ def test_permutation_null_separation_auc_missing():
     conditions = np.array([1, 2])
     res = TrajectoryResult(traj, times, subjects, conditions)
     # The groups passed are not present
-    obs, null = permutation_null_separation_auc(res, group_a=[3], group_b=[4])
+    obs, _null = permutation_null_separation_auc(res, group_a=[3], group_b=[4])
     assert np.isnan(obs)
 
     rng = np.random.default_rng(0)
-    obs, null = permutation_null_separation_auc(
+    obs, _null = permutation_null_separation_auc(
         res, group_a=[1], group_b=[2], n_perm=10, rng=rng
     )
 

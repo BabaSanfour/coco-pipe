@@ -650,7 +650,7 @@ def test_dask_pca_reducer():
     try:
         reducer.fit(X_np)
     except Exception as e:
-        warnings.warn(f"DaskPCA on numpy raised: {e}")
+        warnings.warn(f"DaskPCA on numpy raised: {e}", stacklevel=2)
 
 
 def test_dask_truncated_svd_reducer():
@@ -1613,7 +1613,7 @@ def test_unfitted_errors_all_reducers():
     """Verify RuntimeError for all reducers when unfitted (covers miss lines)."""
     # Linear
     with pytest.raises(RuntimeError):
-        PCAReducer().components_
+        _ = PCAReducer().components_
     with pytest.raises(RuntimeError):
         IncrementalPCAReducer().get_components()
     with pytest.raises(RuntimeError):
@@ -1900,13 +1900,13 @@ def test_linear_unfitted_errors():
         DaskTruncatedSVDReducer(),
     ]
     for r in reducers:
-        with pytest.raises(RuntimeError, match="(not fitted|Model is not fitted)"):
+        with pytest.raises(RuntimeError, match=r"(not fitted|Model is not fitted)"):
             _ = r.explained_variance_ratio_
-        with pytest.raises(RuntimeError, match="(not fitted|Model is not fitted)"):
+        with pytest.raises(RuntimeError, match=r"(not fitted|Model is not fitted)"):
             _ = r.participation_ratio_
-        with pytest.raises(RuntimeError, match="(not fitted|Model is not fitted)"):
+        with pytest.raises(RuntimeError, match=r"(not fitted|Model is not fitted)"):
             _ = r.components_
-        with pytest.raises(RuntimeError, match="(not fitted|Model is not fitted)"):
+        with pytest.raises(RuntimeError, match=r"(not fitted|Model is not fitted)"):
             r.get_components()
 
 

@@ -15,23 +15,23 @@ TopologicalAEReducer
 
 References
 ----------
-.. [1] Moor, M., Horn, M., Rieck, B., and Borgwardt, K. (2020).
+[1] Moor, M., Horn, M., Rieck, B., and Borgwardt, K. (2020).
        "Topological Autoencoders". Proceedings of the 37th International
        Conference on Machine Learning.
-.. [2] Gudhi documentation:
+[2] Gudhi documentation:
        https://gudhi.inria.fr/python/latest/
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
 from ...utils import import_optional_dependency
 from .base import ArrayLike, BaseReducer
 
-__all__ = ["TopologicalSignatureDistance", "TopologicalAEReducer"]
+__all__ = ["TopologicalAEReducer", "TopologicalSignatureDistance"]
 
 _SKORCH_ALLOWED_PARAMS = {"callbacks", "dataset", "optimizer", "train_split"}
 
@@ -253,7 +253,7 @@ def _build_topology_training_classes():
             self,
             input_dim: int = 10,
             latent_dim: int = 2,
-            hidden_dims: Optional[list[int]] = None,
+            hidden_dims: list[int] | None = None,
         ):
             super().__init__()
 
@@ -393,7 +393,7 @@ class TopologicalAEReducer(BaseReducer):
     def __init__(
         self,
         n_components: int = 2,
-        hidden_dims: Optional[list[int]] = None,
+        hidden_dims: list[int] | None = None,
         lam: float = 0.0,
         lr: float = 1e-3,
         batch_size: int = 64,
@@ -437,9 +437,7 @@ class TopologicalAEReducer(BaseReducer):
         self.verbose = verbose
         self.input_dim_ = None
 
-    def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
-    ) -> "TopologicalAEReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "TopologicalAEReducer":
         """
         Fit the topology autoencoder on the input data.
 
@@ -506,7 +504,7 @@ class TopologicalAEReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Latent embedding produced by the encoder.
         """
         self._require_fitted()
@@ -534,7 +532,7 @@ class TopologicalAEReducer(BaseReducer):
             return []
         return list(self.model.history_[:, "train_loss"])
 
-    def get_pytorch_module(self) -> Optional[Any]:
+    def get_pytorch_module(self) -> Any | None:
         """
         Return the fitted underlying PyTorch module.
 

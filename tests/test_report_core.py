@@ -7,6 +7,7 @@ Dim-reduction-specific Report.add_* tests live in tests/test_report_dimred.py.
 import base64
 import gzip
 import json
+from typing import ClassVar
 from unittest.mock import patch
 
 import numpy as np
@@ -70,7 +71,7 @@ def test_report_config_coercion_keeps_extra_fields():
     rep = Report(title="T", config={"some_param": 1})
     assert rep.title == "T"
     # Pydantic 2 allows extras via the model config
-    assert getattr(rep.config, "some_param") == 1
+    assert rep.config.some_param == 1
 
 
 def test_container_element_markdown_fallback():
@@ -359,14 +360,14 @@ def test_report_provenance_fallback():
 
 
 def test_apply_theme_exceptions():
-    with patch(
-        "coco_pipe.viz.theme.set_coco_theme", side_effect=Exception("theme err")
-    ):
-        with patch(
+    with (
+        patch("coco_pipe.viz.theme.set_coco_theme", side_effect=Exception("theme err")),
+        patch(
             "coco_pipe.viz.interactive._utils._register_coco_template",
             side_effect=Exception("tpl err"),
-        ):
-            Report(title="T")  # should catch silently
+        ),
+    ):
+        Report(title="T")  # should catch silently
 
 
 def test_resolve_config_fallback():
@@ -383,9 +384,9 @@ def test_add_container_constant_columns():
     rep = Report("T")
 
     class DummyContainer:
-        dims = ["a"]
-        shape = [2]
-        coords = {}
+        dims: ClassVar[list] = ["a"]
+        shape: ClassVar[list] = [2]
+        coords: ClassVar[dict] = {}
         X = np.array([[1, 1], [1, 1]])  # constant
         y = None
 
@@ -398,9 +399,9 @@ def test_add_container_plot_exception():
     rep = Report("T")
 
     class DummyContainer:
-        dims = ["a"]
-        shape = [2]
-        coords = {}
+        dims: ClassVar[list] = ["a"]
+        shape: ClassVar[list] = [2]
+        coords: ClassVar[dict] = {}
         X = np.array([1, 2])
         y = None
 
@@ -436,14 +437,16 @@ def test_add_raw_preview2():
 
 def test_add_raw_preview_exceptions():
     rep = Report("T")
-    with patch(
-        "coco_pipe.report.core.check_flatline", side_effect=Exception("check err")
-    ):
-        with patch(
+    with (
+        patch(
+            "coco_pipe.report.core.check_flatline", side_effect=Exception("check err")
+        ),
+        patch(
             "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview",
             return_value="fig",
-        ):
-            rep.add_raw_preview(np.array([1, 2]))
+        ),
+    ):
+        rep.add_raw_preview(np.array([1, 2]))
 
 
 def test_add_raw_preview_dims():

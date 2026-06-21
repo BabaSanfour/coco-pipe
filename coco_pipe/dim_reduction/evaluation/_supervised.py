@@ -7,7 +7,7 @@ used to score embedding separability and are not part of the decoding API.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 from sklearn.base import BaseEstimator, clone
@@ -17,7 +17,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-def _cv_random_state(shuffle: bool, random_state: Optional[int]) -> Optional[int]:
+def _cv_random_state(shuffle: bool, random_state: int | None) -> int | None:
     return random_state if shuffle else None
 
 
@@ -26,8 +26,8 @@ def _make_splitter(
     *,
     n_splits: int,
     shuffle: bool,
-    random_state: Optional[int],
-    groups: Optional[np.ndarray],
+    random_state: int | None,
+    groups: np.ndarray | None,
 ):
     if strategy == "stratified_group_kfold":
         if groups is None:
@@ -55,11 +55,11 @@ def _cross_validate_score(
     X: np.ndarray,
     y: Sequence,
     *,
-    groups: Optional[Sequence] = None,
+    groups: Sequence | None = None,
     cv_strategy: str = "stratified",
     n_splits: int = 5,
     shuffle: bool = True,
-    random_state: Optional[int] = 42,
+    random_state: int | None = 42,
     metric: str = "balanced_accuracy",
     use_scaler: bool = False,
 ) -> float:

@@ -49,15 +49,17 @@ def test_qlora_raises_not_implemented_for_braindecode(monkeypatch):
 
 
 def test_unsupported_model_key_raises():
-    with patch.object(BrainDecodeBackend, "is_available", return_value=True):
-        with pytest.raises(ValueError, match="BrainDecodeBackend does not support"):
-            BrainDecodeBackend.load(
-                "reve",
-                get_estimator_spec("reve"),
-                n_outputs=None,
-                device="cpu",
-                train_mode="frozen",
-            )
+    with (
+        patch.object(BrainDecodeBackend, "is_available", return_value=True),
+        pytest.raises(ValueError, match="BrainDecodeBackend does not support"),
+    ):
+        BrainDecodeBackend.load(
+            "reve",
+            get_estimator_spec("reve"),
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+        )
 
 
 def _make_mock_bd_model(feat_dim: int = 200, n_outputs: int = 2):
@@ -237,9 +239,9 @@ def test_configure_peft_applies_lora(monkeypatch):
 
 
 def test_cbramod_src_directory_does_not_exist():
-    assert not os.path.exists(
-        "coco_pipe/decoding/foundation_models/cbramod_src"
-    ), "cbramod_src/ must be deleted — BrainDecode provides the implementation"
+    assert not os.path.exists("coco_pipe/decoding/foundation_models/cbramod_src"), (
+        "cbramod_src/ must be deleted — BrainDecode provides the implementation"
+    )
 
 
 def test_load_revision_and_filename():
@@ -267,7 +269,7 @@ def test_load_revision_and_filename():
     def _fake_import(name, *a, **kw):
         if name == "braindecode.models":
             mod = MagicMock()
-            setattr(mod, "CBraMod", MagicMock(from_pretrained=from_pretrained_mock))
+            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
             return mod
         return orig(name, *a, **kw)
 
@@ -309,7 +311,7 @@ def test_load_lora_train_mode():
     def _fake_import(name, *a, **kw):
         if name == "braindecode.models":
             mod = MagicMock()
-            setattr(mod, "CBraMod", MagicMock(from_pretrained=from_pretrained_mock))
+            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
             return mod
         return orig(name, *a, **kw)
 
@@ -331,15 +333,17 @@ def test_load_lora_train_mode():
 
 
 def test_load_not_available_raises():
-    with patch.object(BrainDecodeBackend, "is_available", return_value=False):
-        with pytest.raises(ImportError, match="requires braindecode"):
-            BrainDecodeBackend.load(
-                "cbramod",
-                get_estimator_spec("cbramod"),
-                n_outputs=2,
-                device="cpu",
-                train_mode="frozen",
-            )
+    with (
+        patch.object(BrainDecodeBackend, "is_available", return_value=False),
+        pytest.raises(ImportError, match="requires braindecode"),
+    ):
+        BrainDecodeBackend.load(
+            "cbramod",
+            get_estimator_spec("cbramod"),
+            n_outputs=2,
+            device="cpu",
+            train_mode="frozen",
+        )
 
 
 def test_reset_head_not_implemented():
@@ -365,15 +369,15 @@ def test_reset_head_not_implemented():
         patch("importlib.import_module", side_effect=_fake_import_cbra),
         patch.object(BrainDecodeBackend, "is_available", return_value=True),
         patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
+        pytest.raises(NotImplementedError),
     ):
-        with pytest.raises(NotImplementedError):
-            BrainDecodeBackend.load(
-                "cbramod",
-                get_estimator_spec("cbramod"),
-                n_outputs=2,
-                device="cpu",
-                train_mode="frozen",
-            )
+        BrainDecodeBackend.load(
+            "cbramod",
+            get_estimator_spec("cbramod"),
+            n_outputs=2,
+            device="cpu",
+            train_mode="frozen",
+        )
 
     # Test luna ignores NotImplementedError on load
     mock_model_luna = MagicMock()
@@ -423,7 +427,7 @@ def test_reset_head_frozen_trainable():
     def _fake_import(name, *a, **kw):
         if name == "braindecode.models":
             mod = MagicMock()
-            setattr(mod, "CBraMod", MagicMock(from_pretrained=from_pretrained_mock))
+            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
             return mod
         return orig(name, *a, **kw)
 
@@ -458,16 +462,18 @@ def test_load_interpolate_channels_unsupported(monkeypatch):
         return orig(name, *a, **kw)
 
     meta = get_estimator_spec("labram")
-    with patch("importlib.import_module", side_effect=_fake_import):
-        with pytest.raises(ImportError, match="requires InterpolatedLaBraM"):
-            BrainDecodeBackend.load(
-                "labram",
-                meta,
-                n_outputs=2,
-                device="cpu",
-                train_mode="frozen",
-                interpolate_channels=True,
-            )
+    with (
+        patch("importlib.import_module", side_effect=_fake_import),
+        pytest.raises(ImportError, match="requires InterpolatedLaBraM"),
+    ):
+        BrainDecodeBackend.load(
+            "labram",
+            meta,
+            n_outputs=2,
+            device="cpu",
+            train_mode="frozen",
+            interpolate_channels=True,
+        )
 
 
 def test_load_interpolate_channels_supported():
@@ -529,16 +535,16 @@ def test_load_montage_warning():
         patch.object(BrainDecodeBackend, "is_available", return_value=True),
         patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
         patch("mne.create_info", return_value=mock_info),
+        pytest.warns(UserWarning, match="Could not assign the standard_1020"),
     ):
-        with pytest.warns(UserWarning, match="Could not assign the standard_1020"):
-            BrainDecodeBackend.load(
-                "cbramod",
-                meta,
-                n_outputs=2,
-                device="cpu",
-                train_mode="frozen",
-                electrode_names=["Fp1", "Fp2"],
-            )
+        BrainDecodeBackend.load(
+            "cbramod",
+            meta,
+            n_outputs=2,
+            device="cpu",
+            train_mode="frozen",
+            electrode_names=["Fp1", "Fp2"],
+        )
 
 
 def test_luna_special_defaults():

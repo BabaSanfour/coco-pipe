@@ -18,21 +18,34 @@ the bridge between ``DimReduction`` outputs and the corresponding plots.
 1. Source → Plot Cheat-Sheet
 ==============================
 
-================================  ===========================================
-What you have on ``DimReduction``  Plot
-================================  ===========================================
-Explicit embedding array            :func:`coco_pipe.viz.plot_embedding`
-``metric_records_``                 :func:`coco_pipe.viz.plot_metrics`
-``diagnostics_["coranking_matrix"]``  :func:`coco_pipe.viz.plot_coranking_matrix`
-``diagnostics_["shepard_distances"]`` :func:`coco_pipe.viz.plot_shepard_diagram`
-``quality_metadata_["loss_history"]``  :func:`coco_pipe.viz.plot_loss_history`
-``quality_metadata_["explained_variance_ratio_"]``  :func:`coco_pipe.viz.plot_eigenvalues`
-``interpretation_records_``         :func:`coco_pipe.viz.plot_reduction_feature_importance`
-``interpretation_["correlation"]``  :func:`coco_pipe.viz.plot_feature_correlation_heatmap`
-``diagnostics_["trajectory_separation"]``  :func:`coco_pipe.viz.plot_trajectory_separation`
-``diagnostics_["trajectory_<kinematic>"]``  :func:`coco_pipe.viz.plot_trajectory_metric_series`
-Native 3D trajectory tensor         :func:`coco_pipe.viz.plot_trajectory`
-================================  ===========================================
+.. list-table::
+   :header-rows: 1
+   :widths: 45 55
+
+   * - What you have on ``DimReduction``
+     - Plot
+   * - Explicit embedding array
+     - :func:`coco_pipe.viz.plot_embedding`
+   * - ``metric_records_``
+     - :func:`coco_pipe.viz.plot_metrics`
+   * - ``diagnostics_["coranking_matrix"]``
+     - :func:`coco_pipe.viz.plot_coranking_matrix`
+   * - ``diagnostics_["shepard_distances"]``
+     - :func:`coco_pipe.viz.plot_shepard_diagram`
+   * - ``quality_metadata_["loss_history"]``
+     - :func:`coco_pipe.viz.plot_loss_history`
+   * - ``quality_metadata_["explained_variance_ratio_"]``
+     - :func:`coco_pipe.viz.plot_eigenvalues`
+   * - ``interpretation_records_``
+     - :func:`coco_pipe.viz.plot_reduction_feature_importance`
+   * - ``interpretation_["correlation"]``
+     - :func:`coco_pipe.viz.plot_feature_correlation_heatmap`
+   * - ``diagnostics_["trajectory_separation"]``
+     - :func:`coco_pipe.viz.plot_trajectory_separation`
+   * - ``diagnostics_["trajectory_<kinematic>"]``
+     - :func:`coco_pipe.viz.plot_trajectory_metric_series`
+   * - Native 3D trajectory tensor
+     - :func:`coco_pipe.viz.plot_trajectory`
 
 ---
 

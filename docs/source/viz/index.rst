@@ -1,8 +1,8 @@
 .. _viz:
 
-================================================
-Visualization Module — Scientific User Guide
-================================================
+=============
+Visualization
+=============
 
 The ``coco_pipe.viz`` module turns tidy result tables (from
 :ref:`decoding <decoding>` and ``coco_pipe.dim_reduction``) into publication-grade
@@ -107,21 +107,7 @@ Trajectories in embedding space                    ``plot_trajectory``, ``plot_t
 
 .. toctree::
    :maxdepth: 2
-   :caption: Core Concepts
+   :caption: User Guide
 
-   theme
-   primitives
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Plot Reference
-
-   decoding
-   dim_reduction
-   interactive
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Worked Examples
-
-   examples/static_decoding_report
+   guide
+   catalog

@@ -14,31 +14,86 @@ name in the leftmost column.
 1. Registry at a Glance
 =========================
 
-==================  ==================  ===========================================  ========================
-Family              Method              When to use it                                Install
-==================  ==================  ===========================================  ========================
-**Linear**          ``PCA``             Default baseline; fast, deterministic,        core
-                                        components inspectable.
-                    ``IncrementalPCA``  PCA when data does not fit in memory.         core
-                    ``DaskPCA``         PCA on Dask arrays / distributed data.        ``[dask]``
-                    ``DaskTruncatedSVD``  Truncated SVD on Dask arrays.               ``[dask]``
-**Manifold**        ``Isomap``          Global geodesic distances; smooth manifolds.  core
-                    ``LLE``             Local linear reconstruction.                  core
-                    ``MDS``             Pairwise distance preservation.               core
-                    ``SpectralEmbedding``  Graph-Laplacian embedding for clusters.    core
-**Neighbor graph**  ``TSNE``            Cluster visualization at small/medium scale.  core
-                    ``UMAP``            Faster, more global than t-SNE.               ``[dim-red]`` or ``[neighbor]``
-                    ``Pacmap``          Better global structure than UMAP at scale.   ``[dim-red]`` or ``[neighbor]``
-                    ``Trimap``          Triplet-based UMAP/PaCMAP alternative.        ``[dim-red]`` or ``[neighbor]``
-                    ``PHATE``           Diffusion-based, good for continuous          ``[dim-red]`` or ``[neighbor]``
-                                        trajectories.
-                    ``ParametricUMAP``  UMAP backed by a learnable encoder.           ``[parametric-umap]``
-**Spatiotemporal**  ``DMD``             Dynamic Mode Decomposition for time series.   ``[spatiotemporal]``
-                    ``TRCA``            Task-Related Component Analysis; SSVEP /      ``[spatiotemporal]``
-                                        evoked EEG.
-**Neural**          ``IVIS``            Siamese-network parametric reducer.           ``[ivis]``
-                    ``TopologicalAE``   Autoencoder with topological regularization.  ``[topology]``
-==================  ==================  ===========================================  ========================
+.. list-table::
+   :header-rows: 1
+   :widths: 16 16 44 24
+
+   * - Family
+     - Method
+     - When to use it
+     - Install
+   * - **Linear**
+     - ``PCA``
+     - Default baseline; fast, deterministic, components inspectable.
+     - core
+   * -
+     - ``IncrementalPCA``
+     - PCA when data does not fit in memory.
+     - core
+   * -
+     - ``DaskPCA``
+     - PCA on Dask arrays / distributed data.
+     - ``[dask]``
+   * -
+     - ``DaskTruncatedSVD``
+     - Truncated SVD on Dask arrays.
+     - ``[dask]``
+   * - **Manifold**
+     - ``Isomap``
+     - Global geodesic distances; smooth manifolds.
+     - core
+   * -
+     - ``LLE``
+     - Local linear reconstruction.
+     - core
+   * -
+     - ``MDS``
+     - Pairwise distance preservation.
+     - core
+   * -
+     - ``SpectralEmbedding``
+     - Graph-Laplacian embedding for clusters.
+     - core
+   * - **Neighbor graph**
+     - ``TSNE``
+     - Cluster visualization at small/medium scale.
+     - core
+   * -
+     - ``UMAP``
+     - Faster, more global than t-SNE.
+     - ``[dim-red]`` or ``[neighbor]``
+   * -
+     - ``Pacmap``
+     - Better global structure than UMAP at scale.
+     - ``[dim-red]`` or ``[neighbor]``
+   * -
+     - ``Trimap``
+     - Triplet-based UMAP/PaCMAP alternative.
+     - ``[dim-red]`` or ``[neighbor]``
+   * -
+     - ``PHATE``
+     - Diffusion-based, good for continuous trajectories.
+     - ``[dim-red]`` or ``[neighbor]``
+   * -
+     - ``ParametricUMAP``
+     - UMAP backed by a learnable encoder.
+     - ``[parametric-umap]``
+   * - **Spatiotemporal**
+     - ``DMD``
+     - Dynamic Mode Decomposition for time series.
+     - ``[spatiotemporal]``
+   * -
+     - ``TRCA``
+     - Task-Related Component Analysis; SSVEP / evoked EEG.
+     - ``[spatiotemporal]``
+   * - **Neural**
+     - ``IVIS``
+     - Siamese-network parametric reducer.
+     - ``[ivis]``
+   * -
+     - ``TopologicalAE``
+     - Autoencoder with topological regularization.
+     - ``[topology]``
 
 The full reducer registry is exposed as
 :data:`coco_pipe.dim_reduction.METHODS`. Optional methods are imported lazily;
@@ -240,22 +295,70 @@ Compare them objectively with :ref:`dim-reduction-evaluation`.
 8. Capabilities Cheat-Sheet
 =============================
 
-============================  ============  ============  ===============  ==========
-Reducer                       ``is_linear``  ``has_components``  ``has_loss_history``  ``transform``
-============================  ============  ============  ===============  ==========
-PCA / IncrementalPCA / Dask\*  ✓             ✓              ✗                ✓
-Isomap / LLE / MDS /           ✗             ✗              ✗                ✗ (non-parametric)
-SpectralEmbedding
-TSNE                           ✗             ✗              ✗                ✗
-UMAP                           ✗             ✗              ✓                ✓ (post-fit)
-ParametricUMAP                 ✗             ✗              ✓                ✓
-PaCMAP / TriMap                ✗             ✗              ✓                ✓ (post-fit)
-PHATE                          ✗             ✗              ✗                ✗
-DMD                            ✓ (modes)     ✓ (modes)      ✗                ✓
-TRCA                           ✓             ✓              ✗                ✓
-IVIS                           ✗             ✗              ✓                ✓
-TopologicalAE                  ✗             ✗              ✓                ✓
-============================  ============  ============  ===============  ==========
+.. list-table::
+   :header-rows: 1
+   :widths: 30 14 16 18 22
+
+   * - Reducer
+     - ``is_linear``
+     - ``has_components``
+     - ``has_loss_history``
+     - ``transform``
+   * - PCA / IncrementalPCA / Dask\*
+     - ✓
+     - ✓
+     - ✗
+     - ✓
+   * - Isomap / LLE / MDS / SpectralEmbedding
+     - ✗
+     - ✗
+     - ✗
+     - ✗ (non-parametric)
+   * - TSNE
+     - ✗
+     - ✗
+     - ✗
+     - ✗
+   * - UMAP
+     - ✗
+     - ✗
+     - ✓
+     - ✓ (post-fit)
+   * - ParametricUMAP
+     - ✗
+     - ✗
+     - ✓
+     - ✓
+   * - PaCMAP / TriMap
+     - ✗
+     - ✗
+     - ✓
+     - ✓ (post-fit)
+   * - PHATE
+     - ✗
+     - ✗
+     - ✗
+     - ✗
+   * - DMD
+     - ✓ (modes)
+     - ✓ (modes)
+     - ✗
+     - ✓
+   * - TRCA
+     - ✓
+     - ✓
+     - ✗
+     - ✓
+   * - IVIS
+     - ✗
+     - ✗
+     - ✓
+     - ✓
+   * - TopologicalAE
+     - ✗
+     - ✗
+     - ✓
+     - ✓
 
 Always check ``reducer.capabilities`` at runtime — third-party libraries
 occasionally change what they expose.

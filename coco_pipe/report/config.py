@@ -20,7 +20,7 @@ class ProvenanceConfig(BaseModel):
     )
     git_hash: str = Field("Unknown", description="Git commit hash of the code.")
     timestamp_utc: str = Field(
-        default_factory=lambda: dt.datetime.now(dt.timezone.utc).strftime(
+        default_factory=lambda: dt.datetime.now(dt.UTC).strftime(
             "%Y-%m-%d %H:%M:%S UTC"
         ),
         description="Execution timestamp.",
@@ -64,8 +64,7 @@ class ReportConfig(BaseModel):
 
     title: str = Field(
         default_factory=lambda: (
-            f"CoCo Analysis Report "
-            f"({dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d')})"
+            f"CoCo Analysis Report ({dt.datetime.now(dt.UTC).strftime('%Y-%m-%d')})"
         ),
         description="Title of the report.",
     )

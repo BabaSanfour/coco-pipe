@@ -306,7 +306,7 @@ def test_plot_bar_exceptions():
         plot_bar([1, 2], orientation="invalid")
 
     # with top_n
-    fig, ax = plot_bar([3, 2, 1], top_n=2)
+    fig, _ax = plot_bar([3, 2, 1], top_n=2)
     plt.close(fig)
 
 
@@ -315,11 +315,11 @@ def test_plot_heatmap_exceptions():
         plot_heatmap([1, 2, 3])
 
     # center logic
-    fig, ax = plot_heatmap([[1, 2], [3, 4]], center=2.5)
+    fig, _ax = plot_heatmap([[1, 2], [3, 4]], center=2.5)
     plt.close(fig)
 
     # center logic outside bounds
-    fig, ax = plot_heatmap([[1, 2], [3, 4]], center=5.0)
+    fig, _ax = plot_heatmap([[1, 2], [3, 4]], center=5.0)
     plt.close(fig)
 
 
@@ -362,7 +362,7 @@ def test_plot_distribution_groups_exceptions():
         plot_distribution_groups([[1]], ["a"], kind="invalid")
 
     # empty group skipping
-    fig, ax = plot_distribution_groups([[1], []], ["a", "b"], kind="box")
+    fig, _ax = plot_distribution_groups([[1], []], ["a", "b"], kind="box")
     plt.close(fig)
 
 
@@ -373,11 +373,11 @@ def test_plot_scatter2d_exceptions():
     with pytest.raises(ValueError):
         plot_scatter2d([1, 2], [1, 2], c=[1])
 
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match=r".*"):
         plot_scatter2d([1, 2], [1, 2], labels=["a"])
 
     # cmap object
-    fig, ax = plot_scatter2d([1, 2], [1, 2], c=[1, 2], cmap=plt.get_cmap("viridis"))
+    fig, _ax = plot_scatter2d([1, 2], [1, 2], c=[1, 2], cmap=plt.get_cmap("viridis"))
     plt.close(fig)
 
 
@@ -388,15 +388,15 @@ def test_plot_scatter3d_exceptions():
     with pytest.raises(ValueError):
         plot_scatter3d([1, 2], [1, 2], [1, 2, 3])
 
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match=r".*"):
         plot_scatter3d([1, 2], [1, 2], [1, 2], labels=["a"])
 
     # 3D
-    fig, ax = plot_scatter3d([1, 2], [1, 2], [1, 2], labels=["a", "b"])
+    fig, _ax = plot_scatter3d([1, 2], [1, 2], [1, 2], labels=["a", "b"])
     plt.close(fig)
 
     # 3D colorbar
-    fig, ax = plot_scatter3d([1, 2], [1, 2], [1, 2], c=[1, 2], colorbar=True)
+    fig, _ax = plot_scatter3d([1, 2], [1, 2], [1, 2], c=[1, 2], colorbar=True)
     plt.close(fig)
 
 
@@ -415,7 +415,7 @@ def test_plot_streamfield_exceptions():
     x, y = np.meshgrid([0, 1], [0, 1])
     u = np.ones((2, 2))
     u[0, 0] = np.nan
-    fig, ax = plot_streamfield(x, y, u, np.ones((2, 2)))
+    fig, _ax = plot_streamfield(x, y, u, np.ones((2, 2)))
     plt.close(fig)
 
 
@@ -499,12 +499,12 @@ def test_plot_histogram_existing_ax():
 
 
 def test_plot_histogram_many_values():
-    fig, ax = plot_histogram(np.arange(100))
+    fig, _ax = plot_histogram(np.arange(100))
     plt.close(fig)
 
 
 def test_plot_histogram_few_values():
-    fig, ax = plot_histogram([1.0])
+    fig, _ax = plot_histogram([1.0])
     plt.close(fig)
 
 
@@ -605,7 +605,7 @@ _TC_TIMES = np.arange(10, dtype=float)
     ],
 )
 def test_plot_timecourses_renders(call):
-    fig, axes = call()
+    fig, _axes = call()
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 
@@ -660,12 +660,12 @@ def test_plot_timecourses_errors(call, match):
 
 
 def test_plot_scatter2d_yerr_only():
-    fig, ax = plot_scatter2d([1, 2], [1, 2], yerr=[0.1, 0.2])
+    fig, _ax = plot_scatter2d([1, 2], [1, 2], yerr=[0.1, 0.2])
     plt.close(fig)
 
 
 def test_plot_scatter2d_label_map():
-    fig, ax = plot_scatter2d(
+    fig, _ax = plot_scatter2d(
         [1, 2],
         [1, 2],
         labels=["a", "b"],
@@ -701,17 +701,17 @@ def test_plot_scatter2d_label_map():
     ],
 )
 def test_plot_scatter3d_renders(call):
-    fig, ax = call()
+    fig, _ax = call()
     plt.close(fig)
 
 
 def test_plot_line_error_bar_style():
-    fig, ax = plot_line([1, 2, 3], [4, 5, 6], yerr=[0.1, 0.2, 0.3], error_style="bar")
+    fig, _ax = plot_line([1, 2, 3], [4, 5, 6], yerr=[0.1, 0.2, 0.3], error_style="bar")
     plt.close(fig)
 
 
 def test_plot_error_points_with_reference_style():
-    fig, ax = plot_error_points(
+    fig, _ax = plot_error_points(
         [1, 2],
         [1, 2],
         reference_x=1.5,

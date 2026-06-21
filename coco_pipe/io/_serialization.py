@@ -21,7 +21,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -64,7 +64,7 @@ def read_table(
     if suffix == ".parquet":
         df = pd.read_parquet(path)
     elif suffix == ".csv":
-        read_kwargs: Dict[str, Any] = {"encoding": "utf-8"}
+        read_kwargs: dict[str, Any] = {"encoding": "utf-8"}
         if sep is None:
             read_kwargs.update({"sep": None, "engine": "python"})
         else:
@@ -104,14 +104,11 @@ def smart_reader(path: Path) -> Any:
             keys = list(f.keys())
             if "embeddings" in keys:
                 return f["embeddings"][:]
-            elif "data" in keys:
+            if "data" in keys:
                 return f["data"][:]
-            elif len(keys) == 1:
+            if len(keys) == 1:
                 return f[keys[0]][:]
-            else:
-                raise ValueError(
-                    f"Ambiguous HDF5 structure: {keys}. Use custom reader."
-                )
+            raise ValueError(f"Ambiguous HDF5 structure: {keys}. Use custom reader.")
     else:
         raise ValueError(f"Unsupported extension {suffix}, utilize custom reader.")
 

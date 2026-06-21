@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -32,9 +32,8 @@ from ..theme import _COLORBLIND_COLORS, DIVERGING, SEQUENTIAL, ColorKind
 from ._utils import _apply_layout, _marker_payload
 
 __all__ = [
-    "plot_coranking_matrix",
     "plot_component_loadings",
-    "plot_scree",
+    "plot_coranking_matrix",
     "plot_embedding",
     "plot_feature_correlation_heatmap",
     "plot_feature_importance",
@@ -43,6 +42,7 @@ __all__ = [
     "plot_phase_portrait",
     "plot_radar_comparison",
     "plot_raw_preview",
+    "plot_scree",
     "plot_shepard_diagram",
     "plot_streamlines",
     "plot_trajectory",
@@ -53,14 +53,14 @@ __all__ = [
 
 def plot_embedding(
     embedding: np.ndarray,
-    labels: Optional[np.ndarray] = None,
-    metadata: Optional[dict[str, Any]] = None,
+    labels: np.ndarray | None = None,
+    metadata: dict[str, Any] | None = None,
     title: str = "Embedding",
     dimensions: int = 2,
     cmap: str = SEQUENTIAL,
-    palette: Optional[str | Sequence[str]] = None,
+    palette: str | Sequence[str] | None = None,
     color_kind: ColorKind = "categorical",
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> go.Figure:
     """
     Create an interactive 2D or 3D scatter plot of an embedding.
@@ -117,9 +117,7 @@ def plot_embedding(
     if "Label" in df.columns:
         color_columns.append("Label")
     if metadata:
-        color_columns.extend(
-            [str(key) for key in metadata.keys() if str(key) in df.columns]
-        )
+        color_columns.extend([str(key) for key in metadata if str(key) in df.columns])
     hover_cols = [col for col in df.columns if col not in {"x", "y", "z"}]
     custom_data = df[hover_cols].values if hover_cols else None
     hovertemplate = (
@@ -167,10 +165,10 @@ def plot_embedding(
     fig = go.Figure([trace])
     if len(color_columns) > 1:
         buttons = [
-            dict(
-                label=column,
-                method="restyle",
-                args=[
+            {
+                "label": column,
+                "method": "restyle",
+                "args": [
                     _marker_payload(
                         df,
                         column,
@@ -180,20 +178,20 @@ def plot_embedding(
                         restyle=True,
                     )
                 ],
-            )
+            }
             for column in color_columns
         ]
         fig.update_layout(
             updatemenus=[
-                dict(
-                    buttons=buttons,
-                    direction="down",
-                    showactive=True,
-                    x=1.0,
-                    xanchor="right",
-                    y=1.15,
-                    yanchor="top",
-                )
+                {
+                    "buttons": buttons,
+                    "direction": "down",
+                    "showactive": True,
+                    "x": 1.0,
+                    "xanchor": "right",
+                    "y": 1.15,
+                    "yanchor": "top",
+                }
             ]
         )
     _apply_layout(fig, title=title)
@@ -262,9 +260,9 @@ def plot_metrics(
         "dumbbell",
         "slopegraph",
     ] = "bar",
-    metric: Optional[str] = None,
-    scope: Optional[str] = None,
-    method: Optional[str | Sequence[str]] = None,
+    metric: str | None = None,
+    scope: str | None = None,
+    method: str | Sequence[str] | None = None,
 ) -> go.Figure:
     """
     Create an interactive metric plot from tidy metric observations.
@@ -390,7 +388,7 @@ def plot_metrics(
                 x=heatmap_df.columns.astype(str).tolist(),
                 y=heatmap_df.index.astype(str).tolist(),
                 colorscale=SEQUENTIAL,
-                colorbar=dict(title="Score"),
+                colorbar={"title": "Score"},
             )
         )
         _apply_layout(
@@ -429,7 +427,7 @@ def plot_metrics(
                     x=[row[left_method], row[right_method]],
                     y=[metric_name, metric_name],
                     mode="lines+markers",
-                    marker=dict(size=10),
+                    marker={"size": 10},
                     name=str(metric_name),
                     showlegend=False,
                 )
@@ -485,7 +483,10 @@ def plot_scree(
             x=curve["components"],
             y=curve["mean"],
             name="Individual",
-            marker=dict(color=bar_color, line=dict(color=bar_edge_color, width=1.5)),
+            marker={
+                "color": bar_color,
+                "line": {"color": bar_edge_color, "width": 1.5},
+            },
             opacity=0.8,
         )
     )
@@ -495,50 +496,50 @@ def plot_scree(
             y=curve["cumulative"],
             mode="lines+markers",
             name="Cumulative",
-            line=dict(color=line_color, width=4),
-            marker=dict(color=line_color, size=8),
+            line={"color": line_color, "width": 4},
+            marker={"color": line_color, "size": 8},
             yaxis="y2",
         )
     )
     fig.update_layout(
-        title=dict(text="Scree Plot", font=dict(size=20), pad=dict(b=20)),
-        xaxis=dict(
-            title="Principal Component",
-            title_font=dict(size=22),
-            tickfont=dict(size=20),
-            showline=True,
-            linewidth=1,
-            linecolor="black",
-        ),
-        yaxis=dict(
-            title="Explained Variance",
-            title_font=dict(size=22),
-            tickfont=dict(size=20),
-            showline=True,
-            linewidth=1,
-            linecolor="black",
-        ),
-        yaxis2=dict(
-            title="Cumulative Explained Variance",
-            title_font=dict(size=22),
-            tickfont=dict(size=16),
-            overlaying="y",
-            side="right",
-            showline=True,
-            linewidth=1,
-            linecolor="black",
-            showgrid=False,
-        ),
-        legend=dict(
-            x=0.99,
-            y=0.99,
-            xanchor="right",
-            yanchor="top",
-            bgcolor="rgba(255,255,255,0.8)",
-            bordercolor="rgba(0,0,0,0.1)",
-            borderwidth=1,
-        ),
-        margin=dict(l=80, r=80, b=80, t=80),
+        title={"text": "Scree Plot", "font": {"size": 20}, "pad": {"b": 20}},
+        xaxis={
+            "title": "Principal Component",
+            "title_font": {"size": 22},
+            "tickfont": {"size": 20},
+            "showline": True,
+            "linewidth": 1,
+            "linecolor": "black",
+        },
+        yaxis={
+            "title": "Explained Variance",
+            "title_font": {"size": 22},
+            "tickfont": {"size": 20},
+            "showline": True,
+            "linewidth": 1,
+            "linecolor": "black",
+        },
+        yaxis2={
+            "title": "Cumulative Explained Variance",
+            "title_font": {"size": 22},
+            "tickfont": {"size": 16},
+            "overlaying": "y",
+            "side": "right",
+            "showline": True,
+            "linewidth": 1,
+            "linecolor": "black",
+            "showgrid": False,
+        },
+        legend={
+            "x": 0.99,
+            "y": 0.99,
+            "xanchor": "right",
+            "yanchor": "top",
+            "bgcolor": "rgba(255,255,255,0.8)",
+            "bordercolor": "rgba(0,0,0,0.1)",
+            "borderwidth": 1,
+        },
+        margin={"l": 80, "r": 80, "b": 80, "t": 80},
         plot_bgcolor="white",
         paper_bgcolor="white",
         template="coco",
@@ -600,15 +601,15 @@ def plot_radar_comparison(
     for method_name, row in df.iterrows():
         values = row[categories].values.tolist()
         values += [values[0]]
-        cats = categories + [categories[0]]
+        cats = [*categories, categories[0]]
         fig.add_trace(
             go.Scatterpolar(r=values, theta=cats, fill="toself", name=str(method_name))
         )
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1] if normalize else None)),
+        polar={"radialaxis": {"visible": True, "range": [0, 1] if normalize else None}},
         title=title,
         showlegend=True,
-        margin=dict(l=40, r=40, b=40, t=55),
+        margin={"l": 40, "r": 40, "b": 40, "t": 55},
         height=420,
         template="coco",
     )
@@ -617,7 +618,7 @@ def plot_radar_comparison(
 
 def plot_raw_preview(
     data: np.ndarray,
-    names: Optional[list] = None,
+    names: list | None = None,
     title: str = "Raw Data Preview",
     max_points: int = 50000,
 ) -> go.Figure:
@@ -673,14 +674,14 @@ def plot_raw_preview(
                 mode="lines",
                 name=name,
                 opacity=0.8,
-                line=dict(width=1),
+                line={"width": 1},
             )
         )
     fig.update_layout(
         title=title,
-        xaxis=dict(rangeslider=dict(visible=True), title="Sample / Time"),
-        yaxis=dict(title="Amplitude"),
-        margin=dict(l=50, r=40, b=50, t=55),
+        xaxis={"rangeslider": {"visible": True}, "title": "Sample / Time"},
+        yaxis={"title": "Amplitude"},
+        margin={"l": 50, "r": 40, "b": 50, "t": 55},
         height=450,
         showlegend=True,
         template="coco",
@@ -693,9 +694,9 @@ def plot_shepard_diagram(
     X_emb: np.ndarray,
     sample_size: int = 1000,
     title: str = "Shepard Diagram",
-    random_state: Optional[int] = None,
-    distances: Optional[dict[str, np.ndarray]] = None,
-    clip_quantiles: Optional[tuple[float, float]] = (0.01, 0.99),
+    random_state: int | None = None,
+    distances: dict[str, np.ndarray] | None = None,
+    clip_quantiles: tuple[float, float] | None = (0.01, 0.99),
     scatter_max_points: int = 4000,
     scatter_opacity: float = 0.14,
 ) -> go.Figure:
@@ -793,10 +794,10 @@ def plot_shepard_diagram(
             y=dist_low_plot,
             colorscale=SEQUENTIAL,
             reversescale=False,
-            contours=dict(coloring="heatmap"),
+            contours={"coloring": "heatmap"},
             ncontours=12,
             showscale=True,
-            colorbar=dict(title="Pair density"),
+            colorbar={"title": "Pair density"},
             name="Density",
         )
     )
@@ -815,7 +816,7 @@ def plot_shepard_diagram(
                 x=x_sc,
                 y=y_sc,
                 mode="markers",
-                marker=dict(size=3, color=f"rgba(0,0,0,{scatter_opacity})"),
+                marker={"size": 3, "color": f"rgba(0,0,0,{scatter_opacity})"},
                 name="Pairs",
                 showlegend=False,
             )
@@ -825,7 +826,7 @@ def plot_shepard_diagram(
             x=[axis_min, axis_max],
             y=[axis_min, axis_max],
             mode="lines",
-            line=dict(color="red", dash="dash"),
+            line={"color": "red", "dash": "dash"},
             name="Ideal",
         )
     )
@@ -845,9 +846,9 @@ def plot_feature_importance(
     scores: Any,
     title: str = "Feature Importance",
     top_n: int = 20,
-    analysis: Optional[str] = None,
-    method: Optional[str] = None,
-    dimension: Optional[str] = None,
+    analysis: str | None = None,
+    method: str | None = None,
+    dimension: str | None = None,
 ) -> go.Figure:
     """
     Plot feature importance as an interactive horizontal bar chart.
@@ -913,8 +914,8 @@ def plot_feature_importance(
 def plot_feature_correlation_heatmap(
     correlations: Any,
     title: str = "Feature Correlation",
-    top_n: Optional[int] = 25,
-    method: Optional[str] = None,
+    top_n: int | None = 25,
+    method: str | None = None,
 ) -> go.Figure:
     """
     Plot feature-to-dimension correlations as an interactive heatmap.
@@ -946,10 +947,9 @@ def plot_feature_correlation_heatmap(
     Examples
     --------
     >>> from coco_pipe.viz.interactive import dim_reduction as viz
-    >>> corr = {"correlation": {"D1": {"F1": 0.3,
-    ...                           "F2": -0.1},
-    ...                           "D2": {"F1": 0.5,
-    ...                           "F2": 0.2}}}
+    >>> corr = {
+    ...     "correlation": {"D1": {"F1": 0.3, "F2": -0.1}, "D2": {"F1": 0.5, "F2": 0.2}}
+    ... }
     >>> fig = viz.plot_feature_correlation_heatmap(corr)
     """
     if top_n is not None and top_n < 1:
@@ -976,7 +976,7 @@ def plot_feature_correlation_heatmap(
                 y=heatmap.index.astype(str).tolist(),
                 colorscale=DIVERGING,
                 zmid=0.0,
-                colorbar=dict(title="Correlation"),
+                colorbar={"title": "Correlation"},
             )
         ]
     )
@@ -995,7 +995,7 @@ def plot_streamlines(
     V_emb: np.ndarray,
     grid_density: int = 25,
     title: str = "Velocity Streamlines",
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> go.Figure:
     """
     Plot a velocity vector field using Plotly line segments.
@@ -1048,7 +1048,7 @@ def plot_streamlines(
             x=X_emb[:, 0],
             y=X_emb[:, 1],
             mode="markers",
-            marker=dict(color="#DDDDDD", size=3),
+            marker={"color": "#DDDDDD", "size": 3},
             name="Points",
             hoverinfo="skip",
         )
@@ -1070,7 +1070,7 @@ def plot_streamlines(
             x=x_lines,
             y=y_lines,
             mode="lines",
-            line=dict(color="orange", width=1.5),
+            line={"color": "orange", "width": 1.5},
             name="Velocity",
             opacity=0.8,
         )
@@ -1088,10 +1088,10 @@ def plot_streamlines(
 def plot_trajectory_metric_series(
     series: Any,
     *,
-    times: Optional[np.ndarray] = None,
-    labels: Optional[np.ndarray] = None,
-    color_map: Optional[dict[str, str]] = None,
-    linestyle_map: Optional[dict[str, str]] = None,
+    times: np.ndarray | None = None,
+    labels: np.ndarray | None = None,
+    color_map: dict[str, str] | None = None,
+    linestyle_map: dict[str, str] | None = None,
     smooth_window: int = 1,
     title: str = "Trajectory Metric",
     ylabel: str = "Value",
@@ -1203,7 +1203,7 @@ def plot_trajectory_metric_series(
                     x=df_grp["Time"],
                     y=upper,
                     mode="lines",
-                    line=dict(width=0),
+                    line={"width": 0},
                     showlegend=False,
                     hoverinfo="skip",
                 )
@@ -1214,7 +1214,7 @@ def plot_trajectory_metric_series(
                     x=df_grp["Time"],
                     y=lower,
                     mode="lines",
-                    line=dict(width=0),
+                    line={"width": 0},
                     fill="tonexty",
                     fillcolor=fillcolor,
                     showlegend=False,
@@ -1288,7 +1288,7 @@ def _sem_envelope_traces(
                     mode="lines",
                     fill="toself",
                     fillcolor=fill_rgba,
-                    line=dict(color="rgba(0,0,0,0)"),
+                    line={"color": "rgba(0,0,0,0)"},
                     showlegend=False,
                     hoverinfo="skip",
                     legendgroup=name,
@@ -1305,12 +1305,12 @@ def _sem_envelope_traces(
                     y=[float(traj[t, 1])],
                     z=[float(traj[t, 2])],
                     mode="markers",
-                    marker=dict(
-                        size=max(6.0, 14.0 * joint / max(joint, 1e-12)),
-                        color=fill_rgba,
-                        opacity=sem_alpha,
-                        line=dict(width=0),
-                    ),
+                    marker={
+                        "size": max(6.0, 14.0 * joint / max(joint, 1e-12)),
+                        "color": fill_rgba,
+                        "opacity": sem_alpha,
+                        "line": {"width": 0},
+                    },
                     showlegend=False,
                     hoverinfo="skip",
                     legendgroup=name,
@@ -1321,25 +1321,25 @@ def _sem_envelope_traces(
 
 def plot_trajectory(
     X: np.ndarray,
-    times: Optional[np.ndarray] = None,
-    labels: Optional[np.ndarray] = None,
-    values: Optional[np.ndarray] = None,
-    sem: Optional[np.ndarray] = None,
-    color_map: Optional[dict[str, str]] = None,
-    linestyle_map: Optional[dict[str, str]] = None,
+    times: np.ndarray | None = None,
+    labels: np.ndarray | None = None,
+    values: np.ndarray | None = None,
+    sem: np.ndarray | None = None,
+    color_map: dict[str, str] | None = None,
+    linestyle_map: dict[str, str] | None = None,
     title: str = "Trajectory Plot",
     dimensions: int = 2,
-    smooth_window: Optional[int] = None,
+    smooth_window: int | None = None,
     downsample: int = 1,
     sem_alpha: float = 0.18,
     sem_n_steps: int = 8,
     show_markers: bool = True,
     add_start_end_markers: bool = False,
     linewidth: float = 4.0,
-    width: Optional[int] = None,
-    height: Optional[int] = None,
-    axis_labels: Optional[list[str]] = None,
-    layout_kws: Optional[dict] = None,
+    width: int | None = None,
+    height: int | None = None,
+    axis_labels: list[str] | None = None,
+    layout_kws: dict | None = None,
 ) -> go.Figure:
     """
     Plot native trajectory tensors interactively.
@@ -1444,7 +1444,7 @@ def plot_trajectory(
                         y=traj[:, 1],
                         z=traj[:, 2],
                         mode="lines",
-                        line=dict(color="rgba(150,150,150,0.35)", width=linewidth),
+                        line={"color": "rgba(150,150,150,0.35)", "width": linewidth},
                         showlegend=False,
                         hoverinfo="skip",
                     )
@@ -1455,13 +1455,13 @@ def plot_trajectory(
                         y=traj[:, 1],
                         z=traj[:, 2],
                         mode="markers",
-                        marker=dict(
-                            size=4,
-                            color=values[idx],
-                            colorscale=SEQUENTIAL,
-                            colorbar=dict(title="Value") if idx == 0 else None,
-                            showscale=idx == 0,
-                        ),
+                        marker={
+                            "size": 4,
+                            "color": values[idx],
+                            "colorscale": SEQUENTIAL,
+                            "colorbar": {"title": "Value"} if idx == 0 else None,
+                            "showscale": idx == 0,
+                        },
                         name=str(labels[idx])
                         if labels is not None
                         else f"Trajectory {idx + 1}",
@@ -1473,7 +1473,7 @@ def plot_trajectory(
                         x=traj[:, 0],
                         y=traj[:, 1],
                         mode="lines",
-                        line=dict(color="rgba(150,150,150,0.35)", width=4),
+                        line={"color": "rgba(150,150,150,0.35)", "width": 4},
                         showlegend=False,
                         hoverinfo="skip",
                     )
@@ -1483,13 +1483,13 @@ def plot_trajectory(
                         x=traj[:, 0],
                         y=traj[:, 1],
                         mode="markers",
-                        marker=dict(
-                            size=7,
-                            color=values[idx],
-                            colorscale=SEQUENTIAL,
-                            colorbar=dict(title="Value") if idx == 0 else None,
-                            showscale=idx == 0,
-                        ),
+                        marker={
+                            "size": 7,
+                            "color": values[idx],
+                            "colorscale": SEQUENTIAL,
+                            "colorbar": {"title": "Value"} if idx == 0 else None,
+                            "showscale": idx == 0,
+                        },
                         name=str(labels[idx])
                         if labels is not None
                         else f"Trajectory {idx + 1}",
@@ -1547,8 +1547,8 @@ def plot_trajectory(
                         y=traj[:, 1],
                         z=traj[:, 2],
                         mode="lines+markers" if show_markers else "lines",
-                        line=dict(color=color, width=linewidth, dash=dash),
-                        marker=dict(size=4, color=color),
+                        line={"color": color, "width": linewidth, "dash": dash},
+                        marker={"size": 4, "color": color},
                         name=name,
                         legendgroup=name,
                         showlegend=show,
@@ -1560,8 +1560,8 @@ def plot_trajectory(
                         x=traj[:, 0],
                         y=traj[:, 1],
                         mode="lines+markers" if show_markers else "lines",
-                        line=dict(color=color, width=linewidth, dash=dash),
-                        marker=dict(size=6, color=color),
+                        line={"color": color, "width": linewidth, "dash": dash},
+                        marker={"size": 6, "color": color},
                         name=name,
                         legendgroup=name,
                         showlegend=show,
@@ -1571,18 +1571,20 @@ def plot_trajectory(
         _apply_layout(fig, title=title)
 
     ax_labels = (
-        axis_labels if axis_labels else [f"Dimension {i+1}" for i in range(dimensions)]
+        axis_labels
+        if axis_labels
+        else [f"Dimension {i + 1}" for i in range(dimensions)]
     )
 
     if dimensions == 2:
         fig.update_layout(xaxis_title=ax_labels[0], yaxis_title=ax_labels[1])
     else:
         fig.update_layout(
-            scene=dict(
-                xaxis_title=ax_labels[0],
-                yaxis_title=ax_labels[1],
-                zaxis_title=ax_labels[2],
-            )
+            scene={
+                "xaxis_title": ax_labels[0],
+                "yaxis_title": ax_labels[1],
+                "zaxis_title": ax_labels[2],
+            }
         )
 
         # Add the mean Start marker if requested
@@ -1600,7 +1602,7 @@ def plot_trajectory(
                     y=[start_y],
                     z=[start_z],
                     mode="markers",
-                    marker=dict(size=12, color="black"),
+                    marker={"size": 12, "color": "black"},
                     showlegend=False,
                     name="Start",
                     hoverinfo="skip",
@@ -1619,7 +1621,7 @@ def plot_trajectory(
 def plot_coranking_matrix(
     coranking_matrix: np.ndarray,
     title: str = "Co-Ranking Matrix",
-    max_k: Optional[int] = None,
+    max_k: int | None = None,
 ) -> go.Figure:
     """
     Plot a co-ranking matrix as an interactive heatmap.
@@ -1631,7 +1633,7 @@ def plot_coranking_matrix(
     title
         Figure title.
     max_k
-        Crop the matrix to the top-left ``max_k × max_k`` corner. Defaults
+        Crop the matrix to the top-left ``max_k x max_k`` corner. Defaults
         to ``min(n, 50)``.
 
     Returns
@@ -1657,7 +1659,7 @@ def plot_coranking_matrix(
         go.Heatmap(
             z=matrix,
             colorscale=SEQUENTIAL,
-            colorbar=dict(title="Count"),
+            colorbar={"title": "Count"},
         )
     )
     _apply_layout(
@@ -1673,10 +1675,10 @@ def plot_coranking_matrix(
 def plot_trajectory_separation(
     separation: dict,
     *,
-    times: Optional[np.ndarray] = None,
-    top_n: Optional[int] = None,
-    color_map: Optional[dict[tuple, str]] = None,
-    linestyle_map: Optional[dict[tuple, str]] = None,
+    times: np.ndarray | None = None,
+    top_n: int | None = None,
+    color_map: dict[tuple, str] | None = None,
+    linestyle_map: dict[tuple, str] | None = None,
     smooth_window: int = 1,
     title: str = "Trajectory Separation",
     **layout_kwargs: Any,
@@ -1850,8 +1852,8 @@ def plot_phase_portrait(
                 y=velocity[idx],
                 mode="lines+markers",
                 name=str(label),
-                line=dict(color=color, width=2),
-                marker=dict(size=5, color=color),
+                line={"color": color, "width": 2},
+                marker={"size": 5, "color": color},
             )
         )
     _apply_layout(
@@ -1866,8 +1868,8 @@ def plot_phase_portrait(
 
 def plot_component_loadings(
     components: np.ndarray,
-    feature_names: Optional[list[str]] = None,
-    n_components: Optional[int] = None,
+    feature_names: list[str] | None = None,
+    n_components: int | None = None,
     title: str = "Component Loadings",
 ) -> go.Figure:
     """
@@ -1915,7 +1917,7 @@ def plot_component_loadings(
             y=loadings.index.astype(str).tolist(),
             colorscale=DIVERGING,
             zmid=0.0,
-            colorbar=dict(title="Loading"),
+            colorbar={"title": "Loading"},
         )
     )
     _apply_layout(

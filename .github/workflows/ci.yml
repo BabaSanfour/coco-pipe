@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+
+  test:
+    name: Tests / ${{ matrix.os }} / py${{ matrix.python-version }}
+    needs: quality
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[full,test]"
+
+      - name: Run tests
+        run: |
+          pytest tests/ --cov=coco_pipe --cov-report=xml --verbose
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: BabaSanfour/coco-pipe
+
+  foundation:
+    name: Heavy foundation tests
+    needs: quality
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      contains(github.event.head_commit.message, '[run-foundation]')
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[full,test]"
+
+      - name: Run real checkpoint tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          COCO_PIPE_RUN_REAL_FOUNDATION: "1"
+          COCO_PIPE_RUN_REAL_FOUNDATION_TRAINING: "1"
+        run: |
+          pytest tests/ -m real_checkpoints -v

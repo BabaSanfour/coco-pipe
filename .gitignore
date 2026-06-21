@@ -52,3 +52,11 @@ outputs/
 tutorial_trajectories*
 uv.lock
 tutorial*
+# Sphinx Documentation
+docs/build/
+docs/_build/
+docs/source/api/
+docs/source/auto_examples/
+docs/source/generated/
+docs/source/README.md
+docs/source/sg_execution_times.rst

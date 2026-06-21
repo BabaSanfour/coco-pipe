@@ -1,3 +1,4 @@
+from typing import ClassVar
 from unittest.mock import patch
 
 import numpy as np
@@ -148,7 +149,7 @@ def test_decoding_report_api_and_core_reexports():
 def test_decoding_report_rejects_unknown_sections():
     result = make_synthetic_result()
     with pytest.raises(ValueError, match="Unknown decoding report section"):
-        make_decoding_report(result, sections=["performnace"])
+        make_decoding_report(result, sections=["unknown_section_name"])
 
 
 def test_decoding_report_empty_edge_cases():
@@ -506,7 +507,7 @@ def test_section_builders_empty_and_filter_raises():
         build_cv_section(result, metric="nonexistent")
 
     class NoProbResult:
-        raw = {}
+        raw: ClassVar[dict] = {}
 
         def get_confusion_matrices(self, model=None):
             return pd.DataFrame()
@@ -537,13 +538,13 @@ def test_section_builders_empty_and_filter_raises():
         build_neural_section(result, model="ghost_model")
 
     class NoConfig:
-        config = {}
+        config: ClassVar[dict] = {}
 
     with pytest.raises(SectionDataUnavailable, match="configuration"):
         build_configuration_section(NoConfig())
 
     class NoMeta:
-        meta = {}
+        meta: ClassVar[dict] = {}
 
     with pytest.raises(SectionDataUnavailable, match="Provenance"):
         build_provenance_section(NoMeta())
@@ -587,13 +588,15 @@ def test_section_builders_single_item_and_extra_branches():
     meta = pd.DataFrame(
         {"FeatureFamily": ["EEG"], "Sensor": ["Fp1"], "x": [0.0], "y": [0.0]}
     )
-    with patch("coco_pipe.report._utils._plot_or_none", return_value=None):
-        with pytest.raises(SectionDataUnavailable, match="No sensor maps"):
-            build_topomaps_section(
-                make_synthetic_result(),
-                feature_metadata=meta,
-                coords=meta.set_index("Sensor")[["x", "y"]],
-            )
+    with (
+        patch("coco_pipe.report._utils._plot_or_none", return_value=None),
+        pytest.raises(SectionDataUnavailable, match="No sensor maps"),
+    ):
+        build_topomaps_section(
+            make_synthetic_result(),
+            feature_metadata=meta,
+            coords=meta.set_index("Sensor")[["x", "y"]],
+        )
 
 
 def test_caveats_and_export_inventory_branches():

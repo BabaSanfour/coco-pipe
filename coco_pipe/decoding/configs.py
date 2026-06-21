@@ -9,8 +9,9 @@ any computation begins.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -39,7 +40,7 @@ class LinearMixin(BaseModel):
 
     fit_intercept: bool = True
     copy_X: bool = True
-    n_jobs: Optional[int] = None
+    n_jobs: int | None = None
 
 
 class RegularizedLinearMixin(BaseModel):
@@ -48,29 +49,25 @@ class RegularizedLinearMixin(BaseModel):
     fit_intercept: bool = True
     copy_X: bool = True
     tol: float = 1e-3
-    max_iter: Optional[int] = None
+    max_iter: int | None = None
     positive: bool = False
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class TreeMixin(BaseModel):
     """Common parameters for Tree-based models."""
 
     n_estimators: int = Field(100, ge=1)
-    max_depth: Optional[int] = None
-    min_samples_split: Union[int, float] = 2
-    min_samples_leaf: Union[int, float] = 1
+    max_depth: int | None = None
+    min_samples_split: int | float = 2
+    min_samples_leaf: int | float = 1
     min_weight_fraction_leaf: float = 0.0
-    max_features: Union[str, int, float, None] = "sqrt"
-    max_leaf_nodes: Optional[int] = None
+    max_features: str | int | float | None = "sqrt"
+    max_leaf_nodes: int | None = None
     min_impurity_decrease: float = 0.0
     ccp_alpha: float = 0.0
-    n_jobs: Optional[int] = None
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    n_jobs: int | None = None
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
     verbose: int = 0
     warm_start: bool = False
 
@@ -81,7 +78,7 @@ class SupportVectorMixin(BaseModel):
     C: float = Field(1.0, gt=0.0)
     kernel: Literal["linear", "poly", "rbf", "sigmoid", "precomputed"] = "rbf"
     degree: int = 3
-    gamma: Union[str, float] = "scale"
+    gamma: str | float = "scale"
     coef0: float = 0.0
     tol: float = 1e-3
     verbose: bool = False
@@ -94,7 +91,7 @@ class SGDMixin(BaseModel):
     """Stochastic Gradient Descent parameters."""
 
     loss: str = "hinge"
-    penalty: Optional[Literal["l2", "l1", "elasticnet"]] = "l2"
+    penalty: Literal["l2", "l1", "elasticnet"] | None = "l2"
     alpha: float = 0.0001
     l1_ratio: float = 0.15
     fit_intercept: bool = True
@@ -116,7 +113,7 @@ class MLPMixin(BaseModel):
     activation: Literal["identity", "logistic", "tanh", "relu"] = "relu"
     solver: Literal["lbfgs", "sgd", "adam"] = "adam"
     alpha: float = 0.0001
-    batch_size: Union[int, str] = "auto"
+    batch_size: int | str = "auto"
     learning_rate: Literal["constant", "invscaling", "adaptive"] = "constant"
     learning_rate_init: float = 0.001
     power_t: float = 0.5
@@ -134,9 +131,7 @@ class MLPMixin(BaseModel):
     epsilon: float = 1e-8
     n_iter_no_change: int = 10
     max_fun: int = 15000
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class GradientBoostingMixin(BaseModel):
@@ -146,23 +141,21 @@ class GradientBoostingMixin(BaseModel):
     n_estimators: int = 100
     subsample: float = 1.0
     criterion: Literal["friedman_mse", "squared_error"] = "friedman_mse"
-    min_samples_split: Union[int, float] = 2
-    min_samples_leaf: Union[int, float] = 1
+    min_samples_split: int | float = 2
+    min_samples_leaf: int | float = 1
     min_weight_fraction_leaf: float = 0.0
     max_depth: int = 3
     min_impurity_decrease: float = 0.0
-    init: Optional[str] = None
-    max_features: Union[str, int, float, None] = None
+    init: str | None = None
+    max_features: str | int | float | None = None
     verbose: int = 0
-    max_leaf_nodes: Optional[int] = None
+    max_leaf_nodes: int | None = None
     warm_start: bool = False
     validation_fraction: float = 0.1
     n_iter_no_change: int = 5
     tol: float = 1e-4
     ccp_alpha: float = 0.0
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 # --- Classifiers ---
@@ -178,16 +171,14 @@ class LogisticRegressionConfig(ClassicalEstimatorConfig):
     C: float = Field(1.0, gt=0.0)
     fit_intercept: bool = True
     intercept_scaling: float = 1.0
-    class_weight: Optional[Union[Dict, str]] = None
+    class_weight: dict | str | None = None
     solver: Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"] = "lbfgs"
     max_iter: int = 100
     verbose: int = 0
     warm_start: bool = False
-    n_jobs: Optional[int] = None
-    l1_ratio: Optional[float] = None
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    n_jobs: int | None = None
+    l1_ratio: float | None = None
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class RandomForestClassifierConfig(ClassicalEstimatorConfig, TreeMixin):
@@ -197,8 +188,8 @@ class RandomForestClassifierConfig(ClassicalEstimatorConfig, TreeMixin):
     criterion: Literal["gini", "entropy", "log_loss"] = "gini"
     bootstrap: bool = True
     oob_score: bool = False
-    class_weight: Optional[Union[str, Dict, List]] = None
-    max_samples: Optional[Union[int, float]] = None
+    class_weight: str | dict | list | None = None
+    max_samples: int | float | None = None
 
 
 class SVCConfig(ClassicalEstimatorConfig, SupportVectorMixin):
@@ -206,12 +197,10 @@ class SVCConfig(ClassicalEstimatorConfig, SupportVectorMixin):
 
     method: Literal["SVC"] = "SVC"
     probability: bool = True  # Default to True for metrics requiring proba
-    class_weight: Optional[Union[Dict, str]] = None
+    class_weight: dict | str | None = None
     decision_function_shape: Literal["ovo", "ovr"] = "ovr"
     break_ties: bool = False
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class LinearSVCConfig(ClassicalEstimatorConfig):
@@ -220,18 +209,16 @@ class LinearSVCConfig(ClassicalEstimatorConfig):
     method: Literal["LinearSVC"] = "LinearSVC"
     penalty: Literal["l1", "l2"] = "l2"
     loss: Literal["hinge", "squared_hinge"] = "squared_hinge"
-    dual: Union[bool, Literal["auto"]] = "auto"
+    dual: bool | Literal["auto"] = "auto"
     tol: float = 1e-4
     C: float = Field(1.0, gt=0.0)
     multi_class: Literal["ovr", "crammer_singer"] = "ovr"
     fit_intercept: bool = True
     intercept_scaling: float = 1.0
-    class_weight: Optional[Union[Dict, str]] = None
+    class_weight: dict | str | None = None
     verbose: int = 0
     max_iter: int = 1000
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class KNeighborsClassifierConfig(ClassicalEstimatorConfig):
@@ -244,8 +231,8 @@ class KNeighborsClassifierConfig(ClassicalEstimatorConfig):
     leaf_size: int = 30
     p: int = 2
     metric: str = "minkowski"
-    metric_params: Optional[Dict] = None
-    n_jobs: Optional[int] = None
+    metric_params: dict | None = None
+    n_jobs: int | None = None
 
 
 class GradientBoostingClassifierConfig(ClassicalEstimatorConfig, GradientBoostingMixin):
@@ -262,28 +249,28 @@ class HistGradientBoostingClassifierConfig(ClassicalEstimatorConfig):
     learning_rate: float = 0.1
     max_iter: int = 100
     max_leaf_nodes: int = 31
-    max_depth: Optional[int] = None
+    max_depth: int | None = None
     min_samples_leaf: int = 20
     l2_regularization: float = 0.0
     max_bins: int = 255
-    categorical_features: Optional[Union[List[int], List[str], List[bool]]] = None
-    monotonic_cst: Optional[Any] = None
-    interaction_cst: Optional[Any] = None
+    categorical_features: list[int] | list[str] | list[bool] | None = None
+    monotonic_cst: Any | None = None
+    interaction_cst: Any | None = None
     warm_start: bool = False
-    early_stopping: Union[bool, Literal["auto"]] = "auto"
-    scoring: Optional[str] = "loss"
+    early_stopping: bool | Literal["auto"] = "auto"
+    scoring: str | None = "loss"
     validation_fraction: float = 0.1
     n_iter_no_change: int = 10
     tol: float = 1e-7
     verbose: int = 0
-    random_state: Optional[int] = None
+    random_state: int | None = None
 
 
 class SGDClassifierConfig(ClassicalEstimatorConfig, SGDMixin):
     """Configuration for sklearn.linear_model.SGDClassifier."""
 
     method: Literal["SGDClassifier"] = "SGDClassifier"
-    class_weight: Optional[Union[Dict, str]] = None
+    class_weight: dict | str | None = None
 
 
 class MLPClassifierConfig(ClassicalEstimatorConfig, MLPMixin):
@@ -296,7 +283,7 @@ class GaussianNBConfig(ClassicalEstimatorConfig):
     """Configuration for sklearn.naive_bayes.GaussianNB."""
 
     method: Literal["GaussianNB"] = "GaussianNB"
-    priors: Optional[List[float]] = None
+    priors: list[float] | None = None
     var_smoothing: float = 1e-9
 
 
@@ -305,9 +292,9 @@ class LDAConfig(ClassicalEstimatorConfig):
 
     method: Literal["LinearDiscriminantAnalysis"] = "LinearDiscriminantAnalysis"
     solver: Literal["svd", "lsqr", "eigen"] = "svd"
-    shrinkage: Optional[Union[str, float]] = None
-    priors: Optional[List[float]] = None
-    n_components: Optional[int] = None
+    shrinkage: str | float | None = None
+    priors: list[float] | None = None
+    n_components: int | None = None
     store_covariance: bool = False
     tol: float = 1e-4
 
@@ -318,9 +305,7 @@ class AdaBoostClassifierConfig(ClassicalEstimatorConfig):
     method: Literal["AdaBoostClassifier"] = "AdaBoostClassifier"
     n_estimators: int = 50
     learning_rate: float = 1.0
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class DummyClassifierConfig(ClassicalEstimatorConfig):
@@ -328,10 +313,8 @@ class DummyClassifierConfig(ClassicalEstimatorConfig):
 
     method: Literal["DummyClassifier"] = "DummyClassifier"
     strategy: Literal["stratified", "most_frequent", "prior", "uniform"] = "prior"
-    constant: Optional[Any] = None
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    constant: Any | None = None
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 # --- Deep Learning / Foundation Models ---
@@ -379,11 +362,11 @@ class SlidingEstimatorConfig(BaseEstimatorConfig):
 
     method: Literal["SlidingEstimator"] = "SlidingEstimator"
     base_estimator: EstimatorConfigType
-    scoring: Optional[Union[str, Callable]] = None
-    n_jobs: Optional[int] = 1
-    position: Optional[float] = 0
+    scoring: str | Callable | None = None
+    n_jobs: int | None = 1
+    position: float | None = 0
     allow_2d: bool = False
-    verbose: Optional[Union[bool, str, int]] = None
+    verbose: bool | str | int | None = None
 
 
 class GeneralizingEstimatorConfig(BaseEstimatorConfig):
@@ -394,11 +377,11 @@ class GeneralizingEstimatorConfig(BaseEstimatorConfig):
 
     method: Literal["GeneralizingEstimator"] = "GeneralizingEstimator"
     base_estimator: EstimatorConfigType
-    scoring: Optional[Union[str, Callable]] = None
-    n_jobs: Optional[int] = 1
-    position: Optional[float] = 0
+    scoring: str | Callable | None = None
+    n_jobs: int | None = 1
+    position: float | None = 0
     allow_2d: bool = False
-    verbose: Optional[Union[bool, str, int]] = None
+    verbose: bool | str | int | None = None
 
 
 # --- Regressors ---
@@ -426,7 +409,7 @@ class LassoConfig(ClassicalEstimatorConfig, RegularizedLinearMixin):
 
     method: Literal["Lasso"] = "Lasso"
     alpha: float = 1.0
-    precompute: Union[bool, List] = False
+    precompute: bool | list = False
     fit_intercept: bool = True
     copy_X: bool = True
     selection: Literal["cyclic", "random"] = "cyclic"
@@ -439,7 +422,7 @@ class ElasticNetConfig(ClassicalEstimatorConfig, RegularizedLinearMixin):
     method: Literal["ElasticNet"] = "ElasticNet"
     alpha: float = 1.0
     l1_ratio: float = 0.5
-    precompute: Union[bool, List] = False
+    precompute: bool | list = False
     fit_intercept: bool = True
     copy_X: bool = True
     selection: Literal["cyclic", "random"] = "cyclic"
@@ -455,7 +438,7 @@ class RandomForestRegressorConfig(ClassicalEstimatorConfig, TreeMixin):
     )
     bootstrap: bool = True
     oob_score: bool = False
-    max_samples: Optional[Union[int, float]] = None
+    max_samples: int | float | None = None
 
 
 class SVRConfig(ClassicalEstimatorConfig, SupportVectorMixin):
@@ -493,8 +476,8 @@ class DummyRegressorConfig(ClassicalEstimatorConfig):
 
     method: Literal["DummyRegressor"] = "DummyRegressor"
     strategy: Literal["mean", "median", "quantile", "constant"] = "mean"
-    constant: Optional[Union[int, float, List]] = None
-    quantile: Optional[float] = None
+    constant: int | float | list | None = None
+    quantile: float | None = None
 
 
 class DecisionTreeRegressorConfig(ClassicalEstimatorConfig):
@@ -505,13 +488,13 @@ class DecisionTreeRegressorConfig(ClassicalEstimatorConfig):
         "squared_error"
     )
     splitter: Literal["best", "random"] = "best"
-    max_depth: Optional[int] = None
-    min_samples_split: Union[int, float] = 2
-    min_samples_leaf: Union[int, float] = 1
+    max_depth: int | None = None
+    min_samples_split: int | float = 2
+    min_samples_leaf: int | float = 1
     min_weight_fraction_leaf: float = 0.0
-    max_features: Union[str, int, float, None] = None
-    random_state: Optional[int] = None
-    max_leaf_nodes: Optional[int] = None
+    max_features: str | int | float | None = None
+    random_state: int | None = None
+    max_leaf_nodes: int | None = None
     min_impurity_decrease: float = 0.0
     ccp_alpha: float = 0.0
 
@@ -526,8 +509,8 @@ class KNeighborsRegressorConfig(ClassicalEstimatorConfig):
     leaf_size: int = 30
     p: int = 2
     metric: str = "minkowski"
-    metric_params: Optional[Dict] = None
-    n_jobs: Optional[int] = None
+    metric_params: dict | None = None
+    n_jobs: int | None = None
 
 
 class ExtraTreesRegressorConfig(ClassicalEstimatorConfig, TreeMixin):
@@ -536,7 +519,7 @@ class ExtraTreesRegressorConfig(ClassicalEstimatorConfig, TreeMixin):
     method: Literal["ExtraTreesRegressor"] = "ExtraTreesRegressor"
     bootstrap: bool = False
     oob_score: bool = False
-    max_samples: Optional[Union[int, float]] = None
+    max_samples: int | float | None = None
 
 
 class HistGradientBoostingRegressorConfig(ClassicalEstimatorConfig):
@@ -549,21 +532,21 @@ class HistGradientBoostingRegressorConfig(ClassicalEstimatorConfig):
     learning_rate: float = 0.1
     max_iter: int = 100
     max_leaf_nodes: int = 31
-    max_depth: Optional[int] = None
+    max_depth: int | None = None
     min_samples_leaf: int = 20
     l2_regularization: float = 0.0
     max_bins: int = 255
-    categorical_features: Optional[Union[List[int], List[str], List[bool]]] = None
-    monotonic_cst: Optional[Any] = None
-    interaction_cst: Optional[Any] = None
+    categorical_features: list[int] | list[str] | list[bool] | None = None
+    monotonic_cst: Any | None = None
+    interaction_cst: Any | None = None
     warm_start: bool = False
-    early_stopping: Union[bool, Literal["auto"]] = "auto"
-    scoring: Optional[str] = "loss"
+    early_stopping: bool | Literal["auto"] = "auto"
+    scoring: str | None = "loss"
     validation_fraction: float = 0.1
     n_iter_no_change: int = 10
     tol: float = 1e-7
     verbose: int = 0
-    random_state: Optional[int] = None
+    random_state: int | None = None
 
 
 class AdaBoostRegressorConfig(ClassicalEstimatorConfig):
@@ -573,9 +556,7 @@ class AdaBoostRegressorConfig(ClassicalEstimatorConfig):
     n_estimators: int = 50
     learning_rate: float = 1.0
     loss: Literal["linear", "square", "exponential"] = "linear"
-    random_state: Optional[int] = Field(
-        42, description="Random seed for reproducibility."
-    )
+    random_state: int | None = Field(42, description="Random seed for reproducibility.")
 
 
 class BayesianRidgeConfig(ClassicalEstimatorConfig):
@@ -588,8 +569,8 @@ class BayesianRidgeConfig(ClassicalEstimatorConfig):
     alpha_2: float = 1e-6
     lambda_1: float = 1e-6
     lambda_2: float = 1e-6
-    alpha_init: Optional[float] = None
-    lambda_init: Optional[float] = None
+    alpha_init: float | None = None
+    lambda_init: float | None = None
     compute_score: bool = False
     fit_intercept: bool = True
     copy_X: bool = True
@@ -621,7 +602,7 @@ class ClassicalModelConfig(ClassicalEstimatorConfig):
 
     method: Literal["ClassicalModel"] = "ClassicalModel"
     estimator: str
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     input_kind: Literal["tabular", "embeddings"] = "tabular"
 
 
@@ -631,14 +612,14 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     kind: Literal["foundation_embedding"] = "foundation_embedding"
     model_key: str = "dummy"
     backend: str = "auto"
-    n_outputs: Optional[int] = None
+    n_outputs: int | None = None
     train_mode: Literal["frozen", "full", "lora", "qlora"] = "frozen"
     pooling: Literal["mean", "flatten"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
-    sfreq: Optional[float] = Field(None, gt=0)
-    ch_names: Optional[List[str]] = None
-    backend_kwargs: Dict[str, Any] = Field(default_factory=dict)
+    sfreq: float | None = Field(None, gt=0)
+    ch_names: list[str] | None = None
+    backend_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class LoRAConfig(BaseModel):
@@ -649,7 +630,7 @@ class LoRAConfig(BaseModel):
     r: int = Field(16, ge=1)
     alpha: int = Field(32, ge=1)
     dropout: float = Field(0.0, ge=0.0, le=1.0)
-    target_modules: Union[str, List[str]] = "all-linear"
+    target_modules: str | list[str] = "all-linear"
 
 
 class QuantizationConfig(BaseModel):
@@ -679,7 +660,7 @@ class CheckpointConfig(BaseModel):
 
     save: Literal["none", "best", "last", "all"] = "best"
     monitor: str = "val_loss"
-    output_dir: Optional[Path] = None
+    output_dir: Path | None = None
 
 
 class TrainerConfig(BaseModel):
@@ -688,7 +669,7 @@ class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_epochs: int = Field(10, ge=1)
-    early_stopping_patience: Optional[int] = Field(None, ge=1)
+    early_stopping_patience: int | None = Field(None, ge=1)
     batch_size: int = Field(32, ge=1)
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
 
@@ -707,19 +688,19 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     kind: Literal["neural_finetune"] = "neural_finetune"
     model_key: str = "dummy"
     backend: str = "auto"
-    n_outputs: Optional[int] = Field(None, ge=1)
+    n_outputs: int | None = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
-    optimizer: Dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
+    optimizer: dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
-    lora: Optional[LoRAConfig] = None
-    quantization: Optional[QuantizationConfig] = None
-    sfreq: Optional[float] = Field(None, gt=0)
-    ch_names: Optional[List[str]] = None
-    backend_kwargs: Dict[str, Any] = Field(default_factory=dict)
-    class_weight: Union[str, Dict[Any, float], None] = "balanced"
+    lora: LoRAConfig | None = None
+    quantization: QuantizationConfig | None = None
+    sfreq: float | None = Field(None, gt=0)
+    ch_names: list[str] | None = None
+    backend_kwargs: dict[str, Any] = Field(default_factory=dict)
+    class_weight: str | dict[Any, float] | None = "balanced"
 
 
 class TemporalDecoderConfig(BaseEstimatorConfig):
@@ -728,54 +709,54 @@ class TemporalDecoderConfig(BaseEstimatorConfig):
     kind: Literal["temporal"] = "temporal"
     wrapper: Literal["sliding", "generalizing"] = "sliding"
     base: ClassicalModelConfig
-    scoring: Optional[Union[str, Callable]] = None
-    n_jobs: Optional[int] = 1
-    position: Optional[float] = 0
+    scoring: str | Callable | None = None
+    n_jobs: int | None = 1
+    position: float | None = 0
     allow_2d: bool = False
-    verbose: Optional[Union[bool, str, int]] = None
+    verbose: bool | str | int | None = None
 
 
-AtomicEstimator = Union[
-    LogisticRegressionConfig,
-    RandomForestClassifierConfig,
-    SVCConfig,
-    LinearSVCConfig,
-    KNeighborsClassifierConfig,
-    GradientBoostingClassifierConfig,
-    HistGradientBoostingClassifierConfig,
-    SGDClassifierConfig,
-    MLPClassifierConfig,
-    GaussianNBConfig,
-    LDAConfig,
-    AdaBoostClassifierConfig,
-    DummyClassifierConfig,
+AtomicEstimator = (
+    LogisticRegressionConfig
+    | RandomForestClassifierConfig
+    | SVCConfig
+    | LinearSVCConfig
+    | KNeighborsClassifierConfig
+    | GradientBoostingClassifierConfig
+    | HistGradientBoostingClassifierConfig
+    | SGDClassifierConfig
+    | MLPClassifierConfig
+    | GaussianNBConfig
+    | LDAConfig
+    | AdaBoostClassifierConfig
+    | DummyClassifierConfig
     # Regressors
-    LinearRegressionConfig,
-    RidgeConfig,
-    LassoConfig,
-    ElasticNetConfig,
-    RandomForestRegressorConfig,
-    SVRConfig,
-    GradientBoostingRegressorConfig,
-    SGDRegressorConfig,
-    MLPRegressorConfig,
-    DummyRegressorConfig,
-    DecisionTreeRegressorConfig,
-    KNeighborsRegressorConfig,
-    ExtraTreesRegressorConfig,
-    HistGradientBoostingRegressorConfig,
-    AdaBoostRegressorConfig,
-    BayesianRidgeConfig,
-    ARDRegressionConfig,
-]
+    | LinearRegressionConfig
+    | RidgeConfig
+    | LassoConfig
+    | ElasticNetConfig
+    | RandomForestRegressorConfig
+    | SVRConfig
+    | GradientBoostingRegressorConfig
+    | SGDRegressorConfig
+    | MLPRegressorConfig
+    | DummyRegressorConfig
+    | DecisionTreeRegressorConfig
+    | KNeighborsRegressorConfig
+    | ExtraTreesRegressorConfig
+    | HistGradientBoostingRegressorConfig
+    | AdaBoostRegressorConfig
+    | BayesianRidgeConfig
+    | ARDRegressionConfig
+)
 
 EstimatorConfigType = Annotated[
-    Union[AtomicEstimator, SlidingEstimatorConfig, GeneralizingEstimatorConfig],
+    AtomicEstimator | SlidingEstimatorConfig | GeneralizingEstimatorConfig,
     Field(discriminator="method"),
 ]
 
 ClassicalModelType = Annotated[
-    Union[ClassicalModelConfig, AtomicEstimator], Field(discriminator="method")
+    ClassicalModelConfig | AtomicEstimator, Field(discriminator="method")
 ]
 
 
@@ -828,7 +809,7 @@ class CVConfig(BaseModel):
     stratify: bool = Field(
         False, description="Whether strategy='split' should stratify by y."
     )
-    group_key: Optional[str] = Field(
+    group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
     )
     auto_reduce_n_splits: bool = Field(
@@ -848,12 +829,12 @@ class TuningConfig(BaseModel):
     enabled: bool = False
     search_type: Literal["grid", "random"] = "grid"
     n_iter: int = Field(10, ge=1, description="Number of iterations for random search")
-    scoring: Optional[str] = None  # Metric to optimize (defaults to first in list)
+    scoring: str | None = None  # Metric to optimize (defaults to first in list)
     n_jobs: int = -1
-    random_state: Optional[int] = Field(
+    random_state: int | None = Field(
         42, description="Random seed used by RandomizedSearchCV."
     )
-    cv: Optional[CVConfig] = Field(
+    cv: CVConfig | None = Field(
         None,
         description=(
             "Inner CV used for model selection. Defaults to the outer CV family."
@@ -873,9 +854,9 @@ class FeatureSelectionConfig(BaseModel):
 
     enabled: bool = False
     method: Literal["k_best", "sfs"] = "sfs"
-    n_features: Optional[int] = Field(None, gt=0, description="Number of features.")
+    n_features: int | None = Field(None, gt=0, description="Number of features.")
     direction: Literal["forward", "backward"] = "forward"
-    tol: Optional[float] = Field(
+    tol: float | None = Field(
         None,
         description=(
             "SFS early-stopping tolerance. When set and n_features is None, the "
@@ -883,14 +864,14 @@ class FeatureSelectionConfig(BaseModel):
             "stops improving by at least tol (plateau stop)."
         ),
     )
-    cv: Optional[CVConfig] = Field(
+    cv: CVConfig | None = Field(
         None,
         description=(
             "Inner CV used by SequentialFeatureSelector. Defaults to tuning.cv "
             "when available, otherwise the outer CV family."
         ),
     )
-    scoring: Optional[str] = None
+    scoring: str | None = None
     allow_nongroup_inner_cv: bool = Field(
         False,
         description=(
@@ -907,7 +888,7 @@ class ReducerConfig(BaseModel):
 
     enabled: bool = False
     method: Literal["pca"] = "pca"
-    n_components: Optional[Union[int, float]] = Field(
+    n_components: int | float | None = Field(
         None,
         description=(
             "PCA components. Integers select a fixed count; floats in (0, 1) "
@@ -918,7 +899,7 @@ class ReducerConfig(BaseModel):
     svd_solver: Literal["auto", "full", "covariance_eigh", "arpack", "randomized"] = (
         "auto"
     )
-    random_state: Optional[int] = 42
+    random_state: int | None = 42
 
     @model_validator(mode="after")
     def _validate_n_components(self) -> ReducerConfig:
@@ -934,13 +915,13 @@ class CalibrationConfig(BaseModel):
 
     enabled: bool = False
     method: Literal["sigmoid", "isotonic"] = "sigmoid"
-    cv: Optional[CVConfig] = Field(
+    cv: CVConfig | None = Field(
         None,
         description=(
             "Inner CV used by CalibratedClassifierCV. Defaults to the outer CV family."
         ),
     )
-    n_jobs: Optional[int] = None
+    n_jobs: int | None = None
     allow_nongroup_inner_cv: bool = Field(
         False,
         description=("Allow a non-grouped calibration CV under grouped outer CV."),
@@ -963,7 +944,7 @@ class ChanceAssessmentConfig(BaseModel):
 
     method: Literal["permutation", "binomial", "auto"] = "permutation"
     n_permutations: int = Field(1000, ge=1)
-    p0: Union[float, Literal["auto"], None] = Field(
+    p0: float | Literal["auto"] | None = Field(
         "auto",
         description="Chance level for binomial test (e.g., 0.5 for binary).",
     )
@@ -981,8 +962,8 @@ class StatisticalAssessmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    random_state: Optional[int] = 42
-    metrics: Optional[List[str]] = Field(
+    random_state: int | None = 42
+    metrics: list[str] | None = Field(
         None, description="Subset of experiment metrics to run assessment for."
     )
 
@@ -991,24 +972,22 @@ class StatisticalAssessmentConfig(BaseModel):
         default_factory=ConfidenceIntervalConfig
     )
 
-    unit_of_inference: Optional[
-        Literal["sample", "group_mean", "group_majority", "custom"]
-    ] = Field(
+    unit_of_inference: (
+        Literal["sample", "group_mean", "group_majority", "custom"] | None
+    ) = Field(
         None,
         description="Independent unit for label permutation or binomial counts.",
     )
-    custom_unit_column: Optional[str] = None
+    custom_unit_column: str | None = None
     custom_aggregation: Literal["mean", "majority"] = "mean"
 
 
 ModelConfigType = Annotated[
-    Union[
-        ClassicalModelType,
-        FoundationEmbeddingModelConfig,
-        FrozenBackboneDecoderConfig,
-        NeuralFineTuneConfig,
-        TemporalDecoderConfig,
-    ],
+    ClassicalModelType
+    | FoundationEmbeddingModelConfig
+    | FrozenBackboneDecoderConfig
+    | NeuralFineTuneConfig
+    | TemporalDecoderConfig,
     Field(discriminator="kind"),
 ]
 
@@ -1025,9 +1004,9 @@ class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     task: MetricTask = "classification"
-    output_dir: Optional[Path] = None
+    output_dir: Path | None = None
     tag: str = "experiment"
-    random_state: Optional[int] = Field(
+    random_state: int | None = Field(
         None,
         description=(
             "Master random seed. If set, it is used to derive seeds for all "
@@ -1036,10 +1015,10 @@ class ExperimentConfig(BaseModel):
     )
 
     # Map of Friendly Name -> Polymorphic Config Object
-    models: Dict[str, ModelConfigType]
+    models: dict[str, ModelConfigType]
 
     # Map of Friendly Name -> Parameter Grid (Search Space)
-    grids: Optional[Dict[str, Dict[str, List[Any]]]] = None
+    grids: dict[str, dict[str, list[Any]]] | None = None
 
     cv: CVConfig = Field(default_factory=CVConfig)
     tuning: TuningConfig = Field(default_factory=TuningConfig)
@@ -1056,12 +1035,12 @@ class ExperimentConfig(BaseModel):
         ),
     )
 
-    metrics: List[str] = Field(
+    metrics: list[str] = Field(
         default_factory=lambda: ["accuracy", "roc_auc"],
         description="List of metrics to compute.",
     )
 
-    use_scaler: Union[bool, str] = Field(
+    use_scaler: bool | str = Field(
         True, description="Whether to scalar normalize features upstream."
     )
     n_jobs: int = -1
@@ -1104,14 +1083,17 @@ class ExperimentConfig(BaseModel):
             raise ValueError("calibration is only available for classification.")
 
         # 4. Validate Tuning Metrics
-        if self.tuning.enabled and self.tuning.scoring:
-            if self.tuning.scoring in registered_metrics:
-                spec = get_metric_spec(self.tuning.scoring)
-                if spec.task != self.task:
-                    raise ValueError(
-                        f"Tuning metric '{self.tuning.scoring}' is for {spec.task} "
-                        f"but task is {self.task}."
-                    )
+        if (
+            self.tuning.enabled
+            and self.tuning.scoring
+            and self.tuning.scoring in registered_metrics
+        ):
+            spec = get_metric_spec(self.tuning.scoring)
+            if spec.task != self.task:
+                raise ValueError(
+                    f"Tuning metric '{self.tuning.scoring}' is for {spec.task} "
+                    f"but task is {self.task}."
+                )
 
         # 4. Validate Tuning CV
         if self.tuning.enabled and self.tuning.cv is None:

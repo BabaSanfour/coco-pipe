@@ -41,14 +41,16 @@ reducer. The manager never silently re-fits or re-embeds.
 
 The evaluator routes by embedding shape, not by method name:
 
-==================================  =====================================
-``X_emb.shape``                     Path
-==================================  =====================================
-``(n_samples, n_components)``        Standard 2D metrics (trustworthiness,
-                                    continuity, LCMC, MRRE, Shepard).
-``(n_trajectories, n_times, n_dims)``  Trajectory metrics (speed, curvature,
-                                    dispersion, separation).
-==================================  =====================================
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - ``X_emb.shape``
+     - Path
+   * - ``(n_samples, n_components)``
+     - Standard 2D metrics (trustworthiness, continuity, LCMC, MRRE, Shepard).
+   * - ``(n_trajectories, n_times, n_dims)``
+     - Trajectory metrics (speed, curvature, dispersion, separation).
 
 For 2D paths, the **original** data ``X`` is required (the co-ranking matrix
 needs both spaces). For 3D paths, ``X`` is optional — most trajectory metrics

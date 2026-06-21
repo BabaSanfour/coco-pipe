@@ -20,9 +20,11 @@ def test_cache_dir_no_env(monkeypatch):
 def test_download_to_exception(tmp_path):
     target = tmp_path / "test.js"
 
-    with patch("urllib.request.urlopen", side_effect=URLError("Mock error")):
-        with pytest.raises(URLError):
-            _download_to(target, "http://example.com")
+    with (
+        patch("urllib.request.urlopen", side_effect=URLError("Mock error")),
+        pytest.raises(URLError),
+    ):
+        _download_to(target, "http://example.com")
 
     # temporary file should be unlinked
     assert not (tmp_path / "test.js.part").exists()

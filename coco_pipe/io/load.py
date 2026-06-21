@@ -8,7 +8,7 @@ Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -34,48 +34,46 @@ def _resolve_dataset_class(name: str):
 
 
 def load_data(
-    path: Optional[Union[str, Path]] = None,
+    path: str | Path | None = None,
     mode: str = "auto",
     # --- Tabular Arguments ---
-    target_col: Optional[str] = None,
-    index_col: Optional[Union[str, int]] = None,
+    target_col: str | None = None,
+    index_col: str | int | None = None,
     sep: str = "\t",
-    header: Optional[Union[int, List[int]]] = 0,
-    sheet_name: Optional[Union[str, int]] = 0,
-    columns_to_dims: Optional[List[str]] = None,
+    header: int | list[int] | None = 0,
+    sheet_name: str | int | None = 0,
+    columns_to_dims: list[str] | None = None,
     col_sep: str = "_",
-    meta_columns: Optional[List[str]] = None,
+    meta_columns: list[str] | None = None,
     clean: bool = False,
-    clean_kwargs: Optional[Dict[str, Any]] = None,
+    clean_kwargs: dict[str, Any] | None = None,
     # --- BIDS Arguments ---
-    task: Optional[str] = None,
-    session: Optional[Union[str, List[str]]] = None,
-    runs: Optional[Union[str, List[str]]] = None,
+    task: str | None = None,
+    session: str | list[str] | None = None,
+    runs: str | list[str] | None = None,
     datatype: str = "eeg",
-    suffix: Optional[str] = None,
+    suffix: str | None = None,
     loading_mode: str = "epochs",  # Maps to BIDSDataset `mode`
-    window_length: Optional[float] = None,
-    stride: Optional[float] = None,
-    event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+    window_length: float | None = None,
+    stride: float | None = None,
+    event_id: dict[str, int] | str | list[str] | None = None,
     tmin: float = -0.2,
     tmax: float = 0.5,
-    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
+    baseline: tuple[float | None, float | None] | None = None,
     drop_short_epochs: bool = True,
-    subject_metadata_df: Optional[Any] = None,
-    subject_key: Optional[str] = None,
+    subject_metadata_df: Any | None = None,
+    subject_key: str | None = None,
     # --- Embedding Arguments ---
     pattern: str = "*.pkl",
-    dims: Tuple[str, ...] = ("obs", "feature"),
-    coords: Optional[Dict[str, Union[List, np.ndarray]]] = None,
-    run: Optional[str] = None,
-    processing: Optional[str] = None,
-    reader: Optional[Any] = None,
-    id_fn: Optional[Any] = None,
+    dims: tuple[str, ...] = ("obs", "feature"),
+    coords: dict[str, list | np.ndarray] | None = None,
+    run: str | None = None,
+    processing: str | None = None,
+    reader: Any | None = None,
+    id_fn: Any | None = None,
     # --- Common Arguments ---
-    subjects: Optional[Union[str, List[str], int, List[int]]] = None,
-    config: Optional[
-        Union[DatasetConfig, BIDSConfig, TabularConfig, EmbeddingConfig]
-    ] = None,
+    subjects: str | list[str] | int | list[int] | None = None,
+    config: DatasetConfig | BIDSConfig | TabularConfig | EmbeddingConfig | None = None,
     **kwargs,
 ) -> DataContainer:
     """
@@ -90,6 +88,7 @@ def load_data(
         given (in which case ``config.path`` is used).
     mode : {"auto", "tabular", "bids", "embedding"}, default="auto"
         Type of data to load.
+
         - "auto": Infers type from file extension or directory structure. A
           directory with ``dataset_description.json`` or ``sub-*`` entries is
           treated as ``"bids"``; ``.csv``/``.tsv``/``.xls``/``.xlsx``/``.txt``
@@ -144,6 +143,7 @@ def load_data(
         How to process the data. Renamed to ``loading_mode`` here (and in
         ``BIDSConfig``) to avoid colliding with this function's ``mode``
         argument; it is passed through as ``mode`` to ``BIDSDataset``.
+
         - 'epochs': Splices continuous data into fixed-length windows.
         - 'continuous': Loads as single continuous segments.
         - 'load_existing': Loads pre-computed epochs.
@@ -160,7 +160,7 @@ def load_data(
 
     Embedding Arguments (mode="embedding")
     --------------------------------------
-    pattern : str, default='*.pkl'
+    pattern : str, default=r'\\*.pkl'
         Glob pattern to match files.
     dims : tuple of str, default=('obs', 'feature')
         Dimension labels for the data arrays.
@@ -204,7 +204,10 @@ def load_data(
     strategy:
 
     >>> container = load_data(
-    ...     "/data/bids", mode="bids", task="rest", loading_mode="epochs",
+    ...     "/data/bids",
+    ...     mode="bids",
+    ...     task="rest",
+    ...     loading_mode="epochs",
     ...     window_length=2.0,
     ... )
     """
@@ -276,7 +279,7 @@ def load_data(
             **kwargs,
         ).load()
 
-    elif mode == "bids":
+    if mode == "bids":
         # Note: config.loading_mode maps to BIDSDataset's `mode`.
         return _resolve_dataset_class("BIDSDataset")(
             root=path,
@@ -300,7 +303,7 @@ def load_data(
             **kwargs,
         ).load()
 
-    elif mode == "embedding":
+    if mode == "embedding":
         return _resolve_dataset_class("EmbeddingDataset")(
             path=path,
             pattern=dataset_cfg.pattern,
@@ -315,10 +318,9 @@ def load_data(
             **kwargs,
         ).load()
 
-    else:
-        raise ValueError(
-            f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."
-        )
+    raise ValueError(
+        f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."
+    )
 
 
 def _infer_mode(path: Path) -> str:
@@ -364,7 +366,7 @@ def _build_config(
     run,
     processing,
     subjects,
-) -> Union[TabularConfig, BIDSConfig, EmbeddingConfig]:
+) -> TabularConfig | BIDSConfig | EmbeddingConfig:
     """Construct and validate the mode-appropriate config from raw kwargs."""
     if mode == "tabular":
         return TabularConfig(

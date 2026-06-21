@@ -348,15 +348,15 @@ class _WeightCapturingClassifier(BaseEstimator, ClassifierMixin):
 
 
 def _make_spec(**overrides):
-    base = dict(
-        supports_proba=False,
-        supports_decision_function=False,
-        importance=("unavailable",),
-        supports_groups=False,
-        grouped_metadata="none",
-        is_sparse_capable=False,
-        family="linear",
-    )
+    base = {
+        "supports_proba": False,
+        "supports_decision_function": False,
+        "importance": ("unavailable",),
+        "supports_groups": False,
+        "grouped_metadata": "none",
+        "is_sparse_capable": False,
+        "family": "linear",
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -465,9 +465,9 @@ def test_fit_and_score_fold_sample_weight_train_only():
 
     # Only train-fold weights should have been forwarded
     expected = sw[train_idx]
-    assert np.allclose(
-        clf.recorded_weight_, expected
-    ), f"Expected {expected}, got {clf.recorded_weight_}"
+    assert np.allclose(clf.recorded_weight_, expected), (
+        f"Expected {expected}, got {clf.recorded_weight_}"
+    )
 
 
 def test_experiment_run_rejects_length_mismatch():

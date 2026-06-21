@@ -14,8 +14,8 @@ import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Optional
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import joblib
 
@@ -62,10 +62,10 @@ __all__ = [
     "get_git_revision_hash",
     "get_package_version",
     "import_optional_dependency",
-    "stable_hash",
-    "slug",
     "resolve_n_jobs",
     "run_task_batch",
+    "slug",
+    "stable_hash",
 ]
 
 
@@ -90,7 +90,7 @@ def import_optional_dependency(
     loader: Any,
     feature: str,
     dependency: str,
-    install_hint: Optional[str] = None,
+    install_hint: str | None = None,
 ) -> Any:
     """
     Lazily import an optional dependency with clearer failure modes.
@@ -136,8 +136,7 @@ def get_git_revision_hash(cwd: str | os.PathLike[str] | None = None) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=1,
             cwd=cwd,
@@ -170,9 +169,7 @@ def get_environment_info(
     """Capture runtime provenance metadata for reports and experiment results."""
     version_packages = packages or PACKAGE_VERSIONS
     return {
-        "timestamp_utc": dt.datetime.now(dt.timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
-        ),
+        "timestamp_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "os_platform": platform.platform(),
         "python_version": platform.python_version(),
         "command": shlex.join(sys.argv),

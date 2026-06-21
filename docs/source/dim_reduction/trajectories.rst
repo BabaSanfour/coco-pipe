@@ -1,8 +1,9 @@
 .. _dim-reduction-trajectories:
 
-================================
-Trajectory Metrics and Geometry
-================================
+===================
+Trajectory Analysis
+===================
+
 
 Trajectory metrics operate on **native 3D embedding tensors** of shape
 ``(n_trajectories, n_times, n_dims)``. They quantify how groups (trials,
@@ -15,7 +16,7 @@ trial-locked EEG, cell-cycle stages, robot trajectories) works.
 ---
 
 1. Why Native 3D?
-==================
+-----------------
 
 A flat ``(n_samples, n_components)`` embedding has lost the trajectory
 structure that makes per-time-point metrics meaningful. The evaluation layer
@@ -32,7 +33,7 @@ reports them as unavailable.
 ---
 
 2. Kinematics
-===============
+-------------
 
 All kinematic primitives take ``traj`` with shape
 ``(n_trials, n_times, n_dims)`` and return per-time-point or
@@ -40,23 +41,36 @@ per-trajectory values. They live in
 :mod:`coco_pipe.dim_reduction.evaluation.geometry` and are re-exported from
 :mod:`coco_pipe.dim_reduction`.
 
-==============================  ================================================
-Function                        What it computes
-==============================  ================================================
-``trajectory_speed``            ``|Δposition / Δt|`` per timepoint.
-``trajectory_acceleration``     ``|Δspeed / Δt|`` per timepoint.
-``trajectory_curvature``        Local curvature via cosine or Frenet method.
-``trajectory_turning_angle``    Angular change between successive segments.
-``trajectory_path_length``      Total or cumulative length along the path.
-``trajectory_displacement``     ``|endpoint − startpoint|`` per trajectory.
-``trajectory_tortuosity``       ``path_length / displacement``.
-``trajectory_dispersion``       Spread of trajectories at each timepoint.
-``trajectory_distance_from_center``  Distance from each point to its trajectory
-                                centroid.
-``trajectory_cohesion``         Tight-cluster diagnostic per trajectory.
-``trajectory_intra_spread``     Mean within-trajectory pairwise distance.
-``trajectory_auc_speed``        Time-integrated speed.
-==============================  ================================================
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Function
+     - What it computes
+   * - ``trajectory_speed``
+     - ``|Δposition / Δt|`` per timepoint.
+   * - ``trajectory_acceleration``
+     - ``|Δspeed / Δt|`` per timepoint.
+   * - ``trajectory_curvature``
+     - Local curvature via cosine or Frenet method.
+   * - ``trajectory_turning_angle``
+     - Angular change between successive segments.
+   * - ``trajectory_path_length``
+     - Total or cumulative length along the path.
+   * - ``trajectory_displacement``
+     - ``|endpoint − startpoint|`` per trajectory.
+   * - ``trajectory_tortuosity``
+     - ``path_length / displacement``.
+   * - ``trajectory_dispersion``
+     - Spread of trajectories at each timepoint.
+   * - ``trajectory_distance_from_center``
+     - Distance from each point to its trajectory centroid.
+   * - ``trajectory_cohesion``
+     - Tight-cluster diagnostic per trajectory.
+   * - ``trajectory_intra_spread``
+     - Mean within-trajectory pairwise distance.
+   * - ``trajectory_auc_speed``
+     - Time-integrated speed.
 
 .. code-block:: python
 
@@ -76,7 +90,7 @@ full per-timepoint timecourses under ``DimReduction.diagnostics_``.
 ---
 
 3. Group Separation
-=====================
+-------------------
 
 :func:`~coco_pipe.dim_reduction.trajectory_separation` is the high-level
 entrypoint for time-resolved separation between labeled trajectory groups.
@@ -108,7 +122,7 @@ In manager-driven scoring, set ``separation_method`` in
 directly to :meth:`DimReduction.score`).
 
 3.1 Choosing a separation method
-----------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 - **Centroid**: simple, fast, most interpretable. Good default.
 - **Within-between ratio**: when groups have very different spread. Robust
@@ -121,7 +135,7 @@ directly to :meth:`DimReduction.score`).
 ---
 
 4. Trajectory Metrics in the Evaluator
-========================================
+--------------------------------------
 
 When ``X_emb`` is 3D, the evaluator dispatches to the trajectory path. Each
 kinematic family produces both ``_mean`` and ``_peak`` scalar summaries on
@@ -155,7 +169,7 @@ kinematic family produces both ``_mean`` and ``_peak`` scalar summaries on
 ---
 
 5. Visualization
-==================
+----------------
 
 The trajectory plots in :mod:`coco_pipe.viz.dim_reduction` consume the same
 ``(n_trajectories, n_times, n_dims)`` tensors and the diagnostics emitted by
@@ -181,7 +195,7 @@ See :ref:`viz-dim-reduction` for the full plot reference.
 ---
 
 6. Conditions and Statistics
-==============================
+----------------------------
 
 For paired or grouped per-trajectory comparisons (e.g., paired-sample tests
 across conditions), use the statistics helpers re-exported from the package:
@@ -200,7 +214,7 @@ condition comparison without leaving the dim-reduction module.
 ---
 
 7. Caveats
-============
+----------
 
 - **Coordinate frame matters**. Distances and curvatures are computed in the
   embedding space — if you compare across reducers, normalize first or rely

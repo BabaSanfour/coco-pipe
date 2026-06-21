@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
@@ -740,7 +741,7 @@ def plot_distribution_groups(
         raise ValueError("kind must be 'box' or 'violin'.")
 
     if show_points:
-        for position, group in zip(positions, values):
+        for position, group in zip(positions, values, strict=False):
             if len(group) == 0:
                 continue
             x = np.linspace(position - jitter, position + jitter, len(group))
@@ -951,7 +952,7 @@ def plot_scatter2d(
             if palette is not None
             else [plt.get_cmap(QUALITATIVE)(i % 10) for i in range(len(unique))]
         )
-        for color, label in zip(colors, unique):
+        for color, label in zip(colors, unique, strict=False):
             mask = lab_arr == label
             display = label_map.get(label, label) if label_map else label
             ax.scatter(
@@ -1085,7 +1086,7 @@ def plot_scatter3d(
             if palette is not None
             else [plt.get_cmap(QUALITATIVE)(i % 10) for i in range(len(unique))]
         )
-        for color_value, label in zip(colors, unique):
+        for color_value, label in zip(colors, unique, strict=False):
             mask = lab_arr == label
             display = label_map.get(label, label) if label_map else label
             ax.scatter(

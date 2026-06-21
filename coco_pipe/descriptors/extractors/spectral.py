@@ -313,7 +313,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     feature, names = self._finalize_descriptor(
                         values,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
-                        metric_name="_".join(metric_prefix + ["abs", band_name]),
+                        metric_name="_".join([*metric_prefix, "abs", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -325,7 +325,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     feature, names = self._finalize_descriptor(
                         log_values,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
-                        metric_name="_".join(metric_prefix + ["log", "abs", band_name]),
+                        metric_name="_".join([*metric_prefix, "log", "abs", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -367,7 +367,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     feature, names = self._finalize_descriptor(
                         relative,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
-                        metric_name="_".join(metric_prefix + ["rel", band_name]),
+                        metric_name="_".join([*metric_prefix, "rel", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -418,7 +418,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                         ratio,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
                         metric_name="_".join(
-                            metric_prefix + ["ratio", numerator, denominator]
+                            [*metric_prefix, "ratio", numerator, denominator]
                         ),
                         channel_names=channel_names,
                     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import logging
 import warnings
@@ -115,7 +116,7 @@ def _result_frame(
 ) -> pd.DataFrame:
     """Fetch ``result.<accessor>(**kwargs)`` as a DataFrame.
 
-    Every ``ExperimentResult`` accessor exists and returns an empty frame when it
+    Every ``~coco_pipe.decoding.result.ExperimentResult`` accessor exists and returns an empty frame when it
     holds no data, so callers branch on emptiness rather than ``hasattr``. The two
     section policies share this one fetch:
 
@@ -869,9 +870,11 @@ def build_caveats_section(
         caveats.append(
             "Feature metadata was not provided; sensor-wise feature plots were skipped."
         )
-    if callable(getattr(result, "get_probability_diagnostics", None)):
-        if _result_frame(result, "get_probability_diagnostics", required=False).empty:
-            caveats.append("Probability diagnostics were unavailable.")
+    if (
+        callable(getattr(result, "get_probability_diagnostics", None))
+        and _result_frame(result, "get_probability_diagnostics", required=False).empty
+    ):
+        caveats.append("Probability diagnostics were unavailable.")
     if not caveats:
         raise SectionDataUnavailable("No report caveats were identified.")
     section = Section(title=name)
@@ -1070,7 +1073,7 @@ def make_decoding_report(
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Report:
-    """Build a decoding report from one ``ExperimentResult``.
+    """Build a decoding report from one ``~coco_pipe.decoding.result.ExperimentResult``.
 
     With ``interactive=True``, chart-like sections render Plotly figures; topomap
     and sensor-map sections remain Matplotlib images (no Plotly twin exists).
@@ -1102,10 +1105,8 @@ def _append_section(
     result: Any,
     **kwargs: Any,
 ) -> Report:
-    try:
+    with contextlib.suppress(SectionDataUnavailable):
         report.add_section(builder(result, **kwargs))
-    except SectionDataUnavailable:
-        pass
     return report
 
 
@@ -1241,33 +1242,33 @@ __all__ = [
     "DEFAULT_SECTIONS",
     "VALID_SECTIONS",
     "SectionDataUnavailable",
-    "build_decoding_sections",
-    "build_decoding_overview_section",
-    "build_decoding_summary_section",
+    "add_decoding_diagnostics",
+    "add_decoding_features",
+    "add_decoding_neural_artifacts",
+    "add_decoding_overview",
+    "add_decoding_performance",
+    "add_decoding_statistical_assessment",
+    "add_decoding_summary",
+    "add_decoding_temporal",
+    "add_decoding_topomaps",
+    "build_caveats_section",
+    "build_configuration_section",
     "build_cv_section",
-    "build_probability_section",
     "build_decoding_diagnostics_section",
+    "build_decoding_overview_section",
+    "build_decoding_sections",
+    "build_decoding_summary_section",
+    "build_export_inventory_section",
+    "build_features_section",
+    "build_fit_diagnostics_section",
+    "build_neural_section",
+    "build_performance_section",
+    "build_probability_section",
+    "build_provenance_section",
     "build_statistical_section",
     "build_temporal_section",
-    "build_performance_section",
-    "build_features_section",
     "build_topomaps_section",
-    "build_fit_diagnostics_section",
     "build_tuning_section",
-    "build_neural_section",
-    "build_configuration_section",
-    "build_provenance_section",
-    "build_caveats_section",
-    "build_export_inventory_section",
-    "add_decoding_overview",
-    "add_decoding_temporal",
-    "add_decoding_summary",
-    "add_decoding_diagnostics",
-    "add_decoding_statistical_assessment",
-    "add_decoding_neural_artifacts",
-    "add_decoding_performance",
-    "add_decoding_features",
-    "add_decoding_topomaps",
     "make_decoding_report",
 ]
 

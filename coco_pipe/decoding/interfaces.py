@@ -1,6 +1,6 @@
 """
 Lightweight public interfaces for decoding estimator families.
-============================================================
+==============================================================
 
 These protocols define the structural contracts for models and extractors
 used within the decoding pipeline. Since they are runtime-checkable,

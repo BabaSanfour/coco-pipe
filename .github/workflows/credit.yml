@@ -1,0 +1,90 @@
+name: Contributor credit
+
+on:
+  schedule:
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-credit:
+    name: Update contributor credit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pygithub
+
+      - name: Generate contributor credit file
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p docs/source/_static
+
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from collections import Counter
+          from pathlib import Path
+
+          output = subprocess.check_output(
+              ["git", "shortlog", "-sne", "HEAD"],
+              text=True,
+          )
+
+          contributors = []
+          for line in output.splitlines():
+              parts = line.strip().split("\t")
+              if len(parts) != 2:
+                  continue
+              commits, identity = parts
+              contributors.append({
+                  "name": identity.rsplit("<", 1)[0].strip(),
+                  "email": identity.rsplit("<", 1)[1].rstrip(">").strip()
+                           if "<" in identity else "",
+                  "commits": int(commits),
+              })
+
+          contributors.sort(key=lambda x: (-x["commits"], x["name"].lower()))
+
+          path = Path("docs/source/_static/contributors.json")
+          path.write_text(
+              json.dumps(contributors, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Check for changes
+        id: changes
+        run: |
+          git status --porcelain
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          title: "MAINT: update contributor credit"
+          commit-message: "MAINT: update contributor credit"
+          branch: "bot/update-contributor-credit"
+          delete-branch: true
+          labels: "no-changelog-entry-needed"
+          body: |
+            Automated monthly update of contributor credit metadata.

@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .result import TrajectoryResult
 
+from collections.abc import Sequence
 from itertools import combinations
-from typing import Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -25,8 +25,8 @@ from scipy.stats import ttest_rel
 from statsmodels.stats.multitest import multipletests
 
 __all__ = [
-    "paired_condition_stats",
     "grouped_condition_stats",
+    "paired_condition_stats",
     "permutation_null_separation_auc",
 ]
 
@@ -211,14 +211,14 @@ def grouped_condition_stats(
 
 
 def permutation_null_separation_auc(
-    result: "TrajectoryResult",
+    result: TrajectoryResult,
     group_a: Sequence[int],
     group_b: Sequence[int],
     n_perm: int = 200,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
     method: str = "centroid",
-    window: Optional[Tuple[float, float]] = None,
-) -> Tuple[float, np.ndarray]:
+    window: tuple[float, float] | None = None,
+) -> tuple[float, np.ndarray]:
     """Label-shuffle null on between-group centroid separation AUC.
 
     Parameters

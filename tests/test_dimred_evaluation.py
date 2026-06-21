@@ -626,7 +626,7 @@ def test_trajectory_geometry_guardrails():
 
 
 def test_feature_importance():
-    X, y = make_blobs(n_samples=100, centers=2, n_features=2, random_state=42)
+    X, _y = make_blobs(n_samples=100, centers=2, n_features=2, random_state=42)
     X[:, 1] = np.random.randn(100)
 
     model = DimReduction("PCA", n_components=1)
@@ -796,7 +796,7 @@ def test_shepard_diagram_data():
     assert len(d_emb) == 45
 
     # 2. Subsample (N > sample_size)
-    d_orig_sub, d_emb_sub = shepard_diagram_data(X, X_emb, sample_size=5)
+    d_orig_sub, _d_emb_sub = shepard_diagram_data(X, X_emb, sample_size=5)
     assert len(d_orig_sub) == 10  # 5*4/2
 
 
@@ -809,7 +809,7 @@ def test_reproducibility_shepard_sampling():
     size = 10
     d1_orig, d1_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
     d2_orig, d2_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
-    d3_orig, d3_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=43)
+    d3_orig, _d3_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=43)
 
     assert np.allclose(d1_orig, d2_orig)
     assert np.allclose(d1_emb, d2_emb)
@@ -924,7 +924,7 @@ def test_method_selector_single_method():
 
 def test_evaluation_plot(data):
     """Test plotting of selector metric records through plot_metrics."""
-    X, y = data
+    _X, _y = data
     import matplotlib.pyplot as plt
 
     selector = MethodSelector([])
@@ -959,7 +959,7 @@ def test_evaluation_plot(data):
         },
     ]
 
-    fig, ax = plot_metrics(selector, metric="trustworthiness")
+    fig, _ax = plot_metrics(selector, metric="trustworthiness")
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 
@@ -1275,7 +1275,7 @@ def test_evaluate_embedding_trajectory_ndim_guard():
     X_emb = np.random.rand(10, 2)
     from coco_pipe.dim_reduction.evaluation.core import _evaluate_trajectory_metrics
 
-    m, meta, d, r = _evaluate_trajectory_metrics("test", X_emb, None)
+    m, meta, _d, _r = _evaluate_trajectory_metrics("test", X_emb, None)
     assert m == {}
     assert meta == {}
 
@@ -1313,7 +1313,7 @@ def test_evaluate_embedding_standard_metrics_empty_selection_orchestration():
 
     from coco_pipe.dim_reduction.evaluation.core import _evaluate_standard_metrics
 
-    m, d, r = _evaluate_standard_metrics(
+    m, _d, _r = _evaluate_standard_metrics(
         "test", X, X_emb, {"trajectory_speed"}, 5, None, None
     )
     assert m == {}

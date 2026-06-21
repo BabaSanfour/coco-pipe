@@ -6,8 +6,9 @@ import argparse
 import json
 import os
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -91,7 +92,7 @@ def validate_real_checkpoints(
                 }
             )
             continue
-        n_times = spec.pretrained_n_times or int(round(spec.pretrained_sfreq * 2))
+        n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 2)
         backend_kwargs: dict[str, Any] = {}
         if model_key == "labram":
             backend_kwargs["interpolate_channels"] = True
@@ -173,7 +174,7 @@ def validate_real_training(
                     }
                 )
             continue
-        n_times = spec.pretrained_n_times or int(round(spec.pretrained_sfreq * 2))
+        n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 2)
         rng = np.random.default_rng(42)
         X = rng.normal(size=(8, len(channels), n_times)).astype(np.float32)
         y = np.repeat([0, 1], 4)

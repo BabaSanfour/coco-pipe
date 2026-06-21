@@ -387,33 +387,35 @@ def test_run_permutation_assessment_mocked():
     X = np.zeros((2, 2))
     y = np.array([1, 0])
 
-    with patch("coco_pipe.decoding.stats._run_permutation_loop") as mock_loop:
-        with patch("coco_pipe.decoding.stats._bootstrap_scores") as mock_boot:
-            mock_loop.return_value = np.array([[0.5], [0.5]])
-            mock_boot.return_value = np.array([[1.0], [1.0]])
+    with (
+        patch("coco_pipe.decoding.stats._run_permutation_loop") as mock_loop,
+        patch("coco_pipe.decoding.stats._bootstrap_scores") as mock_boot,
+    ):
+        mock_loop.return_value = np.array([[0.5], [0.5]])
+        mock_boot.return_value = np.array([[1.0], [1.0]])
 
-            rows, nulls = _run_permutation_assessment(
-                model="lr",
-                metric="accuracy",
-                observed_result=observed_result,
-                experiment_config=experiment_config,
-                X=X,
-                y=y,
-                groups=None,
-                sample_ids=np.array([0, 1]),
-                sample_metadata=None,
-                feature_names=None,
-                time_axis=None,
-                observation_level="sample",
-                inferential_unit="sample",
-                config=config,
-                unit="sample",
-            )
+        rows, _nulls = _run_permutation_assessment(
+            model="lr",
+            metric="accuracy",
+            observed_result=observed_result,
+            experiment_config=experiment_config,
+            X=X,
+            y=y,
+            groups=None,
+            sample_ids=np.array([0, 1]),
+            sample_metadata=None,
+            feature_names=None,
+            time_axis=None,
+            observation_level="sample",
+            inferential_unit="sample",
+            config=config,
+            unit="sample",
+        )
 
-            assert len(rows) == 1
-            assert rows[0]["Model"] == "lr"
-            assert rows[0]["Metric"] == "accuracy"
-            assert rows[0]["Observed"] == 1.0
+        assert len(rows) == 1
+        assert rows[0]["Model"] == "lr"
+        assert rows[0]["Metric"] == "accuracy"
+        assert rows[0]["Observed"] == 1.0
 
 
 def test_benjamini_hochberg_real_values():

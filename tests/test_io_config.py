@@ -123,4 +123,4 @@ def test_dataset_config_discriminator():
 def test_dataset_config_invalid_mode():
     """Test invalid mode in discriminator."""
     with pytest.raises(ValidationError):
-        DatasetConfig(**{"dataset": {"mode": "unknown", "path": "path"}})
+        DatasetConfig(dataset={"mode": "unknown", "path": "path"})

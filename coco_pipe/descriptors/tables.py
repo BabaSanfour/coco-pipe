@@ -22,7 +22,8 @@ Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -33,9 +34,9 @@ from coco_pipe.io.structures import DataContainer
 from ._constants import DEFAULT_RATIO_PREFIXES
 
 __all__ = [
-    "mad_failures_from_qc",
     "add_aggregated_band_ratios",
     "build_descriptor_tables",
+    "mad_failures_from_qc",
 ]
 
 

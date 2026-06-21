@@ -35,11 +35,11 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     _device: str = "cpu"
     _n_outputs: int | None = None
     _expected_n_chans: int | None = None
-    signal_metadata_: "SignalMetadata | None" = None
+    signal_metadata_: SignalMetadata | None = None
     _net_ = None
 
     @abstractmethod
-    def reset_head(self, n_outputs: int) -> "BackendBase":
+    def reset_head(self, n_outputs: int) -> BackendBase:
         """Replace the classification head without changing backbone weights.
 
         Parameters
@@ -55,7 +55,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         ...
 
     @abstractmethod
-    def get_embedding_info(self) -> "FoundationModelSpec":
+    def get_embedding_info(self) -> FoundationModelSpec:
         """Return the registry spec for this model instance.
 
         Returns
@@ -82,12 +82,12 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     def load(
         cls,
         model_key: str,
-        metadata: "FoundationModelSpec",
+        metadata: FoundationModelSpec,
         n_outputs: int | None,
         device: str,
         train_mode: str,
         **backend_kwargs,
-    ) -> "BackendBase":
+    ) -> BackendBase:
         """Load pretrained weights and return a ready-to-use backend.
 
         All heavy imports (torch, transformers, braindecode) must happen
@@ -121,7 +121,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         X: np.ndarray,
         y: np.ndarray | None = None,
         **fit_params,
-    ) -> "BackendBase":
+    ) -> BackendBase:
         """Train the model on (X, y).
 
         In ``frozen`` mode only the classification head is updated; in
@@ -209,7 +209,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """
         ...
 
-    def configure_peft(self, lora_config: dict) -> "BackendBase":
+    def configure_peft(self, lora_config: dict) -> BackendBase:
         """Wrap the backbone with LoRA adapters post-hoc.
 
         Useful for switching from ``frozen`` to ``lora`` after the initial
@@ -245,7 +245,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         X: np.ndarray,
         y: np.ndarray | None = None,
         **fit_params,
-    ) -> "BackendBase":
+    ) -> BackendBase:
         """Shared skorch training loop. Both real backends use this verbatim."""
         from skorch import NeuralNetClassifier, NeuralNetRegressor
 
@@ -292,7 +292,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             groups_arr = np.asarray(groups)
             y_arr = np.asarray(y)
             random_state = fit_params.get("random_state", 42)
-            n_splits = max(2, int(round(1.0 / validation_fraction)))
+            n_splits = max(2, round(1.0 / validation_fraction))
             # Cap folds at the smallest number of distinct groups in any class.
             min_groups_per_class = min(
                 np.unique(groups_arr[y_arr == cls]).size for cls in np.unique(y_arr)

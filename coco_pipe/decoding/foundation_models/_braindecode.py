@@ -102,7 +102,7 @@ class BrainDecodeBackend(BackendBase):
         lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
         **kw,
-    ) -> "BrainDecodeBackend":
+    ) -> BrainDecodeBackend:
         """Load a pretrained braindecode model and return an initialised backend.
 
         Parameters
@@ -439,7 +439,7 @@ class BrainDecodeBackend(BackendBase):
             return self._from_tensor(logits).squeeze(-1)
         return self._from_tensor(logits.argmax(dim=-1))
 
-    def reset_head(self, n_outputs: int) -> "BrainDecodeBackend":
+    def reset_head(self, n_outputs: int) -> BrainDecodeBackend:
         """Replace the classification head without modifying backbone weights.
 
         Parameters
@@ -456,7 +456,7 @@ class BrainDecodeBackend(BackendBase):
         self._n_outputs = n_outputs
         return self
 
-    def configure_peft(self, lora_config: dict) -> "BrainDecodeBackend":
+    def configure_peft(self, lora_config: dict) -> BrainDecodeBackend:
         """Apply LoRA adapters to the backbone post-hoc.
 
         Parameters

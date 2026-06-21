@@ -4,7 +4,7 @@ This is the descriptor-specific table IO layer. It builds on the generic
 :func:`coco_pipe.io._serialization.read_table` primitive but owns the
 descriptor concerns: the ``_feature_columns.json`` sidecar contract, loading a
 descriptor table into a :class:`~coco_pipe.io.structures.DataContainer` (flat or
-sensor × feature), and the cross-shard **merge** stage.
+sensor x feature), and the cross-shard **merge** stage.
 
 Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,10 +26,10 @@ from coco_pipe.io.utils import normalize_subject_value
 from .naming import parse_descriptor_feature_column
 
 __all__ = [
-    "save_descriptor_table",
     "check_feature_column_consistency",
-    "merge_descriptor_tables",
     "load_descriptor_table",
+    "merge_descriptor_tables",
+    "save_descriptor_table",
 ]
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ def load_descriptor_table(
     location_statistic: str | None = None,
     exclude_subfamilies: Sequence[str] | None = None,
 ) -> DataContainer:
-    """Load a descriptor feature table into a :class:`DataContainer`."""
+    """Load a descriptor feature table into a :class:`~coco_pipe.io.DataContainer`."""
     table_path = Path(table_path)
     feature_columns_path = Path(feature_columns_path)
     max_abs = None

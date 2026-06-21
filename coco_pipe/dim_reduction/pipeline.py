@@ -33,9 +33,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
-from datetime import datetime, timezone
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -66,14 +67,14 @@ from coco_pipe.utils import slug, stable_hash
 
 __all__ = [
     "POOLED_CONDITION",
-    "run_fit",
-    "run_eval",
     "build_auto_pooled_eval_spec",
-    "valid_n_components_for_container",
-    "valid_component_sweep",
-    "prepare_eval_inputs",
-    "build_fit_request",
     "build_eval_request",
+    "build_fit_request",
+    "prepare_eval_inputs",
+    "run_eval",
+    "run_fit",
+    "valid_component_sweep",
+    "valid_n_components_for_container",
 ]
 
 logger = logging.getLogger(__name__)
@@ -258,7 +259,7 @@ def _base_eval_payload(
             "filters": list(eval_spec["filters"]),
             "label_map": dict(eval_spec["label_map"]),
             "status": "success",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "n_samples": int(n_samples),
             "n_groups": int(n_groups),
             "n_labels": int(n_labels),
@@ -359,7 +360,7 @@ def run_eval(
                 eval_spec,
                 eval_id,
                 artifact_stem=artifact_stem,
-                n_samples=int(len(selected_ids)),
+                n_samples=len(selected_ids),
                 n_groups=int(pd.Index(groups).nunique()),
                 n_labels=int(pd.Index(labels).nunique()),
             ),
@@ -574,7 +575,7 @@ def valid_component_sweep(
 def build_auto_pooled_eval_spec(
     conditions: list[str],
     run_pooled: bool,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Return a ``condition_separation`` eval spec, or ``None``.
 
     The spec is only produced when *run_pooled* is ``True`` and at least two
@@ -615,9 +616,9 @@ def build_fit_request(
     output_root: Path,
     overwrite: bool = False,
     subject_col: str = "subject",
-    extra_payload: Optional[dict[str, Any]] = None,
-    artifact_path: Optional[Path] = None,
-    artifact_path_factory: Optional[Callable[[dict[str, Any], Path], Path]] = None,
+    extra_payload: dict[str, Any] | None = None,
+    artifact_path: Path | None = None,
+    artifact_path_factory: Callable[[dict[str, Any], Path], Path] | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_fit`.
 
@@ -647,7 +648,7 @@ def build_fit_request(
         "sample_ids_sha256": hashlib.sha256(
             "\\0".join(ids.tolist()).encode("utf-8")
         ).hexdigest()[:16],
-        "n_samples": int(len(ids)),
+        "n_samples": len(ids),
     }
     fit_id = stable_hash(fit_identity, length=16)
     fit_payload: dict[str, Any] = {
@@ -675,7 +676,7 @@ def build_fit_request(
         "reducer": reducer_name,
         "n_components": int(n_components),
         "status": "success",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "n_samples": int(container.X.shape[0]),
         "n_subjects": int(
             pd.Index(
@@ -725,11 +726,10 @@ def build_eval_request(
     container: DataContainer,
     output_root: Path,
     overwrite: bool = False,
-    fit_artifact: Optional[dict[str, Any]] = None,
-    artifact_path: Optional[Path] = None,
-    artifact_path_factory: Optional[
-        Callable[[dict[str, Any], dict[str, Any], Path], Path]
-    ] = None,
+    fit_artifact: dict[str, Any] | None = None,
+    artifact_path: Path | None = None,
+    artifact_path_factory: Callable[[dict[str, Any], dict[str, Any], Path], Path]
+    | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_eval`.
 

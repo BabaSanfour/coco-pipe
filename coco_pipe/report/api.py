@@ -19,7 +19,7 @@ SectionSelection = list[str] | Literal["compact", "default", "full"]
 
 
 def from_container(
-    container: "DataContainer",
+    container: DataContainer,
     title: str = "Analysis Report",
     config: dict[str, Any] | None = None,
     raw_preview: bool = True,
@@ -241,7 +241,7 @@ def from_embeddings(
 
 def from_reductions(
     reductions: list[Any],
-    container: "DataContainer" | None = None,
+    container: DataContainer | None = None,
     embeddings: list[np.ndarray] | None = None,
     labels: np.ndarray | None = None,
     metadata: dict[str, Any] | None = None,
@@ -252,7 +252,7 @@ def from_reductions(
     theme: str = "paper",
     raw_preview: bool = False,
     asset_urls: dict[str, str] | None = None,
-    qc_result: "QCResult" | None = None,
+    qc_result: QCResult | None = None,
     output_path: str | Path | None = None,
 ) -> Report:
     """
@@ -343,18 +343,18 @@ def from_experiment_result(
     title: str = "Decoding Report",
     config: dict | None = None,
     asset_urls: dict[str, str] | str | None = None,
-    qc_result: "QCResult" | None = None,
+    qc_result: QCResult | None = None,
     output_path: str | Path | None = None,
     verbose: bool | None = None,
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options=None,
-) -> "Report":
-    """Build a decoding report from an ``ExperimentResult``.
+) -> Report:
+    """Build a decoding report from an ``~coco_pipe.decoding.result.ExperimentResult``.
 
     Parameters
     ----------
     result : Any
-        Decoding result object (e.g. ``ExperimentResult``).
+        Decoding result object (e.g. ``~coco_pipe.decoding.result.ExperimentResult``).
     feature_metadata : pd.DataFrame, optional
         Feature-level metadata for sensor map sections.
     info : mne.Info, optional
@@ -439,8 +439,8 @@ def from_experiment_results(
     qc_result=None,
     output_path=None,
     on_error="warn",
-) -> "Report":
-    """Build one report from many labelled ``ExperimentResult`` objects or paths."""
+) -> Report:
+    """Build one report from many labelled ``~coco_pipe.decoding.result.ExperimentResult`` objects or paths."""
     from .decoding_comparison import make_experiment_results_report
 
     return make_experiment_results_report(
@@ -462,7 +462,7 @@ def from_experiment_results(
     )
 
 
-def merge_reports(*reports: "Report", title: str = "Comparison Report") -> "Report":
+def merge_reports(*reports: Report, title: str = "Comparison Report") -> Report:
     """Merge multiple reports into a single comparison report.
 
     Each source report's sections are copied, prefixed with its own title, and

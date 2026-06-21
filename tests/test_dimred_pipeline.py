@@ -20,9 +20,9 @@ def dummy_container():
     n_samples = 100
     X = np.random.rand(n_samples, 5)
     coords = {
-        "subject": [f"sub{i//2}" for i in range(n_samples)],
+        "subject": [f"sub{i // 2}" for i in range(n_samples)],
         "target": ["A" if i % 2 == 0 else "B" for i in range(n_samples)],
-        "group": [f"G{i//10}" for i in range(n_samples)],
+        "group": [f"G{i // 10}" for i in range(n_samples)],
     }
     ids = np.arange(n_samples).astype(str)
     return DataContainer(
@@ -181,7 +181,7 @@ def testprepare_eval_inputs(dummy_container):
         "filters": [{"column": "subject", "values": ["sub1"]}],
         "label_map": {"A": "Class_A"},
     }
-    idx, sel_ids, labels, groups = prepare_eval_inputs(
+    _idx, sel_ids, labels, _groups = prepare_eval_inputs(
         dummy_container, fit_ids, eval_spec
     )
     assert len(sel_ids) == 2

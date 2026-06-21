@@ -2,7 +2,7 @@
 Core Reporting Classes
 ======================
 
-Defines :class:`Section` and :class:`Report` — the high-level containers that
+Defines :class:`~coco_pipe.report.Section` and :class:`~coco_pipe.report.Report` — the high-level containers that
 assemble :mod:`coco_pipe.report.elements` into a single-file HTML report.
 
 The element primitives themselves live in :mod:`coco_pipe.report.elements`
@@ -18,7 +18,7 @@ import re
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -114,12 +114,12 @@ class Section(ContainerElement):
     def __init__(
         self,
         title: str,
-        icon: Optional[str] = None,
-        tags: Optional[List[str]] = None,
+        icon: str | None = None,
+        tags: list[str] | None = None,
         status: str = "OK",
-        code: Optional[str] = None,
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, str]] = None,
+        code: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, str] | None = None,
     ):
         super().__init__()
         self.title = title
@@ -129,7 +129,7 @@ class Section(ContainerElement):
         self.code = code
         self.description = description
         self.metadata = metadata or {}
-        self.findings: List[Dict] = []  # List of serialized CheckResults
+        self.findings: list[dict] = []  # List of serialized CheckResults
 
         # Generated ID (slugify)
         self.id = _slugify(self.title)
@@ -146,8 +146,8 @@ class Section(ContainerElement):
 
     def add_columns(
         self,
-        elements: List[Element],
-        cols: Optional[int] = None,
+        elements: list[Element],
+        cols: int | None = None,
         gap: str = "gap-4",
     ) -> "Section":
         """
@@ -207,7 +207,7 @@ class Report(ContainerElement):
           and openable offline. See :mod:`coco_pipe.report._assets`.
     """
 
-    _DEFAULT_ASSET_URLS = {
+    _DEFAULT_ASSET_URLS: ClassVar[dict[str, str]] = {
         "plotly": "https://cdn.plot.ly/plotly-2.27.0.min.js",
         "tailwind": "https://cdn.tailwindcss.com",
         "pako": "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js",
@@ -216,9 +216,9 @@ class Report(ContainerElement):
     def __init__(
         self,
         title: str = "CoCo Analysis Report",
-        config: Optional[Union[Dict, ReportConfig]] = None,
+        config: dict | ReportConfig | None = None,
         theme: str = "paper",
-        asset_urls: Optional[Dict[str, str]] = None,
+        asset_urls: dict[str, str] | None = None,
     ):
         super().__init__()
         self.timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -250,8 +250,8 @@ class Report(ContainerElement):
 
     @classmethod
     def _resolve_assets(
-        cls, asset_urls: Optional[Union[Dict[str, str], str]]
-    ) -> tuple[Dict[str, str], str]:
+        cls, asset_urls: dict[str, str] | str | None
+    ) -> tuple[dict[str, str], str]:
         """
         Resolve the JS-asset slots into ``(urls_or_contents, mode)``.
 
@@ -275,7 +275,7 @@ class Report(ContainerElement):
 
     @staticmethod
     def _resolve_config(
-        config: Optional[Union[Dict, ReportConfig]],
+        config: dict | ReportConfig | None,
         title: str,
     ) -> ReportConfig:
         """Coerce ``config`` to a :class:`ReportConfig`, honoring ``title``."""
@@ -307,7 +307,7 @@ class Report(ContainerElement):
         section.id = candidate
         return self.add_element(section)
 
-    def add_figure(self, fig: Any, caption: Optional[str] = None) -> "Report":
+    def add_figure(self, fig: Any, caption: str | None = None) -> "Report":
         """
         Add a figure (Matplotlib) or Image.
         """
@@ -343,7 +343,7 @@ class Report(ContainerElement):
             # Dimensions
             dims_data = [
                 {"Dimension": d, "Size": s}
-                for d, s in zip(container.dims, container.shape)
+                for d, s in zip(container.dims, container.shape, strict=False)
             ]
             sec.add_element(TableElement(dims_data, title="Dimensions"))
 
@@ -399,7 +399,11 @@ class Report(ContainerElement):
         except Exception as e:
             import warnings
 
-            warnings.warn(f"Failed to add container info to report: {e}", UserWarning)
+            warnings.warn(
+                f"Failed to add container info to report: {e}",
+                UserWarning,
+                stacklevel=2,
+            )
 
         return self
 
@@ -460,7 +464,7 @@ class Report(ContainerElement):
         inline in the page.
 
         Payload format (the contract with ``base.html``)
-        -----------------------------------------------
+        ------------------------------------------------
         Each element that wants to store payload assigns itself a UUID
         ``data-id`` and pushes its data into the registry:
 
@@ -553,8 +557,8 @@ class Report(ContainerElement):
 
     def add_summary_card(
         self,
-        metrics: Dict[str, Any],
-        colors: Optional[List[str]] = None,
+        metrics: dict[str, Any],
+        colors: list[str] | None = None,
     ) -> "Report":
         """
         Add a row of KPI stat-cards above the first section.
@@ -591,7 +595,7 @@ class Report(ContainerElement):
         self.children.insert(0, row)
         return self
 
-    def show(self, port: Optional[int] = None) -> None:
+    def show(self, port: int | None = None) -> None:
         """
         Render the report and open it in the default web browser.
 
@@ -623,7 +627,7 @@ class Report(ContainerElement):
         """
         Return an iframe embedding of the rendered report for Jupyter display.
 
-        Jupyter automatically calls this method when a :class:`Report` instance
+        Jupyter automatically calls this method when a :class:`~coco_pipe.report.Report` instance
         is the last expression in a notebook cell, rendering an inline preview.
 
         Returns
@@ -655,7 +659,7 @@ class Report(ContainerElement):
         report renders as grey placeholders if opened without a network
         connection (e.g. ``file://`` viewing, offline archives, restrictive
         corporate firewalls, air-gapped machines). Pass
-        ``asset_urls="inline"`` to :class:`Report` to bundle the
+        ``asset_urls="inline"`` to :class:`~coco_pipe.report.Report` to bundle the
         JavaScript directly into the HTML.
         """
         if self.asset_mode == "cdn":
@@ -674,6 +678,6 @@ class Report(ContainerElement):
 
 
 __all__ = [
-    "Section",
     "Report",
+    "Section",
 ]

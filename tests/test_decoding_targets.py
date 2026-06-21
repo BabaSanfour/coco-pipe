@@ -20,7 +20,7 @@ def test_prepare_target_binary_success():
     )
     spec = {"target_col": "target_col", "label_map": {"c": "b"}, "positive_class": "b"}
 
-    selected, y, groups, frame = prepare_target(container, spec)
+    _selected, y, groups, frame = prepare_target(container, spec)
     assert len(y) == 5
     assert list(y) == [0, 1, 0, 1, 1]
     assert list(groups) == ["g1", "g2", "g3", "g4", "g5"]
@@ -37,7 +37,7 @@ def test_prepare_target_multiclass_success():
         }
     )
     spec = {"target_col": "target_col", "class_order": ["a", "b", "c"]}
-    _, y, groups, _ = prepare_target(container, spec)
+    _, y, _groups, _ = prepare_target(container, spec)
     assert list(y) == [2, 1, 0]
 
 

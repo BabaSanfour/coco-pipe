@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import sys
 import types
@@ -15,24 +16,22 @@ from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 
 def test_dataset_config_discriminator_and_defaults(tmp_path):
     tab_cfg = DatasetConfig(
-        **{
-            "dataset": {
-                "mode": "tabular",
-                "path": tmp_path / "table.csv",
-                "select_kwargs": {"keep": ["f1"]},
-            }
+        dataset={
+            "mode": "tabular",
+            "path": tmp_path / "table.csv",
+            "select_kwargs": {"keep": ["f1"]},
         }
     )
     assert isinstance(tab_cfg.dataset, TabularConfig)
     assert tab_cfg.dataset.sep == "\t"
     assert tab_cfg.dataset.select_kwargs == {"keep": ["f1"]}
 
-    bids_cfg = DatasetConfig(**{"dataset": {"mode": "bids", "path": tmp_path}})
+    bids_cfg = DatasetConfig(dataset={"mode": "bids", "path": tmp_path})
     assert isinstance(bids_cfg.dataset, BIDSConfig)
     assert bids_cfg.dataset.loading_mode == "epochs"
 
     with pytest.raises(ValidationError):
-        DatasetConfig(**{"dataset": {"path": tmp_path}})
+        DatasetConfig(dataset={"path": tmp_path})
 
 
 def test_tabular_dataset_columns_to_dims(monkeypatch, tmp_path):
@@ -229,7 +228,7 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
         sys.modules,
         "mne_bids",
         types.SimpleNamespace(
-            BIDSPath=lambda **k: types.SimpleNamespace(match=lambda: [], **k),
+            BIDSPath=lambda **k: types.SimpleNamespace(match=list, **k),
             read_raw_bids=lambda *a: None,
         ),
     )
@@ -238,7 +237,7 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
     monkeypatch.setattr(
         dataset,
         "_get_bids_path",
-        lambda: lambda **k: types.SimpleNamespace(match=lambda: [], **k),
+        lambda: lambda **k: types.SimpleNamespace(match=list, **k),
     )
 
     # One subject, two sessions
@@ -440,11 +439,8 @@ def test_embedding_shape_mismatch(tmp_path, caplog):
         tmp_path, dims=("f",), pattern="really_bad.npy", reader=np.load
     )
 
-    with caplog.at_level("WARNING"):
-        try:
-            ds.load()
-        except RuntimeError:
-            pass
+    with caplog.at_level("WARNING"), contextlib.suppress(RuntimeError):
+        ds.load()
 
     assert "Shape mismatch" in caplog.text
 
@@ -460,14 +456,13 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
         sub = bids_path.subject
         if sub == "01":
             return np.zeros((1, 5, 10)), [0], ["c"], 100, None
-        else:
-            return (
-                np.zeros((1, 6, 10)),
-                [0],
-                ["c"],
-                100,
-                None,
-            )  # Different channels count
+        return (
+            np.zeros((1, 6, 10)),
+            [0],
+            ["c"],
+            100,
+            None,
+        )  # Different channels count
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -503,9 +498,8 @@ def test_bids_time_warning(monkeypatch, tmp_path):
         sub = bids_path.subject
         if sub == "01":
             return np.zeros((1, 1, 10)), np.arange(10), ["c"], 100, None
-        else:
-            # Different time length
-            return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
+        # Different time length
+        return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -540,7 +534,7 @@ def test_tabular_dataset_extra(tmp_path):
     df.to_csv(p2, index=False)
     ds = TabularDataset(p2)
     # min_abs_fraction
-    c, rep = ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
+    _c, _rep = ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
 
     with pytest.raises(ValueError):
         ds.clean(df, mode="invalid")
@@ -643,8 +637,7 @@ def test_bids_dataset_extra(tmp_path):
         call_idx += 1
         if call_idx == 1:
             return np.zeros((1, 2, 10)), np.zeros(10), ["C1", "C2"], 100, None
-        else:
-            return np.zeros((1, 2, 5)), np.zeros(5), ["C1", "C2"], 100, None
+        return np.zeros((1, 2, 5)), np.zeros(5), ["C1", "C2"], 100, None
 
     call_idx = 0
     dmod.read_bids_entry = fake_read_short

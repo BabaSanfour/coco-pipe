@@ -5,8 +5,9 @@ Results Container.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -48,7 +49,7 @@ class TrajectoryResult:
     statistical assessment of trajectory dynamics across subjects and conditions.
     """
 
-    _REDUCERS = [
+    _REDUCERS: ClassVar[list] = [
         (
             "trajectory_length",
             lambda traj, t: float(np.nanmean(trajectory_path_length(traj))),
@@ -247,7 +248,7 @@ class TrajectoryResult:
 
     def get_separation_timecourses(
         self, methods: Sequence[str] = ("centroid", "mahalanobis")
-    ) -> dict[str, dict[Tuple[int, int], np.ndarray]]:
+    ) -> dict[str, dict[tuple[int, int], np.ndarray]]:
         """Pooled-across-subjects separation timecourses per condition pair.
 
         Returns
@@ -256,7 +257,7 @@ class TrajectoryResult:
             ``{method: {(a, b): timecourse_array}}``. Use the result directly with
             ``coco_pipe.viz.interactive.plot_trajectory_separation``.
         """
-        out: dict[str, dict[Tuple[int, int], np.ndarray]] = {}
+        out: dict[str, dict[tuple[int, int], np.ndarray]] = {}
         for method in methods:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -268,7 +269,7 @@ class TrajectoryResult:
             }
         return out
 
-    def slice_time(self, tmin: float, tmax: float) -> "TrajectoryResult":
+    def slice_time(self, tmin: float, tmax: float) -> TrajectoryResult:
         """Return a new TrajectoryResult restricted to a time window."""
         mask = (self.times >= tmin) & (self.times <= tmax)
         if not np.any(mask):
@@ -283,9 +284,9 @@ class TrajectoryResult:
 
     def filter(
         self,
-        subjects: Optional[Sequence] = None,
-        conditions: Optional[Sequence[int]] = None,
-    ) -> "TrajectoryResult":
+        subjects: Sequence | None = None,
+        conditions: Sequence[int] | None = None,
+    ) -> TrajectoryResult:
         """Return a new TrajectoryResult containing only specified
         subjects/conditions."""
         mask = np.ones(self.trajectories.shape[0], dtype=bool)
@@ -356,7 +357,7 @@ class TrajectoryResult:
         save_object(self, path)
 
     @classmethod
-    def load(cls, path: str | Path) -> "TrajectoryResult":
+    def load(cls, path: str | Path) -> TrajectoryResult:
         """Load a TrajectoryResult object from disk."""
         res = load_object(path)
         if not isinstance(res, cls):
@@ -383,7 +384,7 @@ class EmbeddingQualityResult:
         X : np.ndarray
             High-dimensional original data matrix (n_samples, n_features).
         Z : np.ndarray
-            Low-dimensional embedded data matrix (n_samples, n_components).
+            Low-dimensional embedded data matrix (n_samples, n_dims).
         """
         self.X = X
         self.Z = Z
@@ -440,8 +441,8 @@ class EmbeddingQualityResult:
         return pd.concat(dfs, ignore_index=True)
 
     def get_shepard_diagram_data(
-        self, sample_size: int = 1000, random_state: Optional[int] = None
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        self, sample_size: int = 1000, random_state: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return (d_orig, d_emb) sampled pairwise distances."""
         return shepard_diagram_data(
             self.X, self.Z, sample_size=sample_size, random_state=random_state
@@ -452,7 +453,7 @@ class EmbeddingQualityResult:
         save_object(self, path)
 
     @classmethod
-    def load(cls, path: str | Path) -> "EmbeddingQualityResult":
+    def load(cls, path: str | Path) -> EmbeddingQualityResult:
         """Load an EmbeddingQualityResult object from disk."""
         res = load_object(path)
         if not isinstance(res, cls):
@@ -471,8 +472,8 @@ class VelocityResult:
         self,
         X: np.ndarray,
         Z: np.ndarray,
-        times: Optional[np.ndarray] = None,
-        groups: Optional[np.ndarray] = None,
+        times: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ):
         """
         Initialize the VelocityResult.
@@ -482,7 +483,7 @@ class VelocityResult:
         X : np.ndarray
             High-dimensional original data matrix (n_samples, n_features).
         Z : np.ndarray
-            Low-dimensional embedded data matrix (n_samples, n_components).
+            Low-dimensional embedded data matrix (n_samples, n_dims).
         times : np.ndarray, optional
             Time coordinates for samples.
         groups : np.ndarray, optional
@@ -515,7 +516,7 @@ class VelocityResult:
         save_object(self, path)
 
     @classmethod
-    def load(cls, path: str | Path) -> "VelocityResult":
+    def load(cls, path: str | Path) -> VelocityResult:
         """Load a VelocityResult object from disk."""
         res = load_object(path)
         if not isinstance(res, cls):

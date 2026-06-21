@@ -296,7 +296,7 @@ def test_experiment_validation_hardening():
 
     # FS metric mismatch
     with pytest.raises(
-        (ValueError, ValidationError), match="is not defined|incompatible with task"
+        (ValueError, ValidationError), match=r"is not defined|incompatible with task"
     ):
         ExperimentConfig(
             task="classification",

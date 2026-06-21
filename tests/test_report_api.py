@@ -84,7 +84,7 @@ def test_from_tabular(MockTabularDataset, mock_from_container):
     MockTabularDataset.assert_called_once_with(path="data.csv")
     mock_ds.load.assert_called_once()
 
-    args, kwargs = mock_from_container.call_args
+    _args, kwargs = mock_from_container.call_args
     assert kwargs["title"] == "Tabular Report: data.csv"
     assert kwargs["config"]["run_params"]["source"] == "Tabular"
 
@@ -99,7 +99,7 @@ def test_from_embeddings(MockEmbeddingDataset, mock_from_container):
     from_embeddings("embs/", output_path="emb.html")
     MockEmbeddingDataset.assert_called_once_with(path="embs/")
 
-    args, kwargs = mock_from_container.call_args
+    _args, kwargs = mock_from_container.call_args
     assert kwargs["title"] == "Embedding Report: embs"
     assert kwargs["config"]["run_params"]["source"] == "Embeddings"
 

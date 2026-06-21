@@ -8,7 +8,7 @@ or notebook wants an interactive figure.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 import matplotlib.colors as mcolors
 import numpy as np
@@ -27,8 +27,8 @@ __all__ = [
 
 
 def _coerce_named_series(
-    values: Union[pd.Series, Mapping[str, float], Sequence[float]],
-    labels: Optional[Sequence[str]],
+    values: pd.Series | Mapping[str, float] | Sequence[float],
+    labels: Sequence[str] | None,
 ) -> pd.Series:
     """Normalize a Series / dict / sequence to a labelled Series."""
     if isinstance(values, pd.Series):
@@ -46,21 +46,21 @@ def _coerce_named_series(
 
 
 def plot_bar(
-    scores: Union[pd.Series, Mapping[str, float], Sequence[float]],
-    errors: Optional[Union[pd.Series, Mapping[str, float], Sequence[float]]] = None,
-    labels: Optional[Sequence[str]] = None,
-    label_map: Optional[Mapping[str, str]] = None,
-    top_n: Optional[int] = None,
+    scores: pd.Series | Mapping[str, float] | Sequence[float],
+    errors: pd.Series | Mapping[str, float] | Sequence[float] | None = None,
+    labels: Sequence[str] | None = None,
+    label_map: Mapping[str, str] | None = None,
+    top_n: int | None = None,
     ascending: bool = False,
     sort: bool = True,
     orientation: Literal["vertical", "horizontal"] = "vertical",
-    color: Optional[Union[str, Sequence[str]]] = None,
-    cmap: Optional[str] = None,
+    color: str | Sequence[str] | None = None,
+    cmap: str | None = None,
     abs_values: bool = False,
-    title: Optional[str] = None,
-    xaxis_title: Optional[str] = None,
-    yaxis_title: Optional[str] = None,
-    height: Optional[int] = None,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    height: int | None = None,
 ) -> go.Figure:
     """Interactive ranked bar chart with optional error bars.
 
@@ -111,10 +111,7 @@ def plot_bar(
     else:
         err_series = None
 
-    if abs_values:
-        sort_key = series.abs()
-    else:
-        sort_key = series
+    sort_key = series.abs() if abs_values else series
 
     if sort:
         order = sort_key.sort_values(ascending=ascending).index
@@ -133,22 +130,24 @@ def plot_bar(
 
     if cmap is not None:
         # Color by value
-        marker = dict(
-            color=series.values.tolist(),
-            colorscale=cmap,
-            colorbar=dict(title=yaxis_title or "Value")
+        marker = {
+            "color": series.values.tolist(),
+            "colorscale": cmap,
+            "colorbar": {"title": yaxis_title or "Value"}
             if orientation == "vertical"
-            else dict(title=xaxis_title or "Value"),
-        )
+            else {"title": xaxis_title or "Value"},
+        }
     else:
         bar_color = color if color is not None else _COLORBLIND_COLORS[0]
-        marker = dict(color=bar_color)
+        marker = {"color": bar_color}
 
     error_kwargs: dict[str, Any] = {}
     if err_series is not None:
-        error_kwargs["error_" + ("y" if orientation == "vertical" else "x")] = dict(
-            type="data", array=err_series.values.tolist(), visible=True
-        )
+        error_kwargs["error_" + ("y" if orientation == "vertical" else "x")] = {
+            "type": "data",
+            "array": err_series.values.tolist(),
+            "visible": True,
+        }
 
     if orientation == "vertical":
         bar = go.Bar(
@@ -178,18 +177,18 @@ def plot_bar(
 
 
 def plot_distribution_groups(
-    groups: Sequence[Union[Sequence[float], np.ndarray, pd.Series]],
+    groups: Sequence[Sequence[float] | np.ndarray | pd.Series],
     labels: Sequence[Any],
     kind: Literal["box", "violin"] = "box",
     show_points: bool = True,
     point_opacity: float = 0.55,
     showmeans: bool = True,
-    title: Optional[str] = None,
-    xaxis_title: Optional[str] = None,
-    yaxis_title: Optional[str] = None,
-    color: Optional[Union[str, Sequence[str]]] = None,
-    height: Optional[int] = None,
-    sig_pairs: Optional[Sequence[tuple[int, int, str]]] = None,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    color: str | Sequence[str] | None = None,
+    height: int | None = None,
+    sig_pairs: Sequence[tuple[int, int, str]] | None = None,
 ) -> go.Figure:
     """Interactive grouped distribution plot (box or violin) with overlaid points.
 
@@ -248,17 +247,17 @@ def plot_distribution_groups(
             color_list = (color_list * len(groups))[: len(groups)]
 
     fig = go.Figure()
-    for idx, (data, label) in enumerate(zip(groups, labels)):
+    for idx, (data, label) in enumerate(zip(groups, labels, strict=False)):
         arr = np.asarray(list(data), dtype=float)
         arr = arr[np.isfinite(arr)]
         trace_color = color_list[idx]
-        common = dict(
-            y=arr.tolist(),
-            name=str(label),
-            marker_color=trace_color,
-            line_color=trace_color,
-            showlegend=False,
-        )
+        common = {
+            "y": arr.tolist(),
+            "name": str(label),
+            "marker_color": trace_color,
+            "line_color": trace_color,
+            "showlegend": False,
+        }
         if kind == "box":
             trace = go.Box(
                 **common,
@@ -266,7 +265,7 @@ def plot_distribution_groups(
                 boxpoints="all" if show_points else "outliers",
                 jitter=0.3 if show_points else 0.0,
                 pointpos=0.0,
-                marker=dict(opacity=point_opacity, size=5),
+                marker={"opacity": point_opacity, "size": 5},
             )
         else:
             trace = go.Violin(
@@ -274,7 +273,7 @@ def plot_distribution_groups(
                 meanline_visible=showmeans,
                 points="all" if show_points else False,
                 jitter=0.3 if show_points else 0.0,
-                marker=dict(opacity=point_opacity, size=5),
+                marker={"opacity": point_opacity, "size": 5},
                 box_visible=True,
             )
         fig.add_trace(trace)
@@ -303,7 +302,7 @@ def plot_distribution_groups(
                 x1=x_b,
                 y0=y,
                 y1=y,
-                line=dict(color="black", width=1.2),
+                line={"color": "black", "width": 1.2},
             )
             fig.add_annotation(
                 x=x_a,
@@ -312,7 +311,7 @@ def plot_distribution_groups(
                 text=annotation,
                 showarrow=False,
                 yshift=8,
-                font=dict(size=12),
+                font={"size": 12},
             )
 
     _apply_layout(
@@ -326,20 +325,20 @@ def plot_distribution_groups(
 
 
 def plot_heatmap(
-    matrix: Union[pd.DataFrame, Sequence[Sequence[float]], np.ndarray],
-    x_labels: Optional[Sequence[Any]] = None,
-    y_labels: Optional[Sequence[Any]] = None,
-    cmap: Optional[str] = None,
-    center: Optional[float] = None,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
+    matrix: pd.DataFrame | Sequence[Sequence[float]] | np.ndarray,
+    x_labels: Sequence[Any] | None = None,
+    y_labels: Sequence[Any] | None = None,
+    cmap: str | None = None,
+    center: float | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
     annotate: bool = False,
     annotation_format: str = ".3g",
-    title: Optional[str] = None,
-    xaxis_title: Optional[str] = None,
-    yaxis_title: Optional[str] = None,
-    colorbar_label: Optional[str] = None,
-    height: Optional[int] = None,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    colorbar_label: str | None = None,
+    height: int | None = None,
 ) -> go.Figure:
     """Interactive 2D heatmap.
 
@@ -410,7 +409,7 @@ def plot_heatmap(
         "x": x_lab,
         "y": y_lab,
         "colorscale": cmap,
-        "colorbar": dict(title=colorbar_label or ""),
+        "colorbar": {"title": colorbar_label or ""},
     }
     if center is not None:
         heatmap_kwargs["zmid"] = center
@@ -439,14 +438,14 @@ def plot_heatmap(
 
 def plot_timecourses(
     data: np.ndarray | pd.DataFrame,
-    times: Optional[np.ndarray] = None,
-    channel_names: Optional[Sequence[str]] = None,
-    rois: Optional[Mapping[str, Sequence[str]] | Sequence[str]] = None,
-    group_labels: Optional[Sequence[Any]] = None,
-    group_name_map: Optional[Mapping[Any, str]] = None,
-    palette: Optional[Mapping[Any, Any] | Sequence[Any]] = None,
-    linestyle_map: Optional[Mapping[Any, str]] = None,
-    n_cols: Optional[int] = None,
+    times: np.ndarray | None = None,
+    channel_names: Sequence[str] | None = None,
+    rois: Mapping[str, Sequence[str]] | Sequence[str] | None = None,
+    group_labels: Sequence[Any] | None = None,
+    group_name_map: Mapping[Any, str] | None = None,
+    palette: Mapping[Any, Any] | Sequence[Any] | None = None,
+    linestyle_map: Mapping[Any, str] | None = None,
+    n_cols: int | None = None,
     error_style: str = "band",
     xlabel: str = "Time",
     ylabel: str = "Amplitude",
@@ -589,9 +588,9 @@ def plot_timecourses(
             rgb = mcolors.to_rgb(mcolors.cnames.get(str(color_val), str(color_val)))
         except ValueError:
             return f"rgba(100,100,100,{alpha})"
-        return f"rgba({int(rgb[0]*255)}, {int(rgb[1]*255)}, {int(rgb[2]*255)}, {alpha})"
+        return f"rgba({int(rgb[0] * 255)}, {int(rgb[1] * 255)}, {int(rgb[2] * 255)}, {alpha})"
 
-    for idx, (roi_name, roi_channels) in enumerate(roi_dict.items()):
+    for idx, (_roi_name, roi_channels) in enumerate(roi_dict.items()):
         row = (idx // n_cols) + 1
         col = (idx % n_cols) + 1
 
@@ -640,7 +639,7 @@ def plot_timecourses(
                         x=x_values,
                         y=mean_erp + sem_erp,
                         mode="lines",
-                        line=dict(width=0),
+                        line={"width": 0},
                         showlegend=False,
                         legendgroup=str(grp),
                         hoverinfo="skip",
@@ -655,7 +654,7 @@ def plot_timecourses(
                         mode="lines",
                         fill="tonexty",
                         fillcolor=rgba_color,
-                        line=dict(width=0),
+                        line={"width": 0},
                         showlegend=False,
                         legendgroup=str(grp),
                         hoverinfo="skip",
@@ -672,7 +671,7 @@ def plot_timecourses(
                     mode="lines",
                     name=display_name,
                     legendgroup=str(grp),
-                    line=dict(color=color, width=line_width, dash=dash),
+                    line={"color": color, "width": line_width, "dash": dash},
                     opacity=opacity,
                     showlegend=show_lg,
                 ),
@@ -711,5 +710,5 @@ def plot_timecourses(
         height=base_height + row_height * n_rows,
         legend_horizontal=True,
     )
-    fig.update_layout(margin=dict(l=60, r=40, b=60, t=70))
+    fig.update_layout(margin={"l": 60, "r": 40, "b": 60, "t": 70})
     return fig

@@ -256,12 +256,14 @@ def test_validation_main(mock_training, mock_checkpoints):
     with tempfile.TemporaryDirectory() as tmpdir:
         out_file = Path(tmpdir) / "out.json"
         mock_checkpoints.return_value = [{"model_key": "cbramod", "status": "failed"}]
-        with patch(
-            "sys.argv",
-            ["validation.py", "--models", "cbramod", "--output", str(out_file)],
+        with (
+            patch(
+                "sys.argv",
+                ["validation.py", "--models", "cbramod", "--output", str(out_file)],
+            ),
+            pytest.raises(SystemExit),
         ):
-            with pytest.raises(SystemExit):
-                main()
+            main()
         assert out_file.exists()
 
 

@@ -18,36 +18,36 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
 import importlib
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
-    "METHODS",
-    "get_reducer_class",
     "DEFAULT_EVAL_GROUP_COL",
-    "parse_eval_specs",
+    "METHODS",
     "BaseReducerConfig",
-    "StochasticReducerConfig",
-    "PCAConfig",
-    "IncrementalPCAConfig",
+    "DMDConfig",
     "DaskPCAConfig",
     "DaskTruncatedSVDConfig",
-    "UMAPConfig",
-    "TSNEConfig",
-    "PacmapConfig",
-    "TrimapConfig",
-    "PHATEConfig",
+    "EvaluationConfig",
+    "IVISConfig",
+    "IncrementalPCAConfig",
     "IsomapConfig",
     "LLEConfig",
     "MDSConfig",
-    "SpectralEmbeddingConfig",
-    "DMDConfig",
-    "TRCAConfig",
-    "TopologicalAEConfig",
-    "IVISConfig",
+    "PCAConfig",
+    "PHATEConfig",
+    "PacmapConfig",
     "ParametricUMAPConfig",
-    "EvaluationConfig",
+    "SpectralEmbeddingConfig",
+    "StochasticReducerConfig",
+    "TRCAConfig",
+    "TSNEConfig",
+    "TopologicalAEConfig",
+    "TrimapConfig",
+    "UMAPConfig",
+    "get_reducer_class",
+    "parse_eval_specs",
 ]
 
 # --- Registry & Lazy Loading ---
@@ -208,7 +208,7 @@ def get_reducer_class(method: str):
             raise ImportError(
                 f"Could not import reducer '{method}'. "
                 f"Ensure required dependencies are installed. Error: {e}"
-            )
+            ) from e
         raise e
 
 
@@ -247,7 +247,7 @@ class BaseReducerConfig(_StrictConfigModel):
 class StochasticReducerConfig(_StrictConfigModel):
     """Mixin for reducers that expose a random seed."""
 
-    random_state: Optional[int] = Field(42, description="Seed for reproducibility")
+    random_state: int | None = Field(42, description="Seed for reproducibility")
 
 
 # --- Specific Reducer Configs ---
@@ -266,7 +266,7 @@ class IncrementalPCAConfig(BaseReducerConfig):
     """Configuration for Incremental PCA."""
 
     method: Literal["IncrementalPCA"] = "IncrementalPCA"
-    batch_size: Optional[int] = Field(None, description="Batch size.")
+    batch_size: int | None = Field(None, description="Batch size.")
     whiten: bool = Field(False, description="Whiten.")
 
 
@@ -295,7 +295,7 @@ class UMAPConfig(BaseReducerConfig, StochasticReducerConfig):
         0.1, ge=0.0, description="Minimum distance between points in low-dim space."
     )
     metric: str = Field("euclidean", description="Metric for distance computation.")
-    n_epochs: Optional[int] = Field(None, description="Number of training epochs.")
+    n_epochs: int | None = Field(None, description="Number of training epochs.")
     spread: float = Field(1.0, description="Effective scale of embedded points.")
     set_op_mix_ratio: float = Field(
         1.0, description="Interpolate between intersection and union (1.0 is union)."
@@ -403,7 +403,7 @@ class SpectralEmbeddingConfig(BaseReducerConfig, StochasticReducerConfig):
     affinity: str = Field(
         "nearest_neighbors", description="Affinity (nearest_neighbors, rbf, etc)."
     )
-    gamma: Optional[float] = Field(None, description="Kernel coefficient for rbf.")
+    gamma: float | None = Field(None, description="Kernel coefficient for rbf.")
 
 
 class DMDConfig(BaseReducerConfig):
@@ -429,7 +429,7 @@ class TRCAConfig(BaseReducerConfig):
 
     method: Literal["TRCA"] = "TRCA"
     sfreq: float = Field(250.0, description="Sampling frequency in Hertz.")
-    filterbank: Optional[list] = Field(
+    filterbank: list | None = Field(
         None,
         description=(
             "Optional filterbank definition as [(passband), (stopband)] groups."
@@ -472,7 +472,7 @@ class ParametricUMAPConfig(BaseReducerConfig, StochasticReducerConfig):
     n_neighbors: int = Field(15, description="Number of neighbors.")
     min_dist: float = Field(0.1, description="Minimum distance.")
     metric: str = Field("euclidean", description="Metric.")
-    n_epochs: Optional[int] = Field(None, description="Number of epochs.")
+    n_epochs: int | None = Field(None, description="Number of epochs.")
     batch_size: int = Field(1000, description="Batch size.")
     verbose: bool = Field(False, description="Verbose.")
 
@@ -544,11 +544,11 @@ class EvaluationConfig(_StrictConfigModel):
         default_factory=lambda: [5, 10, 20, 50, 100],
         description="Neighborhood sizes (k) for multi-scale evaluation.",
     )
-    selection_metric: Optional[str] = Field(
+    selection_metric: str | None = Field(
         default=None,
         description="Primary metric used for automatic method ranking.",
     )
-    selection_k: Optional[int] = Field(
+    selection_k: int | None = Field(
         default=None,
         description="Neighborhood size to compare for k-scoped ranking metrics.",
     )
@@ -591,7 +591,7 @@ class EvaluationConfig(_StrictConfigModel):
 
     @field_validator("selection_metric")
     @classmethod
-    def _validate_selection_metric(cls, value: Optional[str]) -> Optional[str]:
+    def _validate_selection_metric(cls, value: str | None) -> str | None:
         if value is None:
             return value
         if value not in _VALID_RANKING_METRICS:
@@ -603,7 +603,7 @@ class EvaluationConfig(_StrictConfigModel):
 
     @field_validator("selection_k")
     @classmethod
-    def _validate_selection_k(cls, value: Optional[int]) -> Optional[int]:
+    def _validate_selection_k(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("`selection_k` must be a positive integer.")
         return value
@@ -682,7 +682,7 @@ _MISSING_EVAL_VALUES: frozenset[str] = frozenset(
 
 
 def parse_eval_specs(
-    raw_specs: Union[Any, None],
+    raw_specs: Any | None,
     subject_col: str,
 ) -> list[dict[str, Any]]:
     """Parse raw eval spec input into a validated list of spec dicts.

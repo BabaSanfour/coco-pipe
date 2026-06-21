@@ -107,7 +107,7 @@ def test_with_features_replaces_feature_axis(sample_container):
 def test_with_features_default_names_and_same_dim(sample_container):
     new_X = np.random.randn(*sample_container.X.shape[:-1], 2)
     out = sample_container.with_features(new_X, feature_dim="time", new_dim_name="time")
-    assert out.X.shape == sample_container.X.shape[:-1] + (2,)
+    assert out.X.shape == (*sample_container.X.shape[:-1], 2)
     assert out.dims == sample_container.dims
     assert list(out.coords["time"]) == [0, 1]  # default integer names
 
@@ -425,7 +425,7 @@ def test_balance_stratified(data_container_cls):
     )
 
     # Check y balance
-    u, c = np.unique(balanced.y, return_counts=True)
+    _u, c = np.unique(balanced.y, return_counts=True)
     assert c[0] == c[1]  # Balanced classes
 
     # Check sex preservation (roughly)
@@ -446,7 +446,7 @@ def test_balance_auto_oversample(data_container_cls):
 
     balanced = container.balance(strategy="auto", random_state=42)
 
-    u, c = np.unique(balanced.y, return_counts=True)
+    _u, c = np.unique(balanced.y, return_counts=True)
     assert np.all(c == 10)
     assert balanced.shape[0] == 20
 
@@ -1296,10 +1296,12 @@ def test_select_fuzzy_no_match(sample_container, caplog):
     """Verify warning when fuzzy matching fails to find candidates."""
     import logging
 
-    with caplog.at_level(logging.WARNING):
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(ValueError, match="resulted in empty set"),
+    ):
         # xyz is very far from Fz, Cz, Pz.
-        with pytest.raises(ValueError, match="resulted in empty set"):
-            sample_container.select(channel=["xyz"], fuzzy=True)
+        sample_container.select(channel=["xyz"], fuzzy=True)
 
     assert "No fuzzy match found" in caplog.text
 

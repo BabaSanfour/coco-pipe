@@ -11,8 +11,6 @@ flip_pc_scores_for_consistency
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 import pandas as pd
 
@@ -25,7 +23,7 @@ __all__ = [
 def apply_pca_score_baseline(
     time: np.ndarray,
     scores: pd.DataFrame,
-    n_points: Optional[int] = None,
+    n_points: int | None = None,
     baseline_min_ms: float = -200.0,
     baseline_max_ms: float = 0.0,
 ) -> pd.DataFrame:
@@ -45,7 +43,7 @@ def apply_pca_score_baseline(
     time : np.ndarray of shape (n_times,)
         Time stamps aligned with the columns of ``scores``.
     scores : pd.DataFrame
-        PC rows × time columns.
+        PC rows x time columns.
     n_points : int, optional
         Number of leading samples to use as baseline.  When set, takes
         priority over the time-window mode.
@@ -87,7 +85,7 @@ def flip_pc_scores_for_consistency(
     Parameters
     ----------
     scores : pd.DataFrame
-        PC rows × time columns.
+        PC rows x time columns.
     time : np.ndarray of shape (n_times,)
         Time stamps aligned with the columns of ``scores``.
     flip_window_ms : tuple[float, float], default=(-200.0, 800.0)

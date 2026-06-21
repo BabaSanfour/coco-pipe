@@ -1,8 +1,8 @@
 .. _report:
 
-==================================================
-Report Module — Scientific User Guide
-==================================================
+=======
+Reports
+=======
 
 The ``coco_pipe.report`` module assembles single-file HTML reports from
 :ref:`decoding <decoding>` results, :ref:`dim-reduction <dim-reduction>`
@@ -97,40 +97,9 @@ Hand-built sections                          :class:`~coco_pipe.report.Report` +
 
 .. toctree::
    :maxdepth: 2
-   :caption: Core Concepts
+   :caption: User Guide
 
-   concepts
-   core
+   guide
+   sections
    elements
-   configuration
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Section Builders
-
-   decoding
-   dim_reduction
-   data_quality
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Factories and Assembly
-
-   api
-   assets
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Advanced Topics
-
-   advanced/templates
-   advanced/extensions
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Worked Examples
-
-   examples/basic_report
-   examples/decoding_report
-   examples/reduction_report
-   examples/offline_report
+   advanced

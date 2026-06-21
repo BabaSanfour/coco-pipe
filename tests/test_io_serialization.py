@@ -140,7 +140,7 @@ def test_read_table_explicit_separator(tmp_path):
 def test_read_table_unsupported_format_raises(tmp_path):
     path = tmp_path / "features.tsv"
     path.touch()
-    with pytest.raises(ValueError, match="Expected .csv or .parquet"):
+    with pytest.raises(ValueError, match=r"Expected \.csv or \.parquet"):
         read_table(path)
 
 

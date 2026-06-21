@@ -1,14 +1,17 @@
 .. _decoding:
 
-===========================================
-Decoding Module — Scientific User Guide
-===========================================
+========
+Decoding
+========
 
 The ``coco_pipe.decoding`` module provides a rigorous, reproducible framework for
 neural decoding — the statistical inference of cognitive, perceptual, or clinical
-states from multivariate brain recordings. It is designed from first principles
-around **zero data leakage**, **independence-aware inference**, and a
-**declarative configuration** API.
+states from multivariate brain recordings. It covers **both classical machine
+learning and foundation-model pipelines** through one declarative API: scikit-learn
+estimators and frozen, fine-tuned, or parameter-efficient (LoRA/QLoRA) backbones
+are treated as interchangeable, directly comparable models. It is designed from
+first principles around **zero data leakage**, **independence-aware inference**,
+and a **declarative configuration** API.
 
 .. admonition:: Design Philosophy
 
@@ -61,43 +64,11 @@ around **zero data leakage**, **independence-aware inference**, and a
 
 .. toctree::
    :maxdepth: 2
-   :caption: Core Concepts
+   :caption: User Guide
 
    concepts
-   configs
-   experiment
-   result
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Statistical Inference
-
-   stats
-   cv_strategies
-   model_comparison
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Model Reference
-
+   guide
+   inference
    models
-   metrics
-   feature_selection
-   temporal_decoding
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Advanced Topics
-
-   advanced/foundation_models
-   advanced/custom_estimators
-   advanced/reproducibility
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Worked Examples
-
-   examples/basic_classification
-   examples/grouped_cv
-   examples/temporal_eeg
-   examples/model_comparison
+   foundation_models
+   advanced

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 
 def make_feature_cache_key(

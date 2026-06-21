@@ -27,7 +27,8 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from scipy.stats import spearmanr
@@ -36,19 +37,19 @@ from ..utils import import_optional_dependency
 
 __all__ = [
     "correlate_features",
-    "perturbation_importance",
     "gradient_importance",
     "interpret_features",
+    "perturbation_importance",
 ]
 
 
 def _analysis_records_from_correlations(
-    correlations: Dict[str, Dict[str, float]],
+    correlations: dict[str, dict[str, float]],
     *,
     method_name: str,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Flatten nested correlation output into tidy analysis records."""
-    records: list[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for component, feature_scores in correlations.items():
         for feature, value in feature_scores.items():
             records.append(
@@ -64,13 +65,13 @@ def _analysis_records_from_correlations(
 
 
 def _analysis_records_from_importance(
-    scores: Dict[str, float],
+    scores: dict[str, float],
     *,
     analysis_name: str,
     method_name: str,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Flatten feature-importance scores into tidy analysis records."""
-    records: list[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for feature, value in scores.items():
         if isinstance(value, (int, float, np.number)) and not isinstance(value, bool):
             records.append(
@@ -88,7 +89,7 @@ def correlate_features(
     X_orig: np.ndarray,
     X_emb: np.ndarray,
     feature_names: Sequence[str],
-) -> Dict[str, Dict[str, float]]:
+) -> dict[str, dict[str, float]]:
     """
     Compute Spearman correlations between original features and embedding axes.
 
@@ -152,10 +153,10 @@ def correlate_features(
         raise ValueError(
             "Length of `feature_names` must match the number of input features."
         )
-    results: Dict[str, Dict[str, float]] = {}
+    results: dict[str, dict[str, float]] = {}
 
     for component_index in range(X_emb.shape[1]):
-        component_scores: Dict[str, float] = {}
+        component_scores: dict[str, float] = {}
         for feature_index, feature_name in enumerate(names):
             rho, _ = spearmanr(X_orig[:, feature_index], X_emb[:, component_index])
             if not np.isfinite(rho):
@@ -179,8 +180,8 @@ def perturbation_importance(
     feature_names: Sequence[str],
     X_emb: np.ndarray,
     n_repeats: int = 5,
-    random_state: Optional[int] = None,
-) -> Dict[str, float]:
+    random_state: int | None = None,
+) -> dict[str, float]:
     """
     Compute model-agnostic feature importance by feature shuffling.
 
@@ -269,14 +270,14 @@ def perturbation_importance(
         scores = np.zeros_like(scores, dtype=float)
     else:
         scores = scores / total
-    return {name: float(score) for name, score in zip(names, scores)}
+    return {name: float(score) for name, score in zip(names, scores, strict=False)}
 
 
 def gradient_importance(
     wrapper: Any,
     X: np.ndarray,
-    feature_names: Optional[Sequence[str]] = None,
-) -> Dict[str, Any]:
+    feature_names: Sequence[str] | None = None,
+) -> dict[str, Any]:
     """
     Compute encoder saliency by differentiating embedding magnitude w.r.t. input.
 
@@ -388,20 +389,20 @@ def gradient_importance(
         raise ValueError(
             "Length of `feature_names` must match the number of reduced features."
         )
-    return {name: float(score) for name, score in zip(names, scores)}
+    return {name: float(score) for name, score in zip(names, scores, strict=False)}
 
 
 def interpret_features(
     X: np.ndarray,
     *,
-    X_emb: Optional[np.ndarray] = None,
-    model: Optional[Any] = None,
-    analyses: Optional[Sequence[str]] = None,
-    feature_names: Optional[Sequence[str]] = None,
+    X_emb: np.ndarray | None = None,
+    model: Any | None = None,
+    analyses: Sequence[str] | None = None,
+    feature_names: Sequence[str] | None = None,
     method_name: str = "embedding",
     n_repeats: int = 5,
-    random_state: Optional[int] = None,
-) -> Dict[str, Any]:
+    random_state: int | None = None,
+) -> dict[str, Any]:
     """
     Run one or more feature interpretation analyses.
 
@@ -476,8 +477,8 @@ def interpret_features(
     """
     requested = list(analyses) if analyses is not None else ["correlation"]
 
-    analysis_payload: Dict[str, Any] = {}
-    records: list[Dict[str, Any]] = []
+    analysis_payload: dict[str, Any] = {}
+    records: list[dict[str, Any]] = []
 
     for analysis_name in requested:
         if analysis_name == "correlation":

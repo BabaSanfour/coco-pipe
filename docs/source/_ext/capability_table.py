@@ -1,35 +1,22 @@
-"""
-capability_table
-================
+"""Custom Sphinx directives for coco-pipe model capability tables.
 
-A custom Sphinx directive that reads ``ESTIMATOR_SPECS`` from
-``coco_pipe.decoding._specs`` at build time and emits a formatted RST
-``list-table`` showing each estimator's capabilities.
+This extension provides two directives:
 
-Usage in any .rst file::
+.. code-block:: rst
 
-    .. capability-table::
-        :task: classification
+   .. capability-table::
+      :task: classification
 
-    .. capability-table::
-        :task: regression
+   .. capability-table::
+      :task: regression
+      :show-search-space:
 
-    .. capability-table::
-        :task: all
-
-Options
--------
-task : str, default="all"
-    Filter by task: ``classification``, ``regression``, or ``all``.
-show-search-space : flag
-    If present, append a column with the default search space keys.
+   .. foundation-table::
 """
 
 from __future__ import annotations
 
-import os
-import sys
-from typing import List
+from typing import Any, ClassVar
 
 from docutils import nodes
 from docutils.parsers.rst import Directive, directives
@@ -37,165 +24,293 @@ from sphinx.util import logging
 
 logger = logging.getLogger(__name__)
 
-# Ensure the package root is on sys.path so we can import coco_pipe
-_REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
-)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
 
 def _yes_no(value: bool) -> str:
-    return "✅" if value else "❌"
+    """Return a compact yes/no label."""
+    return "yes" if value else "no"
 
 
-def _importance_label(tup: tuple) -> str:
-    mapping = {
-        "coefficients": "coef\\_",
-        "feature_importances": "feat\\_imp",
-        "permutation": "permutation",
-        "unavailable": "❌",
+def _task_label(tasks: tuple[str, ...]) -> str:
+    """Return a compact task label."""
+    labels = {
+        "classification": "clf",
+        "regression": "reg",
     }
-    return " / ".join(mapping.get(v, v) for v in tup)
+    return " + ".join(labels.get(task, task) for task in tasks)
 
 
-def _task_label(tup: tuple) -> str:
-    abbrev = {"classification": "clf", "regression": "reg"}
-    return " + ".join(abbrev.get(t, t) for t in tup)
+def _importance_label(values: tuple[str, ...]) -> str:
+    """Return a compact feature-importance label."""
+    labels = {
+        "coefficients": "coef",
+        "feature_importances": "feature importances",
+        "permutation": "permutation",
+        "unavailable": "no",
+    }
+    return " / ".join(labels.get(value, value) for value in values)
 
 
 def _family_label(family: str) -> str:
-    return family.capitalize()
+    """Return a display label for an estimator family."""
+    return family.replace("_", " ").title()
+
+
+def _format_unknown(value: Any, *, suffix: str = "") -> str:
+    """Format optional values for display."""
+    if value in {None, "", "unknown"}:
+        return "unknown"
+    return f"{value}{suffix}"
+
+
+def _literal(text: str) -> nodes.literal:
+    """Create an inline literal node."""
+    return nodes.literal(text, text)
+
+
+def _text_cell(value: str) -> nodes.entry:
+    """Create a table cell containing plain text."""
+    entry = nodes.entry()
+    paragraph = nodes.paragraph()
+    paragraph += nodes.Text(value)
+    entry += paragraph
+    return entry
+
+
+def _literal_cell(value: str) -> nodes.entry:
+    """Create a table cell containing inline literal text."""
+    entry = nodes.entry()
+    paragraph = nodes.paragraph()
+    paragraph += _literal(value)
+    entry += paragraph
+    return entry
+
+
+def _make_entry(value: str, *, literal: bool = False) -> nodes.entry:
+    """Create a table entry."""
+    return _literal_cell(value) if literal else _text_cell(value)
+
+
+def _make_row(values: list[tuple[str, bool]]) -> nodes.row:
+    """Create a table row.
+
+    Parameters
+    ----------
+    values
+        Pairs of ``(cell_text, is_literal)``.
+    """
+    row = nodes.row()
+    for text, is_literal in values:
+        row += _make_entry(text, literal=is_literal)
+    return row
+
+
+def _make_table(
+    headers: list[str],
+    rows: list[list[tuple[str, bool]]],
+    *,
+    css_class: str,
+) -> nodes.table:
+    """Create a docutils table."""
+    table = nodes.table(classes=[css_class])
+    tgroup = nodes.tgroup(cols=len(headers))
+    table += tgroup
+
+    for _ in headers:
+        tgroup += nodes.colspec(colwidth=1)
+
+    thead = nodes.thead()
+    thead += _make_row([(header, False) for header in headers])
+    tgroup += thead
+
+    tbody = nodes.tbody()
+    for values in rows:
+        tbody += _make_row(values)
+    tgroup += tbody
+
+    return table
+
+
+def _warning_node(message: str) -> nodes.warning:
+    """Create a Sphinx/docutils warning node."""
+    warning = nodes.warning()
+    warning += nodes.paragraph(text=message)
+    return warning
+
+
+def _load_estimator_specs() -> dict[str, Any]:
+    """Load estimator specifications from coco-pipe."""
+    try:
+        from coco_pipe.decoding._specs import ESTIMATOR_SPECS
+    except Exception as exc:  # pragma: no cover - Sphinx build safeguard
+        msg = f"capability-table: could not load ESTIMATOR_SPECS: {exc}"
+        logger.warning(msg)
+        raise RuntimeError(msg) from exc
+
+    return ESTIMATOR_SPECS
 
 
 class CapabilityTableDirective(Directive):
-    """
-    Sphinx directive ``.. capability-table::``
-
-    Emits an RST list-table of all registered estimators and their key
-    capabilities, optionally filtered by task.
-    """
+    """Generate a table of registered decoding estimators."""
 
     has_content = False
     optional_arguments = 0
-    option_spec = {
+    option_spec: ClassVar[dict] = {
         "task": directives.unchanged,
         "show-search-space": directives.flag,
     }
 
-    # Column definitions: (header, width, extractor)
-    _COLUMNS = [
-        ("Estimator", 28, lambda s: f"``{s.name}``"),
-        ("Family", 12, lambda s: _family_label(s.family)),
-        ("Task", 9, lambda s: _task_label(s.task)),
-        ("Proba", 6, lambda s: _yes_no(s.supports_proba)),
-        ("Score fn", 8, lambda s: _yes_no(s.supports_decision_function)),
-        ("Calibrate", 9, lambda s: _yes_no(s.supports_calibration)),
-        ("Feature sel", 11, lambda s: _yes_no("disabled" not in s.feature_selection)),
-        ("Importances", 13, lambda s: _importance_label(s.importance)),
-        ("Temporal", 11, lambda s: s.temporal if s.temporal != "none" else "❌"),
-        (
-            "Dep",
-            7,
-            lambda s: s.dependency_extra if s.dependency_extra != "core" else "—",
-        ),
-    ]
-
-    def run(self) -> List[nodes.Node]:
+    def run(self) -> list[nodes.Node]:
+        """Run the directive."""
         try:
-            # Import directly from submodule to avoid triggering coco_pipe.__init__
-            # which may pull in optional heavy dependencies (pydantic, etc.)
-            import importlib.util
-            import pathlib
-
-            spec_file = (
-                pathlib.Path(_REPO_ROOT) / "coco_pipe" / "decoding" / "_specs.py"
-            )
-            spec_mod = importlib.util.spec_from_file_location("_specs", spec_file)
-            mod = importlib.util.module_from_spec(spec_mod)
-            # _specs.py depends on _constants.py — load that first
-            const_file = (
-                pathlib.Path(_REPO_ROOT) / "coco_pipe" / "decoding" / "_constants.py"
-            )
-            const_spec = importlib.util.spec_from_file_location(
-                "_constants", const_file
-            )
-            const_mod = importlib.util.module_from_spec(const_spec)
-            const_spec.loader.exec_module(const_mod)
-            import sys as _sys
-
-            _sys.modules["coco_pipe.decoding._constants"] = const_mod
-            spec_mod.loader.exec_module(mod)
-            ESTIMATOR_SPECS = mod.ESTIMATOR_SPECS
-        except Exception as exc:
-            error_msg = f"capability-table: could not load ESTIMATOR_SPECS: {exc}"
-            logger.warning(error_msg)
-            return [nodes.warning("", nodes.paragraph(text=error_msg))]
+            estimator_specs = _load_estimator_specs()
+        except RuntimeError as exc:
+            return [_warning_node(str(exc))]
 
         task_filter = self.options.get("task", "all").strip().lower()
-        show_search = "show-search-space" in self.options
+        show_search_space = "show-search-space" in self.options
 
-        specs = list(ESTIMATOR_SPECS.values())
+        specs = list(estimator_specs.values())
         if task_filter != "all":
-            specs = [s for s in specs if task_filter in s.task]
+            specs = [spec for spec in specs if task_filter in spec.task]
 
         if not specs:
             return [
                 nodes.paragraph(text=f"No estimators found for task='{task_filter}'.")
             ]
 
-        columns = list(self._COLUMNS)
-        if show_search:
-            columns.append(
+        headers = [
+            "Estimator",
+            "Family",
+            "Task",
+            "Proba",
+            "Score fn",
+            "Calibrate",
+            "Feature sel.",
+            "Importances",
+            "Temporal",
+            "Dep.",
+        ]
+
+        if show_search_space:
+            headers.append("Search space keys")
+
+        rows = []
+        for spec in sorted(specs, key=lambda item: (item.family, item.name)):
+            values = [
+                (spec.name, True),
+                (_family_label(spec.family), False),
+                (_task_label(spec.task), False),
+                (_yes_no(spec.supports_proba), False),
+                (_yes_no(spec.supports_decision_function), False),
+                (_yes_no(spec.supports_calibration), False),
+                (_yes_no("disabled" not in spec.feature_selection), False),
+                (_importance_label(spec.importance), False),
+                (spec.temporal if spec.temporal != "none" else "no", False),
                 (
-                    "Search space keys",
-                    20,
-                    lambda s: ", ".join(f"``{k}``" for k in s.default_search_space)
-                    or "—",
-                )
+                    spec.dependency_extra
+                    if spec.dependency_extra != "core"
+                    else "core",
+                    False,
+                ),
+            ]
+
+            if show_search_space:
+                keys = ", ".join(spec.default_search_space) or "none"
+                values.append((keys, True))
+
+            rows.append(values)
+
+        return [
+            _make_table(
+                headers,
+                rows,
+                css_class="capability-table",
             )
+        ]
 
-        # Build the RST list-table text
-        col_widths = " ".join(str(c[1]) for c in columns)
-        header_cells = "\n".join(f"   * - {c[0]}" for c in columns)
 
-        rows_rst = []
-        for spec in sorted(specs, key=lambda s: (s.family, s.name)):
-            cells = []
-            for i, (_, _, extractor) in enumerate(columns):
-                prefix = "     - " if i > 0 else "   * - "
-                cells.append(f"{prefix}{extractor(spec)}")
-            rows_rst.append("\n".join(cells))
+class FoundationTableDirective(Directive):
+    """Generate a table of registered foundation models."""
 
-        table_rst = (
-            f".. list-table::\n"
-            f"   :header-rows: 1\n"
-            f"   :widths: {col_widths}\n"
-            f"\n"
-            f"{header_cells}\n" + "\n".join(rows_rst)
-        )
+    has_content = False
+    required_arguments = 0
+    optional_arguments = 0
+    option_spec: ClassVar[dict] = {}
 
-        # Parse the generated RST into docutils nodes
-        from docutils.statemachine import ViewList
-        from sphinx.util.docutils import switch_source_input
+    def run(self) -> list[nodes.Node]:
+        """Run the directive."""
+        try:
+            estimator_specs = _load_estimator_specs()
+        except RuntimeError as exc:
+            return [_warning_node(str(exc))]
 
-        result = ViewList()
-        source = self.get_source_info()[0]
-        for lineno, line in enumerate(table_rst.splitlines()):
-            result.append(line, source, lineno)
+        specs = [
+            spec for spec in estimator_specs.values() if spec.family == "foundation"
+        ]
 
-        node = nodes.section()
-        node.document = self.state.document
-        with switch_source_input(self.state, result):
-            self.state.nested_parse(result, 0, node)
+        if not specs:
+            return [nodes.paragraph(text="No foundation models found.")]
 
-        return node.children
+        headers = [
+            "Model",
+            "Hub repo",
+            "Emb. dim",
+            "sfreq",
+            "Channels",
+            "Interpolation",
+            "Train modes",
+            "Backend",
+        ]
+
+        rows = []
+        for spec in sorted(specs, key=lambda item: item.name):
+            channels = getattr(spec, "pretrained_n_chans", None)
+            train_modes = getattr(spec, "supported_train_modes", [])
+
+            values = [
+                (getattr(spec, "display_name", spec.name) or spec.name, False),
+                (getattr(spec, "hub_repo", "unknown"), True),
+                (_format_unknown(getattr(spec, "embedding_dim", None)), False),
+                (
+                    _format_unknown(
+                        getattr(spec, "pretrained_sfreq", None),
+                        suffix=" Hz",
+                    ),
+                    False,
+                ),
+                (str(channels) if channels else "varies", False),
+                (
+                    _yes_no(
+                        getattr(
+                            spec,
+                            "supports_channel_interpolation",
+                            False,
+                        )
+                    ),
+                    False,
+                ),
+                (", ".join(train_modes) or "none", True),
+                (getattr(spec, "preferred_backend", "unknown"), True),
+            ]
+
+            rows.append(values)
+
+        return [
+            _make_table(
+                headers,
+                rows,
+                css_class="foundation-table",
+            )
+        ]
 
 
 def setup(app):
+    """Register the custom Sphinx directives."""
     app.add_directive("capability-table", CapabilityTableDirective)
+    app.add_directive("foundation-table", FoundationTableDirective)
+
     return {
-        "version": "1.0",
+        "version": "1.2",
         "parallel_read_safe": True,
         "parallel_write_safe": True,
     }

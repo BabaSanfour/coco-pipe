@@ -19,7 +19,7 @@ import re
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -35,9 +35,8 @@ class Element(ABC):
     @abstractmethod
     def render(self) -> str:
         """Render the element to HTML."""
-        pass
 
-    def collect_payload(self, registry: Dict[str, Any]) -> None:
+    def collect_payload(self, registry: dict[str, Any]) -> None:  # noqa: B027
         """
         Collect data to be stored in the global payload.
         Default implementation does nothing.
@@ -47,7 +46,6 @@ class Element(ABC):
         registry : Dict[str, Any]
             Global dictionary accumulating data. Keyed by UUID.
         """
-        pass
 
 
 class HtmlElement(Element):
@@ -92,7 +90,7 @@ class ImageElement(Element):
     >>> elem = ImageElement(fig, caption="My Plot")
     """
 
-    def __init__(self, src: Any, caption: Optional[str] = None, width: str = "100%"):
+    def __init__(self, src: Any, caption: str | None = None, width: str = "100%"):
         self.src = src
         self.caption = caption
         self.width = width
@@ -178,7 +176,7 @@ class PlotlyElement(Element):
         self.height = height
         self.registry_id = None
 
-    def collect_payload(self, registry: Dict[str, Any]) -> None:
+    def collect_payload(self, registry: dict[str, Any]) -> None:
         """Extract figure data and store in registry."""
         if self.registry_id is None:
             self.registry_id = str(uuid.uuid4())
@@ -213,7 +211,7 @@ class PlotlyElement(Element):
                     return obj
 
             return {k: self._force_standard_json(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
+        if isinstance(obj, list):
             return [self._force_standard_json(x) for x in obj]
         return obj
 
@@ -270,7 +268,7 @@ class TableElement(Element):
     >>> elem = TableElement(df, title="Metrics")
     """
 
-    def __init__(self, data: Any, title: Optional[str] = None):
+    def __init__(self, data: Any, title: str | None = None):
         self.data = data
         self.title = title
         self.table_id = f"table-{uuid.uuid4().hex[:8]}"
@@ -364,9 +362,9 @@ class InteractiveTableElement(Element):
     def __init__(
         self,
         data: Any,
-        title: Optional[str] = None,
-        selector_columns: Optional[List[str]] = None,
-        default_sort: Optional[Dict[str, str]] = None,
+        title: str | None = None,
+        selector_columns: list[str] | None = None,
+        default_sort: dict[str, str] | None = None,
         page_size: int = 50,
     ):
         self.data = data
@@ -374,9 +372,9 @@ class InteractiveTableElement(Element):
         self.selector_columns = list(selector_columns or [])
         self.default_sort = dict(default_sort) if default_sort else None
         self.page_size = int(page_size)
-        self.registry_id: Optional[str] = None
+        self.registry_id: str | None = None
 
-    def collect_payload(self, registry: Dict[str, Any]) -> None:
+    def collect_payload(self, registry: dict[str, Any]) -> None:
         if self.registry_id is None:
             self.registry_id = str(uuid.uuid4())
 
@@ -444,8 +442,8 @@ class MetricsTableElement(TableElement):
         self,
         data: Any,
         title: str = "Comparison Metrics",
-        highlight_cols: Optional[List[str]] = None,
-        higher_is_better: Union[bool, List[str]] = True,
+        highlight_cols: list[str] | None = None,
+        higher_is_better: bool | list[str] = True,
     ):
         super().__init__(data, title)
         self.highlight_cols = highlight_cols
@@ -527,7 +525,7 @@ class StatCardElement(Element):
     >>> report.add_summary_card({"Mean Accuracy": 0.842, "Models": 3})
     """
 
-    _COLORS = {
+    _COLORS: ClassVar[dict[str, tuple[str, str]]] = {
         "blue": ("bg-blue-500", "text-blue-600 dark:text-blue-400"),
         "green": ("bg-green-500", "text-green-600 dark:text-green-400"),
         "yellow": ("bg-yellow-500", "text-yellow-600 dark:text-yellow-400"),
@@ -540,7 +538,7 @@ class StatCardElement(Element):
         label: str,
         value: Any,
         unit: str = "",
-        delta: Optional[str] = None,
+        delta: str | None = None,
         color: str = "blue",
     ):
         self.label = label
@@ -593,7 +591,7 @@ class CalloutElement(Element):
     >>> sec.add_element(note)
     """
 
-    _STYLES: Dict[str, tuple[str, str]] = {
+    _STYLES: ClassVar[dict[str, tuple[str, str]]] = {
         "info": (
             "bg-blue-50 border-blue-400 text-blue-800 "
             "dark:bg-blue-900/20 dark:text-blue-200",
@@ -616,7 +614,7 @@ class CalloutElement(Element):
         ),
     }
 
-    def __init__(self, text: str, kind: str = "info", title: Optional[str] = None):
+    def __init__(self, text: str, kind: str = "info", title: str | None = None):
         self.text = text
         self.kind = kind
         self.title = title
@@ -665,7 +663,7 @@ class CodeBlockElement(Element):
         self,
         code: str,
         language: str = "",
-        title: Optional[str] = None,
+        title: str | None = None,
         copyable: bool = True,
     ):
         self._code = code
@@ -721,9 +719,9 @@ class ContainerElement(Element):
     """
 
     def __init__(self):
-        self.children: List[Element] = []
+        self.children: list[Element] = []
 
-    def add_element(self, element: Union[Element, str]):
+    def add_element(self, element: Element | str):
         """
         Add a child element.
 
@@ -753,7 +751,7 @@ class ContainerElement(Element):
         """Render all child elements concatenated."""
         return "\n".join([c.render() for c in self.children])
 
-    def collect_payload(self, registry: Dict[str, Any]) -> None:
+    def collect_payload(self, registry: dict[str, Any]) -> None:
         """Recursively collect payload from children."""
         for child in self.children:
             child.collect_payload(registry)
@@ -785,8 +783,8 @@ class ColumnsElement(ContainerElement):
 
     def __init__(
         self,
-        elements: List[Element],
-        cols: Optional[int] = None,
+        elements: list[Element],
+        cols: int | None = None,
         gap: str = "gap-4",
     ):
         super().__init__()
@@ -895,7 +893,7 @@ class ProgressBarElement(Element):
         self,
         value: float,
         max_value: float = 100.0,
-        label: Optional[str] = None,
+        label: str | None = None,
         color: str = "blue",
     ):
         self.value = max(0.0, min(value, max_value))
@@ -926,7 +924,7 @@ class ProgressBarElement(Element):
 class TimelineElement(Element):
     """A vertical timeline of events."""
 
-    def __init__(self, events: List[Dict[str, str]]):
+    def __init__(self, events: list[dict[str, str]]):
         self.events = events
 
     def render(self) -> str:
@@ -959,7 +957,7 @@ class TimelineElement(Element):
 class TabsElement(ContainerElement):
     """A tabbed container for multiple elements."""
 
-    def __init__(self, tabs: Dict[str, Element]):
+    def __init__(self, tabs: dict[str, Element]):
         super().__init__()
         self.tabs = tabs
         self._group_id = str(uuid.uuid4())[:8]
@@ -1033,7 +1031,7 @@ class DownloadAssetElement(Element):
 
     def __init__(
         self,
-        data: Union[str, bytes],
+        data: str | bytes,
         filename: str,
         mime_type: str = "application/octet-stream",
         label: str = "Download Asset",
@@ -1055,7 +1053,7 @@ class DownloadAssetElement(Element):
                 size / 1024 / 1024,
             )
 
-    def collect_payload(self, registry: Dict[str, Any]) -> None:
+    def collect_payload(self, registry: dict[str, Any]) -> None:
         if self.registry_id is None:
             self.registry_id = str(uuid.uuid4())
 
@@ -1128,23 +1126,23 @@ class DownloadAssetElement(Element):
 
 
 __all__ = [
+    "AccordionElement",
+    "BadgeElement",
+    "CalloutElement",
+    "CodeBlockElement",
+    "ColumnsElement",
+    "ContainerElement",
+    "DownloadAssetElement",
     "Element",
     "HtmlElement",
     "ImageElement",
-    "PlotlyElement",
-    "TableElement",
     "InteractiveTableElement",
-    "MetricsTableElement",
-    "StatCardElement",
-    "CalloutElement",
-    "CodeBlockElement",
-    "ContainerElement",
-    "ColumnsElement",
-    "AccordionElement",
     "MarkdownElement",
-    "BadgeElement",
+    "MetricsTableElement",
+    "PlotlyElement",
     "ProgressBarElement",
-    "TimelineElement",
+    "StatCardElement",
+    "TableElement",
     "TabsElement",
-    "DownloadAssetElement",
+    "TimelineElement",
 ]

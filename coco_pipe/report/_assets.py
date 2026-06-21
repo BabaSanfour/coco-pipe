@@ -40,7 +40,7 @@ def _cache_dir() -> Path:
     return Path.home() / ".cache" / "coco-pipe" / "report-assets"
 
 
-_USER_AGENT = "coco-pipe/asset-vendor " "(+https://github.com/BabaSanfour/coco-pipe)"
+_USER_AGENT = "coco-pipe/asset-vendor (+https://github.com/BabaSanfour/coco-pipe)"
 
 
 def _download_to(path: Path, url: str, timeout: float = 30.0) -> None:
@@ -53,7 +53,7 @@ def _download_to(path: Path, url: str, timeout: float = 30.0) -> None:
     tmp = path.with_suffix(path.suffix + ".part")
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             tmp.write_bytes(resp.read())
         tmp.replace(path)
     finally:

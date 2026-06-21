@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -240,7 +241,7 @@ def test_showcase_preset_renders_multiple_comparison_views():
     # heatmap / spread / metric matrix keyed on the first by-axis ("scope")
     assert (
         sum(
-            any(token in title for token in ("×", "Spread", "Matrix"))
+            any(token in title for token in ("x", "Spread", "Matrix"))
             for title in titles
         )
         >= 2
@@ -284,18 +285,18 @@ def test_collect_results_and_result_collection_edge_cases(tmp_path):
     summary = pd.DataFrame({"scope": ["EO"], "accuracy_mean": [0.9]})
     coll = ResultCollection(by=("scope",), results={}, contexts={}, summary=summary)
     assert "_status" not in coll.successful_summary.columns
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError):
         _load_result(tmp_path)  # directory exists, result.joblib inside does not
 
     with pytest.raises(ValueError, match="by must contain"):
         collect_results([], by=())
 
     result = make_synthetic_result(n_models=2, n_times=1)
-    coll2 = collect_results([({**{"scope": "EO"}}, result)], by=("scope",))
+    coll2 = collect_results([({"scope": "EO"}, result)], by=("scope",))
     assert "Model" in coll2.summary.columns or len(coll2.results) == 1
 
     class EmptyResult:
-        raw = {}
+        raw: ClassVar[dict] = {}
 
         def summary(self):
             return pd.DataFrame()

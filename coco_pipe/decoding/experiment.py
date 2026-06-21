@@ -8,9 +8,10 @@ import atexit
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from shutil import rmtree
 from tempfile import mkdtemp
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any
 
 import joblib
 import numpy as np
@@ -68,10 +69,10 @@ class Experiment:
 
     def __init__(self, config: ExperimentConfig):
         self.config = config
-        self.results: Dict[str, Any] = {}
-        self.result_: Optional[ExperimentResult] = None
-        self._model_specs: Dict[str, Any] = {}
-        self._model_capabilities: Dict[str, Any] = {}
+        self.results: dict[str, Any] = {}
+        self.result_: ExperimentResult | None = None
+        self._model_specs: dict[str, Any] = {}
+        self._model_capabilities: dict[str, Any] = {}
         self._propagate_random_state()
         self._validate_config()
 
@@ -268,7 +269,7 @@ class Experiment:
 
         ss = SeedSequence(seed + 5)
         model_seeds = ss.spawn(len(model_names))
-        for name, m_ss in zip(model_names, model_seeds):
+        for name, m_ss in zip(model_names, model_seeds, strict=False):
             self._inject_seed(self.config.models[name], int(m_ss.generate_state(1)[0]))
 
     def _inject_seed(self, cfg: Any, seed: int):
@@ -279,9 +280,12 @@ class Experiment:
             cfg.cv.random_state = seed
 
         # Classical parameters dictionary
-        if getattr(cfg, "kind", None) == "classical" and hasattr(cfg, "params"):
-            if resolve_estimator_spec(cfg).supports_random_state:
-                cfg.params["random_state"] = seed
+        if (
+            getattr(cfg, "kind", None) == "classical"
+            and hasattr(cfg, "params")
+            and resolve_estimator_spec(cfg).supports_random_state
+        ):
+            cfg.params["random_state"] = seed
 
         # Recursion into sub-components (backbone, head, base)
         for attr in ("backbone", "head", "base"):
@@ -424,7 +428,7 @@ class Experiment:
             )
         return est_cls(**params)
 
-    def _create_fs_step(self, estimator: BaseEstimator) -> Optional[tuple]:
+    def _create_fs_step(self, estimator: BaseEstimator) -> tuple | None:
         """Create a feature selection step compatible with the chosen model."""
         fs_conf = self.config.feature_selection
         if fs_conf.method == "k_best":
@@ -488,15 +492,15 @@ class Experiment:
     def run(
         self,
         X: np.ndarray,
-        y: Union[pd.Series, np.ndarray],
-        groups: Optional[Union[pd.Series, np.ndarray]] = None,
-        feature_names: Optional[Sequence[str]] = None,
-        sample_ids: Optional[Sequence[Any]] = None,
-        sample_metadata: Optional[Union[pd.DataFrame, Dict[str, Sequence[Any]]]] = None,
+        y: pd.Series | np.ndarray,
+        groups: pd.Series | np.ndarray | None = None,
+        feature_names: Sequence[str] | None = None,
+        sample_ids: Sequence[Any] | None = None,
+        sample_metadata: pd.DataFrame | dict[str, Sequence[Any]] | None = None,
         observation_level: str = "sample",
-        inferential_unit: Optional[str] = None,
-        time_axis: Optional[Sequence[Any]] = None,
-        sample_weight: Optional[np.ndarray] = None,
+        inferential_unit: str | None = None,
+        time_axis: Sequence[Any] | None = None,
+        sample_weight: np.ndarray | None = None,
     ) -> ExperimentResult:
         """
         Execute the complete decoding experiment pipeline.
@@ -718,14 +722,14 @@ class Experiment:
         estimator: BaseEstimator,
         X: np.ndarray,
         y: np.ndarray,
-        groups: Optional[np.ndarray],
+        groups: np.ndarray | None,
         sample_ids: np.ndarray,
         sample_metadata: pd.DataFrame,
         n_jobs: int = 1,
-        spec: Optional[Any] = None,
-        model_name: Optional[str] = None,
-        sample_weight: Optional[np.ndarray] = None,
-    ) -> Dict[str, Any]:
+        spec: Any | None = None,
+        model_name: str | None = None,
+        sample_weight: np.ndarray | None = None,
+    ) -> dict[str, Any]:
         """Perform parallel cross-validation for a single estimator."""
         cv = get_cv_splitter(self.config.cv, groups=groups, y=y)
         splits = list(cv.split(X, y, groups))
@@ -815,7 +819,7 @@ class Experiment:
         }
 
     @staticmethod
-    def _resolve_sample_ids(n: int, ids: Optional[Sequence[Any]]) -> np.ndarray:
+    def _resolve_sample_ids(n: int, ids: Sequence[Any] | None) -> np.ndarray:
         """Ensure sample IDs are provided and have correct length."""
         if ids is None:
             return np.arange(n)
@@ -829,9 +833,9 @@ class Experiment:
     def _resolve_metadata_and_groups(
         self,
         n: int,
-        meta_in: Optional[Union[pd.DataFrame, Dict[str, Sequence[Any]]]],
-        groups_in: Optional[np.ndarray],
-    ) -> tuple[pd.DataFrame, Optional[np.ndarray]]:
+        meta_in: pd.DataFrame | dict[str, Sequence[Any]] | None,
+        groups_in: np.ndarray | None,
+    ) -> tuple[pd.DataFrame, np.ndarray | None]:
         """Validate metadata and extract cross-validation groups if required."""
         # 1. Standardize Metadata to DataFrame
         meta_was_provided = meta_in is not None
@@ -919,8 +923,8 @@ class Experiment:
         return meta, gv
 
     def _build_result_meta(
-        self, X: np.ndarray, t_axis: Optional[np.ndarray]
-    ) -> Dict[str, Any]:
+        self, X: np.ndarray, t_axis: np.ndarray | None
+    ) -> dict[str, Any]:
         meta = get_environment_info()
         meta.update(
             {
@@ -945,7 +949,7 @@ class Experiment:
             meta["time_axis"] = t_axis.tolist()
         return meta
 
-    def _capability_payload(self) -> Dict[str, Any]:
+    def _capability_payload(self) -> dict[str, Any]:
         sels = {}
         if self.config.feature_selection.enabled:
             sels[self.config.feature_selection.method] = get_selector_capabilities(
@@ -966,7 +970,7 @@ class Experiment:
         }
 
     def _resolve_feature_names(
-        self, X: np.ndarray, names: Optional[Sequence[str]]
+        self, X: np.ndarray, names: Sequence[str] | None
     ) -> list[str]:
         exp = 1 if X.ndim < 2 else X.shape[1]
         if names is not None:

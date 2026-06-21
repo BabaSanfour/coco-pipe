@@ -9,13 +9,15 @@ without triggering eager imports of heavyweight dependencies.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import importlib
 import pkgutil
 import threading
 import warnings
+from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Callable, Dict, Type
+from typing import Any
 
 from ._specs import (
     ESTIMATOR_SPECS,
@@ -28,15 +30,13 @@ from ._specs import (
 )
 
 # Runtime class cache
-_ESTIMATOR_REGISTRY: Dict[str, Type] = {}
+_ESTIMATOR_REGISTRY: dict[str, type] = {}
 _INTERNAL_SCANNED = False
 _REGISTRY_LOCK = threading.Lock()
 
 
 class EstimatorNotFoundError(KeyError, ValueError):
     """Raised when an estimator is not found in the registry."""
-
-    pass
 
 
 def _discover_entry_points():  # pragma: no cover
@@ -55,7 +55,9 @@ def _discover_entry_points():  # pragma: no cover
         try:
             ep.load()
         except Exception:
-            warnings.warn(f"Could not load estimator entry point '{ep.name}'")
+            warnings.warn(
+                f"Could not load estimator entry point '{ep.name}'", stacklevel=2
+            )
 
 
 def _discover_internal_modules():  # pragma: no cover
@@ -65,17 +67,15 @@ def _discover_internal_modules():  # pragma: no cover
         return
 
     for _, name, _ in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-        try:
+        with contextlib.suppress(ImportError):
             importlib.import_module(name)
-        except ImportError:
-            pass
 
 
 # Lazy entry point discovery
 _discover_entry_points()
 
 
-def register_estimator(name: str) -> Callable[[Type], Type]:
+def register_estimator(name: str) -> Callable[[type], type]:
     """
     Decorator to register a custom estimator class under a specific name.
 
@@ -90,9 +90,11 @@ def register_estimator(name: str) -> Callable[[Type], Type]:
         A decorator that adds the class to the internal registry.
     """
 
-    def decorator(cls: Type) -> Type:
+    def decorator(cls: type) -> type:
         if name in _ESTIMATOR_REGISTRY:
-            warnings.warn(f"Overwriting existing estimator registry for '{name}'")
+            warnings.warn(
+                f"Overwriting existing estimator registry for '{name}'", stacklevel=2
+            )
         _ESTIMATOR_REGISTRY[name] = cls
         return cls
 
@@ -122,12 +124,14 @@ def register_estimator_spec(spec: EstimatorSpec) -> EstimatorSpec:
     get_estimator_spec : Retrieve a registered specification.
     """
     if spec.name in ESTIMATOR_SPECS:
-        warnings.warn(f"Overwriting existing estimator spec for '{spec.name}'")
+        warnings.warn(
+            f"Overwriting existing estimator spec for '{spec.name}'", stacklevel=2
+        )
     ESTIMATOR_SPECS[spec.name] = spec
     return spec
 
 
-def get_estimator_cls(name: str) -> Type:
+def get_estimator_cls(name: str) -> type:
     """
     Retrieve an estimator class by name, triggering lazy loading if needed.
 
@@ -246,7 +250,7 @@ def get_capabilities(name: str) -> EstimatorCapabilities:
     return get_estimator_spec(name).to_capabilities()
 
 
-def list_capabilities() -> Dict[str, EstimatorCapabilities]:
+def list_capabilities() -> dict[str, EstimatorCapabilities]:
     """
     Return capability metadata for all registered estimators.
 
@@ -262,7 +266,7 @@ def list_capabilities() -> Dict[str, EstimatorCapabilities]:
     return {name: spec.to_capabilities() for name, spec in ESTIMATOR_SPECS.items()}
 
 
-def list_estimator_specs() -> Dict[str, EstimatorSpec]:
+def list_estimator_specs() -> dict[str, EstimatorSpec]:
     """
     Return all registered estimator specs.
 

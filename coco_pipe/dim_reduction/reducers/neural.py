@@ -2,7 +2,7 @@
 Neural-network dimensionality reduction reducers.
 
 This module provides wrappers around neural embedding backends that follow the
-shared `BaseReducer` contract. These reducers integrate with `DimReduction`,
+shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract. These reducers integrate with `~coco_pipe.dim_reduction.DimReduction`,
 reporting, and visualization while keeping optional deep-learning dependencies
 lazy at import time.
 
@@ -13,16 +13,14 @@ IVISReducer
 
 References
 ----------
-.. [1] Szubert, B., Cole, J. E., Monaco, C., and Drozdov, I. (2019).
+[1] Szubert, B., Cole, J. E., Monaco, C., and Drozdov, I. (2019).
        "Structure-preserving visualization of high dimensional single-cell
        datasets". Scientific Reports, 9(1), 8914.
-.. [2] IVIS documentation:
+[2] IVIS documentation:
        https://github.com/beringresearch/ivis
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
-
-from typing import Optional
 
 import numpy as np
 
@@ -57,7 +55,7 @@ class IVISReducer(BaseReducer):
 
     Notes
     -----
-    The IVIS backend uses `embedding_dims` instead of `n_components`. This
+    The IVIS backend uses `embedding_dims` instead of `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`. This
     wrapper maps the reducer component count to the backend constructor
     automatically.
 
@@ -120,7 +118,7 @@ class IVISReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IVISReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "IVISReducer":
         """
         Fit IVIS on the input data.
 
@@ -168,7 +166,7 @@ class IVISReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding of `X`.
         """
         model = self._require_fitted()

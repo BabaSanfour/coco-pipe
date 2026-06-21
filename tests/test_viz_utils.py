@@ -124,13 +124,13 @@ def test_select_dimensions():
 
 def test_get_figure():
     fig, ax = plt.subplots()
-    res_fig, res_ax = get_figure(ax, None, (5, 5))
+    res_fig, _res_ax = get_figure(ax, None, (5, 5))
     assert res_fig is fig
 
-    f2, a2 = get_figure(None, (4, 4), (5, 5))
+    f2, _a2 = get_figure(None, (4, 4), (5, 5))
     assert f2.get_figwidth() == 4
 
-    f3, a3 = get_figure(None, None, (5, 5), projection="polar")
+    _f3, a3 = get_figure(None, None, (5, 5), projection="polar")
     assert a3.name == "polar"
 
 
@@ -541,7 +541,7 @@ def test_prepare_temporal_generalization_matrix():
             "Mean": [0.9, 0.8, 0.7, 0.95],
         }
     )
-    matrix, first = prepare_temporal_generalization_matrix(df)
+    matrix, _first = prepare_temporal_generalization_matrix(df)
     assert matrix.shape == (2, 2)
 
 
@@ -626,7 +626,7 @@ def test_prepare_fit_diagnostics_frame():
         def get_fit_diagnostics(self):
             return df
 
-    frame, data = prepare_fit_diagnostics_frame(Dummy())
+    _frame, data = prepare_fit_diagnostics_frame(Dummy())
     assert len(data) == 1
 
 
@@ -681,7 +681,7 @@ def test_prepare_regression_prediction_data():
         def get_predictions(self):
             return df
 
-    y_true, y_pred = prepare_regression_prediction_data(Dummy())
+    y_true, _y_pred = prepare_regression_prediction_data(Dummy())
     assert len(y_true) == 3
 
     df_nan = pd.DataFrame(
@@ -759,10 +759,10 @@ def test_prepare_feature_score_series():
 
 def test_prepare_trajectory_data():
     X = np.random.randn(5, 10, 3)
-    traj, t, labels, values, dims = prepare_trajectory_data(X)
+    traj, _t, _labels, _values, _dims = prepare_trajectory_data(X)
     assert traj.shape == (5, 10, 2)
 
-    traj3, _, _, _, d = prepare_trajectory_data(X, dimensions=3)
+    _traj3, _, _, _, d = prepare_trajectory_data(X, dimensions=3)
     assert d == 3
 
     with pytest.raises(ValueError):
@@ -776,26 +776,26 @@ def test_prepare_trajectory_data():
     with pytest.raises(ValueError):
         prepare_trajectory_data(X, times=np.arange(5))
 
-    traj_labels, _, labels_out, _, _ = prepare_trajectory_data(X, labels=["A"] * 5)
+    _traj_labels, _, labels_out, _, _ = prepare_trajectory_data(X, labels=["A"] * 5)
     assert labels_out is not None
     with pytest.raises(ValueError):
         prepare_trajectory_data(X, labels=["A"] * 3)
 
     vals = np.random.randn(5, 10)
-    traj_v, _, _, v, _ = prepare_trajectory_data(X, values=vals)
+    _traj_v, _, _, v, _ = prepare_trajectory_data(X, values=vals)
     assert v is not None
     with pytest.raises(ValueError):
         prepare_trajectory_data(X, values=np.random.randn(3, 10))
 
     # smooth
-    traj_s, t_s, _, _, _ = prepare_trajectory_data(X, smooth_window=3)
+    traj_s, _t_s, _, _, _ = prepare_trajectory_data(X, smooth_window=3)
     assert traj_s.shape[1] < 10
 
     with pytest.raises(ValueError):
         prepare_trajectory_data(X, smooth_window=0)
 
     # downsample
-    traj_d, t_d, _, _, _ = prepare_trajectory_data(X, downsample=2)
+    traj_d, _t_d, _, _, _ = prepare_trajectory_data(X, downsample=2)
     assert traj_d.shape[1] == 5
 
     # smooth + values + downsample
@@ -842,7 +842,7 @@ def test_prepare_eigenvalue_curves():
 
 
 def test_prepare_shepard_distances():
-    d_h, d_l, corr = prepare_shepard_distances(
+    d_h, _d_l, corr = prepare_shepard_distances(
         np.zeros(1),
         np.zeros(1),
         distances={"original": [1, 2, 3], "embedded": [1.1, 2.1, 2.9]},
@@ -865,7 +865,7 @@ def test_prepare_shepard_distances():
 def test_prepare_streamline_inputs():
     X = np.random.randn(10, 2)
     V = np.random.randn(10, 2)
-    pts, vecs = prepare_streamline_inputs(X, V)
+    pts, _vecs = prepare_streamline_inputs(X, V)
     assert pts.shape == (10, 2)
 
     with pytest.raises(ValueError):
@@ -877,7 +877,7 @@ def test_prepare_streamline_inputs():
 def test_prepare_streamline_grid():
     X = np.random.randn(50, 2)
     V = np.random.randn(50, 2)
-    Xi, Yi, Ui, Vi = prepare_streamline_grid(X, V, grid_density=5)
+    Xi, _Yi, _Ui, _Vi = prepare_streamline_grid(X, V, grid_density=5)
     assert Xi.shape == (5, 5)
 
     with pytest.raises(ValueError):

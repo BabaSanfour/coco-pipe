@@ -561,7 +561,7 @@ def test_dim_reduction_init():
 
     # Test unknown lazy loading
     with pytest.raises(AttributeError):
-        dr.UnknownReducer
+        _ = dr.UnknownReducer
 
 
 def test_reducers_init():
@@ -571,7 +571,7 @@ def test_reducers_init():
 
     # Test unknown optional
     with pytest.raises(AttributeError):
-        reducers.UnknownReducer
+        _ = reducers.UnknownReducer
 
 
 def test_supervised_splitter_errors():

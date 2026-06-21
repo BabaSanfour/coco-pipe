@@ -2,8 +2,8 @@
 Linear dimensionality reduction reducers.
 
 This module provides linear projection wrappers built on top of scikit-learn
-and optional Dask backends. These reducers follow the shared `BaseReducer`
-contract so they can be used directly with `DimReduction`, reporting, and
+and optional Dask backends. These reducers follow the shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer`
+contract so they can be used directly with `~coco_pipe.dim_reduction.DimReduction`, reporting, and
 visualization utilities.
 
 Classes
@@ -19,18 +19,18 @@ DaskTruncatedSVDReducer
 
 References
 ----------
-.. [1] Pearson, K. (1901). "On Lines and Planes of Closest Fit to Systems of
+[1] Pearson, K. (1901). "On Lines and Planes of Closest Fit to Systems of
        Points in Space". Philosophical Magazine, 2(11), 559-572.
-.. [2] Hotelling, H. (1933). "Analysis of a complex of statistical variables
+[2] Hotelling, H. (1933). "Analysis of a complex of statistical variables
        into principal components". Journal of Educational Psychology, 24(6),
        417-441.
-.. [3] Scikit-learn PCA documentation:
+[3] Scikit-learn PCA documentation:
        https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.PCA.html
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from sklearn.decomposition import PCA, IncrementalPCA
@@ -39,10 +39,10 @@ from ...utils import import_optional_dependency
 from .base import ArrayLike, BaseReducer
 
 __all__ = [
-    "PCAReducer",
-    "IncrementalPCAReducer",
     "DaskPCAReducer",
     "DaskTruncatedSVDReducer",
+    "IncrementalPCAReducer",
+    "PCAReducer",
 ]
 
 _LINEAR_DIAGNOSTIC_ATTRS = (
@@ -162,7 +162,7 @@ class PCAReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PCAReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "PCAReducer":
         """
         Fit PCA on the input data.
 
@@ -203,7 +203,7 @@ class PCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Projected coordinates in principal component space.
 
         Raises
@@ -221,7 +221,7 @@ class PCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components,)
+        np.ndarray of shape (n_dims,)
             Explained variance ratio for each retained component.
 
         Raises
@@ -260,7 +260,7 @@ class PCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components, n_features)
+        np.ndarray of shape (n_dims, n_features)
             Principal component loading matrix.
 
         Raises
@@ -355,9 +355,7 @@ class IncrementalPCAReducer(BaseReducer):
             is_linear=True,
         )
 
-    def __init__(
-        self, n_components: int = 2, batch_size: Optional[int] = None, **kwargs
-    ):
+    def __init__(self, n_components: int = 2, batch_size: int | None = None, **kwargs):
         """
         Initialize the incremental PCA reducer.
 
@@ -374,9 +372,7 @@ class IncrementalPCAReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.batch_size = batch_size
 
-    def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
-    ) -> "IncrementalPCAReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "IncrementalPCAReducer":
         """
         Fit Incremental PCA in batch mode.
 
@@ -410,7 +406,7 @@ class IncrementalPCAReducer(BaseReducer):
         return self
 
     def partial_fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
+        self, X: ArrayLike, y: ArrayLike | None = None
     ) -> "IncrementalPCAReducer":
         """
         Incrementally fit the estimator on a batch of samples.
@@ -457,7 +453,7 @@ class IncrementalPCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Projected coordinates in component space.
 
         Raises
@@ -475,7 +471,7 @@ class IncrementalPCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components,)
+        np.ndarray of shape (n_dims,)
             Explained variance ratio for each retained component.
 
         Raises
@@ -514,7 +510,7 @@ class IncrementalPCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components, n_features)
+        np.ndarray of shape (n_dims, n_features)
             Principal component loading matrix.
 
         Raises
@@ -626,7 +622,7 @@ class DaskPCAReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.svd_solver = svd_solver
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "DaskPCAReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "DaskPCAReducer":
         """
         Fit Dask PCA on the input data.
 
@@ -704,7 +700,7 @@ class DaskPCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components,)
+        np.ndarray of shape (n_dims,)
             Explained variance ratio for each retained component.
 
         Raises
@@ -743,7 +739,7 @@ class DaskPCAReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components, n_features)
+        np.ndarray of shape (n_dims, n_features)
             Principal component loading matrix.
 
         Raises
@@ -856,7 +852,7 @@ class DaskTruncatedSVDReducer(BaseReducer):
         self.algorithm = algorithm
 
     def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
+        self, X: ArrayLike, y: ArrayLike | None = None
     ) -> "DaskTruncatedSVDReducer":
         """
         Fit Dask Truncated SVD on the input data.
@@ -939,7 +935,7 @@ class DaskTruncatedSVDReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components,)
+        np.ndarray of shape (n_dims,)
             Explained variance ratio for each retained component.
 
         Raises
@@ -978,7 +974,7 @@ class DaskTruncatedSVDReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_components, n_features)
+        np.ndarray of shape (n_dims, n_features)
             Principal component loading matrix.
 
         Raises

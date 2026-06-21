@@ -41,7 +41,7 @@ class ResultCollection:
     contexts: dict[tuple[Any, ...], dict[str, Any]]
     summary: pd.DataFrame
 
-    def filter(self, **criteria: Any) -> "ResultCollection":
+    def filter(self, **criteria: Any) -> ResultCollection:
         """Return a collection restricted to exact context matches."""
         keys = {
             key
@@ -456,7 +456,7 @@ def _showcase_specs(by: Sequence[str]) -> list[dict[str, Any]]:
                 "kind": "axis_heatmap",
                 "row": axis,
                 "column": "Model",
-                "title": f"{axis} × Model",
+                "title": f"{axis} x Model",
             },
             {"kind": "spread", "axis": axis, "title": f"Score Spread by {axis}"},
             {
@@ -568,8 +568,8 @@ def make_experiment_results_report(
 
 __all__ = [
     "ResultCollection",
-    "collect_results",
     "build_comparison_section",
     "build_result_tabs",
+    "collect_results",
     "make_experiment_results_report",
 ]

@@ -503,7 +503,7 @@ def aggregate_family_qc(
         rows.append(
             {
                 "family": family,
-                "n_features": int(len(family_missingness)),
+                "n_features": len(family_missingness),
                 "missing_rate_mean": float(family_missingness["missing_rate"].mean()),
                 "missing_rate_max": float(family_missingness["missing_rate"].max()),
                 "nonfinite_rate_mean": float(

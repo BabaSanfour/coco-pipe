@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -85,7 +86,7 @@ def save_embedding_derivative(
     payload_metadata = {
         **dict(getattr(result, "metadata", {}) or {}),
         **dict(metadata or {}),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "arrays": {
             "window_embeddings": ["window", "embedding_feature"],
             "recording_embedding": ["embedding_feature"],
@@ -133,10 +134,7 @@ def discover_embedding_derivatives(
                     paths.append(path)
         except (OSError, json.JSONDecodeError, TypeError):
             paths = []
-    if not paths:
-        paths = sorted(root.rglob("*_embedding.npz"))
-    else:
-        paths = sorted(set(paths))
+    paths = sorted(root.rglob("*_embedding.npz")) if not paths else sorted(set(paths))
     if model_key is None:
         return paths
     selected = []
@@ -267,7 +265,7 @@ def write_embedding_manifest(
     path = Path(root) / "run_manifest.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "records": [_json_value(dict(record)) for record in records],
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

@@ -133,7 +133,7 @@ def test_read_bids_entry(monkeypatch, tmp_path):
     mne_mock.read_epochs.return_value.events = np.array([[0, 0, 1]])
     mne_mock.read_epochs.return_value.event_id = {"stim": 1}
 
-    d, t, c, s, labels = utils_mod.read_bids_entry(
+    d, _t, _c, _s, labels = utils_mod.read_bids_entry(
         bids_path,
         is_pre_epoched=True,
         is_evoked=False,
@@ -151,7 +151,7 @@ def test_read_bids_entry(monkeypatch, tmp_path):
     raw.ch_names = ["C1", "C2"]
     raw.info = {"sfreq": 100}
 
-    d_cont, t_cont, c_cont, s_cont, labels_cont = utils_mod.read_bids_entry(
+    d_cont, _t_cont, _c_cont, _s_cont, labels_cont = utils_mod.read_bids_entry(
         bids_path,
         is_pre_epoched=False,
         is_evoked=False,
@@ -448,7 +448,7 @@ def test_read_bids_entry_evoked(monkeypatch):
         def match(self):
             return [Path("fake2")]
 
-    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+    data, _times, _ch_names, _sfreq, _labels = utils_mod.read_bids_entry(
         MockBIDSPath(), False, True, "continuous", None, None
     )
     assert data.shape == (1, 2, 10)
@@ -474,7 +474,7 @@ def test_read_bids_entry_raw_continuous(monkeypatch):
         utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
     )
 
-    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+    data, _times, _ch_names, _sfreq, _labels = utils_mod.read_bids_entry(
         None, False, False, "continuous", None, None
     )
     assert data.shape == (1, 2, 10)
@@ -513,7 +513,7 @@ def test_read_bids_entry_raw_fixed_epochs(monkeypatch):
     )
     monkeypatch.setattr(utils_mod, "_get_mne", lambda: MockMNE())
 
-    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+    data, _times, _ch_names, _sfreq, _labels = utils_mod.read_bids_entry(
         None, False, False, "epochs", 1.0, 0.5
     )
     assert data.shape == (5, 2, 10)
@@ -555,7 +555,7 @@ def test_read_bids_entry_raw_event_epochs(monkeypatch):
     )
     monkeypatch.setattr(utils_mod, "_get_mne", lambda: MockMNE())
 
-    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+    data, _times, _ch_names, _sfreq, _labels = utils_mod.read_bids_entry(
         None, False, False, "epochs", None, None, event_id={"A": 1}
     )
     assert data.shape == (5, 2, 10)
@@ -581,7 +581,7 @@ def test_read_bids_entry_raw_no_length(monkeypatch):
         utils_mod, "_get_read_raw_bids", lambda: lambda *args, **kwargs: DummyRaw()
     )
 
-    data, times, ch_names, sfreq, labels = utils_mod.read_bids_entry(
+    data, _times, _ch_names, _sfreq, _labels = utils_mod.read_bids_entry(
         None, False, False, "epochs", None, None
     )
     assert data.shape == (1, 2, 10)

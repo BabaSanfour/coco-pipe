@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -159,7 +159,7 @@ def get_figure(
 
 
 def coerce_decoding_frame(
-    obj: "ExperimentResult | pd.DataFrame",
+    obj: ExperimentResult | pd.DataFrame,
     accessor: str | None = None,
 ) -> pd.DataFrame:
     """
@@ -359,7 +359,7 @@ def coerce_sensor_layout(
             ch_names = [info["ch_names"][idx] for idx in picks]
             positions = []
             kept = []
-            for idx, ch_name in zip(picks, ch_names):
+            for idx, ch_name in zip(picks, ch_names, strict=False):
                 if requested is not None and ch_name not in requested:
                     continue
                 loc = np.asarray(info["chs"][idx]["loc"][:2], dtype=float)
@@ -534,7 +534,7 @@ def prepare_metrics_frame(metrics: Any, default_method: str = "Method") -> pd.Da
 
     if isinstance(metrics, list):
         metrics = pd.DataFrame.from_records(metrics)
-    elif hasattr(metrics, "to_frame") and callable(getattr(metrics, "to_frame")):
+    elif hasattr(metrics, "to_frame") and callable(metrics.to_frame):
         metrics = metrics.to_frame()
 
     if not isinstance(metrics, pd.DataFrame):
@@ -876,8 +876,8 @@ def filter_metric_frame(
 def metric_heatmap_frame(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     """Return ``(pivoted heatmap frame, x-axis label)`` for a tidy metric frame.
 
-    Uses a ``Method × ScopeValue`` grid when a single metric varies across a
-    scope axis; otherwise a ``Method × Metric`` grid. Shared by the static and
+    Uses a ``Method x ScopeValue`` grid when a single metric varies across a
+    scope axis; otherwise a ``Method x Metric`` grid. Shared by the static and
     interactive ``plot_metrics`` heatmap renderers.
     """
     has_scope_axis = (
@@ -908,7 +908,7 @@ def metric_scope_series(
     """
     group_cols = ["Method"] + (["Metric"] if frame["Metric"].nunique() > 1 else [])
     summary = (
-        frame.groupby(group_cols + ["Scope", "ScopeValue"], dropna=False)["Value"]
+        frame.groupby([*group_cols, "Scope", "ScopeValue"], dropna=False)["Value"]
         .agg(["mean", "std", "count"])
         .reset_index()
     )
@@ -952,7 +952,9 @@ def prepare_trajectory_metric_series(
             raise ValueError("`times` must align with the trajectory time axis.")
         records = []
         for name, values in series.items():
-            for time, value in zip(x_vals, np.asarray(values, dtype=float).reshape(-1)):
+            for time, value in zip(
+                x_vals, np.asarray(values, dtype=float).reshape(-1), strict=False
+            ):
                 records.append(
                     {
                         "Series": str(name),
@@ -1001,7 +1003,7 @@ def prepare_trajectory_metric_series(
         err = np.full(subset.shape[1], np.nan, dtype=float)
         valid = finite_count > 1
         err[valid] = np.nanstd(subset[:, valid], axis=0) / np.sqrt(finite_count[valid])
-        for time, value, error in zip(x_vals, mean, err):
+        for time, value, error in zip(x_vals, mean, err, strict=False):
             records.append(
                 {
                     "Series": str(label),
@@ -1563,7 +1565,7 @@ def prepare_feature_importance_series(
 ) -> pd.Series:
     """Return ranked feature importances as a Series sorted by magnitude.
 
-    Accepts an ``ExperimentResult`` (via ``get_feature_importances()``), a
+    Accepts an ``~coco_pipe.decoding.ExperimentResult`` (via ``get_feature_importances()``), a
     feature-importance DataFrame, or a numeric mapping/sequence. Non-numeric
     sequences raise ``TypeError``/``ValueError`` so callers can delegate to the
     dimensionality-reduction feature-importance plot (see
@@ -1732,7 +1734,7 @@ def prepare_eigenvalue_curves(
 def prepare_coranking_matrix(
     coranking_matrix: np.ndarray | None, max_k: int | None = None
 ) -> np.ndarray:
-    """Validate a square co-ranking matrix and crop to the top-left ``k × k`` corner.
+    """Validate a square co-ranking matrix and crop to the top-left ``k x k`` corner.
 
     ``k`` defaults to ``min(n, 50)``. Shared by the static and interactive
     co-ranking matrix renderers.

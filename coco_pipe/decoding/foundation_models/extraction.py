@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import warnings
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -49,10 +50,7 @@ def check_capability(
         return CapabilityResult(
             model_key, train_mode, "invalid_configuration", str(exc)
         )
-    if train_mode == "linear_probe":
-        registry_mode = "frozen"
-    else:
-        registry_mode = train_mode
+    registry_mode = "frozen" if train_mode == "linear_probe" else train_mode
     if registry_mode not in spec.supported_train_modes:
         return CapabilityResult(
             model_key,
@@ -75,10 +73,7 @@ def check_capability(
                 model_key,
                 train_mode,
                 "missing_dependency",
-                (
-                    f"Backend dependencies for {resolved_backend!r} "
-                    "are not installed."
-                ),
+                (f"Backend dependencies for {resolved_backend!r} are not installed."),
             )
     except Exception as exc:
         return CapabilityResult(
@@ -144,7 +139,7 @@ def check_capability(
         "requires_auth": spec.requires_auth,
     }
     if n_times is not None and sfreq is not None and spec.pretrained_n_times:
-        model_n_times = int(round(n_times * spec.pretrained_sfreq / sfreq))
+        model_n_times = round(n_times * spec.pretrained_sfreq / sfreq)
         if model_n_times != spec.pretrained_n_times:
             return CapabilityResult(
                 model_key,
@@ -161,13 +156,13 @@ def check_capability(
 
 
 def normalize_inclusive_endpoint(
-    container: "DataContainer",
+    container: DataContainer,
     *,
     segment_duration: float,
     expected_sfreq: float,
     model_key: str = "model",
     on_mismatch: str = "error",
-) -> "tuple[DataContainer | None, str | None]":
+) -> tuple[DataContainer | None, str | None]:
     """Drop MNE's inclusive-endpoint extra sample from epoched windows.
 
     MNE epochs span ``[tmin, tmax]`` inclusively, yielding ``expected_n_times +
@@ -180,7 +175,7 @@ def normalize_inclusive_endpoint(
     ``on_mismatch == "skip"`` and otherwise raises ``ValueError``.
     """
     sfreq = float(container.meta.get("sfreq", expected_sfreq))
-    expected_n_times = int(round(segment_duration * sfreq))
+    expected_n_times = round(segment_duration * sfreq)
     observed_n_times = int(container.X.shape[-1])
     if observed_n_times == expected_n_times:
         return container, None
@@ -387,7 +382,9 @@ class FoundationEmbeddingExtractor:
             "requires_resampling": prepared.source_sfreq != prepared.target_sfreq,
             "original_channels": list(signal_metadata.ch_names),
             "model_channels": prepared.ch_names,
-            "channel_mapping": dict(zip(signal_metadata.ch_names, prepared.ch_names)),
+            "channel_mapping": dict(
+                zip(signal_metadata.ch_names, prepared.ch_names, strict=False)
+            ),
             "channel_adaptation": {
                 "legacy_1020_renamed": [
                     {
@@ -395,7 +392,7 @@ class FoundationEmbeddingExtractor:
                         "to": normalized,
                     }
                     for original, normalized in zip(
-                        signal_metadata.ch_names, prepared.ch_names
+                        signal_metadata.ch_names, prepared.ch_names, strict=False
                     )
                     if original != normalized
                 ],
@@ -411,7 +408,7 @@ class FoundationEmbeddingExtractor:
             "normalize_embeddings": self.normalize_embeddings,
             "embedding_shape": list(embeddings.shape),
             "embedding_dtype": str(embeddings.dtype),
-            "window_count": int(len(X)),
+            "window_count": len(X),
             "window_n_times_original": int(X.shape[-1]),
             "window_n_times_model": int(model_input.shape[-1]),
             "window_duration_seconds": float(

@@ -10,7 +10,8 @@ calibration remain inside each null pipeline.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .result import ExperimentResult
@@ -96,7 +97,7 @@ def aggregate_predictions_for_inference(
     metric: str,
     task: str = "classification",
     unit_of_inference: str = "sample",
-    custom_unit_column: Optional[str] = None,
+    custom_unit_column: str | None = None,
     custom_aggregation: str = "mean",
     require_single_prediction: bool = False,
 ) -> pd.DataFrame:
@@ -148,14 +149,16 @@ def aggregate_predictions_for_inference(
     >>> import pandas as pd
     >>> from coco_pipe.decoding.stats import aggregate_predictions_for_inference
     >>> df = pd.DataFrame(
-    ...     {"Subject": ["S1",
-    ...                           "S1"],
-    ...                           "y_true": [1, 1],
-    ...                           "y_pred": [1, 0],
-    ...                           "SampleID": [0, 1]}
+    ...     {
+    ...         "Subject": ["S1", "S1"],
+    ...         "y_true": [1, 1],
+    ...         "y_pred": [1, 0],
+    ...         "SampleID": [0, 1],
+    ...     }
     ... )
-    >>> res = aggregate_predictions_for_inference(df,
-    ...                           "accuracy", unit_of_inference="Subject")
+    >>> res = aggregate_predictions_for_inference(
+    ...     df, "accuracy", unit_of_inference="Subject"
+    ... )
 
     See Also
     --------
@@ -233,7 +236,7 @@ def aggregate_predictions_for_inference(
 def binomial_accuracy_test(
     y_true: Sequence[Any],
     y_pred: Sequence[Any],
-    p0: Optional[float],
+    p0: float | None,
     alpha: float = 0.05,
     ci_method: str = "wilson",
 ) -> dict[str, Any]:
@@ -323,11 +326,11 @@ def run_statistical_assessment(
     experiment_config: Any,
     X: np.ndarray,
     y: np.ndarray,
-    groups: Optional[np.ndarray],
+    groups: np.ndarray | None,
     sample_ids: np.ndarray,
-    sample_metadata: Optional[pd.DataFrame],
-    feature_names: Optional[Sequence[str]],
-    time_axis: Optional[np.ndarray],
+    sample_metadata: pd.DataFrame | None,
+    feature_names: Sequence[str] | None,
+    time_axis: np.ndarray | None,
     observation_level: str,
     inferential_unit: str,
 ) -> dict[str, Any]:
@@ -593,16 +596,16 @@ def _run_permutation_assessment(
     experiment_config: Any,
     X: np.ndarray,
     y: np.ndarray,
-    groups: Optional[np.ndarray],
+    groups: np.ndarray | None,
     sample_ids: np.ndarray,
-    sample_metadata: Optional[pd.DataFrame],
-    feature_names: Optional[Sequence[str]],
-    time_axis: Optional[np.ndarray],
+    sample_metadata: pd.DataFrame | None,
+    feature_names: Sequence[str] | None,
+    time_axis: np.ndarray | None,
     observation_level: str,
     inferential_unit: str,
     config: StatisticalAssessmentConfig,
     unit: str,
-) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """
     Internal driver for full-pipeline permutation testing.
 
@@ -695,11 +698,11 @@ def _run_permutation_loop(
     experiment_config: Any,
     X: np.ndarray,
     y: np.ndarray,
-    groups: Optional[np.ndarray],
+    groups: np.ndarray | None,
     sample_ids: np.ndarray,
-    sample_metadata: Optional[pd.DataFrame],
-    feature_names: Optional[Sequence[str]],
-    time_axis: Optional[np.ndarray],
+    sample_metadata: pd.DataFrame | None,
+    feature_names: Sequence[str] | None,
+    time_axis: np.ndarray | None,
     observation_level: str,
     inferential_unit: str,
     config: StatisticalAssessmentConfig,
@@ -858,8 +861,8 @@ def _build_permutation_rows(
 
 
 def run_paired_permutation_assessment(
-    results_a: "ExperimentResult",
-    results_b: "ExperimentResult",
+    results_a: ExperimentResult,
+    results_b: ExperimentResult,
     model: str,
     metric: str,
     config: StatisticalAssessmentConfig,
@@ -1080,7 +1083,7 @@ def _score_by_coordinates(
         else:
             scores_array = (y_true_mat.values != y_pred_mat.values).mean(axis=0)
 
-        return dict(zip(y_true_mat.columns, scores_array))
+        return dict(zip(y_true_mat.columns, scores_array, strict=False))
 
     scores = {}
     for key, group in frame.groupby(temporal_cols, dropna=False):
@@ -1094,7 +1097,7 @@ def _bootstrap_engine(
     unit_map: dict[Any, pd.DataFrame],
     score_func: Callable[[pd.DataFrame], np.ndarray],
     n_bootstraps: int = 1000,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> np.ndarray:
     """
     Core engine for unit-based bootstrap resampling.
@@ -1118,7 +1121,7 @@ def _bootstrap_scores(
     metric: str,
     score_keys: list[tuple],
     n_bootstraps: int = 1000,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> np.ndarray:
     """Resample independent units with replacement and re-score."""
     unique_units = frame["InferentialUnitID"].unique()
@@ -1140,7 +1143,7 @@ def _bootstrap_scores_paired(
     temporal_cols: list[str],
     unit_col: str,
     n_bootstraps: int = 1000,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> np.ndarray:
     """Resample independent units for paired differences."""
     from ._diagnostics import score_frame
@@ -1325,9 +1328,9 @@ def _coord_dict(key: tuple[Any, ...], names: list[str]) -> dict[str, Any]:
 def assess_post_hoc_permutation(
     res: dict[str, Any],
     metric: str = "accuracy",
-    unit: Optional[str] = None,
+    unit: str | None = None,
     n_permutations: int = 1000,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> pd.DataFrame:
     """
     Perform a post-hoc label permutation assessment on out-of-fold predictions.
@@ -1396,7 +1399,7 @@ def assess_post_hoc_permutation(
         label_map = df.groupby(u_col)["y_true"].apply(list).to_dict()
         for i in range(n_permutations):
             shuffled_units = rng.permutation(unique_units)
-            unit_map = dict(zip(unique_units, shuffled_units))
+            unit_map = dict(zip(unique_units, shuffled_units, strict=False))
             new_labels = []
             for val in df[u_col]:
                 target_u = unit_map[val]
@@ -1437,9 +1440,9 @@ def assess_post_hoc_permutation(
 def assess_paired_comparison(
     merged: pd.DataFrame,
     metric: str = "accuracy",
-    unit: Optional[str] = None,
+    unit: str | None = None,
     n_permutations: int = 1000,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> pd.DataFrame:
     """
     Perform a paired permutation test between two models.
@@ -1506,9 +1509,9 @@ def assess_paired_comparison(
 def _assess_paired_comparison_internal(
     merged: pd.DataFrame,
     metric: str,
-    unit: Optional[str],
+    unit: str | None,
     n_permutations: int,
-    random_state: Optional[int],
+    random_state: int | None,
 ) -> pd.DataFrame:
     """Internal core for paired comparison on a single coordinate."""
     from ._diagnostics import paired_unit_indices, score_frame
@@ -1576,10 +1579,10 @@ def _assess_paired_comparison_internal(
 def assess_bootstrap_ci(
     res: dict[str, Any],
     metric: str = "accuracy",
-    unit: Optional[str] = None,
+    unit: str | None = None,
     n_bootstraps: int = 1000,
     ci: float = 0.95,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> pd.DataFrame:
     """
     Estimate uncertainty of a metric via bootstrapping over units.

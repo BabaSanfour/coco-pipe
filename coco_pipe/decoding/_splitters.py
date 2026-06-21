@@ -7,7 +7,8 @@ Internal cross-validation splitters for the decoding module.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -135,18 +136,18 @@ class _CVWithGroups(BaseCrossValidator):
             effective_groups = groups if groups is not None else self.groups
         return self.cv.get_n_splits(X, y, effective_groups)
 
-    def __sklearn_tags__(self) -> Dict[str, Any]:
+    def __sklearn_tags__(self) -> dict[str, Any]:
         """Sklearn 1.6+ compatibility for estimator tags."""
-        tags = getattr(self.cv, "__sklearn_tags__", lambda: {})()
+        tags = getattr(self.cv, "__sklearn_tags__", dict)()
         if not tags:
-            tags = getattr(self.cv, "_get_tags", lambda: {})()
+            tags = getattr(self.cv, "_get_tags", dict)()
         return {**tags, "non_deterministic": tags.get("non_deterministic", False)}
 
-    def _get_tags(self) -> Dict[str, Any]:
+    def _get_tags(self) -> dict[str, Any]:
         """Legacy sklearn tag support."""
         return self.__sklearn_tags__()
 
-    def get_params(self, deep: bool = True) -> Dict[str, Any]:
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
         """Get parameters for this estimator."""
         return {"cv": self.cv, "groups": self.groups}
 
@@ -194,8 +195,8 @@ class SimpleSplit(BaseCrossValidator):
         self,
         test_size: float = 0.2,
         shuffle: bool = True,
-        random_state: Optional[int] = None,
-        stratify: Optional[Union[bool, pd.Series, np.ndarray]] = None,
+        random_state: int | None = None,
+        stratify: bool | pd.Series | np.ndarray | None = None,
     ):
         """
         Initialize the hold-out splitter.
@@ -220,9 +221,9 @@ class SimpleSplit(BaseCrossValidator):
 
     def split(
         self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]] = None,
-        groups: Optional[Sequence] = None,
+        X: pd.DataFrame | np.ndarray,
+        y: pd.Series | np.ndarray | None = None,
+        groups: Sequence | None = None,
     ):
         """Generate indices for a single hold-out split."""
         idx = np.arange(len(X))
@@ -251,11 +252,11 @@ class SimpleSplit(BaseCrossValidator):
         """Return the number of splits (always 1)."""
         return 1
 
-    def __sklearn_tags__(self) -> Dict[str, Any]:
+    def __sklearn_tags__(self) -> dict[str, Any]:
         """Sklearn 1.6+ compatibility for estimator tags."""
         return {"non_deterministic": self.shuffle}
 
-    def _get_tags(self) -> Dict[str, Any]:
+    def _get_tags(self) -> dict[str, Any]:
         """Legacy sklearn tag support."""
         return self.__sklearn_tags__()
 
@@ -265,9 +266,9 @@ class SimpleSplit(BaseCrossValidator):
 
 def get_cv_splitter(
     config: CVConfig,
-    groups: Optional[Sequence[Any]] = None,
-    y: Optional[Sequence[Any]] = None,
-    task: Optional[MetricTask] = None,
+    groups: Sequence[Any] | None = None,
+    y: Sequence[Any] | None = None,
+    task: MetricTask | None = None,
     require_groups: bool = True,
 ) -> BaseCrossValidator:
     """
@@ -388,6 +389,7 @@ def get_cv_splitter(
                 "group-aware. Groups will be bound for technical compatibility but "
                 "ignored during splitting logic.",
                 UserWarning,
+                stacklevel=2,
             )
         splitter = _CVWithGroups(splitter, groups)
 

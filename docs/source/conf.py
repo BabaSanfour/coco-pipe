@@ -1,162 +1,346 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# This file only contains a selection of the most common options. For a full
-# list see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
+"""Sphinx configuration for coco-pipe documentation."""
 
-# -- Path setup --------------------------------------------------------------
+from __future__ import annotations
 
-# If extensions (or modules to document with autodoc) are in another directory,
-# add these directories to sys.path here. If the directory is relative to the
-# documentation root, use os.path.abspath to make it absolute, like shown here.
-#
-import os
 import shutil
 import sys
 from datetime import date
+from pathlib import Path
 
-# sys.path.insert(0, os.path.abspath('.'))
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 
-curdir = os.path.dirname(__file__)
-sys.path.append(os.path.abspath(os.path.join(curdir, "..", "coco-pipe")))
-# Make the local _ext/ directory importable
-sys.path.insert(0, os.path.abspath(os.path.join(curdir, "_ext")))
+DOCS_SOURCE_DIR = Path(__file__).resolve().parent
+DOCS_DIR = DOCS_SOURCE_DIR.parent
+REPO_ROOT = DOCS_DIR.parent
+PACKAGE_DIR = REPO_ROOT / "coco_pipe"
 
-
-def copy_readme():
-    """Copy README.md from the root directory to docs/source/."""
-    source = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../README.md"))
-    destination = os.path.abspath(os.path.join(os.path.dirname(__file__), "README.md"))
-
-    if os.path.exists(source):
-        shutil.copyfile(source, destination)
-        print(f"Copied {source} -> {destination}")
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(DOCS_SOURCE_DIR / "_ext"))
 
 
-def cleanup_readme(app, exception):
-    """Delete README.md in docs/source/ after the build."""
-    destination = os.path.abspath(os.path.join(os.path.dirname(__file__), "README.md"))
-
-    if os.path.exists(destination):
-        os.remove(destination)
-        print(f"Deleted {destination} after build.")
-
-
-# Register the cleanup function to run at the end
-def setup(app):
-    app.connect("build-finished", cleanup_readme)
-
-
-copy_readme()
-
-# -- Project information -----------------------------------------------------
+# ---------------------------------------------------------------------------
+# Project information
+# ---------------------------------------------------------------------------
 
 project = "coco-pipe"
-copyright = "2025, HA"
 author = "coco-pipe developers"
+
 _today = date.today()
 copyright = (
-    f"2025-{_today.year}, cocopipe developers. Last updated {_today.isoformat()}"
+    f"2025-{_today.year}, coco-pipe developers. Last updated {_today.isoformat()}"
 )
 
-# The short X.Y version
 version = "0.0.1"
 release = version
 
-# -- General configuration ---------------------------------------------------
 
-# Add any Sphinx extension module names here, as strings. They can be
-# extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
-# ones.
+# ---------------------------------------------------------------------------
+# General configuration
+# ---------------------------------------------------------------------------
+
 extensions = [
+    # Core Sphinx
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
-    #    "sphinx.ext.intersphinx",
-    # "numpydoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.githubpages",
+    # API generation
+    "autoapi.extension",
+    # Markdown
+    "myst_parser",
+    # Design components (grids, cards, tabs)
+    "sphinx_design",
+    # Examples
     "sphinx_gallery.gen_gallery",
-    # "gh_substitutions",  # custom extension, see ./sphinxext/gh_substitutions.py
+    # UX
     "sphinx_copybutton",
     "sphinxcontrib.mermaid",
-    "sphinx.ext.napoleon",
-    "myst_parser",
+    # Local extensions
     "capability_table",
 ]
 
-# Allow Markdown files to be used as documentation pages
 source_suffix = {
     ".rst": "restructuredtext",
     ".md": "markdown",
 }
 
-copybutton_prompt_text = r">>> |\.\.\. "
-copybutton_prompt_is_regexp = True
-
-
 master_doc = "index"
+templates_path = ["_templates"]
+
+exclude_patterns = [
+    "_build",
+    "build",
+    "Thumbs.db",
+    ".DS_Store",
+    "_ideas",
+]
+
+nitpicky = False
+keep_warnings = True
+
+
+# ---------------------------------------------------------------------------
+# Autodoc / Autosummary
+# ---------------------------------------------------------------------------
+
 autosummary_generate = True
+autodoc_typehints = "description"
+autodoc_member_order = "bysource"
 
 autodoc_default_options = {
     "members": True,
     "inherited-members": True,
     "show-inheritance": True,
+    "undoc-members": False,
 }
 
-sphinx_gallery_conf = {
-    "doc_module": "coco-pipe",
-    "reference_url": {
-        "coco-pipe": None,
-    },
-    "examples_dirs": "../../examples",
-    "gallery_dirs": "auto_examples",
-    "filename_pattern": "^((?!sgskip).)*$",
-    "backreferences_dir": "generated",
-    "run_stale_examples": True,  # Force (or not) re running examples,
-    # "default_thumb_file": "_static/default_thumbnail.png",  # Set a global default
-    # thumbnail
-}
 
-# List of patterns, relative to source directory, that match files and
-# directories to ignore when looking for source files.
-# This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "_ideas"]
-
-# Add any paths that contain templates here, relative to this directory.
-templates_path = ["_templates"]
-
-# -- Options for HTML output -------------------------------------------------
-
-# The theme to use for HTML and HTML Help pages.  See the documentation for
-# a list of builtin themes.
-#
-html_theme = "furo"
-
-# Add any paths that contain custom static files (such as style sheets) here,
-# relative to this directory. They are copied after the builtin static files,
-# so a file named "default.css" will overwrite the builtin "default.css".
-# html_static_path = ['_static'] #already done in the setup(app) section
-html_extra_path = ["_copyover"]
-
-
-###################################################################################################
-# Seems like this is not needed anymore
-# #################################################################################
-# Replace gallery.css for changing the highlight of the output cells in sphinx gallery
-# See:
-# https://github.com/sphinx-gallery/sphinx-gallery/issues/399
-# https://github.com/sphinx-doc/sphinx/issues/2090
-# https://github.com/sphinx-doc/sphinx/issues/7747
-# def setup(app):
-#    app.connect('builder-inited', lambda app:
-#    app.config.html_static_path.append('_static'))
-#    app.add_css_file('gallery.css')
-###################################################################################################
-
-# Auto API
-extensions += ["autoapi.extension"]
+# ---------------------------------------------------------------------------
+# AutoAPI
+# ---------------------------------------------------------------------------
 
 autoapi_type = "python"
-autoapi_dirs = ["../../coco_pipe"]
+autoapi_dirs = [str(PACKAGE_DIR)]
+autoapi_root = "api"
+autoapi_add_toctree_entry = False
+autoapi_keep_files = True
+autoapi_options = [
+    "members",
+    "undoc-members",
+    "show-inheritance",
+    "show-module-summary",
+]
 
-extensions += [
-    "sphinx.ext.viewcode"
-]  # see https://github.com/readthedocs/sphinx-autoapi/issues/422
+autoapi_ignore = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/cbramod_src/*",
+]
+
+
+# ---------------------------------------------------------------------------
+# Intersphinx
+# ---------------------------------------------------------------------------
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
+    "sklearn": ("https://scikit-learn.org/stable/", None),
+    "pandas": ("https://pandas.pydata.org/docs/", None),
+    "matplotlib": ("https://matplotlib.org/stable/", None),
+    "mne": ("https://mne.tools/stable/", None),
+}
+
+
+# ---------------------------------------------------------------------------
+# MyST Markdown
+# ---------------------------------------------------------------------------
+
+myst_enable_extensions = [
+    "colon_fence",
+    "deflist",
+    "fieldlist",
+    "html_admonition",
+    "html_image",
+    "linkify",
+    "substitution",
+    "tasklist",
+]
+
+myst_heading_anchors = 3
+
+
+# ---------------------------------------------------------------------------
+# Copy button
+# ---------------------------------------------------------------------------
+
+copybutton_prompt_text = r">>> |\.\.\. |\$ "
+copybutton_prompt_is_regexp = True
+copybutton_only_copy_prompt_lines = False
+
+
+# ---------------------------------------------------------------------------
+# Sphinx Gallery
+# ---------------------------------------------------------------------------
+
+sphinx_gallery_conf = {
+    "doc_module": "coco_pipe",
+    "reference_url": {
+        "coco_pipe": None,
+    },
+    "examples_dirs": str(REPO_ROOT / "examples"),
+    "gallery_dirs": "auto_examples",
+    "backreferences_dir": "generated",
+    "filename_pattern": r".*",
+    "ignore_pattern": r"__init__\.py",
+    "run_stale_examples": False,
+    "remove_config_comments": True,
+    "within_subsection_order": "FileNameSortKey",
+}
+
+
+# ---------------------------------------------------------------------------
+# HTML output
+# ---------------------------------------------------------------------------
+
+html_theme = "pydata_sphinx_theme"
+html_title = "coco-pipe"
+html_short_title = "coco-pipe"
+html_show_sphinx = False
+html_show_copyright = True
+
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+
+html_theme_options = {
+    "announcement": (
+        "coco-pipe is in active pre-release development — APIs may change before 1.0."
+    ),
+    "use_edit_page_button": True,
+    "show_toc_level": 2,
+    "navigation_depth": 2,
+    "collapse_navigation": False,
+    "header_links_before_dropdown": 6,
+    "navbar_align": "left",
+    "navbar_start": ["navbar-logo"],
+    "navbar_center": ["navbar-nav"],
+    "navbar_persistent": [],
+    "navbar_end": ["search-button", "theme-switcher", "navbar-icon-links"],
+    "footer_start": ["copyright"],
+    "footer_end": ["sphinx-version"],
+    "icon_links": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/BabaSanfour/coco-pipe",
+            "icon": "fa-brands fa-github",
+        },
+        {
+            "name": "PyPI",
+            "url": "https://pypi.org/project/coco-pipe/",
+            "icon": "fa-brands fa-python",
+        },
+    ],
+}
+
+html_context = {
+    "github_user": "BabaSanfour",
+    "github_repo": "coco-pipe",
+    "github_version": "main",
+    "doc_path": "docs/source",
+}
+
+
+# Optional: enable once files exist
+# html_logo = "_static/logo.png"
+# html_favicon = "_static/favicon.ico"
+
+
+# ---------------------------------------------------------------------------
+# Repository docs pulled into the build (single source of truth at repo root)
+# ---------------------------------------------------------------------------
+
+# Files copied from the repository root into the docs source tree at build time
+# so they can be referenced from toctrees, then removed afterwards.
+_REPO_DOC_COPIES = {
+    REPO_ROOT / "CONTRIBUTING.md": DOCS_SOURCE_DIR / "contributing.md",
+}
+
+
+def copy_repo_docs() -> None:
+    """Copy repository-root docs into the documentation source directory."""
+    for source, destination in _REPO_DOC_COPIES.items():
+        if source.exists():
+            shutil.copyfile(source, destination)
+
+
+def cleanup_repo_docs(app, exception) -> None:
+    """Remove the copied repository docs after the build."""
+    for destination in _REPO_DOC_COPIES.values():
+        if destination.exists():
+            destination.unlink()
+
+
+def autoapi_skip_member(app, what, name, obj, skip, options):
+    """
+    Hook for Sphinx AutoAPI to determine if a specific member should be excluded from the docs.
+
+    AutoAPI works by statically parsing the Python AST without importing code. Because of this,
+    it finds classes both where they are defined (e.g., `coco_pipe/io/structures.py`) AND
+    where they are re-exported (e.g., `coco_pipe/io/__init__.py`).
+    We use this hook to prune out redundant internal paths and unwanted Pydantic boilerplate.
+    """
+    short_name = name.split(".")[-1]
+
+    # 1. Hide standard Pydantic V1/V2 internal methods that clutter the API documentation.
+    # Pydantic injects dozens of helper methods into BaseModel subclasses, which we don't want users to see.
+    if short_name.startswith("model_") or short_name in {
+        "dict",
+        "json",
+        "parse_obj",
+        "parse_raw",
+        "construct",
+        "schema",
+        "schema_json",
+        "update_forward_refs",
+    }:
+        return True
+
+    # 2. Prevent Duplicate Target Generation.
+    # Because these classes are defined in internal files (e.g. `structures.py`) but exported
+    # publicly in `__init__.py`, AutoAPI will try to generate TWO separate documentation pages for them.
+    # This causes Sphinx to crash with "more than one target found" when we try to cross-reference them.
+    # By forcing AutoAPI to skip their internal source path, we ensure they are ONLY documented
+    # at their clean, public API path (e.g., `coco_pipe.io.DataContainer`).
+    duplicates_to_hide = {
+        "coco_pipe.io.structures.DataContainer",
+        "coco_pipe.dim_reduction.reducers.base.BaseReducer",
+        "coco_pipe.dim_reduction.core.DimReduction",
+        "coco_pipe.decoding.configs.ExperimentConfig",
+        "coco_pipe.decoding.result.ExperimentResult",
+        "coco_pipe.report.core.Report",
+        "coco_pipe.report.core.Section",
+    }
+    if name in duplicates_to_hide:
+        return True
+
+    return skip
+
+
+def autodoc_skip_member(app, what, name, obj, skip, options):
+    """
+    Hook for Sphinx Autodoc to determine if a member should be excluded.
+
+    Unlike AutoAPI (which is static), Autodoc works by dynamically importing modules into memory.
+    While AutoAPI builds the main API reference, Autodoc is triggered by the `autosummary` tables
+    in our index files.
+    We must duplicate the Pydantic filter here because Autodoc parses the imported class objects
+    and will expose the `model_*` methods in the summary tables otherwise.
+    """
+    # Hide standard Pydantic internal methods that clutter the API
+    if name.startswith("model_") or name in {
+        "dict",
+        "json",
+        "parse_obj",
+        "parse_raw",
+        "construct",
+        "schema",
+        "schema_json",
+        "update_forward_refs",
+    }:
+        return True
+    return skip
+
+
+def setup(app):
+    """Register Sphinx build hooks."""
+    copy_repo_docs()
+    app.connect("build-finished", cleanup_repo_docs)
+    app.connect("autoapi-skip-member", autoapi_skip_member)
+    app.connect("autodoc-skip-member", autodoc_skip_member)
+
+
+napoleon_use_ivar = True

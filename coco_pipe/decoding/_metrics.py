@@ -10,8 +10,8 @@ higher values are better.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 from sklearn.metrics import (
@@ -417,8 +417,7 @@ def get_metric_spec(name: str) -> MetricSpec:
     """
     if name not in METRIC_REGISTRY:
         raise ValueError(
-            f"Unknown metric '{name}'. Available: "
-            f"{sorted(list(METRIC_REGISTRY.keys()))}"
+            f"Unknown metric '{name}'. Available: {sorted(METRIC_REGISTRY.keys())}"
         )
     return METRIC_REGISTRY[name]
 

@@ -4,7 +4,7 @@ Dimensionality Reduction Core
 
 Execution manager for one dimensionality reduction method.
 
-`DimReduction` is intentionally narrow. It owns reducer instantiation,
+`~coco_pipe.dim_reduction.DimReduction` is intentionally narrow. It owns reducer instantiation,
 input-shape validation for execution, fit/transform operations, and cached
 evaluation/interpretation state for one reducer instance. Plotting, trajectory
 reshaping, reporting, and multi-method comparison live in dedicated modules.
@@ -13,7 +13,7 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 import numpy as np
 
@@ -100,7 +100,7 @@ class DimReduction:
         self,
         method: Union[str, "BaseReducerConfig"],
         n_components: int = 2,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         **kwargs,
     ):
         """
@@ -136,20 +136,20 @@ class DimReduction:
             n_components=self.n_components, **self.reducer_kwargs
         )
 
-        self.metrics_: Dict[str, Any] = {}
-        self.quality_metadata_: Dict[str, Any] = {}
-        self.diagnostics_: Dict[str, Any] = {}
-        self.metric_records_: List[Dict[str, Any]] = []
-        self.interpretation_: Dict[str, Any] = {}
-        self.interpretation_records_: List[Dict[str, Any]] = []
+        self.metrics_: dict[str, Any] = {}
+        self.quality_metadata_: dict[str, Any] = {}
+        self.diagnostics_: dict[str, Any] = {}
+        self.metric_records_: list[dict[str, Any]] = []
+        self.interpretation_: dict[str, Any] = {}
+        self.interpretation_records_: list[dict[str, Any]] = []
 
     @property
-    def random_state(self) -> Optional[int]:
+    def random_state(self) -> int | None:
         """Return the random seed from parameters if any."""
         return self.reducer_kwargs.get("random_state")
 
     @property
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         """Return reducer capability metadata through the manager interface."""
         return self.reducer.capabilities
 
@@ -162,14 +162,14 @@ class DimReduction:
         self.interpretation_ = {}
         self.interpretation_records_ = []
 
-    def _prepare_input(self, X: Any) -> tuple[np.ndarray, Optional[DataContainer]]:
+    def _prepare_input(self, X: Any) -> tuple[np.ndarray, DataContainer | None]:
         """
         Validate reducer input shape and unwrap it to a NumPy array.
 
         Parameters
         ----------
         X : DataContainer, array-like, or MNE object
-            Input data accepted by the reducer. A ``DataContainer`` is unwrapped
+            Input data accepted by the reducer. A ``~coco_pipe.io.DataContainer`` is unwrapped
             to its ``X`` array and remembered so the embedding can be re-wrapped
             as a container; objects exposing ``get_data()`` (e.g. MNE) are
             unwrapped to arrays.
@@ -179,7 +179,7 @@ class DimReduction:
         data : np.ndarray
             Validated reducer input.
         source : DataContainer or None
-            The source container when ``X`` was a ``DataContainer``, else
+            The source container when ``X`` was a ``~coco_pipe.io.DataContainer``, else
             ``None``.
 
         Raises
@@ -209,7 +209,7 @@ class DimReduction:
         return data, source
 
     def _wrap_embedding(
-        self, embedding: np.ndarray, source: Optional[DataContainer]
+        self, embedding: np.ndarray, source: DataContainer | None
     ) -> Any:
         """
         Re-attach an embedding to its source container when possible.
@@ -225,7 +225,7 @@ class DimReduction:
         Returns
         -------
         DataContainer or np.ndarray
-            An embedding ``DataContainer`` with a ``component`` axis when
+            An embedding ``~coco_pipe.io.DataContainer`` with a ``component`` axis when
             ``source`` is a container and the embedding shares its observation
             layout (the standard 2-D case); otherwise the raw embedding array.
             Native 3-D trajectory embeddings stay as arrays.
@@ -240,7 +240,7 @@ class DimReduction:
         names = [f"component_{i + 1}" for i in range(embedding.shape[-1])]
         return source.with_features(embedding, names=names, new_dim_name="component")
 
-    def fit(self, X: Any, y: Optional[Any] = None) -> "DimReduction":
+    def fit(self, X: Any, y: Any | None = None) -> "DimReduction":
         """
         Fit the reducer on the provided data.
 
@@ -273,15 +273,15 @@ class DimReduction:
         Returns
         -------
         X_emb : DataContainer or np.ndarray
-            Reduced representation. A ``DataContainer`` input yields an embedding
-            ``DataContainer`` (``component`` axis, ids/coords/meta preserved) for
+            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an embedding
+            ``~coco_pipe.io.DataContainer`` (``component`` axis, ids/coords/meta preserved) for
             standard 2-D embeddings; array input yields an array.
         """
         X_arr, source = self._prepare_input(X)
         embedding = self.reducer.transform(X_arr)
         return self._wrap_embedding(embedding, source)
 
-    def fit_transform(self, X: Any, y: Optional[Any] = None) -> Any:
+    def fit_transform(self, X: Any, y: Any | None = None) -> Any:
         """
         Fit the reducer and return the reduced representation.
 
@@ -295,8 +295,8 @@ class DimReduction:
         Returns
         -------
         X_emb : DataContainer or np.ndarray
-            Reduced representation. A ``DataContainer`` input yields an embedding
-            ``DataContainer`` (``component`` axis, ids/coords/meta preserved) for
+            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an embedding
+            ``~coco_pipe.io.DataContainer`` (``component`` axis, ids/coords/meta preserved) for
             standard 2-D embeddings; array input yields an array.
         """
         X_arr, source = self._prepare_input(X)
@@ -325,26 +325,26 @@ class DimReduction:
         X_emb: Any,
         X: Any = None,
         n_neighbors: int = 5,
-        metrics: Optional[List[str]] = None,
-        k_values: Optional[List[int]] = None,
-        labels: Optional[np.ndarray] = None,
-        groups: Optional[np.ndarray] = None,
-        times: Optional[np.ndarray] = None,
-        separation_method: Optional[str] = None,
-        config: Optional[EvaluationConfig] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+        metrics: list[str] | None = None,
+        k_values: list[int] | None = None,
+        labels: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
+        times: np.ndarray | None = None,
+        separation_method: str | None = None,
+        config: EvaluationConfig | None = None,
+    ) -> dict[str, dict[str, Any]]:
         """
         Evaluate an explicit embedding against the original data.
 
         Parameters
         ----------
         X_emb : DataContainer or array-like
-            Embedded data to evaluate. A ``DataContainer`` is unwrapped to its
+            Embedded data to evaluate. A ``~coco_pipe.io.DataContainer`` is unwrapped to its
             ``X`` array.
         X : DataContainer or array-like, optional
             Original high-dimensional data in evaluation-ready layout. This is
             required for standard 2D metrics and optional for native 3D
-            trajectory metrics. A ``DataContainer`` is unwrapped to its ``X``
+            trajectory metrics. A ``~coco_pipe.io.DataContainer`` is unwrapped to its ``X``
             array.
         n_neighbors : int, default=5
             K-nearest neighbors size for metric computation.
@@ -434,11 +434,11 @@ class DimReduction:
         X: np.ndarray,
         *,
         X_emb: np.ndarray,
-        analyses: Optional[List[str]] = None,
-        feature_names: Optional[List[str]] = None,
+        analyses: list[str] | None = None,
+        feature_names: list[str] | None = None,
         n_repeats: int = 5,
-        random_state: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        random_state: int | None = None,
+    ) -> dict[str, Any]:
         """
         Run feature interpretation analyses for an explicit embedding.
 
@@ -506,7 +506,7 @@ class DimReduction:
             "records": list(self.interpretation_records_),
         }
 
-    def get_diagnostics(self) -> Dict[str, Any]:
+    def get_diagnostics(self) -> dict[str, Any]:
         """
         Return cached diagnostics merged with reducer diagnostics.
 
@@ -519,7 +519,7 @@ class DimReduction:
         self.diagnostics_.update(self.reducer.get_diagnostics())
         return self.diagnostics_.copy()
 
-    def get_quality_metadata(self) -> Dict[str, Any]:
+    def get_quality_metadata(self) -> dict[str, Any]:
         """
         Return cached scalar metadata merged with reducer metadata.
 
@@ -532,11 +532,11 @@ class DimReduction:
         self.quality_metadata_.update(self.reducer.get_quality_metadata())
         return self.quality_metadata_.copy()
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Return cached scalar metrics from the latest ``score()`` call."""
         return self.metrics_.copy()
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """
         Return a normalized summary payload for report and export paths.
 
@@ -566,7 +566,7 @@ class DimReduction:
             "capabilities": self.capabilities,
         }
 
-    def save(self, path: Union[str, Path]):
+    def save(self, path: str | Path):
         """
         Save the underlying reducer to disk.
 
@@ -583,7 +583,7 @@ class DimReduction:
         self.reducer.save(path)
 
     @classmethod
-    def load(cls, path: Union[str, Path], method: str) -> "DimReduction":
+    def load(cls, path: str | Path, method: str) -> "DimReduction":
         """
         Load a persisted reducer and wrap it in a fresh manager.
 

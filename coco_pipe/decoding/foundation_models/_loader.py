@@ -53,7 +53,7 @@ def load(
     n_outputs: int | None = None,
     device: str = "auto",
     train_mode: str = "frozen",
-    signal_metadata: "SignalMetadata | None" = None,
+    signal_metadata: SignalMetadata | None = None,
     **backend_kwargs,
 ) -> BackendBase:
     """Load a pretrained EEG foundation model.

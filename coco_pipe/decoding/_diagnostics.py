@@ -4,7 +4,8 @@ Decoding Diagnostics & Tidy Data Helpers
 Functions for expanding and tidying raw decoding results into DataFrames.
 """
 
-from typing import Any, Dict, Iterator, Optional, Sequence
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,7 @@ import pandas as pd
 from ._metrics import get_metric_spec
 
 
-def time_value(index: int, time_axis: Optional[Sequence[Any]]) -> Any:
+def time_value(index: int, time_axis: Sequence[Any] | None) -> Any:
     """
     Map a raw integer index to a meaningful scientific time value.
 
@@ -51,8 +52,8 @@ def score_rows(
     fold_idx: int,
     metric: str,
     score: Any,
-    time_axis: Optional[Sequence[Any]] = None,
-) -> list[Dict[str, Any]]:
+    time_axis: Sequence[Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     Expand scalar or temporal fold scores into tidy data rows.
 
@@ -132,9 +133,9 @@ def score_rows(
 def prediction_rows(
     model: str,
     fold_idx: int,
-    preds: Dict[str, Any],
-    time_axis: Optional[Sequence[Any]] = None,
-) -> list[Dict[str, Any]]:
+    preds: dict[str, Any],
+    time_axis: Sequence[Any] | None = None,
+) -> list[dict[str, Any]]:
     """
     Expand raw predictions from a results dictionary into tidy data rows.
 
@@ -288,7 +289,7 @@ def row_value(values: np.ndarray, row_idx: int) -> Any:
     return val
 
 
-def optional_values(values: Optional[Any], length: int) -> np.ndarray:
+def optional_values(values: Any | None, length: int) -> np.ndarray:
     """
     Ensure a sequence exists and has the correct length for broadcasting.
 
@@ -314,7 +315,7 @@ def optional_values(values: Optional[Any], length: int) -> np.ndarray:
     return np.asarray(values)
 
 
-def proba_matrix(group: pd.DataFrame, n_classes: int) -> Optional[np.ndarray]:
+def proba_matrix(group: pd.DataFrame, n_classes: int) -> np.ndarray | None:
     """
     Re-assemble a probability matrix from tidy prediction columns.
 
@@ -543,8 +544,8 @@ def scalar_prediction_frame(preds: pd.DataFrame) -> pd.DataFrame:
 def confusion_matrix_frame(
     preds: pd.DataFrame,
     labels: Sequence[Any],
-    normalize: Optional[str] = None,
-    group_cols: Optional[list[str]] = None,
+    normalize: str | None = None,
+    group_cols: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Compute and tidy confusion matrices from a prediction frame.
@@ -581,7 +582,7 @@ def confusion_matrix_frame(
 
         # Map group column names to their values
         if isinstance(names, (list, tuple)):
-            for col, val in zip(group_cols, names):
+            for col, val in zip(group_cols, names, strict=False):
                 df_m[col] = val
         else:
             df_m[group_cols[0]] = names
@@ -589,19 +590,19 @@ def confusion_matrix_frame(
 
     if not frames:
         return pd.DataFrame(
-            columns=group_cols + ["TrueLabel", "PredictedLabel", "Value"]
+            columns=[*group_cols, "TrueLabel", "PredictedLabel", "Value"]
         )
 
     return pd.concat(frames, ignore_index=True)[
-        group_cols + ["TrueLabel", "PredictedLabel", "Value"]
+        [*group_cols, "TrueLabel", "PredictedLabel", "Value"]
     ]
 
 
 def curve_score_groups(
     preds: pd.DataFrame,
-    model: Optional[str] = None,
+    model: str | None = None,
     require_probability: bool = False,
-    pos_label: Optional[Any] = None,
+    pos_label: Any | None = None,
 ) -> Iterator[tuple[str, int, Any, np.ndarray, np.ndarray]]:
     """
     Yield binary or one-vs-rest score groups for curve plotting.

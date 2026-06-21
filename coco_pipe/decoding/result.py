@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -39,10 +40,10 @@ class ExperimentResult:
 
     def __init__(
         self,
-        raw_results: Dict[str, Any],
-        config: Optional[Dict[str, Any]] = None,
-        meta: Optional[Dict[str, Any]] = None,
-        time_axis: Optional[Sequence[Any]] = None,
+        raw_results: dict[str, Any],
+        config: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None,
+        time_axis: Sequence[Any] | None = None,
         schema_version: str = RESULT_SCHEMA_VERSION,
     ):
         """
@@ -81,11 +82,11 @@ class ExperimentResult:
             self._time_axis_cache = list(t) if t is not None else None
 
     @property
-    def time_axis(self) -> Optional[list[Any]]:
+    def time_axis(self) -> list[Any] | None:
         """The scientific time points for temporal decoding results."""
         return self._time_axis_cache
 
-    def to_payload(self, serializable: bool = False) -> Dict[str, Any]:
+    def to_payload(self, serializable: bool = False) -> dict[str, Any]:
         """
         Return the result payload for persistence or transmission.
 
@@ -116,7 +117,7 @@ class ExperimentResult:
         }
         return make_serializable(payload) if serializable else payload
 
-    def save(self, path: Optional[Union[str, Path, Any]] = None, indent: int = 2):
+    def save(self, path: str | Path | Any | None = None, indent: int = 2):
         """
         Save results to a file, auto-detecting the format from the extension.
 
@@ -167,10 +168,10 @@ class ExperimentResult:
 
     def export(
         self,
-        output_dir: Union[str, Path],
-        config: Optional[Dict[str, Any]] = None,
+        output_dir: str | Path,
+        config: dict[str, Any] | None = None,
         formats: Sequence[str] = ("csv",),
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Export the result object and all available tidy tables.
 
         Individual optional table failures are recorded in the run manifest
@@ -203,8 +204,8 @@ class ExperimentResult:
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
         effective_config = dict(config or self.config or {})
-        written: Dict[str, str] = {}
-        export_errors: Dict[str, str] = {}
+        written: dict[str, str] = {}
+        export_errors: dict[str, str] = {}
         written["result"] = str(self.save(output / "result.joblib"))
         accessors = {
             "summary": self.summary,
@@ -262,7 +263,7 @@ class ExperimentResult:
         return written
 
     @classmethod
-    def load(cls, path: Union[str, Path, Any]) -> "ExperimentResult":
+    def load(cls, path: str | Path | Any) -> ExperimentResult:
         """
         Load results from a file (auto-detects JSON or Pickle).
 
@@ -294,10 +295,7 @@ class ExperimentResult:
         if not path.exists():
             raise FileNotFoundError(f"Result file not found: {path}")
 
-        if path.suffix == ".json":
-            payload = read_json(path)
-        else:
-            payload = load_object(path)
+        payload = read_json(path) if path.suffix == ".json" else load_object(path)
 
         return cls(
             raw_results=payload["results"],
@@ -375,7 +373,7 @@ class ExperimentResult:
         cols = sorted(df.columns)
         return df[cols]
 
-    def get_detailed_scores(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_detailed_scores(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level scores for all models or a specific model in long format.
 
@@ -418,7 +416,7 @@ class ExperimentResult:
                     )
         return pd.DataFrame(rows)
 
-    def get_temporal_score_summary(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_temporal_score_summary(self, model: str | None = None) -> pd.DataFrame:
         """
         Get temporal metric means/stds and significance across folds.
 
@@ -522,7 +520,7 @@ class ExperimentResult:
                             )
         return pd.DataFrame(rows, columns=columns)
 
-    def get_predictions(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_predictions(self, model: str | None = None) -> pd.DataFrame:
         """
         Get concatenated predictions for all models or a specific model.
 
@@ -558,7 +556,7 @@ class ExperimentResult:
                 )
         return pd.DataFrame(rows)
 
-    def get_splits(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_splits(self, model: str | None = None) -> pd.DataFrame:
         """
         Get outer-CV train/test membership in long format for all models.
 
@@ -638,7 +636,7 @@ class ExperimentResult:
 
         return pd.DataFrame(all_rows)
 
-    def get_fit_diagnostics(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_fit_diagnostics(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level timing and warning diagnostics for all models.
 
@@ -725,15 +723,15 @@ class ExperimentResult:
 
     def _build_confusion_df(
         self,
-        model: Optional[str],
-        labels: Optional[Sequence[Any]],
-        normalize: Optional[str],
+        model: str | None,
+        labels: Sequence[Any] | None,
+        normalize: str | None,
         group_cols: list[str],
     ) -> pd.DataFrame:
         """Shared logic for building confusion matrix DataFrames."""
         preds = scalar_prediction_frame(self.get_predictions(model=model))
         if preds.empty:
-            cols = group_cols + ["TrueLabel", "PredictedLabel", "Value"]
+            cols = [*group_cols, "TrueLabel", "PredictedLabel", "Value"]
             return pd.DataFrame(columns=cols)
 
         if labels is None:
@@ -745,9 +743,9 @@ class ExperimentResult:
 
     def get_confusion_matrices(
         self,
-        model: Optional[str] = None,
-        labels: Optional[Sequence[Any]] = None,
-        normalize: Optional[str] = None,
+        model: str | None = None,
+        labels: Sequence[Any] | None = None,
+        normalize: str | None = None,
     ) -> pd.DataFrame:
         """
         Get fold-level confusion matrices in long format.
@@ -792,7 +790,7 @@ class ExperimentResult:
         )
 
     def get_confusion_counts(
-        self, model: Optional[str] = None, labels: Optional[Sequence[Any]] = None
+        self, model: str | None = None, labels: Sequence[Any] | None = None
     ) -> pd.DataFrame:
         """
         Get unnormalized per-fold confusion counts.
@@ -815,9 +813,9 @@ class ExperimentResult:
 
     def get_pooled_confusion_matrix(
         self,
-        model: Optional[str] = None,
-        labels: Optional[Sequence[Any]] = None,
-        normalize: Optional[str] = None,
+        model: str | None = None,
+        labels: Sequence[Any] | None = None,
+        normalize: str | None = None,
     ) -> pd.DataFrame:
         """
         Get pooled out-of-fold confusion matrices in long format.
@@ -849,7 +847,7 @@ class ExperimentResult:
         )
 
     def get_roc_curve(
-        self, model: Optional[str] = None, pos_label: Optional[Any] = None
+        self, model: str | None = None, pos_label: Any | None = None
     ) -> pd.DataFrame:
         """
         Get binary or one-vs-rest ROC curve coordinates.
@@ -909,7 +907,7 @@ class ExperimentResult:
         return pd.concat(frames, ignore_index=True)
 
     def get_pr_curve(
-        self, model: Optional[str] = None, pos_label: Optional[Any] = None
+        self, model: str | None = None, pos_label: Any | None = None
     ) -> pd.DataFrame:
         """
         Get binary or one-vs-rest precision-recall curve coordinates.
@@ -969,7 +967,7 @@ class ExperimentResult:
             )
         return pd.concat(frames, ignore_index=True)
 
-    def get_roc_auc_summary(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_roc_auc_summary(self, model: str | None = None) -> pd.DataFrame:
         """
         Get summary ROC-AUC metrics across models and folds.
 
@@ -1036,7 +1034,7 @@ class ExperimentResult:
             )
         return pd.DataFrame(rows)
 
-    def get_pr_auc_summary(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_pr_auc_summary(self, model: str | None = None) -> pd.DataFrame:
         """
         Get summary PR-AUC (Average Precision) metrics across models and folds.
 
@@ -1102,9 +1100,9 @@ class ExperimentResult:
 
     def get_calibration_curve(
         self,
-        model: Optional[str] = None,
+        model: str | None = None,
         n_bins: int = 5,
-        pos_label: Optional[Any] = None,
+        pos_label: Any | None = None,
         strategy: str = "uniform",
     ) -> pd.DataFrame:
         """
@@ -1176,7 +1174,7 @@ class ExperimentResult:
             )
         return pd.concat(frames, ignore_index=True)
 
-    def get_probability_diagnostics(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_probability_diagnostics(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level log-loss and Brier summaries when probabilities exist.
 
@@ -1224,7 +1222,7 @@ class ExperimentResult:
                         "Value": float(ll),
                     }
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.debug(f"log_loss skipped for {m_name} fold {f_idx}: {e}")
 
             # 2. Brier Scores (Vectorized)
@@ -1261,9 +1259,9 @@ class ExperimentResult:
         self,
         lightweight: bool = False,
         metric: str = "accuracy",
-        unit: Optional[str] = None,
+        unit: str | None = None,
         n_permutations: int = 1000,
-        random_state: Optional[int] = None,
+        random_state: int | None = None,
     ) -> pd.DataFrame:
         """
         Get finite-sample statistical assessment rows in long form.
@@ -1375,7 +1373,7 @@ class ExperimentResult:
         present_cols = [c for c in cols if c in df.columns]
         return df[present_cols]
 
-    def get_statistical_nulls(self, model: Optional[str] = None) -> Dict[str, Any]:
+    def get_statistical_nulls(self, model: str | None = None) -> dict[str, Any]:
         """
         Return stored statistical null distributions, when configured.
 
@@ -1407,7 +1405,7 @@ class ExperimentResult:
                 nulls[m_name] = res["statistical_nulls"]
         return nulls
 
-    def get_model_artifacts(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_model_artifacts(self, model: str | None = None) -> pd.DataFrame:
         """
         Return fold-level model artifact metadata in long form.
 
@@ -1464,11 +1462,11 @@ class ExperimentResult:
     def get_bootstrap_confidence_intervals(
         self,
         metric: str = "accuracy",
-        model: Optional[str] = None,
-        unit: Optional[str] = None,
+        model: str | None = None,
+        unit: str | None = None,
         n_bootstraps: int = 1000,
         ci: float = 0.95,
-        random_state: Optional[int] = None,
+        random_state: int | None = None,
     ) -> pd.DataFrame:
         """
         Bootstrap metric confidence intervals over configured inference units.
@@ -1549,12 +1547,12 @@ class ExperimentResult:
 
     def compare_models(
         self,
-        models: Optional[Sequence[str]] = None,
+        models: Sequence[str] | None = None,
         metric: str = "accuracy",
-        unit: Optional[str] = None,
+        unit: str | None = None,
         n_permutations: int = 1000,
         correction: str = "fdr_bh",
-        random_state: Optional[int] = None,
+        random_state: int | None = None,
     ) -> pd.DataFrame:
         """
         Perform exhaustive pairwise comparisons between multiple models.
@@ -1633,9 +1631,9 @@ class ExperimentResult:
         model_a: str,
         model_b: str,
         metric: str = "accuracy",
-        unit: Optional[str] = None,
+        unit: str | None = None,
         n_permutations: int = 1000,
-        random_state: Optional[int] = None,
+        random_state: int | None = None,
     ) -> pd.DataFrame:
         """
         Paired model comparison using outer-fold predictions on shared samples.
@@ -1725,7 +1723,7 @@ class ExperimentResult:
         return df_res[cols]
 
     def get_feature_importances(
-        self, model: Optional[str] = None, fold_level: bool = False
+        self, model: str | None = None, fold_level: bool = False
     ) -> pd.DataFrame:
         """
         Get feature importances in long format.
@@ -1842,7 +1840,7 @@ class ExperimentResult:
 
         return df[ordered_cols]
 
-    def _resolve_inference_unit(self, unit: Optional[str]) -> str:
+    def _resolve_inference_unit(self, unit: str | None) -> str:
         if unit is not None:
             return unit
         return self.meta.get("inferential_unit") or "sample"
@@ -1852,7 +1850,7 @@ class ExperimentResult:
 
         return get_time_val(index, self.time_axis)
 
-    def get_best_params(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_best_params(self, model: str | None = None) -> pd.DataFrame:
         """
         Get the best hyperparameters selected per fold.
 
@@ -1893,7 +1891,7 @@ class ExperimentResult:
                             )
         return pd.DataFrame(rows)
 
-    def get_search_results(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_search_results(self, model: str | None = None) -> pd.DataFrame:
         """
         Get compact hyperparameter-search diagnostics in long form.
 
@@ -1945,7 +1943,7 @@ class ExperimentResult:
         ]
         return pd.DataFrame(rows, columns=cols)
 
-    def get_selected_features(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_selected_features(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level selected feature masks in long format.
 
@@ -2012,7 +2010,7 @@ class ExperimentResult:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
-    def get_feature_scores(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_feature_scores(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level feature-selection scores.
 
@@ -2079,7 +2077,7 @@ class ExperimentResult:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
-    def get_feature_stability(self, model: Optional[str] = None) -> pd.DataFrame:
+    def get_feature_stability(self, model: str | None = None) -> pd.DataFrame:
         """
         Analyze feature selection stability across folds.
 
@@ -2149,7 +2147,7 @@ class ExperimentResult:
         return pd.concat(frames, ignore_index=True)
 
     def get_generalization_matrix(
-        self, model: Optional[str] = None, metric: str = "accuracy"
+        self, model: str | None = None, metric: str = "accuracy"
     ) -> pd.DataFrame:
         """
         Get Generalization Matrix (Train Time x Test Time) averaged across folds.

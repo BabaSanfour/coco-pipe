@@ -11,8 +11,9 @@ import inspect
 import logging
 import time
 import warnings
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
-from typing import Any, Callable, Dict, Optional, Sequence, Union
+from typing import Any
 
 import joblib
 import numpy as np
@@ -116,9 +117,9 @@ def fit_and_score_fold(
     estimator: BaseEstimator,
     X: np.ndarray,
     y: np.ndarray,
-    groups: Optional[np.ndarray],
+    groups: np.ndarray | None,
     sample_ids: np.ndarray,
-    sample_metadata: Optional[Dict[str, np.ndarray]],
+    sample_metadata: dict[str, np.ndarray] | None,
     train_idx: np.ndarray,
     test_idx: np.ndarray,
     metrics: Sequence[str],
@@ -126,11 +127,11 @@ def fit_and_score_fold(
     calibration_config: Any,
     spec: Any,
     tuning_config: Any = None,
-    feature_names: Optional[list[str]] = None,
+    feature_names: list[str] | None = None,
     search_enabled: bool = False,
     force_serial: bool = False,
-    sample_weight: Optional[np.ndarray] = None,
-) -> Dict[str, Any]:
+    sample_weight: np.ndarray | None = None,
+) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
 
@@ -349,11 +350,11 @@ def fit_estimator(
     estimator: BaseEstimator,
     X_train: np.ndarray,
     y_train: np.ndarray,
-    groups_train: Optional[np.ndarray],
+    groups_train: np.ndarray | None,
     feature_selection_config: Any,
     calibration_config: Any,
     tuning_config: Any = None,
-    sample_weight: Optional[np.ndarray] = None,
+    sample_weight: np.ndarray | None = None,
 ) -> None:
     """
     Fit an estimator with intelligent metadata and group routing.
@@ -405,7 +406,7 @@ def fit_estimator(
         ):
             sfs.cv = get_cv_splitter(feature_selection_config.cv, require_groups=False)
 
-    fit_params: Dict[str, Any] = {}
+    fit_params: dict[str, Any] = {}
     if groups_train is not None:
         if calibrated and _config_uses_group_cv(
             getattr(calibration_config, "cv", None)
@@ -453,7 +454,7 @@ def extract_feature_importances(
     fs_enabled: bool = False,
     search_enabled: bool = False,
     calibration_enabled: bool = False,
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """
     Extract and aggregate feature importances or coefficients from a fitted model.
 
@@ -524,7 +525,7 @@ def extract_feature_importances(
     return _get_raw_importance(estimator, spec)
 
 
-def _get_raw_importance(estimator: Any, spec: Any) -> Optional[np.ndarray]:
+def _get_raw_importance(estimator: Any, spec: Any) -> np.ndarray | None:
     """
     Internal helper to extract importance from the base estimator.
 
@@ -560,8 +561,8 @@ def compute_metric_safe(
     y_est: np.ndarray,
     is_multiclass: bool,
     is_proba: bool = False,
-    name: Optional[str] = None,
-) -> Union[float, np.ndarray]:
+    name: str | None = None,
+) -> float | np.ndarray:
     """
     Handles Standard, Sliding, and Generalizing decoding results efficiently.
 
@@ -637,8 +638,8 @@ def extract_metadata(
     spec: Any,
     feature_selection_config: Any,
     search_enabled: bool = False,
-    feature_names: Optional[list[str]] = None,
-) -> Dict[str, Any]:
+    feature_names: list[str] | None = None,
+) -> dict[str, Any]:
     """
     Metadata extraction.
 
@@ -672,43 +673,42 @@ def extract_metadata(
         estimator = getattr(estimator, "best_estimator_", estimator)
 
     # 2. Pipeline / Feature Selection Diagnostics
-    if feature_selection_config.enabled:
-        if hasattr(estimator, "named_steps"):
-            fs_step = estimator.named_steps.get("fs")
-            clf_step = estimator.named_steps.get("clf")
+    if feature_selection_config.enabled and hasattr(estimator, "named_steps"):
+        fs_step = estimator.named_steps.get("fs")
+        clf_step = estimator.named_steps.get("clf")
 
-            if fs_step is not None:
-                mask = fs_step.get_support()
-                indices = np.flatnonzero(mask)
-                n_feat = len(mask)
+        if fs_step is not None:
+            mask = fs_step.get_support()
+            indices = np.flatnonzero(mask)
+            n_feat = len(mask)
 
-                actual_names = (
-                    feature_names
-                    if (feature_names and len(feature_names) == n_feat)
-                    else [f"feature_{i}" for i in range(n_feat)]
-                )
+            actual_names = (
+                feature_names
+                if (feature_names and len(feature_names) == n_feat)
+                else [f"feature_{i}" for i in range(n_feat)]
+            )
 
-                meta.update(
-                    {
-                        "feature_selection_method": feature_selection_config.method,
-                        "selected_features": mask,
-                        "selected_feature_indices": indices,
-                        "selected_feature_names": [actual_names[i] for i in indices],
-                        "feature_names": actual_names,
-                    }
-                )
+            meta.update(
+                {
+                    "feature_selection_method": feature_selection_config.method,
+                    "selected_features": mask,
+                    "selected_feature_indices": indices,
+                    "selected_feature_names": [actual_names[i] for i in indices],
+                    "feature_names": actual_names,
+                }
+            )
 
-                if feature_selection_config.method == "sfs" and hasattr(
-                    fs_step, "ranking_"
-                ):
-                    meta["selection_order"] = fs_step.ranking_
-                elif feature_selection_config.method == "k_best" and hasattr(
-                    fs_step, "scores_"
-                ):
-                    meta["feature_scores"] = fs_step.scores_
+            if feature_selection_config.method == "sfs" and hasattr(
+                fs_step, "ranking_"
+            ):
+                meta["selection_order"] = fs_step.ranking_
+            elif feature_selection_config.method == "k_best" and hasattr(
+                fs_step, "scores_"
+            ):
+                meta["feature_scores"] = fs_step.scores_
 
-            if clf_step is not None:
-                estimator = clf_step
+        if clf_step is not None:
+            estimator = clf_step
 
     if hasattr(estimator, "named_steps"):
         estimator = estimator.named_steps.get("clf", estimator)
@@ -720,7 +720,7 @@ def extract_metadata(
     return meta
 
 
-def compact_search_results(estimator: BaseEstimator) -> list[Dict[str, Any]]:
+def compact_search_results(estimator: BaseEstimator) -> list[dict[str, Any]]:
     """
     Return compact search diagnostics with pre-standardized arrays.
 
@@ -769,9 +769,9 @@ def compact_search_results(estimator: BaseEstimator) -> list[Dict[str, Any]]:
 
 
 def metadata_slice(
-    metadata_dict: Optional[Dict[str, np.ndarray]],
+    metadata_dict: dict[str, np.ndarray] | None,
     indices: np.ndarray,
-) -> Optional[Dict[str, list[Any]]]:
+) -> dict[str, list[Any]] | None:
     """
     Slicing of pre-converted metadata.
 
@@ -794,7 +794,7 @@ def metadata_slice(
 
 def warning_records_to_dict(
     stage: str, warning_records: Sequence[Any]
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Return serializable warning records captured in one fold stage.
     """

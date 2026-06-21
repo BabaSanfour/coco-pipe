@@ -285,15 +285,15 @@ class FoundationModelSpec(EstimatorSpec):
         return self.pretrained_n_times / self.pretrained_sfreq
 
 
-_FM_DEFAULTS: dict[str, Any] = dict(
-    import_path="coco_pipe.decoding.foundation_models:BackendBase",
-    family="foundation",
-    task=("classification", "regression"),
-    input_kinds=("epoched",),
-    supports_calibration=False,
-    fit_smoke_required=False,
-    feature_selection=("disabled",),
-)
+_FM_DEFAULTS: dict[str, Any] = {
+    "import_path": "coco_pipe.decoding.foundation_models:BackendBase",
+    "family": "foundation",
+    "task": ("classification", "regression"),
+    "input_kinds": ("epoched",),
+    "supports_calibration": False,
+    "fit_smoke_required": False,
+    "feature_selection": ("disabled",),
+}
 
 
 def _fm_spec(name: str, **kwargs: Any) -> FoundationModelSpec:

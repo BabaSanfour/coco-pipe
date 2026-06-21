@@ -90,7 +90,7 @@ def _plot_or_none(
 
 
 def _add_tabs_or_single(
-    container: "Section | Any",
+    container: Section | Any,
     elements: Mapping[str, ImageElement | None],
 ) -> None:
     """Add one image directly, or several as a tab group, skipping ``None``."""

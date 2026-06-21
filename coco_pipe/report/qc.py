@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 def _add_qc_table(
-    section: "Section",
+    section: Section,
     frame: pd.DataFrame,
     *,
     title: str,
@@ -54,7 +54,7 @@ def build_qc_section(
     *,
     compact: bool = False,
     page_size: int = 10,
-) -> "Section":
+) -> Section:
     """Build the standardised QC drop-log report section.
 
     Parameters

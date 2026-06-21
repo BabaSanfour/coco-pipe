@@ -66,7 +66,7 @@ def psd_data(signal_data):
 def mock_fit_batch(psd_data):
     """A mock ParametricFitBatch for testing corrected bands."""
     psds, freqs = psd_data
-    n_obs, n_chans, n_freqs = psds.shape
+    n_obs, n_chans, _n_freqs = psds.shape
 
     periodic_psds = np.zeros_like(psds)
     # Add a "peak" at 10Hz (approx index)
@@ -223,7 +223,7 @@ def test_spectral_capabilities_and_requests():
 def test_spectral_extract_psd_edge_cases(signal_data):
     from unittest.mock import MagicMock
 
-    X, sfreq, ch_names = signal_data
+    _X, _sfreq, ch_names = signal_data
 
     # explicit log output coverage
     config = BandDescriptorConfig(
@@ -632,19 +632,21 @@ def test_complexity_raise_on_error(signal_data):
         measures=["sample_entropy"],
     )
     extractor = ComplexityDescriptorExtractor(config)
-    with patch.object(
-        extractor,
-        "_load_antropy",
-        return_value=MagicMock(sample_entropy=lambda x, **kwargs: np.inf),
+    with (
+        patch.object(
+            extractor,
+            "_load_antropy",
+            return_value=MagicMock(sample_entropy=lambda x, **kwargs: np.inf),
+        ),
+        pytest.raises(ValueError, match="produced a non-finite result"),
     ):
-        with pytest.raises(ValueError, match="produced a non-finite result"):
-            extractor.extract(
-                X,
-                sfreq=sfreq,
-                channel_names=ch_names,
-                ids=None,
-                runtime=DescriptorRuntimeConfig(on_error="raise"),
-            )
+        extractor.extract(
+            X,
+            sfreq=sfreq,
+            channel_names=ch_names,
+            ids=None,
+            runtime=DescriptorRuntimeConfig(on_error="raise"),
+        )
 
 
 def test_easy_batch_complexity_measures_emit_expected_columns(signal_data):
@@ -904,16 +906,18 @@ def test_medium_batch_neurokit_raises_on_nonfinite_values():
     )
     fake_nk = MagicMock(entropy_fuzzy=lambda signal, **kwargs: (np.inf, {}))
 
-    with patch.object(extractor, "_load_neurokit", return_value=fake_nk):
-        with pytest.raises(ValueError, match="produced a non-finite result"):
-            extractor.extract(
-                X,
-                sfreq=250.0,
-                channel_names=["Fz"],
-                ids=None,
-                runtime=DescriptorRuntimeConfig(on_error="raise"),
-                obs_offset=0,
-            )
+    with (
+        patch.object(extractor, "_load_neurokit", return_value=fake_nk),
+        pytest.raises(ValueError, match="produced a non-finite result"),
+    ):
+        extractor.extract(
+            X,
+            sfreq=250.0,
+            channel_names=["Fz"],
+            ids=None,
+            runtime=DescriptorRuntimeConfig(on_error="raise"),
+            obs_offset=0,
+        )
 
 
 def test_lazy_loading_failure_antropy(monkeypatch):

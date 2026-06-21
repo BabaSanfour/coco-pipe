@@ -1,8 +1,11 @@
 .. _report-elements:
 
-==================================
+===================
+Elements and Assets
+===================
+
 Element Catalog
-==================================
+===============
 
 :mod:`coco_pipe.report.elements` provides 19 reusable HTML primitives.
 Every section adder in the report module — and any custom adder you
@@ -21,44 +24,59 @@ All elements share a common contract:
 ---
 
 1. Catalog at a Glance
-========================
+----------------------
 
-==========================================  ========================================================
-Element                                     Use
-==========================================  ========================================================
-:class:`~coco_pipe.report.elements.HtmlElement`            Raw HTML string passthrough.
-:class:`~coco_pipe.report.elements.ImageElement`           Base64-encoded image from bytes, file,
-                                                            ``Path``, or a matplotlib :class:`~matplotlib.figure.Figure`.
-:class:`~coco_pipe.report.elements.PlotlyElement`          Plotly figure with lazy hydration.
-:class:`~coco_pipe.report.elements.TableElement`           Static HTML table from a DataFrame /
-                                                            dict / list.
-:class:`~coco_pipe.report.elements.InteractiveTableElement`  Searchable, sortable, paged table with
-                                                            CSV export.
-:class:`~coco_pipe.report.elements.MetricsTableElement`    Table with per-column "best" highlighting.
-:class:`~coco_pipe.report.elements.StatCardElement`        Big-number stat with delta and unit.
-:class:`~coco_pipe.report.elements.CalloutElement`         Boxed info/warning/error/success message.
-:class:`~coco_pipe.report.elements.CodeBlockElement`       Syntax-tagged ``<pre><code>`` with copy.
-:class:`~coco_pipe.report.elements.MarkdownElement`        Markdown → HTML (graceful fallback).
-:class:`~coco_pipe.report.elements.BadgeElement`           Pill label with color.
-:class:`~coco_pipe.report.elements.ProgressBarElement`     Inline progress bar.
-:class:`~coco_pipe.report.elements.TimelineElement`        Ordered list of timestamped events.
-:class:`~coco_pipe.report.elements.TabsElement`            Tabbed container holding other elements.
-:class:`~coco_pipe.report.elements.AccordionElement`       ``<details>``-backed collapsible section.
-:class:`~coco_pipe.report.elements.ColumnsElement`         CSS-grid row of side-by-side elements.
-:class:`~coco_pipe.report.elements.ContainerElement`       Base class for any container; itself
-                                                            adds ``add_element`` / ``add_markdown``.
-:class:`~coco_pipe.report.elements.DownloadAssetElement`   ``<a download>`` button backed by inline
-                                                            base64 payload (CSV, JSON, bytes).
-:class:`~coco_pipe.report.elements.Element`                Abstract base; subclass for custom widgets.
-==========================================  ========================================================
+.. list-table::
+   :header-rows: 1
+
+   * - Element
+     - Use
+   * - :class:`~coco_pipe.report.elements.HtmlElement`
+     - Raw HTML string passthrough.
+   * - :class:`~coco_pipe.report.elements.ImageElement`
+     - Base64-encoded image from bytes, file, ``Path``, or a matplotlib :class:`~matplotlib.figure.Figure`.
+   * - :class:`~coco_pipe.report.elements.PlotlyElement`
+     - Plotly figure with lazy hydration.
+   * - :class:`~coco_pipe.report.elements.TableElement`
+     - Static HTML table from a DataFrame / dict / list.
+   * - :class:`~coco_pipe.report.elements.InteractiveTableElement`
+     - Searchable, sortable, paged table with CSV export.
+   * - :class:`~coco_pipe.report.elements.MetricsTableElement`
+     - Table with per-column "best" highlighting.
+   * - :class:`~coco_pipe.report.elements.StatCardElement`
+     - Big-number stat with delta and unit.
+   * - :class:`~coco_pipe.report.elements.CalloutElement`
+     - Boxed info/warning/error/success message.
+   * - :class:`~coco_pipe.report.elements.CodeBlockElement`
+     - Syntax-tagged ``<pre><code>`` with copy.
+   * - :class:`~coco_pipe.report.elements.MarkdownElement`
+     - Markdown → HTML (graceful fallback).
+   * - :class:`~coco_pipe.report.elements.BadgeElement`
+     - Pill label with color.
+   * - :class:`~coco_pipe.report.elements.ProgressBarElement`
+     - Inline progress bar.
+   * - :class:`~coco_pipe.report.elements.TimelineElement`
+     - Ordered list of timestamped events.
+   * - :class:`~coco_pipe.report.elements.TabsElement`
+     - Tabbed container holding other elements.
+   * - :class:`~coco_pipe.report.elements.AccordionElement`
+     - ``<details>``-backed collapsible section.
+   * - :class:`~coco_pipe.report.elements.ColumnsElement`
+     - CSS-grid row of side-by-side elements.
+   * - :class:`~coco_pipe.report.elements.ContainerElement`
+     - Base class for any container; itself adds ``add_element`` / ``add_markdown``.
+   * - :class:`~coco_pipe.report.elements.DownloadAssetElement`
+     - ``<a download>`` button backed by inline base64 payload (CSV, JSON, bytes).
+   * - :class:`~coco_pipe.report.elements.Element`
+     - Abstract base; subclass for custom widgets.
 
 ---
 
 2. Data Elements
-==================
+----------------
 
 2.1 ``HtmlElement``
----------------------
+~~~~~~~~~~~~~~~~~~~
 
 Bare HTML wrapper — bypass the typed elements when you need a one-off
 fragment.
@@ -70,7 +88,7 @@ fragment.
    sec.add_element(HtmlElement("<div class='text-xs'>raw HTML</div>"))
 
 2.2 ``ImageElement``
-----------------------
+~~~~~~~~~~~~~~~~~~~~
 
 Embeds any image as a base64 data URI. Accepts:
 
@@ -90,7 +108,7 @@ Every image also emits an inline "Download PNG" link so the reader can
 extract the asset.
 
 2.3 ``PlotlyElement``
------------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 Plotly figure with lazy hydration: the figure JSON is collected into
 the global payload registry; the rendered HTML emits a
@@ -110,7 +128,7 @@ large numeric arrays (``{"dtype": "f8", "bdata": "…"}``) and decodes
 them so the rendered JSON is roundtrip-stable.
 
 2.4 ``TableElement``
-----------------------
+~~~~~~~~~~~~~~~~~~~~
 
 Static HTML table. Accepts a DataFrame, a dict (rendered as one-row
 key/value), a list of records, or a dict of lists.
@@ -126,7 +144,7 @@ key/value), a list of records, or a dict of lists.
 Tables include an inline "Download CSV" button.
 
 2.5 ``InteractiveTableElement``
----------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Same input as :class:`TableElement` but client-side searchable,
 sortable, paged, with per-column "selector" dropdowns. Useful for
@@ -144,7 +162,7 @@ exploratory tables with hundreds of rows.
    )
 
 2.6 ``MetricsTableElement``
------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A :class:`TableElement` that highlights the "best" value in each
 metric column. Pass ``higher_is_better=`` to control direction per
@@ -163,10 +181,10 @@ column (``True`` / ``False`` / per-column list).
 ---
 
 3. UI Primitives
-==================
+----------------
 
 3.1 ``StatCardElement``
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Large-number card with unit, delta, and a color tag. Use
 :meth:`Report.add_summary_card` to render a row of these at the top of
@@ -179,7 +197,7 @@ a report.
    StatCardElement("Accuracy", 0.95, unit="%", delta="+2.1%", color="green")
 
 3.2 ``CalloutElement``
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~
 
 Boxed message with an icon. ``kind`` is one of ``"info"``,
 ``"warning"``, ``"error"``, ``"success"``.
@@ -192,7 +210,7 @@ Boxed message with an icon. ``kind`` is one of ``"info"``,
                   title="Outliers detected")
 
 3.3 ``CodeBlockElement``
---------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Syntax-tagged ``<pre><code>`` block. Adds a "Copy" button when
 ``copyable=True``.
@@ -209,7 +227,7 @@ Syntax-tagged ``<pre><code>`` block. Adds a "Copy" button when
    )
 
 3.4 ``MarkdownElement``
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 Markdown → HTML using the ``markdown`` package when available; falls
 back to ``<pre class="whitespace-pre-wrap">`` rendering when not.
@@ -221,7 +239,7 @@ back to ``<pre class="whitespace-pre-wrap">`` rendering when not.
    MarkdownElement("# Notes\n* Item 1\n* Item 2")
 
 3.5 ``BadgeElement`` / ``ProgressBarElement`` / ``TimelineElement``
----------------------------------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
@@ -240,10 +258,10 @@ back to ``<pre class="whitespace-pre-wrap">`` rendering when not.
 ---
 
 4. Layout Primitives
-======================
+--------------------
 
 4.1 ``TabsElement``
----------------------
+~~~~~~~~~~~~~~~~~~~
 
 Tabbed container; keys are tab labels, values are any element.
 
@@ -258,7 +276,7 @@ Tabbed container; keys are tab labels, values are any element.
    })
 
 4.2 ``AccordionElement``
---------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Collapsible section backed by ``<details>``.
 
@@ -271,7 +289,7 @@ Collapsible section backed by ``<details>``.
    sec.add_element(acc)
 
 4.3 ``ColumnsElement``
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~
 
 CSS-grid row. Sub-elements are placed side by side.
 
@@ -287,7 +305,7 @@ CSS-grid row. Sub-elements are placed side by side.
 :meth:`Section.add_columns` is a shortcut for the same pattern.
 
 4.4 ``ContainerElement``
---------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Base class. :class:`Section` and :class:`Report` inherit from it.
 Useful when subclassing for custom containers.
@@ -295,7 +313,7 @@ Useful when subclassing for custom containers.
 ---
 
 5. Download Helpers
-=====================
+-------------------
 
 ``DownloadAssetElement`` embeds binary or text payloads as base64 data
 and produces a ``<a download>`` link. Useful for shipping the source
@@ -319,7 +337,7 @@ on-demand when the user clicks; the HTML stays small.
 ---
 
 6. Custom Elements
-====================
+------------------
 
 To add a new element type, subclass
 :class:`~coco_pipe.report.elements.Element`:
@@ -346,3 +364,193 @@ If your element holds heavy data, override ``collect_payload`` and use
 implementations.
 
 See :ref:`report-extensions` for binding custom adders to ``Report``.
+
+.. _report-assets:
+
+JavaScript Asset Modes
+======================
+
+Rendered reports rely on three JavaScript bundles:
+
+- **Plotly** — interactive plot rendering.
+- **Tailwind Play CDN** — runtime CSS compiler driven by the markup.
+- **pako** — gzip decompression of the embedded data payload.
+
+How those bundles are served is controlled by the ``asset_urls``
+constructor argument on :class:`~coco_pipe.report.core.Report` and
+every factory in :mod:`coco_pipe.report.api`.
+
+---
+
+1. Three Modes
+--------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``asset_urls`` argument
+     - Behavior
+   * - ``None`` (default)
+     - ``<script src="…cdn URL…">`` tags. Requires network.
+   * - ``dict``
+     - CDN defaults merged with the user's overrides.
+   * - ``"inline"``
+     - The bundles are downloaded once (with caching) and embedded directly in ``<script>...</script>`` tags. Resulting HTML opens fully offline.
+
+The current mode is exposed on the report as ``Report.asset_mode``
+(``"cdn"`` / ``"custom"`` / ``"inline"``) and surfaced in the Run
+Info drawer.
+
+---
+
+2. CDN Mode (Default)
+---------------------
+
+.. code-block:: python
+
+   from coco_pipe.report import Report
+
+   report = Report(title="Online")
+   report.save("online.html")
+
+The rendered HTML loads:
+
+- ``https://cdn.plot.ly/plotly-2.27.0.min.js``
+- ``https://cdn.tailwindcss.com``
+- ``https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js``
+
+Pros: nothing to host, small HTML.
+Cons: requires network when the report is opened.
+
+---
+
+3. Self-Hosted URLs
+-------------------
+
+Pass a dict to point at your own bundle URLs:
+
+.. code-block:: python
+
+   report = Report(
+       title="Self-hosted",
+       asset_urls={
+           "plotly": "/static/plotly-2.27.0.min.js",
+           "tailwind": "/static/tailwind.min.js",
+           "pako": "/static/pako-2.1.0.min.js",
+       },
+   )
+
+Only override the URLs you want to change; unspecified slots fall back
+to the CDN defaults. The mode is set to ``"custom"``.
+
+Useful when your team intranet hosts vendored JS, or when you need a
+specific Plotly version different from the default.
+
+---
+
+4. Inline Mode (Fully Offline)
+------------------------------
+
+.. code-block:: python
+
+   report = Report(title="Air-gapped", asset_urls="inline")
+   report.save("standalone.html")
+
+On the first run, :func:`~coco_pipe.report._assets.get_vendored_contents`
+downloads the three bundles into
+``~/.cache/coco-pipe/report-assets/`` and reads them as strings. The
+template then inlines them in ``<script>...</script>`` tags instead of
+``<script src=...>``. Subsequent runs skip the download and just read
+from cache.
+
+The resulting HTML is fully self-contained — opens identically on a
+laptop with no internet, an air-gapped review machine, or a printed-
+PDF reference copy.
+
+4.1 Cache location
+~~~~~~~~~~~~~~~~~~
+
+The cache directory defaults to
+``~/.cache/coco-pipe/report-assets/``. Override it via environment
+variable when generating reports on a shared cluster:
+
+.. code-block:: bash
+
+   export COCO_PIPE_REPORT_ASSET_CACHE=/scratch/coco-pipe-assets
+
+4.2 Pre-warming the cache
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For automated pipelines running on a machine without internet, run
+the download step once on a machine that does:
+
+.. code-block:: python
+
+   from coco_pipe.report._assets import vendor_assets
+
+   cache_dir = vendor_assets()                        # downloads if missing
+   cache_dir = vendor_assets(force=True)              # re-download
+
+Then ship the cache directory alongside the code base, set the env
+var to its path on the target machine, and ``asset_urls="inline"``
+will use the local copies without ever touching the network.
+
+4.3 Cost
+~~~~~~~~
+
+Inline mode adds roughly:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Bundle
+     - Approximate size
+   * - Plotly
+     - ~3 MB minified
+   * - Tailwind Play CDN
+     - ~70 KB
+   * - pako
+     - ~50 KB
+
+So a typical inline report grows by ~3-4 MB compared to a CDN report.
+Worth it when offline access matters; skip when it doesn't.
+
+---
+
+5. Failure Modes
+----------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Scenario
+     - Behavior
+   * - Network unavailable in CDN mode
+     - Report renders fine; opens blank or broken in the browser. Switch to ``"inline"`` to fix.
+   * - Network unavailable in inline mode
+     - First call raises :class:`OSError` (urllib). Pre-warm the cache via ``vendor_assets()`` on an online machine.
+   * - Unknown ``asset_urls`` value
+     - :meth:`Report._resolve_assets` raises ``TypeError`` at construction.
+   * - Cache directory not writable
+     - First call raises ``OSError``. Override location with ``COCO_PIPE_REPORT_ASSET_CACHE``.
+
+---
+
+6. Asset Mode at a Glance — When to Use Which
+---------------------------------------------
+
+.. list-table::
+   :header-rows: 1
+
+   * - Use case
+     - Recommended mode
+   * - Interactive notebook exploration
+     - ``None`` (CDN) — smallest HTML, network always available.
+   * - Web-served reports
+     - ``dict`` pointing at your CDN paths — control over the asset bundle versions.
+   * - Email / Slack-shared HTML
+     - ``"inline"`` — recipients can open the file with no network access.
+   * - Long-term archive / publication
+     - ``"inline"`` — frozen, self-contained record.
+   * - Air-gapped / cluster runs
+     - ``"inline"`` + pre-warmed cache + env override.

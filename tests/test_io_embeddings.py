@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -180,11 +181,11 @@ def test_save_embedding_errors(tmp_path):
     class DummyResult:
         window_embeddings = np.array([[1]])
         recording_embedding = np.array([1])
-        window_start = [0]
-        window_stop = [1]
-        window_index = [0]
+        window_start: ClassVar[list] = [0]
+        window_stop: ClassVar[list] = [1]
+        window_index: ClassVar[list] = [0]
 
-    with pytest.raises(ValueError, match="must end in .npz"):
+    with pytest.raises(ValueError, match=r"must end in \.npz"):
         save_embedding_derivative(DummyResult(), tmp_path / "bad.txt")
 
     path = tmp_path / "test.npz"

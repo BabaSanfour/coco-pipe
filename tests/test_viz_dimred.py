@@ -469,7 +469,7 @@ def test_plot_scree_renders(call):
 
 def test_plot_eigenvalues_with_conditions():
     vals = {"cond_A": np.random.rand(5), "cond_B": np.random.rand(5)}
-    fig, ax = viz.plot_eigenvalues(vals, condition_colors={"cond_A": "red"})
+    fig, _ax = viz.plot_eigenvalues(vals, condition_colors={"cond_A": "red"})
     plt.close(fig)
 
 
@@ -480,7 +480,7 @@ def test_plot_feature_correlation_heatmap_top_n():
             "D2": {f"F{i}": float(30 - i) / 30 for i in range(30)},
         }
     }
-    fig, ax = viz.plot_feature_correlation_heatmap(payload, top_n=10)
+    fig, _ax = viz.plot_feature_correlation_heatmap(payload, top_n=10)
     plt.close(fig)
 
 
@@ -493,7 +493,7 @@ def test_plot_feature_correlation_heatmap_invalid_top_n():
 
 def test_plot_coranking_matrix_max_k():
     Q = np.random.rand(100, 100)
-    fig, ax = viz.plot_coranking_matrix(Q, max_k=20)
+    fig, _ax = viz.plot_coranking_matrix(Q, max_k=20)
     plt.close(fig)
 
 
