@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import coco_pipe.io.utils as utils_mod
+from coco_pipe.io import utils as utils_mod
 from coco_pipe.io.utils import (
     _get_bids_path,
     _get_mne,
@@ -544,7 +544,7 @@ def test_read_bids_entry_raw_event_epochs(monkeypatch):
             return np.zeros((5, 2, 10))
 
     class MockMNE:
-        def Epochs(*args, **kwargs):
+        def Epochs(self, *args, **kwargs):
             return DummyEpochs()
 
         def events_from_annotations(self, *args, **kwargs):
@@ -588,7 +588,7 @@ def test_read_bids_entry_raw_no_length(monkeypatch):
 
 
 def test_io_init_getattr():
-    import coco_pipe.io as coco_io
+    from coco_pipe import io as coco_io
 
     # 1. Valid attributes
     assert coco_io.BIDSDataset is not None

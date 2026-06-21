@@ -535,8 +535,6 @@ def test_make_serializable_all_types():
     assert isinstance(serialized["nested"]["list"][1], float)
     assert isinstance(serialized["nested"]["tuple"][0], int)
     # Check JSON compatibility
-    import json
-
     json.dumps(serialized)
 
 
@@ -556,8 +554,6 @@ def test_save_load_json_roundtrip(tmp_path):
 
     # Verify it was indeed JSON
     with open(json_path) as f:
-        import json
-
         data = json.load(f)
         assert data["schema_version"] == RESULT_SCHEMA_VERSION
 

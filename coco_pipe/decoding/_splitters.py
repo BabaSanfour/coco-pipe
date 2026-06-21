@@ -114,7 +114,9 @@ class _CVWithGroups(BaseCrossValidator):
                 aligned = self.groups.loc[X.index]
                 if len(aligned) == len(X):
                     return aligned
-            except Exception:
+            except (KeyError, IndexError):
+                # X.index does not align with the bound groups; fall through to
+                # the length-mismatch error below rather than guessing.
                 pass
 
         raise ValueError(

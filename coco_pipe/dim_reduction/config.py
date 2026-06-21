@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 __all__ = [
     "DEFAULT_EVAL_GROUP_COL",
     "METHODS",
+    "MISSING_EVAL_VALUES",
     "BaseReducerConfig",
     "DMDConfig",
     "DaskPCAConfig",

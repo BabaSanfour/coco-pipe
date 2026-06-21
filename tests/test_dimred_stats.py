@@ -113,9 +113,7 @@ def test_permutation_null_separation_auc_missing():
     assert np.isnan(obs)
 
     rng = np.random.default_rng(0)
-    obs, _null = permutation_null_separation_auc(
-        res, group_a=[1], group_b=[2], n_perm=10, rng=rng
-    )
+    permutation_null_separation_auc(res, group_a=[1], group_b=[2], n_perm=10, rng=rng)
 
 
 def test_paired_condition_stats_missing_conditions():

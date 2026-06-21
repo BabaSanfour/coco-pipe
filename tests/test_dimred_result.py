@@ -269,9 +269,7 @@ def test_trajectory_result_separation_pair_scalars():
     df = res.get_separation_pair_scalars()
     assert len(df) == 0
 
-    res = TrajectoryResult(
-        traj, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2])
-    )
+    TrajectoryResult(traj, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2]))
     traj_nan = np.full((2, 3, 2), np.nan)
     res_nan = TrajectoryResult(
         traj_nan, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2])

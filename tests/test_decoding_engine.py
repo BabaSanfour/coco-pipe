@@ -152,7 +152,7 @@ def test_fit_and_score_fold_response_logic():
     X, y = np.zeros((4, 2)), np.array([0, 0, 1, 1])
     ids = np.array(["a", "b", "c", "d"])
 
-    import coco_pipe.decoding._engine as engine
+    from coco_pipe.decoding import _engine as engine
     from coco_pipe.decoding._metrics import MetricSpec
 
     old_get = engine.get_metric_spec
@@ -428,7 +428,7 @@ def test_fit_estimator_skips_unsupported_clf():
 
 def test_fit_and_score_fold_sample_weight_train_only():
     """Only the training-fold slice of sample_weight reaches the classifier."""
-    import coco_pipe.decoding._engine as engine
+    from coco_pipe.decoding import _engine as engine
     from coco_pipe.decoding._metrics import MetricSpec
 
     clf = _WeightCapturingClassifier()

@@ -305,7 +305,6 @@ def test_experiment_config_validation_errors():
 
 
 def test_resolve_metadata_and_groups_mismatch():
-    _X, _y = _classification_data(n_samples=10)
     exp = Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}
@@ -429,7 +428,6 @@ def test_build_result_meta_time_axis_mismatch():
 
 
 def test_importance_aggregation_shape_mismatch_recovery():
-    _X, _y = _classification_data()
     Experiment(
         ExperimentConfig(
             task="classification", models={"lr": LogisticRegressionConfig()}

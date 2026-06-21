@@ -60,3 +60,7 @@ docs/source/auto_examples/
 docs/source/generated/
 docs/source/README.md
 docs/source/sg_execution_times.rst
+
+# CodeQL
+codeql-db/
+*.sarif

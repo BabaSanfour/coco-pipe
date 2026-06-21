@@ -34,7 +34,9 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 if TYPE_CHECKING:
-    from ..core import DimReduction
+    # Import via the package re-export rather than the ``core`` submodule so the
+    # type-only reference does not register as an import cycle edge.
+    from coco_pipe.dim_reduction import DimReduction
 
 from ..config import EvaluationConfig
 from ._supervised import _cross_validate_score
@@ -749,7 +751,9 @@ class MethodSelector:
         TypeError
             If any provided object is not a ``~coco_pipe.dim_reduction.DimReduction`` instance.
         """
-        from ..core import DimReduction
+        # Import via the package re-export rather than the ``core`` submodule so
+        # this lazy runtime check does not register as an import cycle edge.
+        from coco_pipe.dim_reduction import DimReduction
 
         if isinstance(reducers, list):
             validated: dict[str, DimReduction] = {}

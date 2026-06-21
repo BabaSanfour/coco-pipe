@@ -430,7 +430,7 @@ def test_descriptors_qc_does_not_import_io_descriptors():
     # parses via the domain module, not back up through io.descriptors.
     import inspect
 
-    import coco_pipe.descriptors.qc as qc
+    from coco_pipe.descriptors import qc
 
     assert "coco_pipe.io.descriptors" not in inspect.getsource(qc)
 

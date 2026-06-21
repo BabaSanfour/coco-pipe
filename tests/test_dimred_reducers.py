@@ -18,13 +18,13 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_blobs
 
-import coco_pipe.dim_reduction.reducers.topology as topology_mod
 from coco_pipe.dim_reduction.config import (
     METHODS,
     ParametricUMAPConfig,
     get_reducer_class,
 )
 from coco_pipe.dim_reduction.preprocessing import flip_pc_scores_for_consistency
+from coco_pipe.dim_reduction.reducers import topology as topology_mod
 from coco_pipe.dim_reduction.reducers.base import BaseReducer
 from coco_pipe.dim_reduction.reducers.linear import (
     DaskPCAReducer,
@@ -1940,6 +1940,8 @@ def test_dask_unsupported_numpy():
             warnings.simplefilter("always")
             r.fit(X)
     except Exception:
+        # Optional Dask backend may be unavailable; this test only exercises the
+        # warning path, so a failed fit is acceptable here.
         pass
 
     r2 = DaskTruncatedSVDReducer()
@@ -1948,4 +1950,6 @@ def test_dask_unsupported_numpy():
             warnings.simplefilter("always")
             r2.fit(X)
     except Exception:
+        # Optional Dask backend may be unavailable; this test only exercises the
+        # warning path, so a failed fit is acceptable here.
         pass

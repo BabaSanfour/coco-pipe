@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-import coco_pipe.io.dataset as dataset_mod
+from coco_pipe.io import dataset as dataset_mod
 from coco_pipe.io.config import BIDSConfig, DatasetConfig, TabularConfig
 from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 
@@ -534,7 +534,7 @@ def test_tabular_dataset_extra(tmp_path):
     df.to_csv(p2, index=False)
     ds = TabularDataset(p2)
     # min_abs_fraction
-    _c, _rep = ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
+    ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
 
     with pytest.raises(ValueError):
         ds.clean(df, mode="invalid")
@@ -566,26 +566,6 @@ def test_embedding_dataset_extra(tmp_path):
 
 
 def test_bids_dataset_extra(tmp_path):
-    class DummyEpochs:
-        def get_data(self, **kwargs):
-            return np.zeros((1, 2, 10))
-
-        @property
-        def times(self):
-            return np.zeros(10)
-
-        @property
-        def ch_names(self):
-            return ["C1", "C2"]
-
-        @property
-        def info(self):
-            return {"sfreq": 100}
-
-        @property
-        def events(self):
-            return np.zeros((1, 3))
-
     # Mocking subjects/sessions/runs parsing
     sub_dir = tmp_path / "sub-01" / "ses-A" / "eeg"
     sub_dir.mkdir(parents=True)
@@ -598,7 +578,7 @@ def test_bids_dataset_extra(tmp_path):
     # subject_metadata_df
     meta_df = pd.DataFrame({"sub": ["01"], "extra": [5]})
 
-    import coco_pipe.io.dataset as dmod
+    from coco_pipe.io import dataset as dmod
 
     orig_read = dmod.read_bids_entry
 

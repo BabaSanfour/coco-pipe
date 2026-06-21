@@ -924,7 +924,6 @@ def test_method_selector_single_method():
 
 def test_evaluation_plot(data):
     """Test plotting of selector metric records through plot_metrics."""
-    _X, _y = data
     import matplotlib.pyplot as plt
 
     selector = MethodSelector([])
@@ -1209,7 +1208,7 @@ def test_evaluate_embedding_trajectory_separation_edge_cases():
     """Test edge cases in _evaluate_trajectory_metrics separation logic."""
     # 1. Empty values_arr for AUC
     # We mock trajectory_separation to return an empty array for a pair
-    import coco_pipe.dim_reduction.evaluation.core as core_mod
+    from coco_pipe.dim_reduction.evaluation import core as core_mod
     from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
 
     original_sep = core_mod.trajectory_separation

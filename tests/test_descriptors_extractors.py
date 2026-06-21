@@ -12,12 +12,12 @@ import numpy as np
 import pytest
 from scipy.stats import kurtosis as scipy_kurtosis
 
-import coco_pipe.descriptors.extractors._parametric_fit as param_fit_module
 from coco_pipe.descriptors.configs import (
     BandDescriptorConfig,
     ComplexityDescriptorConfig,
     ParametricDescriptorConfig,
 )
+from coco_pipe.descriptors.extractors import _parametric_fit as param_fit_module
 from coco_pipe.descriptors.extractors._parametric_fit import _ParametricFitBatch
 from coco_pipe.descriptors.extractors._psd import compute_psd
 from coco_pipe.descriptors.extractors.base import (

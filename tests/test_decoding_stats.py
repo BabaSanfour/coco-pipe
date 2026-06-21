@@ -555,7 +555,7 @@ def test_run_permutation_loop_branches():
     mock_res = MagicMock()
     mock_res.get_predictions.return_value = mock_pred_df
 
-    with patch("coco_pipe.decoding.experiment.Experiment") as mock_exp_cls:
+    with patch("coco_pipe.decoding.Experiment") as mock_exp_cls:
         mock_exp_cls.return_value.run.return_value = mock_res
 
         res = _run_permutation_loop(

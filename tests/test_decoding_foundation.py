@@ -23,7 +23,9 @@ def test_configure_peft_raises_not_implemented_by_default():
     """A backend that doesn't override configure_peft raises NotImplementedError."""
 
     class _Bare(BackendBase):
-        def reset_head(self, n): ...
+        def reset_head(self, n):
+            return None
+
         def get_embedding_info(self):
             return get_estimator_spec("cbramod")
 

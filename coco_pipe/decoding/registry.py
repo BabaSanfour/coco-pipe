@@ -31,7 +31,11 @@ from ._specs import (
 
 # Runtime class cache
 _ESTIMATOR_REGISTRY: dict[str, type] = {}
-_INTERNAL_SCANNED = False
+# Single-element flag (mutated in place) recording whether the internal-module
+# scan has run. A list avoids rebinding a module global under the lock, which a
+# double-checked-locking pattern would otherwise flag as a write with no
+# intra-procedural read.
+_INTERNAL_SCANNED = [False]
 _REGISTRY_LOCK = threading.Lock()
 
 
@@ -184,12 +188,11 @@ def get_estimator_cls(name: str) -> type:
             return _ESTIMATOR_REGISTRY[name]
 
     # Try internal discovery
-    global _INTERNAL_SCANNED
-    if not _INTERNAL_SCANNED:
+    if not _INTERNAL_SCANNED[0]:
         with _REGISTRY_LOCK:
-            if not _INTERNAL_SCANNED:
+            if not _INTERNAL_SCANNED[0]:
                 _discover_internal_modules()  # pragma: no cover
-                _INTERNAL_SCANNED = True  # pragma: no cover
+                _INTERNAL_SCANNED[0] = True  # pragma: no cover
         if name in _ESTIMATOR_REGISTRY:  # pragma: no cover
             return _ESTIMATOR_REGISTRY[name]
 

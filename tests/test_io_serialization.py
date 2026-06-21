@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import coco_pipe.io._serialization as serialization_mod
+from coco_pipe.io import _serialization as serialization_mod
 from coco_pipe.io._serialization import (
     default_id_extractor,
     load_object,
