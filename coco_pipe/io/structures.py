@@ -5,9 +5,9 @@ Data Structures
 Standardized containers for passing data between Datasets, Preprocessing, and main
 modules.
 
-This module provides the `~coco_pipe.io.DataContainer`, an N-dimensional tensor wrapper that manages
-metadata, coordinates, and labels alongside the raw data matrix. It serves as the
-common currency for the entire pipeline.
+This module provides the `~coco_pipe.io.DataContainer`, an N-dimensional tensor wrapper
+that manages metadata, coordinates, and labels alongside the raw data matrix. It serves
+as the common currency for the entire pipeline.
 
 Examples
 --------

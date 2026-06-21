@@ -2,9 +2,9 @@
 Base interfaces for dimensionality reduction backends.
 
 This module defines the reducer contract shared by built-in reducers and
-user-defined reducers. A reducer is any object derived from `~coco_pipe.dim_reduction.reducers.base.BaseReducer`
-implementing `fit` and `transform`, optionally exposing diagnostics and scalar
-quality metadata through helper methods.
+user-defined reducers. A reducer is any object derived from
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` implementing `fit` and `transform`
+, optionally exposing diagnostics and scalar quality metadata through helper methods.
 
 The surrounding dim-reduction stack uses these interfaces to provide:
 
@@ -15,9 +15,10 @@ The surrounding dim-reduction stack uses these interfaces to provide:
 
 Notes
 -----
-`~coco_pipe.dim_reduction.reducers.base.BaseReducer` is the intended extension point for custom reducers. Third-party
-reducers can participate in `~coco_pipe.dim_reduction.DimReduction` workflows without extra wrappers as
-long as they respect the method contract documented here.
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` is the intended extension point for
+custom reducers. Third-party reducers can participate in
+`~coco_pipe.dim_reduction.DimReduction` workflows without extra wrappers as long as they
+respect the method contract documented here.
 """
 
 import os
@@ -308,7 +309,8 @@ class BaseReducer(ABC):
         -------
         X_new : np.ndarray
             Reduced representation. The exact output shape depends on the
-            reducer, but the last dimension usually matches `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
+            reducer, but the last dimension usually matches
+            `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
 
         Raises
         ------

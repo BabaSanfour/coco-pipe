@@ -1565,9 +1565,10 @@ def prepare_feature_importance_series(
 ) -> pd.Series:
     """Return ranked feature importances as a Series sorted by magnitude.
 
-    Accepts an ``~coco_pipe.decoding.ExperimentResult`` (via ``get_feature_importances()``), a
-    feature-importance DataFrame, or a numeric mapping/sequence. Non-numeric
-    sequences raise ``TypeError``/``ValueError`` so callers can delegate to the
+    Accepts an ``~coco_pipe.decoding.ExperimentResult`` (via
+    ``get_feature_importances()``), a feature-importance DataFrame,
+    or a numeric mapping/sequence. Non-numeric sequences raise
+    ``TypeError``/``ValueError`` so callers can delegate to the
     dimensionality-reduction feature-importance plot (see
     :func:`_is_raw_importance_sequence`).
     """

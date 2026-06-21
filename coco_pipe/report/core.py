@@ -2,8 +2,9 @@
 Core Reporting Classes
 ======================
 
-Defines :class:`~coco_pipe.report.Section` and :class:`~coco_pipe.report.Report` — the high-level containers that
-assemble :mod:`coco_pipe.report.elements` into a single-file HTML report.
+Defines :class:`~coco_pipe.report.Section` and :class:`~coco_pipe.report.Report` — the
+high-level containers that assemble :mod:`coco_pipe.report.elements` into a single-file
+HTML report.
 
 The element primitives themselves live in :mod:`coco_pipe.report.elements`
 and are re-exported from this module for backward compatibility.
@@ -627,8 +628,8 @@ class Report(ContainerElement):
         """
         Return an iframe embedding of the rendered report for Jupyter display.
 
-        Jupyter automatically calls this method when a :class:`~coco_pipe.report.Report` instance
-        is the last expression in a notebook cell, rendering an inline preview.
+        Jupyter automatically calls this method when a :class:`~coco_pipe.report.Report`
+        instance is the last expression in a notebook cell, rendering an inline preview.
 
         Returns
         -------

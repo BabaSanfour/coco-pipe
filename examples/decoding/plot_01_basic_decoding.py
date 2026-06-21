@@ -4,11 +4,13 @@ Basic Decoding: Classification and Model Verification
 =====================================================
 
 This example demonstrates the core functionality of the ``coco_pipe.decoding`` module.
-We generate a synthetic classification dataset and evaluate two classical machine learning
-models (Logistic Regression and Random Forest) using a rigorous cross-validation pipeline.
+We generate a synthetic classification dataset and evaluate two classical machine
+learning models (Logistic Regression and Random Forest) using a rigorous
+cross-validation pipeline.
 
-The decoding engine automatically handles data splitting, model fitting, metric calculation,
-and produces an `ExperimentResult` object that natively integrates with our visualization tools.
+The decoding engine automatically handles data splitting, model fitting, metric
+calculation, and produces an `ExperimentResult` object that natively integrates with
+our visualization tools.
 """
 
 # %%
@@ -89,7 +91,7 @@ plt.show()
 # Interpretation
 # --------------
 # - **Decoding Scores**: The bar chart shows the mean performance metrics across all 5
-#   cross-validation folds, including standard error bands. Random Forest often outperforms
-#   Logistic Regression on non-linear informative features.
+#   cross-validation folds, including standard error bands. Random Forest often
+#   outperforms Logistic Regression on non-linear informative features.
 # - **Confusion Matrix**: The matrix visualizes the out-of-fold predictions, normalized
 #   by true class counts, highlighting the model's sensitivity and specificity.

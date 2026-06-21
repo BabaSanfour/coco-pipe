@@ -2,9 +2,9 @@
 Neural-network dimensionality reduction reducers.
 
 This module provides wrappers around neural embedding backends that follow the
-shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract. These reducers integrate with `~coco_pipe.dim_reduction.DimReduction`,
-reporting, and visualization while keeping optional deep-learning dependencies
-lazy at import time.
+shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract. These reducers
+integrate with `~coco_pipe.dim_reduction.DimReduction`, reporting, and visualization
+while keeping optional deep-learning dependencies lazy at import time.
 
 Classes
 -------
@@ -55,7 +55,8 @@ class IVISReducer(BaseReducer):
 
     Notes
     -----
-    The IVIS backend uses `embedding_dims` instead of `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`. This
+    The IVIS backend uses `embedding_dims` instead of
+    `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`. This
     wrapper maps the reducer component count to the backend constructor
     automatically.
 

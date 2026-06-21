@@ -3,9 +3,10 @@
 Comprehensive Comparison of Dimensionality Reduction Methods
 ============================================================
 
-This example compares several dimensionality reduction algorithms (PCA, t-SNE, UMAP, and Pacmap)
-across different parameter settings using a synthetic high-dimensional dataset. It demonstrates
-how hyperparameter choices can drastically affect the resulting embeddings.
+This example compares several dimensionality reduction algorithms (PCA, t-SNE, UMAP, and
+Pacmap) across different parameter settings using a synthetic high-dimensional dataset.
+It demonstrates how hyperparameter choices can drastically affect the resulting
+embeddings.
 """
 
 # %%
@@ -33,8 +34,8 @@ warnings.filterwarnings("ignore")
 # %%
 # 1. Generate Synthetic Data
 # --------------------------
-# We create a synthetic dataset with 5 distinct classes embedded in a 50-dimensional space
-# to simulate a complex, high-dimensional classification problem.
+# We create a synthetic dataset with 5 distinct classes embedded in a 50-dimensional
+# space to simulate a complex, high-dimensional classification problem.
 
 n_samples = 2000
 n_features = 50
@@ -152,7 +153,11 @@ plt.show()
 # ----------
 # This comprehensive comparison illustrates that:
 #
-# 1. **PCA** provides a rapid baseline but struggles to separate complex non-linear structures.
-# 2. **t-SNE** creates beautiful, distinct clusters but is highly sensitive to the perplexity parameter and takes longer to compute.
-# 3. **UMAP** effectively balances local and global structure preservation while remaining computationally efficient.
-# 4. **Pacmap** aims to preserve both local and global structures simultaneously, often rivaling UMAP in speed and cluster quality.
+# 1. **PCA** provides a rapid baseline but struggles to separate complex non-linear
+# structures.
+# 2. **t-SNE** creates beautiful, distinct clusters but is highly sensitive to the
+# perplexity parameter and takes longer to compute.
+# 3. **UMAP** effectively balances local and global structure preservation while
+# remaining computationally efficient.
+# 4. **Pacmap** aims to preserve both local and global structures simultaneously,
+# often rivaling UMAP in speed and cluster quality.

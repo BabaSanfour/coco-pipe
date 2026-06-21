@@ -103,7 +103,8 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/v') ||
-      needs.detect.outputs.run_foundation == 'true'
+      needs.detect.outputs.run_foundation == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'run-foundation')
 
     steps:
       - uses: actions/checkout@v6

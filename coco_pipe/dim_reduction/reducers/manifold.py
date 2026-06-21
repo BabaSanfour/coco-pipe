@@ -2,9 +2,9 @@
 Nonlinear manifold-learning reducers.
 
 This module provides wrappers around scikit-learn manifold-learning estimators.
-These reducers follow the shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract so they can be used
-with `~coco_pipe.dim_reduction.DimReduction`, reporting, and visualization utilities while preserving a
-consistent reducer API.
+These reducers follow the shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer`
+contract so they can be used with `~coco_pipe.dim_reduction.DimReduction`, reporting,
+and visualization utilities while preserving a consistent reducer API.
 
 Classes
 -------

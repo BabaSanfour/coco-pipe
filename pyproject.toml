@@ -35,7 +35,10 @@ dependencies = [
   "numpy>=2.0.0",
   "pandas",
   "scikit-learn>=1.6",
-  "matplotlib",
+  # Upper-capped until seaborn ships PR #3820: matplotlib 3.13 removes the
+  # deprecated `vert=` that seaborn<=0.13.2 still passes to bxp, which would
+  # break seaborn boxplots. Lift this once a fixed seaborn release exists.
+  "matplotlib<3.13",
   "seaborn",
   "scipy>=1.11.0",
   "pyyaml",
@@ -281,7 +284,7 @@ filterwarnings = [
   "ignore:.*DaskPCA on numpy raised.*:UserWarning",
   "ignore:.*Precision loss occurred in moment calculation.*:RuntimeWarning",
   "ignore:.*invalid value encountered in divide.*:RuntimeWarning",
-  "ignore:.*will be deprecated in a future version. Use orientation.*",
+  "ignore:.*vert.*Use orientation.*",
 ]
 
 [tool.ruff]
@@ -310,7 +313,6 @@ select = [
   "RUF",
 ]
 ignore = [
-  "E501",
   "RET504",
 ]
 

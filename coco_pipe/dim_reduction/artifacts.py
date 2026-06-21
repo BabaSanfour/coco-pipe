@@ -183,7 +183,8 @@ def _load_eval_payload(path: Path) -> dict[str, Any]:
 def _embedding_container(
     embedding: np.ndarray, ids: np.ndarray, fit: dict[str, Any]
 ) -> DataContainer | None:
-    """Reconstruct the embedding as a ``~coco_pipe.io.DataContainer`` from artifact arrays.
+    """Reconstruct the embedding as a ``~coco_pipe.io.DataContainer`` from artifact
+    arrays.
 
     Returns a ``('obs', 'component')`` container carrying the observation ids,
     a ``component`` coordinate, and the fit payload under ``meta['fit']``. The

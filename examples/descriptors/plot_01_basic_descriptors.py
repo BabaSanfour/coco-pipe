@@ -61,7 +61,7 @@ config = {
 # %%
 # 3. Extract Features
 # -------------------
-# We pass our data, configuration, sampling frequency, and channel names to the pipeline.
+# We pass our data, configs, sampling frequency, and channel names to the pipeline.
 
 channels = ["Fz", "Cz", "Pz"]
 pipe = DescriptorPipeline(config)

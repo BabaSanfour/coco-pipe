@@ -113,9 +113,9 @@ def _result_frame(
 ) -> pd.DataFrame:
     """Fetch ``result.<accessor>(**kwargs)`` as a DataFrame.
 
-    Every ``~coco_pipe.decoding.result.ExperimentResult`` accessor exists and returns an empty frame when it
-    holds no data, so callers branch on emptiness rather than ``hasattr``. The two
-    section policies share this one fetch:
+    Every ``~coco_pipe.decoding.result.ExperimentResult`` accessor exists and returns an
+    empty frame when it holds no data, so callers branch on emptiness rather than
+    ``hasattr``. The two section policies share this one fetch:
 
     - ``required=True`` (a section's primary data): a missing accessor or empty
       result raises :class:`SectionDataUnavailable`, and accessor errors propagate.

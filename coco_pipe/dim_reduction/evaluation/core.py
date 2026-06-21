@@ -10,7 +10,8 @@ dim-reduction stack:
 - ``evaluate_embedding(...)`` evaluates an explicit embedding and returns
   scalar metrics, scalar metadata, diagnostics, and tidy metric records.
 - ``MethodSelector`` compares and ranks multiple already-scored
-  ``~coco_pipe.dim_reduction.DimReduction`` objects without refitting or recomputing embeddings.
+  ``~coco_pipe.dim_reduction.DimReduction`` objects without refitting or recomputing
+  embeddings.
 
 The module is intentionally evaluation-only. It does not fit reducers,
 transform data, reconstruct 3D trajectory tensors from flat embeddings, or
@@ -697,14 +698,14 @@ class MethodSelector:
     Compare and rank already-scored dimensionality reduction methods.
 
     ``MethodSelector`` is intentionally post-hoc. It does not fit reducers or
-    compute embeddings. Each reducer must already be a scored ``~coco_pipe.dim_reduction.DimReduction``
-    instance with cached ``metric_records_``.
+    compute embeddings. Each reducer must already be a scored
+    ``~coco_pipe.dim_reduction.DimReduction`` instance with cached ``metric_records_``.
 
     Parameters
     ----------
     reducers : dict or list of DimReduction
-        Scored ``~coco_pipe.dim_reduction.DimReduction`` objects to compare. Lists are converted to a
-        method-keyed mapping using ``reducer.method``.
+        Scored ``~coco_pipe.dim_reduction.DimReduction`` objects to compare. Lists are
+        converted to a method-keyed mapping using ``reducer.method``.
 
     Attributes
     ----------
@@ -751,7 +752,8 @@ class MethodSelector:
         Raises
         ------
         TypeError
-            If any provided object is not a ``~coco_pipe.dim_reduction.DimReduction`` instance.
+            If any provided object is not a ``~coco_pipe.dim_reduction.DimReduction``
+            instance.
         """
         # Import via the package re-export rather than the ``core`` submodule so
         # this lazy runtime check does not register as an import cycle edge.

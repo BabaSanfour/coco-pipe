@@ -266,17 +266,22 @@ def cleanup_repo_docs(app, exception) -> None:
 
 def autoapi_skip_member(app, what, name, obj, skip, options):
     """
-    Hook for Sphinx AutoAPI to determine if a specific member should be excluded from the docs.
+    Hook for Sphinx AutoAPI to determine if a specific member should be excluded from
+    the docs.
 
-    AutoAPI works by statically parsing the Python AST without importing code. Because of this,
-    it finds classes both where they are defined (e.g., `coco_pipe/io/structures.py`) AND
-    where they are re-exported (e.g., `coco_pipe/io/__init__.py`).
-    We use this hook to prune out redundant internal paths and unwanted Pydantic boilerplate.
+    AutoAPI works by statically parsing the Python AST without importing code. Because
+    of this, it finds classes both where they are defined (e.g.,
+    `coco_pipe/io/structures.py`) AND where they are re-exported (e.g.,
+    `coco_pipe/io/__init__.py`).
+    We use this hook to prune out redundant internal paths and unwanted Pydantic
+    boilerplate.
     """
     short_name = name.split(".")[-1]
 
-    # 1. Hide standard Pydantic V1/V2 internal methods that clutter the API documentation.
-    # Pydantic injects dozens of helper methods into BaseModel subclasses, which we don't want users to see.
+    # 1. Hide standard Pydantic V1/V2 internal methods that clutter the API
+    # documentation.
+    # Pydantic injects dozens of helper methods into BaseModel subclasses,
+    # which we don't want users to see.
     if short_name.startswith("model_") or short_name in {
         "dict",
         "json",
@@ -290,11 +295,13 @@ def autoapi_skip_member(app, what, name, obj, skip, options):
         return True
 
     # 2. Prevent Duplicate Target Generation.
-    # Because these classes are defined in internal files (e.g. `structures.py`) but exported
-    # publicly in `__init__.py`, AutoAPI will try to generate TWO separate documentation pages for them.
-    # This causes Sphinx to crash with "more than one target found" when we try to cross-reference them.
-    # By forcing AutoAPI to skip their internal source path, we ensure they are ONLY documented
-    # at their clean, public API path (e.g., `coco_pipe.io.DataContainer`).
+    # Because these classes are defined in internal files (e.g. `structures.py`) but
+    # exported publicly in `__init__.py`, AutoAPI will try to generate TWO separate
+    # documentation pages for them.
+    # This causes Sphinx to crash with "more than one target found" when we try to
+    # cross-reference them.
+    # By forcing AutoAPI to skip their internal source path, we ensure they are ONLY
+    # documented at their clean, public API path (e.g., `coco_pipe.io.DataContainer`).
     duplicates_to_hide = {
         "coco_pipe.io.structures.DataContainer",
         "coco_pipe.dim_reduction.reducers.base.BaseReducer",
@@ -314,11 +321,13 @@ def autodoc_skip_member(app, what, name, obj, skip, options):
     """
     Hook for Sphinx Autodoc to determine if a member should be excluded.
 
-    Unlike AutoAPI (which is static), Autodoc works by dynamically importing modules into memory.
-    While AutoAPI builds the main API reference, Autodoc is triggered by the `autosummary` tables
-    in our index files.
-    We must duplicate the Pydantic filter here because Autodoc parses the imported class objects
-    and will expose the `model_*` methods in the summary tables otherwise.
+    Unlike AutoAPI (which is static), Autodoc works by dynamically importing modules
+    into memory.
+    While AutoAPI builds the main API reference, Autodoc is triggered by the
+    `autosummary` tables in our index files.
+    We must duplicate the Pydantic filter here because Autodoc parses the imported
+    class objects and will expose the `model_*` methods in the summary tables
+    otherwise.
     """
     # Hide standard Pydantic internal methods that clutter the API
     if name.startswith("model_") or name in {

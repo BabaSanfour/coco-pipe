@@ -4,10 +4,11 @@ Dimensionality Reduction Core
 
 Execution manager for one dimensionality reduction method.
 
-`~coco_pipe.dim_reduction.DimReduction` is intentionally narrow. It owns reducer instantiation,
-input-shape validation for execution, fit/transform operations, and cached
-evaluation/interpretation state for one reducer instance. Plotting, trajectory
-reshaping, reporting, and multi-method comparison live in dedicated modules.
+`~coco_pipe.dim_reduction.DimReduction` is intentionally narrow. It owns reducer
+instantiation, input-shape validation for execution, fit/transform operations,
+and cached evaluation/interpretation state for one reducer instance. Plotting,
+trajectory reshaping, reporting, and multi-method comparison live in dedicated
+modules.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
@@ -168,9 +169,9 @@ class DimReduction:
         Parameters
         ----------
         X : DataContainer, array-like, or MNE object
-            Input data accepted by the reducer. A ``~coco_pipe.io.DataContainer`` is unwrapped
-            to its ``X`` array and remembered so the embedding can be re-wrapped
-            as a container; objects exposing ``get_data()`` (e.g. MNE) are
+            Input data accepted by the reducer. A ``~coco_pipe.io.DataContainer`` is
+            unwrapped to its ``X`` array and remembered so the embedding can be
+            re-wrapped as a container; objects exposing ``get_data()`` (e.g. MNE) are
             unwrapped to arrays.
 
         Returns
@@ -272,9 +273,10 @@ class DimReduction:
         Returns
         -------
         X_emb : DataContainer or np.ndarray
-            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an embedding
-            ``~coco_pipe.io.DataContainer`` (``component`` axis, ids/coords/meta preserved) for
-            standard 2-D embeddings; array input yields an array.
+            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an
+            embedding ``~coco_pipe.io.DataContainer`` (``component`` axis,
+            ids/coords/meta preserved) for standard 2-D embeddings; array input yields
+            an array.
         """
         X_arr, source = self._prepare_input(X)
         embedding = self.reducer.transform(X_arr)
@@ -294,8 +296,10 @@ class DimReduction:
         Returns
         -------
         X_emb : DataContainer or np.ndarray
-            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an embedding
-            ``~coco_pipe.io.DataContainer`` (``component`` axis, ids/coords/meta preserved) for
+            Reduced representation. A ``~coco_pipe.io.DataContainer`` input yields an
+            embedding
+            ``~coco_pipe.io.DataContainer`` (``component`` axis, ids/coords/meta
+            preserved) for
             standard 2-D embeddings; array input yields an array.
         """
         X_arr, source = self._prepare_input(X)
@@ -338,12 +342,14 @@ class DimReduction:
         Parameters
         ----------
         X_emb : DataContainer or array-like
-            Embedded data to evaluate. A ``~coco_pipe.io.DataContainer`` is unwrapped to its
+            Embedded data to evaluate. A ``~coco_pipe.io.DataContainer`` is unwrapped to
+            its
             ``X`` array.
         X : DataContainer or array-like, optional
             Original high-dimensional data in evaluation-ready layout. This is
             required for standard 2D metrics and optional for native 3D
-            trajectory metrics. A ``~coco_pipe.io.DataContainer`` is unwrapped to its ``X``
+            trajectory metrics. A ``~coco_pipe.io.DataContainer`` is unwrapped to its
+            ``X``
             array.
         n_neighbors : int, default=5
             K-nearest neighbors size for metric computation.

@@ -2,8 +2,9 @@
 Linear dimensionality reduction reducers.
 
 This module provides linear projection wrappers built on top of scikit-learn
-and optional Dask backends. These reducers follow the shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer`
-contract so they can be used directly with `~coco_pipe.dim_reduction.DimReduction`, reporting, and
+and optional Dask backends. These reducers follow the shared
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract so they can be
+used directly with `~coco_pipe.dim_reduction.DimReduction`, reporting, and
 visualization utilities.
 
 Classes

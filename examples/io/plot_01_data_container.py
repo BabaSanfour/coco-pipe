@@ -177,7 +177,8 @@ print(f"First 2 epochs per subject:\n{subset_strat.ids}")
 # Z-score normalization (mean=0, std=1) across the time dimension
 zscored_eeg = container_eeg.zscore(dim="time")
 print(
-    f"Z-scored EEG Data:\nMean: {np.mean(zscored_eeg.X):.3f}, Std: {np.std(zscored_eeg.X):.3f}"
+    f"Z-scored EEG Data:\nMean: {np.mean(zscored_eeg.X):.3f},"
+    f"\nStd: {np.std(zscored_eeg.X):.3f}"
 )
 
 

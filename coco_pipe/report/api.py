@@ -440,7 +440,8 @@ def from_experiment_results(
     output_path=None,
     on_error="warn",
 ) -> Report:
-    """Build one report from many labelled ``~coco_pipe.decoding.result.ExperimentResult`` objects or paths."""
+    """Build one report from many labelled
+    ``~coco_pipe.decoding.result.ExperimentResult`` objects or paths."""
     from .decoding_comparison import make_experiment_results_report
 
     return make_experiment_results_report(

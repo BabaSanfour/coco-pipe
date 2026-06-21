@@ -3,8 +3,8 @@ Spatiotemporal dimensionality reduction reducers.
 
 This module provides reducers for structured signals where time, trials, or
 snapshots are part of the data layout. These reducers follow the shared
-`~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract while declaring nonstandard input layouts through the
-`capabilities` mapping.
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` contract while declaring
+nonstandard input layouts through the `capabilities` mapping.
 
 Classes
 -------
@@ -507,7 +507,8 @@ class TRCAReducer(BaseReducer):
         Returns
         -------
         np.ndarray of shape (n_trials, n_dims, n_times)
-            Projected trial signals, truncated to `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
+            Projected trial signals, truncated to
+            `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
 
         Raises
         ------

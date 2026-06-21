@@ -588,7 +588,8 @@ def plot_timecourses(
             rgb = mcolors.to_rgb(mcolors.cnames.get(str(color_val), str(color_val)))
         except ValueError:
             return f"rgba(100,100,100,{alpha})"
-        return f"rgba({int(rgb[0] * 255)}, {int(rgb[1] * 255)}, {int(rgb[2] * 255)}, {alpha})"
+        r, g, b = (int(channel * 255) for channel in rgb[:3])
+        return f"rgba({r}, {g}, {b}, {alpha})"
 
     for idx, (_roi_name, roi_channels) in enumerate(roi_dict.items()):
         row = (idx // n_cols) + 1
