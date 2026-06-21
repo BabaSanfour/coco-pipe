@@ -411,11 +411,13 @@ def _evaluate_standard_metrics(
             sample_size=1000,
             random_state=random_state,
         )
-        shepard_metrics = {
-            "shepard_correlation": float(np.corrcoef(d_orig, d_emb)[0, 1])
-            if len(d_orig) > 1
-            else np.nan
-        }
+        # corrcoef divides by each input's std; constant (zero-variance)
+        # distances make it undefined, so guard rather than emit a warning.
+        if len(d_orig) > 1 and np.std(d_orig) > 0 and np.std(d_emb) > 0:
+            shepard_correlation = float(np.corrcoef(d_orig, d_emb)[0, 1])
+        else:
+            shepard_correlation = np.nan
+        shepard_metrics = {"shepard_correlation": shepard_correlation}
         metrics_payload.update(shepard_metrics)
         diagnostics_payload["shepard_distances_"] = {
             "original": d_orig,

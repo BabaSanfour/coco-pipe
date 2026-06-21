@@ -198,9 +198,10 @@ def test_comparison_unknown_kind_warns_and_returns_none():
         _items(),
         by=("scope", "analysis_mode", "unit_name"),
     )
-    section = build_comparison_section(
-        collection, kind="not_a_real_kind", axis="unit_name"
-    )
+    with pytest.warns(RuntimeWarning, match="Unknown decoding comparison kind"):
+        section = build_comparison_section(
+            collection, kind="not_a_real_kind", axis="unit_name"
+        )
     assert section is None
 
 

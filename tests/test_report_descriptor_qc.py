@@ -1,4 +1,5 @@
 import tempfile
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -284,3 +285,40 @@ def test_generate_descriptor_subject_report_edge_cases():
             {},
         )
         assert res.exists()
+
+
+def test_generate_descriptor_subject_report_asset_urls_inline_is_self_contained():
+    """``asset_urls='inline'`` must embed assets and suppress the CDN warning."""
+    overview_df = pd.DataFrame(
+        [{"Subject": "sub-01", "Session": "ses-01", "Condition": "rest"}]
+    )
+    empty = pd.DataFrame()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cdn_path = Path(tmpdir) / "cdn.html"
+        inline_path = Path(tmpdir) / "inline.html"
+
+        def _build(out_path, **kwargs):
+            return generate_descriptor_subject_report(
+                out_path,
+                overview_df,
+                empty,
+                empty,
+                empty,
+                None,
+                {},
+                **kwargs,
+            )
+
+        # Default path warns about external CDN references.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _build(cdn_path)
+        assert any("external CDN" in str(w.message) for w in caught)
+
+        # Inline path is self-contained: no CDN warning.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            _build(inline_path, asset_urls="inline")
+        assert not any("external CDN" in str(w.message) for w in caught)
+        assert inline_path.exists()

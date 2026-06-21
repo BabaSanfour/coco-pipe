@@ -132,6 +132,7 @@ def generate_descriptor_subject_report(
     feature_missingness_df: pd.DataFrame,
     family_summary_df: pd.DataFrame,
     figure_paths: Mapping[str, Path],
+    asset_urls: dict[str, str] | str | None = None,
 ) -> Path:
     """Build the per-shard (subject/session/condition) descriptor QC report.
 
@@ -139,6 +140,10 @@ def generate_descriptor_subject_report(
     ----------
     output_path
         Destination ``.html`` path. Parent directories are created.
+    asset_urls
+        Passed through to :class:`~coco_pipe.report.core.Report`. Use
+        ``"inline"`` to embed Plotly/Tailwind/pako so the saved HTML renders
+        offline (file://) instead of referencing external CDNs.
     overview_df
         Single-row dataframe with ``Subject``, ``Session``, ``Condition``,
         and summary metrics for the shard.
@@ -170,7 +175,8 @@ def generate_descriptor_subject_report(
             f"{overview_df.iloc[0]['Subject']} "
             f"{overview_df.iloc[0]['Session']} "
             f"{overview_df.iloc[0]['Condition']}"
-        )
+        ),
+        asset_urls=asset_urls,
     )
 
     overview = Section("Overview", icon="📋")
@@ -280,6 +286,7 @@ def generate_descriptor_dataset_report(
     figure_paths: Mapping[str, Path],
     manifest_df: pd.DataFrame | None = None,
     condition_breakdown_df: pd.DataFrame | None = None,
+    asset_urls: dict[str, str] | str | None = None,
 ) -> Path:
     """Build the merged-dataset descriptor QC report.
 
@@ -287,6 +294,10 @@ def generate_descriptor_dataset_report(
     ----------
     output_path
         Destination ``.html`` path. Parent directories are created.
+    asset_urls
+        Passed through to :class:`~coco_pipe.report.core.Report`. Use
+        ``"inline"`` to embed Plotly/Tailwind/pako so the saved HTML renders
+        offline (file://) instead of referencing external CDNs.
     overview_df
         Single-row dataframe with dataset-level summary metrics.
     shard_summary_df
@@ -318,7 +329,7 @@ def generate_descriptor_dataset_report(
     Path
         *output_path*, after the report has been written.
     """
-    report = Report(title="Descriptor QC Dataset Report")
+    report = Report(title="Descriptor QC Dataset Report", asset_urls=asset_urls)
 
     overview = Section("Overview", icon="📋")
     _add_optional_table(overview, overview_df, "Dataset Overview")

@@ -27,6 +27,28 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
 
+  detect:
+    name: Detect run flags
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      run_foundation: ${{ steps.flags.outputs.run_foundation }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - id: flags
+        run: |
+          message="$(git log -1 --pretty=%B)"
+          echo "HEAD commit message:"
+          echo "$message"
+          if printf '%s' "$message" | grep -qiF '[run-foundation]'; then
+            echo "run_foundation=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_foundation=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Tests / ${{ matrix.os }} / py${{ matrix.python-version }}
     needs: quality
@@ -62,16 +84,26 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: BabaSanfour/coco-pipe
 
+  pytest:
+    name: pytest
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the full test matrix to pass
+        run: |
+          result="${{ needs.test.result }}"
+          echo "test matrix result: $result"
+          test "$result" = "success"
+
   foundation:
     name: Heavy foundation tests
-    needs: quality
+    needs: [quality, detect]
     runs-on: ubuntu-latest
     if: >
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/v') ||
-      contains(github.event.head_commit.message, '[run-foundation]') ||
-      contains(github.event.pull_request.title, '[run-foundation]') ||
-      contains(github.event.pull_request.body, '[run-foundation]')
+      needs.detect.outputs.run_foundation == 'true'
 
     steps:
       - uses: actions/checkout@v6

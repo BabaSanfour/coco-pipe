@@ -105,8 +105,8 @@ def finalize_axes(
         for tick in ax.get_xticklabels():
             tick.set_ha(xtick_ha)
 
-    # Legend
-    if legend:
+    # Legend (only when there are labeled artists to show)
+    if legend and ax.get_legend_handles_labels()[0]:
         ax.legend(title=legend_title, frameon=False)
 
     # Grid
@@ -1467,7 +1467,7 @@ def prepare_prediction_accuracy_scores(
     require_non_empty(frame, context)
     return (
         frame.groupby(["Model", *group_columns], dropna=False)
-        .apply(_prediction_accuracy)
+        .apply(_prediction_accuracy, include_groups=False)
         .reset_index(name="Value")
     )
 

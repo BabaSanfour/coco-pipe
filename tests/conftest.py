@@ -26,7 +26,22 @@ def mock_visualizations():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    plt.rcParams["figure.max_open_warning"] = 0
     plt.show = MagicMock()
+
+
+@pytest.fixture(autouse=True)
+def _close_figures():
+    """Close any figures a test left open.
+
+    Plot helpers return figures to their caller rather than closing them, so
+    without this the per-test figures accumulate and matplotlib emits a
+    "More than 20 figures have been opened" warning mid-suite.
+    """
+    yield
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
 
 
 @pytest.fixture(scope="session", autouse=True)

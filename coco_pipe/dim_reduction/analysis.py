@@ -158,9 +158,16 @@ def correlate_features(
     for component_index in range(X_emb.shape[1]):
         component_scores: dict[str, float] = {}
         for feature_index, feature_name in enumerate(names):
-            rho, _ = spearmanr(X_orig[:, feature_index], X_emb[:, component_index])
-            if not np.isfinite(rho):
+            feature = X_orig[:, feature_index]
+            component = X_emb[:, component_index]
+            # spearmanr warns and returns nan when either input is constant;
+            # treat that as zero correlation without emitting the warning.
+            if np.ptp(feature) == 0 or np.ptp(component) == 0:
                 rho = 0.0
+            else:
+                rho, _ = spearmanr(feature, component)
+                if not np.isfinite(rho):
+                    rho = 0.0
             component_scores[feature_name] = float(rho)
 
         results[f"Dimension {component_index + 1}"] = dict(

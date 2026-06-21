@@ -257,6 +257,32 @@ testpaths = ["tests"]
 markers = [
   "real_checkpoints: heavy tests that download real foundation checkpoints from HuggingFace. Requires HF_TOKEN, accepted gated-model licenses, network access, and COCO_PIPE_RUN_REAL_FOUNDATION=1.",
 ]
+# Treat warnings as errors so a *new* warning in coco-pipe's own code fails CI,
+# then explicitly ignore the known, irreducible ones. Two groups:
+#   (2) coco-pipe's own *intentional* informative warnings, which tests trigger
+#       on purpose (asserted with `pytest.warns` where it adds a contract;
+#       ignored here where the trigger is incidental/parametrized), and
+#   (1) third-party deprecations/notices we do not control.
+filterwarnings = [
+  "error",
+  # (2) coco-pipe intentional informative warnings -------------------------
+  "ignore:.*is not group-aware.*:UserWarning",
+  "ignore:.*uses channel names for positional encoding.*:UserWarning",
+  "ignore:.*Variable epoch lengths detected.*:RuntimeWarning",
+  "ignore:.*references three external CDN scripts.*:UserWarning",
+  # (1) third-party noise --------------------------------------------------
+  "ignore:.*groups parameter is ignored.*:UserWarning",
+  "ignore:.*enable_nested_tensor.*:UserWarning",
+  "ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning",
+  "ignore:.*default value of .init. will change.*:FutureWarning",
+  "ignore:.*number of connected components.*:UserWarning",
+  "ignore:.*Graph is not fully connected.*:UserWarning",
+  "ignore:.*Changing the sparsity structure.*",
+  "ignore:.*DaskPCA on numpy raised.*:UserWarning",
+  "ignore:.*Precision loss occurred in moment calculation.*:RuntimeWarning",
+  "ignore:.*invalid value encountered in divide.*:RuntimeWarning",
+  "ignore:.*will be deprecated in a future version. Use orientation.*",
+]
 
 [tool.ruff]
 line-length = 88
