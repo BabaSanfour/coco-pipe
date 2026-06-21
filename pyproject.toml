@@ -225,6 +225,11 @@ full = [
   "specparam",
   "antropy",
   "neurokit2",
+  "braindecode>=1.4.0,<1.6",
+  "transformers",
+  "huggingface-hub",
+  "peft",
+  "accelerate",
 ]
 
 all = [
@@ -261,6 +266,7 @@ extend-exclude = [
   "analysis/analysis_paper_eegbci_109.py",
   "docs/source/auto_examples",
   "docs/build",
+  "__pyrefly__virtual*"
 ]
 
 [tool.ruff.lint]

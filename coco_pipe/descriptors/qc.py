@@ -13,16 +13,16 @@ import numpy as np
 import pandas as pd
 
 from coco_pipe.descriptors._constants import (
-    _AGG_STAT_PREFIXES,
-    _BAND_SUBFAMILY_PATTERNS,
-    _CLASSIFICATION_COLUMNS,
-    _COMPLEXITY_SUBFAMILY,
-    _CONSTANT_COLUMNS,
-    _FAILURE_FAMILY_ALIASES,
-    _FAMILY_QC_COLUMNS,
-    _MISSINGNESS_COLUMNS,
-    _PARAM_SUBFAMILY,
+    AGG_STAT_PREFIXES,
+    BAND_SUBFAMILY_PATTERNS,
+    CLASSIFICATION_COLUMNS,
+    COMPLEXITY_SUBFAMILY,
+    CONSTANT_COLUMNS,
+    FAILURE_FAMILY_ALIASES,
+    FAMILY_QC_COLUMNS,
     KNOWN_FAMILY_TOKENS,
+    MISSINGNESS_COLUMNS,
+    PARAM_SUBFAMILY,
 )
 from coco_pipe.io.quality import (
     compute_constant_feature_summary,
@@ -34,7 +34,7 @@ from .naming import parse_descriptor_feature_column, split_family_token
 
 def _strip_stat_prefix(measure: str) -> str:
     head, _, tail = str(measure).partition("_")
-    return tail if head in _AGG_STAT_PREFIXES and tail else str(measure)
+    return tail if head in AGG_STAT_PREFIXES and tail else str(measure)
 
 
 def descriptor_identity(measure: str) -> str:
@@ -65,14 +65,14 @@ def descriptor_subfamily(family: str | None, measure: str) -> str:
         return "unknown"
     core = _strip_stat_prefix(measure)
     if family == "band":
-        for pattern, label in _BAND_SUBFAMILY_PATTERNS:
+        for pattern, label in BAND_SUBFAMILY_PATTERNS:
             if pattern in core:
                 return label
         return "band_other"
     if family == "param":
-        return _PARAM_SUBFAMILY.get(core, "param_other")
+        return PARAM_SUBFAMILY.get(core, "param_other")
     if family == "complexity":
-        return _COMPLEXITY_SUBFAMILY.get(core, "complexity_other")
+        return COMPLEXITY_SUBFAMILY.get(core, "complexity_other")
     return str(family)
 
 
@@ -114,7 +114,7 @@ def _classify_cached(
             }
         )
 
-    return pd.DataFrame.from_records(rows, columns=_CLASSIFICATION_COLUMNS)
+    return pd.DataFrame.from_records(rows, columns=CLASSIFICATION_COLUMNS)
 
 
 def classify_descriptor_columns(
@@ -139,7 +139,7 @@ def compute_family_missingness(
 ) -> pd.DataFrame:
     """Enrich per-column missingness with descriptor family metadata."""
     if not descriptor_names:
-        return pd.DataFrame(columns=_MISSINGNESS_COLUMNS)
+        return pd.DataFrame(columns=MISSINGNESS_COLUMNS)
     missingness = compute_feature_missingness(df, descriptor_names)
     classification = classify_descriptor_columns(descriptor_names, known_families)
     return missingness.merge(classification, on="column", how="left")
@@ -153,7 +153,7 @@ def compute_family_constant_summary(
 ) -> pd.DataFrame:
     """Enrich per-column constant-feature results with family metadata."""
     if not descriptor_names:
-        return pd.DataFrame(columns=_CONSTANT_COLUMNS)
+        return pd.DataFrame(columns=CONSTANT_COLUMNS)
     constants = compute_constant_feature_summary(df, descriptor_names, tol)
     classification = classify_descriptor_columns(descriptor_names, known_families)
     return constants.merge(classification, on="column", how="left")
@@ -467,7 +467,7 @@ def aggregate_family_qc(
 ) -> pd.DataFrame:
     """Aggregate descriptor health indicators to one row per family."""
     if not descriptor_names:
-        return pd.DataFrame(columns=_FAMILY_QC_COLUMNS)
+        return pd.DataFrame(columns=FAMILY_QC_COLUMNS)
 
     missingness = compute_family_missingness(
         df,
@@ -489,7 +489,7 @@ def aggregate_family_qc(
         and "family" in failures_df.columns
     ):
         failure_families = (
-            failures_df["family"].astype(str).replace(_FAILURE_FAMILY_ALIASES)
+            failures_df["family"].astype(str).replace(FAILURE_FAMILY_ALIASES)
         )
 
     rows: list[dict[str, Any]] = []
@@ -518,4 +518,4 @@ def aggregate_family_qc(
             }
         )
 
-    return pd.DataFrame.from_records(rows, columns=_FAMILY_QC_COLUMNS)
+    return pd.DataFrame.from_records(rows, columns=FAMILY_QC_COLUMNS)

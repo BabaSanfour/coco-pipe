@@ -150,6 +150,7 @@ def get_git_revision_hash(cwd: str | os.PathLike[str] | None = None) -> str:
         PermissionError,
         subprocess.TimeoutExpired,
     ):
+        # Gracefully fallback to "Unknown" if git is unavailable or fails
         pass
     return "Unknown"
 

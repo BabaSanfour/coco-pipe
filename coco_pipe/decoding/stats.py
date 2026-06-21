@@ -14,7 +14,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .result import ExperimentResult
+    import coco_pipe.decoding.result as result_mod
 
 import numpy as np
 import pandas as pd
@@ -350,7 +350,7 @@ def run_statistical_assessment(
 
     Parameters
     ----------
-    observed_result : ExperimentResult
+    observed_result : result_mod.ExperimentResult
         The result of the actual experiment run.
     experiment_config : ExperimentConfig
         The full configuration of the experiment.
@@ -711,7 +711,7 @@ def _run_permutation_loop(
     """
     Execute the core permutation loop using parallel processing.
     """
-    from .experiment import Experiment
+    import coco_pipe.decoding.experiment as exp_mod
 
     rng = np.random.default_rng(config.random_state)
     if unit == "sample":
@@ -753,7 +753,7 @@ def _run_permutation_loop(
         # degenerate inner folds). Score the permuted fit only.
         if perm_config.statistical_assessment is not None:
             perm_config.statistical_assessment.enabled = False
-        p_res = Experiment(perm_config).run(
+        p_res = exp_mod.Experiment(perm_config).run(
             X,
             y_perm,
             groups=groups,
@@ -861,8 +861,8 @@ def _build_permutation_rows(
 
 
 def run_paired_permutation_assessment(
-    results_a: ExperimentResult,
-    results_b: ExperimentResult,
+    results_a: result_mod.ExperimentResult,
+    results_b: result_mod.ExperimentResult,
     model: str,
     metric: str,
     config: StatisticalAssessmentConfig,
@@ -883,7 +883,7 @@ def run_paired_permutation_assessment(
 
     Parameters
     ----------
-    results_a, results_b : ExperimentResult
+    results_a, results_b : result_mod.ExperimentResult
         The results of the two experiments to compare.
     model : str
         The name of the model to compare.

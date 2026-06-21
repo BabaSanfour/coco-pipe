@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import inspect
-import logging
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
@@ -31,8 +30,6 @@ from .elements import (
     TabsElement,
 )
 from .qc import build_qc_section
-
-logger = logging.getLogger(__name__)
 
 
 class SectionDataUnavailable(RuntimeError):

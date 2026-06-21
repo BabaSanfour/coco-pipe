@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from .structures import DataContainer
 
 from ._constants import (
-    _STATUS_ORDER,
     GROUP_BY_COLUMN,
+    STATUS_ORDER,
     QCFlagLevel,
     QualityInput,
     QualityStatus,
@@ -205,7 +205,7 @@ def make_qc_flag(
     scope: str | None = None,
 ) -> dict[str, Any]:
     """Create a structured QC flag record."""
-    if level not in _STATUS_ORDER:
+    if level not in STATUS_ORDER:
         raise ValueError("level must be one of: 'pass', 'warn', or 'fail'.")
     return {
         "level": level,
@@ -220,10 +220,10 @@ def make_qc_flag(
 def resolve_qc_status(flags: list[dict[str, Any]]) -> str:
     """Return the worst status level from a list of QC flag dicts."""
     levels = [str(flag.get("level", "pass")) for flag in flags]
-    valid_levels = [level if level in _STATUS_ORDER else "pass" for level in levels]
+    valid_levels = [level if level in STATUS_ORDER else "pass" for level in levels]
     return max(
         valid_levels,
-        key=lambda status: _STATUS_ORDER.get(status, 0),
+        key=lambda status: STATUS_ORDER.get(status, 0),
         default="pass",
     )
 
@@ -665,51 +665,6 @@ def check_flatline(signal: QualityInput, threshold: float = 1e-10) -> CheckResul
             std,
         )
     return CheckResult("Signal Quality", "OK", "Signal variance OK.", 0)
-
-
-def row_quality_score(
-    df: pd.DataFrame,
-    exclude_cols: list[str] | None = None,
-    count_zero: bool = True,
-    normalize: bool = False,
-) -> pd.Series:
-    """Calculate per-row badness from NaN, Inf, and optionally zero counts.
-
-    Higher values indicate worse quality. With ``normalize=True``, divide by
-    the number of evaluated numeric columns so scores are in ``[0, 1]``.
-
-    Parameters
-    ----------
-    df:
-        Input rows to score.
-    exclude_cols:
-        Columns to exclude before selecting numeric values.
-    count_zero:
-        Whether zero values contribute to the badness score.
-    normalize:
-        Whether to divide counts by the number of evaluated numeric columns.
-
-    Returns
-    -------
-    pandas.Series
-        Row-aligned badness scores. Lower values indicate better quality.
-    """
-    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
-    num = use_df.select_dtypes(include=[np.number])
-    if num.shape[1] == 0:
-        dtype = float if normalize else int
-        return pd.Series(np.zeros(len(df), dtype=dtype), index=df.index)
-
-    nan_cnt = num.isna().sum(axis=1)
-    arr = num.to_numpy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        inf_mask = np.isinf(arr)
-    inf_cnt = inf_mask.sum(axis=1)
-    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
-    score = (nan_cnt + inf_cnt + zero_cnt).astype(int)
-    if normalize:
-        return score.astype(float) / num.shape[1]
-    return score
 
 
 def drop_epoch_outliers(

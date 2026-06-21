@@ -24,7 +24,7 @@ import numpy as np
 
 from coco_pipe.io.structures import DataContainer
 
-from ._constants import _FAILURE_FAMILY_ALIASES
+from ._constants import FAILURE_FAMILY_ALIASES
 from .configs import DescriptorConfig, ParametricDescriptorConfig
 from .extractors._parametric_fit import fit_parametric_batch
 from .extractors._psd import compute_psd
@@ -782,7 +782,7 @@ class DescriptorPipeline:
         # generated column strings. It aligns with ``descriptor_names`` because
         # ``_merge_descriptor_blocks`` concatenates columns in ``blocks`` order.
         feature_family = [
-            _FAILURE_FAMILY_ALIASES.get(block.family, block.family)
+            FAILURE_FAMILY_ALIASES.get(block.family, block.family)
             for block in blocks
             for _ in block.descriptor_names
         ]

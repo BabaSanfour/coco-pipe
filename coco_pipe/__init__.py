@@ -2,6 +2,8 @@
 Package initializer for the coco_pipe package.
 """
 
+from typing import TYPE_CHECKING
+
 from .descriptors import (
     DescriptorConfig,
     DescriptorPipeline,
@@ -25,32 +27,55 @@ from .dim_reduction import (
 )
 from .utils import get_environment_info, get_git_revision_hash, get_package_version
 
+if TYPE_CHECKING:
+    from .dim_reduction import (
+        DaskPCAReducer as DaskPCAReducer,
+    )
+    from .dim_reduction import (
+        DaskTruncatedSVDReducer as DaskTruncatedSVDReducer,
+    )
+    from .dim_reduction import (
+        DMDReducer as DMDReducer,
+    )
+    from .dim_reduction import (
+        IVISReducer as IVISReducer,
+    )
+    from .dim_reduction import (
+        PacmapReducer as PacmapReducer,
+    )
+    from .dim_reduction import (
+        ParametricUMAPReducer as ParametricUMAPReducer,
+    )
+    from .dim_reduction import (
+        PHATEReducer as PHATEReducer,
+    )
+    from .dim_reduction import (
+        TopologicalAEReducer as TopologicalAEReducer,
+    )
+    from .dim_reduction import (
+        TRCAReducer as TRCAReducer,
+    )
+    from .dim_reduction import (
+        TrimapReducer as TrimapReducer,
+    )
+    from .dim_reduction import (
+        UMAPReducer as UMAPReducer,
+    )
+
 # Core exports
 __all__ = [
     "METHODS",
     "BaseReducer",
-    "DMDReducer",
-    "DaskPCAReducer",
-    "DaskTruncatedSVDReducer",
     "DescriptorConfig",
     "DescriptorPipeline",
     "DimReduction",
-    "IVISReducer",
     "IncrementalPCAReducer",
     "IsomapReducer",
     "LLEReducer",
     "MDSReducer",
     "PCAReducer",
-    "PHATEReducer",
-    "PacmapReducer",
-    "ParametricUMAPReducer",
     "SpectralEmbeddingReducer",
-    "TRCAReducer",
     "TSNEReducer",
-    "TopologicalAEReducer",
-    "TrimapReducer",
-    # Optional (Lazy)
-    "UMAPReducer",
     "continuity",
     "get_environment_info",
     "get_git_revision_hash",
@@ -74,6 +99,8 @@ _LAZY_DIM_REDUCTION_EXPORTS = {
     "DaskTruncatedSVDReducer",
     "ParametricUMAPReducer",
 }
+
+__all__.extend(_LAZY_DIM_REDUCTION_EXPORTS)
 
 
 def __getattr__(name):

@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from .analysis import interpret_features
 from .artifacts import (
     EVAL_METRIC_COLUMNS,
@@ -66,6 +68,41 @@ from .reducers import (
     TSNEReducer,
 )
 
+if TYPE_CHECKING:
+    from .reducers import (
+        DaskPCAReducer as DaskPCAReducer,
+    )
+    from .reducers import (
+        DaskTruncatedSVDReducer as DaskTruncatedSVDReducer,
+    )
+    from .reducers import (
+        DMDReducer as DMDReducer,
+    )
+    from .reducers import (
+        IVISReducer as IVISReducer,
+    )
+    from .reducers import (
+        PacmapReducer as PacmapReducer,
+    )
+    from .reducers import (
+        ParametricUMAPReducer as ParametricUMAPReducer,
+    )
+    from .reducers import (
+        PHATEReducer as PHATEReducer,
+    )
+    from .reducers import (
+        TopologicalAEReducer as TopologicalAEReducer,
+    )
+    from .reducers import (
+        TRCAReducer as TRCAReducer,
+    )
+    from .reducers import (
+        TrimapReducer as TrimapReducer,
+    )
+    from .reducers import (
+        UMAPReducer as UMAPReducer,
+    )
+
 # Core exports
 __all__ = [
     "DEFAULT_EVAL_GROUP_COL",
@@ -79,26 +116,14 @@ __all__ = [
     # Artifact constants
     "SEPARATION_METRIC_KEY",
     "BaseReducer",
-    "DMDReducer",
-    "DaskPCAReducer",
-    "DaskTruncatedSVDReducer",
     "DimReduction",
-    "IVISReducer",
     "IncrementalPCAReducer",
     "IsomapReducer",
     "LLEReducer",
     "MDSReducer",
     "PCAReducer",
-    "PHATEReducer",
-    "PacmapReducer",
-    "ParametricUMAPReducer",
     "SpectralEmbeddingReducer",
-    "TRCAReducer",
     "TSNEReducer",
-    "TopologicalAEReducer",
-    "TrimapReducer",
-    # Optional (Lazy)
-    "UMAPReducer",
     "apply_pca_score_baseline",
     "build_auto_pooled_eval_spec",
     "build_availability_record",
@@ -159,6 +184,8 @@ _LAZY_REDUCER_EXPORTS = {
     "DaskTruncatedSVDReducer",
     "ParametricUMAPReducer",
 }
+
+__all__.extend(_LAZY_REDUCER_EXPORTS)
 
 
 def __getattr__(name):

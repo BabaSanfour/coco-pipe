@@ -42,11 +42,11 @@ import numpy as np
 import pandas as pd
 
 from coco_pipe.dim_reduction._constants import (
-    _FIT_PROVENANCE_FIELDS,
     ARTIFACTS_DIRNAME,
     EVAL_METRIC_COLUMNS,
     EVALS_SUBDIR,
     FIT_METRIC_COLUMNS,
+    FIT_PROVENANCE_FIELDS,
     FITS_SUBDIR,
     POOLED_CONDITION,
     STEM_SLUG_MAX_LEN,
@@ -59,7 +59,7 @@ from coco_pipe.dim_reduction.artifacts import (
     save_eval_artifact,
     save_fit_artifact,
 )
-from coco_pipe.dim_reduction.config import _MISSING_EVAL_VALUES, DEFAULT_EVAL_GROUP_COL
+from coco_pipe.dim_reduction.config import DEFAULT_EVAL_GROUP_COL, MISSING_EVAL_VALUES
 from coco_pipe.dim_reduction.core import DimReduction
 from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
 from coco_pipe.io import DataContainer, fingerprint_container
@@ -247,7 +247,7 @@ def _base_eval_payload(
     n_groups: int = 0,
     n_labels: int = 0,
 ) -> dict[str, Any]:
-    payload = {field: fit_payload.get(field) for field in _FIT_PROVENANCE_FIELDS}
+    payload = {field: fit_payload.get(field) for field in FIT_PROVENANCE_FIELDS}
     payload.update(
         {
             "n_components": int(fit_payload["n_components"]),
@@ -513,9 +513,9 @@ def prepare_eval_inputs(
     if eval_spec["label_map"]:
         labels = labels.map(lambda value: eval_spec["label_map"].get(str(value), value))
     labels = labels.astype("string").str.strip()
-    labels = labels.mask(labels.str.lower().isin(_MISSING_EVAL_VALUES))
+    labels = labels.mask(labels.str.lower().isin(MISSING_EVAL_VALUES))
     groups = aligned_frame[eval_spec["group_col"]].astype("string").str.strip()
-    groups = groups.mask(groups.str.lower().isin(_MISSING_EVAL_VALUES))
+    groups = groups.mask(groups.str.lower().isin(MISSING_EVAL_VALUES))
     valid_mask = labels.notna() & groups.notna()
     if not valid_mask.any():
         raise RuntimeError(f"Eval '{eval_spec['name']}' produced no valid samples.")

@@ -132,5 +132,5 @@ def _resolve_device(device: str) -> str:
         if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             return "mps"
     except ImportError:
-        pass
+        pass  # Fallback to CPU if torch is not installed
     return "cpu"

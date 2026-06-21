@@ -21,7 +21,6 @@ from coco_pipe.io.structures import DataContainer
 
 from .analysis import interpret_features
 from .config import BaseReducerConfig, EvaluationConfig, get_reducer_class
-from .evaluation.core import evaluate_embedding
 from .reducers.base import BaseReducer
 
 __all__ = ["DimReduction"]
@@ -392,6 +391,9 @@ class DimReduction:
             X_emb = X_emb.X
         if isinstance(X, DataContainer):
             X = X.X
+
+        from .evaluation.core import evaluate_embedding
+
         payload = evaluate_embedding(
             X_emb=X_emb,
             X=X,

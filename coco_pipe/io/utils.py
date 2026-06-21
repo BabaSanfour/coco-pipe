@@ -92,6 +92,51 @@ def make_strata(
     )
 
 
+def row_quality_score(
+    df: pd.DataFrame,
+    exclude_cols: list[str] | None = None,
+    count_zero: bool = True,
+    normalize: bool = False,
+) -> pd.Series:
+    """Calculate per-row badness from NaN, Inf, and optionally zero counts.
+
+    Higher values indicate worse quality. With ``normalize=True``, divide by
+    the number of evaluated numeric columns so scores are in ``[0, 1]``.
+
+    Parameters
+    ----------
+    df:
+        Input rows to score.
+    exclude_cols:
+        Columns to exclude before selecting numeric values.
+    count_zero:
+        Whether zero values contribute to the badness score.
+    normalize:
+        Whether to divide counts by the number of evaluated numeric columns.
+
+    Returns
+    -------
+    pandas.Series
+        Row-aligned badness scores. Lower values indicate better quality.
+    """
+    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
+    num = use_df.select_dtypes(include=[np.number])
+    if num.shape[1] == 0:
+        dtype = float if normalize else int
+        return pd.Series(np.zeros(len(df), dtype=dtype), index=df.index)
+
+    nan_cnt = num.isna().sum(axis=1)
+    arr = num.to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inf_mask = np.isinf(arr)
+    inf_cnt = inf_mask.sum(axis=1)
+    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
+    score = (nan_cnt + inf_cnt + zero_cnt).astype(int)
+    if normalize:
+        return score.astype(float) / num.shape[1]
+    return score
+
+
 def sample_indices(
     df: "pd.DataFrame",
     target: str,
@@ -111,8 +156,6 @@ def sample_indices(
             continue
 
         if prefer_clean:
-            from .quality import row_quality_score
-
             q = row_quality_score(sub, exclude_cols=exclude)
             if not replace:
                 sub_shuf = sub.sample(frac=1.0, random_state=rng.integers(0, 1 << 32))

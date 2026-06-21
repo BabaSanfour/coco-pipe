@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 import coco_pipe.io.utils as utils_mod
-from coco_pipe.io.quality import row_quality_score
 from coco_pipe.io.utils import (
     _get_bids_path,
     _get_mne,
@@ -16,6 +15,7 @@ from coco_pipe.io.utils import (
     detect_subjects,
     load_participants_tsv,
     make_strata,
+    row_quality_score,
     sample_indices,
 )
 

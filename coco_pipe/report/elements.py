@@ -462,11 +462,8 @@ class MetricsTableElement(TableElement):
                     continue
 
                 # Determine direction
-                is_higher = True
-                if isinstance(self.higher_is_better, list):
-                    is_higher = col in self.higher_is_better
-                else:
-                    is_higher = self.higher_is_better
+                hib = self.higher_is_better
+                is_higher = col in hib if isinstance(hib, list) else bool(hib)
 
                 if is_higher:
                     self.best_vals[col] = self.data[col].max()

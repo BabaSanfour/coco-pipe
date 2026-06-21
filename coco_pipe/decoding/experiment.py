@@ -4,6 +4,8 @@ Decoding Experiment
 Main executor for decoding experiments.
 """
 
+from __future__ import annotations
+
 import atexit
 import logging
 import time
@@ -11,7 +13,10 @@ from collections import defaultdict
 from collections.abc import Sequence
 from shutil import rmtree
 from tempfile import mkdtemp
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .result import ExperimentResult
 
 import joblib
 import numpy as np
@@ -39,7 +44,6 @@ from .registry import (
     get_selector_capabilities,
     resolve_estimator_spec,
 )
-from .result import ExperimentResult
 
 logger = logging.getLogger(__name__)
 
@@ -684,6 +688,8 @@ class Experiment:
                 self.results[name] = {"error": str(e), "status": "failed"}
 
         logger.info(f"Experiment Completed in {time.time() - start_time:.2f}s")
+        from .result import ExperimentResult
+
         res_obj = ExperimentResult(
             self.results,
             config=self.config.model_dump(),
@@ -691,9 +697,9 @@ class Experiment:
         )
 
         if self.config.statistical_assessment.enabled:
-            from .stats import run_statistical_assessment
+            import coco_pipe.decoding.stats as stats
 
-            assessment = run_statistical_assessment(
+            assessment = stats.run_statistical_assessment(
                 res_obj,
                 self.config,
                 X,

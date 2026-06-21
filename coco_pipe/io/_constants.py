@@ -22,7 +22,7 @@ QCFlagLevel = Literal["pass", "warn", "fail"]
 QualityInput = pd.DataFrame | np.ndarray
 """Accepted input type for column-level quality checks."""
 
-_STATUS_ORDER: dict[str, int] = {"pass": 0, "warn": 1, "fail": 2}
+STATUS_ORDER: dict[str, int] = {"pass": 0, "warn": 1, "fail": 2}
 """Ordinal ranking used by ``resolve_qc_status`` to pick the worst level."""
 
 GROUP_BY_COLUMN: dict[str, str] = {

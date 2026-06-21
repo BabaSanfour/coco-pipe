@@ -42,7 +42,7 @@ class DecoderEstimator(Protocol):
         self : DecoderEstimator
             The fitted estimator.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def predict(self, X: Any) -> Any:
         """
@@ -58,7 +58,7 @@ class DecoderEstimator(Protocol):
         y_pred : array-like of shape (n_samples,)
             Predicted target values per sample.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_params(self, deep: bool = True) -> dict[str, Any]:
         """
@@ -75,7 +75,7 @@ class DecoderEstimator(Protocol):
         params : dict
             Parameter names mapped to their values.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def set_params(self, **params: Any) -> DecoderEstimator:
         """
@@ -91,7 +91,7 @@ class DecoderEstimator(Protocol):
         self : DecoderEstimator
             The estimator instance.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
 
 @runtime_checkable
@@ -118,7 +118,7 @@ class EmbeddingExtractor(Protocol):
         embeddings : array-like
             The extracted feature vectors.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_embedding_info(self) -> dict[str, Any]:
         """
@@ -130,7 +130,7 @@ class EmbeddingExtractor(Protocol):
             A dictionary containing provider name, model name, pooling
             strategy, and output dimensionality.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
 
 @runtime_checkable
@@ -151,7 +151,7 @@ class NeuralTrainable(Protocol):
         history : list of dict
             A list of diagnostic records, one per training iteration.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_checkpoint_manifest(self) -> dict[str, Any]:
         """
@@ -162,7 +162,7 @@ class NeuralTrainable(Protocol):
         manifest : dict
             Metadata including checkpoint paths and best-epoch indices.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_model_card_info(self) -> dict[str, Any]:
         """
@@ -174,7 +174,7 @@ class NeuralTrainable(Protocol):
             Information about model architecture, training configuration,
             and hyperparameters.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_failure_diagnostics(self) -> dict[str, Any]:
         """
@@ -185,7 +185,7 @@ class NeuralTrainable(Protocol):
         diagnostics : dict
             Information about gradients, NaN detection, or hardware state.
         """
-        ...  # pragma: no cover
+        # pragma: no cover
 
     def get_artifact_metadata(self) -> dict[str, Any]:
         """
@@ -196,4 +196,4 @@ class NeuralTrainable(Protocol):
         metadata : dict
             A serializable dictionary containing history, model card, and checkpoints.
         """
-        ...  # pragma: no cover
+        # pragma: no cover

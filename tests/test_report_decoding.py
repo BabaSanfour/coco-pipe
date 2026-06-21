@@ -354,7 +354,7 @@ def test_add_decoding_neural_artifacts_exception(mock_plot):
     add_decoding_neural_artifacts(rep, MockResultForExceptions())
 
 
-@patch("coco_pipe.report.decoding.logger.debug")
+@patch("coco_pipe.report._utils.logger.debug")
 @patch(
     "coco_pipe.viz.decoding.plot_feature_importance",
     side_effect=ValueError("Plot error"),
@@ -369,7 +369,7 @@ def test_add_decoding_features_exception(mock_plot, mock_log):
     mock_plot.assert_not_called()
 
 
-@patch("coco_pipe.report.decoding.logger.debug")
+@patch("coco_pipe.report._utils.logger.debug")
 @patch(
     "coco_pipe.viz.decoding.plot_feature_sensor_profile",
     side_effect=ValueError("Plot error"),

@@ -7,16 +7,31 @@ Three concerns live here, each a single-place edit point:
   ``DESCRIPTOR_SCOPE_RE`` define the token vocabulary and scope regex used by
   the column parser (:mod:`coco_pipe.descriptors.naming`) and the family-level
   QC (:mod:`coco_pipe.descriptors.qc`).
-* **Sub-family vocabulary** — ``_AGG_STAT_PREFIXES``,
-  ``_BAND_SUBFAMILY_PATTERNS``, ``_PARAM_SUBFAMILY``, and
-  ``_COMPLEXITY_SUBFAMILY`` drive
+* **Sub-family vocabulary** — ``AGG_STAT_PREFIXES``,
+  ``BAND_SUBFAMILY_PATTERNS``, ``PARAM_SUBFAMILY``, and
+  ``COMPLEXITY_SUBFAMILY`` drive
   :func:`coco_pipe.descriptors.qc.descriptor_subfamily`.
 * **QC output schemas** — the ``_*_COLUMNS`` lists and
-  ``_FAILURE_FAMILY_ALIASES`` dict are the canonical column orderings for every
+  ``FAILURE_FAMILY_ALIASES`` dict are the canonical column orderings for every
   DataFrame produced by :mod:`coco_pipe.descriptors.qc`.
 """
 
 import re
+
+__all__ = [
+    "AGG_STAT_PREFIXES",
+    "BAND_SUBFAMILY_PATTERNS",
+    "CLASSIFICATION_COLUMNS",
+    "COMPLEXITY_SUBFAMILY",
+    "CONSTANT_COLUMNS",
+    "DEFAULT_RATIO_PREFIXES",
+    "DESCRIPTOR_SCOPE_RE",
+    "FAILURE_FAMILY_ALIASES",
+    "FAMILY_QC_COLUMNS",
+    "KNOWN_FAMILY_TOKENS",
+    "MISSINGNESS_COLUMNS",
+    "PARAM_SUBFAMILY",
+]
 
 # --------------------------------------------------------------------------- #
 # Column-naming contract
@@ -33,13 +48,13 @@ cross-channel measure names."""
 # --------------------------------------------------------------------------- #
 # Sub-family vocabulary (drives descriptor_subfamily)
 # --------------------------------------------------------------------------- #
-_AGG_STAT_PREFIXES: frozenset[str] = frozenset(
+AGG_STAT_PREFIXES: frozenset[str] = frozenset(
     {"mean", "median", "iqr", "mad", "std", "var", "min", "max"}
 )
 """Aggregation-stat tokens that may prefix a subject-level measure (e.g.
 ``median_log_abs_alpha``); stripped before sub-family derivation."""
 
-_BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
+BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
     ("corr_log_abs", "corr_log_abs"),
     ("corr_rel", "corr_rel"),
     ("corr_ratio", "corr_ratio"),
@@ -52,7 +67,7 @@ _BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
 """Band output-type ``(pattern, label)`` pairs, longest/corrected first so e.g.
 ``corr_log_abs`` matches before ``log_abs`` and ``abs``."""
 
-_PARAM_SUBFAMILY: dict[str, str] = {
+PARAM_SUBFAMILY: dict[str, str] = {
     "offset": "aperiodic",
     "exponent": "aperiodic",
     "knee": "aperiodic",
@@ -67,7 +82,7 @@ _PARAM_SUBFAMILY: dict[str, str] = {
 }
 """Parametric measure → sub-family (``aperiodic`` / ``peaks`` / ``fit_quality``)."""
 
-_COMPLEXITY_SUBFAMILY: dict[str, str] = {
+COMPLEXITY_SUBFAMILY: dict[str, str] = {
     "sample_entropy": "entropy",
     "perm_entropy": "entropy",
     "spectral_entropy": "entropy",
@@ -90,13 +105,13 @@ _COMPLEXITY_SUBFAMILY: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 # QC output schemas
 # --------------------------------------------------------------------------- #
-_FAILURE_FAMILY_ALIASES: dict[str, str] = {
+FAILURE_FAMILY_ALIASES: dict[str, str] = {
     "bands": "band",
     "parametric": "param",
 }
 """Normalise loose failure-log family labels to the canonical token form."""
 
-_CLASSIFICATION_COLUMNS: list[str] = [
+CLASSIFICATION_COLUMNS: list[str] = [
     "column",
     "family",
     "scope",
@@ -107,7 +122,7 @@ _CLASSIFICATION_COLUMNS: list[str] = [
 ]
 """Output schema of :func:`~coco_pipe.descriptors.qc.classify_descriptor_columns`."""
 
-_MISSINGNESS_COLUMNS: list[str] = [
+MISSINGNESS_COLUMNS: list[str] = [
     "column",
     "missing_count",
     "missing_rate",
@@ -120,7 +135,7 @@ _MISSINGNESS_COLUMNS: list[str] = [
 ]
 """Output schema of :func:`~coco_pipe.descriptors.qc.compute_family_missingness`."""
 
-_CONSTANT_COLUMNS: list[str] = [
+CONSTANT_COLUMNS: list[str] = [
     "column",
     "std",
     "is_all_nan",
@@ -133,7 +148,7 @@ _CONSTANT_COLUMNS: list[str] = [
 """Output schema of
 :func:`~coco_pipe.descriptors.qc.compute_family_constant_summary`."""
 
-_FAMILY_QC_COLUMNS: list[str] = [
+FAMILY_QC_COLUMNS: list[str] = [
     "family",
     "n_features",
     "missing_rate_mean",

@@ -317,7 +317,6 @@ def load_descriptor_table(
     feature_cols = [item["column"] for item in parsed]
     selected_feature_cols = list(feature_cols)
     feature_df = df.loc[:, feature_cols].replace([np.inf, -np.inf], np.nan)
-    dropped_feature_columns = pd.DataFrame()
     if drop_degenerate_columns:
         from .qc import select_viable_feature_columns
 

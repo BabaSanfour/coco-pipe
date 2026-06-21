@@ -870,7 +870,7 @@ class DataContainer:
                     "<=": lambda a, b: a <= b,
                     "==": lambda a, b: a == b,
                     "!=": lambda a, b: a != b,
-                    "in": lambda a, b: np.isin(a, b),
+                    "in": np.isin,
                 }
                 for op, val in query.items():
                     if op not in ops:
@@ -1435,11 +1435,11 @@ class DataContainer:
             names_arr = np.arange(n_features_new)
 
         # Build new dims tuple, swapping feature_dim → new_dim if changed
-        new_dims = tuple(new_dim if d == self.dims[-1] else d for d in self.dims)
+        new_dims = tuple(new_dim if d == feature_dim else d for d in self.dims)
 
         # Build new coords: drop the old feature coord (if present) and set
         # the new one
-        new_coords = {k: v for k, v in self.coords.items() if k != self.dims[-1]}
+        new_coords = {k: v for k, v in self.coords.items() if k != feature_dim}
         new_coords[new_dim] = names_arr
 
         return replace(
@@ -1449,7 +1449,7 @@ class DataContainer:
             coords=new_coords,
             meta={
                 **self.meta,
-                "with_features_from": self.dims[-1],
+                "with_features_from": feature_dim,
                 "with_features_to": new_dim,
             },
         )

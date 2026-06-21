@@ -52,7 +52,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         self : BackendBase
             The backend with the new head in place.
         """
-        ...
 
     @abstractmethod
     def get_embedding_info(self) -> FoundationModelSpec:
@@ -63,7 +62,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         spec : FoundationModelSpec
             The spec describing this model's provenance and signal expectations.
         """
-        ...
 
     @classmethod
     @abstractmethod
@@ -75,7 +73,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         available : bool
             ``True`` if the backend's dependencies are importable.
         """
-        ...
 
     @classmethod
     @abstractmethod
@@ -114,7 +111,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         backend : BackendBase
             A fully initialised, ready-to-fit backend instance.
         """
-        ...
 
     def fit(
         self,
@@ -190,7 +186,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         embeddings : np.ndarray of shape (n_samples, embedding_dim)
             Backbone feature vectors before the classification head.
         """
-        ...
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -207,7 +202,6 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             Predicted class indices (classification) or continuous values
             (regression).
         """
-        ...
 
     def configure_peft(self, lora_config: dict) -> BackendBase:
         """Wrap the backbone with LoRA adapters post-hoc.

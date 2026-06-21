@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from ._constants import (
     ANALYSIS_MODES,
     DESCRIPTOR_ONLY_ANALYSIS_MODES,
@@ -43,32 +45,33 @@ from .quality import (
     drop_subject_outliers,
     make_qc_flag,
     resolve_qc_status,
-    row_quality_score,
     run_qc,
 )
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
 from .units import iter_analysis_units
-from .utils import normalize_subject_value
+from .utils import normalize_subject_value, row_quality_score
+
+if TYPE_CHECKING:
+    from .dataset import BIDSDataset as BIDSDataset
+    from .dataset import EmbeddingDataset as EmbeddingDataset
+    from .dataset import TabularDataset as TabularDataset
 
 __all__ = [
     "ANALYSIS_MODES",
     "DESCRIPTOR_ONLY_ANALYSIS_MODES",
     "BIDSConfig",
-    "BIDSDataset",
     "BaseDatasetConfig",
     "CheckResult",
     "DataContainer",
     "DatasetConfig",
     "EmbeddingConfig",
-    "EmbeddingDataset",
     "EpochDropRecord",
     "QCResult",
     "SklearnWrapper",
     "SpatialWhitener",
     "SubjectDropRecord",
     "TabularConfig",
-    "TabularDataset",
     "compute_constant_feature_summary",
     "compute_feature_missingness",
     "compute_row_outlier_scores",
@@ -100,9 +103,12 @@ __all__ = [
     "write_json",
 ]
 
+_LAZY_DATASET_EXPORTS = ["BIDSDataset", "EmbeddingDataset", "TabularDataset"]
+__all__.extend(_LAZY_DATASET_EXPORTS)
+
 
 def __getattr__(name):
-    if name in {"BIDSDataset", "EmbeddingDataset", "TabularDataset"}:
+    if name in _LAZY_DATASET_EXPORTS:
         # Delegate to load's lazy resolver so dataset-class resolution (and
         # test monkeypatching) lives in a single place.
         from .load import _resolve_dataset_class

@@ -25,7 +25,7 @@ jobs:
           cache: pip
 
       - name: Run pre-commit
-        uses: pre-commit/action@v3.0.1
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
 
   test:
     name: Tests / ${{ matrix.os }} / py${{ matrix.python-version }}
@@ -57,7 +57,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: BabaSanfour/coco-pipe
@@ -69,7 +69,9 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/v') ||
-      contains(github.event.head_commit.message, '[run-foundation]')
+      contains(github.event.head_commit.message, '[run-foundation]') ||
+      contains(github.event.pull_request.title, '[run-foundation]') ||
+      contains(github.event.pull_request.body, '[run-foundation]')
 
     steps:
       - uses: actions/checkout@v6

@@ -675,7 +675,7 @@ class EvaluationConfig(_StrictConfigModel):
 DEFAULT_EVAL_GROUP_COL: str = "patient_group_id"
 """Default grouping column used when building post-hoc eval specs."""
 
-_MISSING_EVAL_VALUES: frozenset[str] = frozenset(
+MISSING_EVAL_VALUES: frozenset[str] = frozenset(
     {"", "nan", "none", "null", "na", "n/a", "<na>"}
 )
 """Label/group values that are treated as missing during eval alignment."""

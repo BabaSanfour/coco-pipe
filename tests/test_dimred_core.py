@@ -542,7 +542,9 @@ def test_score_no_metrics_payload_note():
     dr = DimReduction("PCA", n_components=2)
     dr.fit(X)
     # Request a metric that doesn't exist for 2D to trigger empty payload
-    with patch("coco_pipe.dim_reduction.core.evaluate_embedding") as mock_eval:
+    with patch(
+        "coco_pipe.dim_reduction.evaluation.core.evaluate_embedding"
+    ) as mock_eval:
         mock_eval.return_value = {
             "metrics": {},
             "metadata": {},

@@ -23,10 +23,10 @@ from coco_pipe.io.quality import (
     drop_subject_outliers,
     make_qc_flag,
     resolve_qc_status,
-    row_quality_score,
     run_qc,
 )
 from coco_pipe.io.structures import DataContainer
+from coco_pipe.io.utils import row_quality_score
 
 
 def test_check_result_is_issue():

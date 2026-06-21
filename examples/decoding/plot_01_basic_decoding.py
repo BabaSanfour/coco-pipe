@@ -76,11 +76,11 @@ print("Decoding complete!")
 # functions to instantly generate publication-ready plots.
 
 # Plot aggregate scalar scores (Accuracy, ROC AUC, F1)
-fig_scores, ax_scores = plot_decoding_scores(result, kind="bar")
+plot_decoding_scores(result, kind="bar")
 plt.show()
 
 # Plot the confusion matrix for the Random Forest model
-fig_cm, ax_cm = plot_confusion_matrix(
+plot_confusion_matrix(
     result, model="RandomForest", title="Random Forest: Confusion Matrix"
 )
 plt.show()

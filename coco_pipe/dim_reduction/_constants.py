@@ -56,7 +56,7 @@ EVAL_RUN_KEY_FIELDS: tuple[str, ...] = (
 )
 """Fields that uniquely identify an eval run entry."""
 
-_FIT_PROVENANCE_FIELDS: tuple[str, ...] = (
+FIT_PROVENANCE_FIELDS: tuple[str, ...] = (
     "fit_id",
     "scope",
     "condition",

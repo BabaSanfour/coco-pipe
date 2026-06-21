@@ -1327,13 +1327,13 @@ class ExperimentResult:
 
         # 3. Lightweight post-hoc permutation assessment
         if lightweight:
-            from .stats import assess_post_hoc_permutation
+            import coco_pipe.decoding.stats as stats_mod
 
             for model, res in self.raw.items():
                 if "error" in res:
                     continue
                 try:
-                    df_l = assess_post_hoc_permutation(
+                    df_l = stats_mod.assess_post_hoc_permutation(
                         res,
                         metric=metric,
                         unit=u_type,
@@ -1506,7 +1506,7 @@ class ExperimentResult:
         --------
         coco_pipe.decoding.stats.assess_bootstrap_ci : Underlying engine.
         """
-        from .stats import assess_bootstrap_ci
+        import coco_pipe.decoding.stats as stats_mod
 
         u_type = self._resolve_inference_unit(unit)
         rows = []
@@ -1517,7 +1517,7 @@ class ExperimentResult:
                 continue
 
             try:
-                df_b = assess_bootstrap_ci(
+                df_b = stats_mod.assess_bootstrap_ci(
                     res,
                     metric=metric,
                     unit=u_type,
@@ -1622,9 +1622,9 @@ class ExperimentResult:
         df = pd.concat(all_results, ignore_index=True)
 
         # 2. Apply multiple comparison correction
-        from .stats import apply_multiple_comparison_correction
+        import coco_pipe.decoding.stats as stats_mod
 
-        return apply_multiple_comparison_correction(df, method=correction)
+        return stats_mod.apply_multiple_comparison_correction(df, method=correction)
 
     def compare_models_paired(
         self,
@@ -1670,7 +1670,7 @@ class ExperimentResult:
         --------
         coco_pipe.decoding.stats.assess_paired_comparison : Underlying engine.
         """
-        from .stats import assess_paired_comparison
+        import coco_pipe.decoding.stats as stats_mod
 
         u_type = self._resolve_inference_unit(unit)
         preds = scalar_prediction_frame(self.get_predictions())
@@ -1690,7 +1690,7 @@ class ExperimentResult:
         if merged.empty:
             raise ValueError("No overlapping samples found between the two models.")
 
-        df_res = assess_paired_comparison(
+        df_res = stats_mod.assess_paired_comparison(
             merged,
             metric=metric,
             unit=u_type,

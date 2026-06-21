@@ -52,7 +52,7 @@ jobs:
           sphinx-build -b html -W --keep-going docs/source docs/build/html
 
       - name: Upload built docs artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/build/html
 
@@ -72,8 +72,8 @@ jobs:
 
     steps:
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
