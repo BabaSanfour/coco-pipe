@@ -685,6 +685,60 @@ def test_aggregate_unknown_method():
         dc.aggregate(by=[1, 2], stats="magic")
 
 
+def test_combine_coords():
+    """Composite coordinate creation and its use as a grouping key."""
+    X = np.arange(4 * 2, dtype=float).reshape(4, 2)
+    coords = {
+        "obs": np.array(["a", "b", "c", "d"]),
+        "subject": np.array(["0001", "0001", "0002", "0002"]),
+        "session": np.array(["01", "01", "01", "02"]),
+        "run": np.array(["01", "02", "01", "01"]),
+        "feature": np.array(["f0", "f1"]),
+    }
+    dc = DataContainer(X, dims=("obs", "feature"), coords=coords)
+
+    # Default: name-prefixed components joined in the given order.
+    out = dc.combine_coords(["subject", "session", "run"], "recording_id")
+    assert np.array_equal(
+        out.coords["recording_id"],
+        [
+            "subject-0001_session-01_run-01",
+            "subject-0001_session-01_run-02",
+            "subject-0002_session-01_run-01",
+            "subject-0002_session-02_run-01",
+        ],
+    )
+    # Original is untouched (returns a copy).
+    assert "recording_id" not in dc.coords
+
+    # The composite coord drops straight into aggregate as a single key.
+    agg = out.aggregate(by="recording_id", stats="mean")
+    assert agg.shape == (4, 2)
+
+    # pair_sep=None joins values only; custom separators honored.
+    vals = dc.combine_coords(["subject", "run"], "sr", sep="|", pair_sep=None)
+    assert np.array_equal(
+        vals.coords["sr"], ["0001|01", "0001|02", "0002|01", "0002|01"]
+    )
+
+    # Error paths.
+    with pytest.raises(ValueError, match="at least one"):
+        dc.combine_coords([], "x")
+    with pytest.raises(ValueError, match="not found"):
+        dc.combine_coords(["nope"], "x")
+    with pytest.raises(ValueError, match="already exists"):
+        dc.combine_coords(["subject"], "subject")
+    dc.combine_coords(["subject"], "subject", overwrite=True)  # no raise
+    # Coords of unequal length cannot be combined.
+    uneven = DataContainer(
+        X,
+        dims=("obs", "feature"),
+        coords={"subject": coords["subject"], "feature": coords["feature"]},
+    )
+    with pytest.raises(ValueError, match="share a length"):
+        uneven.combine_coords(["subject", "feature"], "x")
+
+
 def _make_descriptor_container(X, *, descriptor_names=None):
     return DataContainer(
         X=np.asarray(X, dtype=np.float32),

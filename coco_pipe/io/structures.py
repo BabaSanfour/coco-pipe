@@ -1592,6 +1592,93 @@ class DataContainer:
         """Alias for center(). Common in EEG."""
         return self.center(dim=dim, inplace=inplace)
 
+    def combine_coords(
+        self,
+        keys: Sequence[str],
+        name: str,
+        *,
+        sep: str = "_",
+        pair_sep: str | None = "-",
+        overwrite: bool = False,
+    ) -> "DataContainer":
+        """Return a copy with a new coordinate combining several existing coords.
+
+        Each element of the new coordinate joins the corresponding elements of
+        ``keys`` in the order given. This materializes a single composite key
+        (e.g. a ``recording_id`` from ``subject``/``session``/``run``) that can
+        then be used anywhere a single coordinate is expected — most notably as
+        the ``by`` argument to :meth:`aggregate`, but also for ``select``,
+        ``observation_frame``, or provenance labels.
+
+        Parameters
+        ----------
+        keys : sequence of str
+            Names of existing coordinates to combine. All must be present in
+            ``coords`` and share the same length.
+        name : str
+            Name of the new coordinate to create.
+        sep : str, default="_"
+            Separator placed between components.
+        pair_sep : str or None, default="-"
+            Separator between a component's source name and its value, yielding
+            ``"<key><pair_sep><value>"`` (e.g. ``"subject-0001"``). When
+            ``None``, names are omitted and only the values are joined.
+        overwrite : bool, default=False
+            Whether to replace ``name`` if a coordinate by that name exists.
+
+        Returns
+        -------
+        DataContainer
+            A copy with the new composite coordinate added.
+
+        Raises
+        ------
+        ValueError
+            If ``keys`` is empty, any key is missing, the keys differ in
+            length, or ``name`` already exists and ``overwrite`` is False.
+
+        Examples
+        --------
+        >>> grouped = container.combine_coords(
+        ...     ["subject", "session", "run"], "recording_id"
+        ... ).aggregate(by="recording_id", stats="mean")
+        """
+        if not keys:
+            raise ValueError("`keys` must contain at least one coordinate name.")
+        missing = [k for k in keys if k not in self.coords]
+        if missing:
+            raise ValueError(
+                f"Coordinates not found: {missing}. Available: {sorted(self.coords)}."
+            )
+        if name in self.coords and not overwrite:
+            raise ValueError(
+                f"Coordinate '{name}' already exists. "
+                "Pass overwrite=True to replace it."
+            )
+
+        arrays = [np.asarray(self.coords[k], dtype=object) for k in keys]
+        lengths = {arr.shape[0] for arr in arrays}
+        if len(lengths) != 1:
+            sizes = {k: arr.shape[0] for k, arr in zip(keys, arrays, strict=True)}
+            raise ValueError(
+                f"Coordinates to combine must share a length; got {sizes}."
+            )
+
+        n = arrays[0].shape[0]
+        combined = np.empty(n, dtype=object)
+        for i in range(n):
+            if pair_sep is None:
+                combined[i] = sep.join(str(arr[i]) for arr in arrays)
+            else:
+                combined[i] = sep.join(
+                    f"{k}{pair_sep}{arr[i]}"
+                    for k, arr in zip(keys, arrays, strict=True)
+                )
+
+        new_coords = dict(self.coords)
+        new_coords[name] = combined
+        return replace(self, coords=new_coords)
+
     def aggregate(
         self,
         by: str | np.ndarray | list[Any],
