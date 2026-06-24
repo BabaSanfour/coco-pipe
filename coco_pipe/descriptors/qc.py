@@ -24,7 +24,7 @@ from coco_pipe.descriptors._constants import (
     MISSINGNESS_COLUMNS,
     PARAM_SUBFAMILY,
 )
-from coco_pipe.io.quality import (
+from coco_pipe.io.utils import (
     compute_constant_feature_summary,
     compute_feature_missingness,
 )

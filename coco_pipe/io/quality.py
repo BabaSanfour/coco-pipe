@@ -36,6 +36,10 @@ from ._constants import (
     QualityInput,
     QualityStatus,
 )
+from .utils import (
+    _require_feature_columns,
+    compute_feature_missingness,
+)
 
 
 @dataclass
@@ -225,93 +229,6 @@ def resolve_qc_status(flags: list[dict[str, Any]]) -> str:
         valid_levels,
         key=lambda status: STATUS_ORDER.get(status, 0),
         default="pass",
-    )
-
-
-def _require_feature_columns(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-) -> pd.DataFrame:
-    """Return requested feature columns or raise with the missing names."""
-    missing = [column for column in feature_cols if column not in df.columns]
-    if missing:
-        raise ValueError(f"Feature columns not found: {missing}.")
-    return df.loc[:, feature_cols]
-
-
-def compute_feature_missingness(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-) -> pd.DataFrame:
-    """Compute per-column missingness and non-finite rates.
-
-    NaN values contribute only to the missingness metrics. Positive and
-    negative infinity contribute only to the non-finite metrics.
-    """
-    features = _require_feature_columns(df, feature_cols)
-    n_rows = len(features)
-    records = []
-    for column in feature_cols:
-        values = features[column]
-        missing_mask = values.isna()
-        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
-        nonfinite_mask = np.isinf(numeric)
-        missing_count = int(missing_mask.sum())
-        nonfinite_count = int(nonfinite_mask.sum())
-        records.append(
-            {
-                "column": column,
-                "missing_count": missing_count,
-                "missing_rate": missing_count / n_rows if n_rows else 0.0,
-                "nonfinite_count": nonfinite_count,
-                "nonfinite_rate": nonfinite_count / n_rows if n_rows else 0.0,
-            }
-        )
-    return pd.DataFrame.from_records(
-        records,
-        columns=[
-            "column",
-            "missing_count",
-            "missing_rate",
-            "nonfinite_count",
-            "nonfinite_rate",
-        ],
-    )
-
-
-def compute_constant_feature_summary(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-    tol: float = 1e-12,
-) -> pd.DataFrame:
-    """Compute per-column variance and constant-feature indicators.
-
-    Standard deviations use the population definition (``ddof=0``). Entirely
-    NaN columns are identified separately and are not marked constant.
-    """
-    if tol < 0:
-        raise ValueError("tol must be non-negative.")
-    features = _require_feature_columns(df, feature_cols)
-    records = []
-    for column in feature_cols:
-        values = features[column]
-        is_all_nan = bool(values.isna().all())
-        numeric = pd.to_numeric(values, errors="coerce").replace(
-            [np.inf, -np.inf],
-            np.nan,
-        )
-        std = float(numeric.std(ddof=0)) if numeric.notna().any() else np.nan
-        records.append(
-            {
-                "column": column,
-                "std": std,
-                "is_all_nan": is_all_nan,
-                "is_constant": bool(not is_all_nan and np.isfinite(std) and std <= tol),
-            }
-        )
-    return pd.DataFrame.from_records(
-        records,
-        columns=["column", "std", "is_all_nan", "is_constant"],
     )
 
 

@@ -10,6 +10,8 @@ from coco_pipe.io.utils import (
     _get_bids_path,
     _get_mne,
     _get_read_raw_bids,
+    compute_constant_feature_summary,
+    compute_feature_missingness,
     detect_runs,
     detect_sessions,
     detect_subjects,
@@ -604,3 +606,74 @@ def test_load_participants_tsv_without_participant_id(tmp_path):
     """participants.tsv lacking a participant_id column yields an empty lookup."""
     (tmp_path / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
     assert load_participants_tsv(tmp_path) == {}
+
+
+def test_compute_feature_missingness_separates_nan_and_infinity():
+    df = pd.DataFrame(
+        {
+            "a": [1.0, np.nan, np.inf, -np.inf],
+            "b": [np.nan, 2.0, 3.0, 4.0],
+            "metadata": ["x", "y", "z", "w"],
+        }
+    )
+
+    summary = compute_feature_missingness(df, ["a", "b"])
+
+    assert summary.to_dict(orient="records") == [
+        {
+            "column": "a",
+            "missing_count": 1,
+            "missing_rate": 0.25,
+            "nonfinite_count": 2,
+            "nonfinite_rate": 0.5,
+        },
+        {
+            "column": "b",
+            "missing_count": 1,
+            "missing_rate": 0.25,
+            "nonfinite_count": 0,
+            "nonfinite_rate": 0.0,
+        },
+    ]
+
+
+def test_compute_feature_missingness_empty_rows_has_stable_schema():
+    summary = compute_feature_missingness(
+        pd.DataFrame(columns=["a", "b"]),
+        ["a", "b"],
+    )
+
+    assert summary.columns.tolist() == [
+        "column",
+        "missing_count",
+        "missing_rate",
+        "nonfinite_count",
+        "nonfinite_rate",
+    ]
+    assert summary["missing_rate"].tolist() == [0.0, 0.0]
+
+
+def test_compute_constant_feature_summary():
+    df = pd.DataFrame(
+        {
+            "all_nan": [np.nan, np.nan, np.nan],
+            "constant": [2.0, 2.0, 2.0],
+            "near_constant": [1.0, 1.0, 1.0 + 1e-13],
+            "variable": [1.0, 2.0, 3.0],
+        }
+    )
+
+    summary = compute_constant_feature_summary(
+        df,
+        ["all_nan", "constant", "near_constant", "variable"],
+    ).set_index("column")
+
+    assert bool(summary.loc["all_nan", "is_all_nan"])
+    assert not bool(summary.loc["all_nan", "is_constant"])
+    assert summary.loc["constant", "std"] == 0.0
+    assert bool(summary.loc["constant", "is_constant"])
+    assert bool(summary.loc["near_constant", "is_constant"])
+    assert not bool(summary.loc["variable", "is_constant"])
+
+    with pytest.raises(ValueError, match="tol must be non-negative"):
+        compute_constant_feature_summary(df, ["constant"], tol=-1)

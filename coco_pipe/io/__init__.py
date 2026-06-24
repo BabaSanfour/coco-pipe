@@ -37,8 +37,6 @@ from .quality import (
     EpochDropRecord,
     QCResult,
     SubjectDropRecord,
-    compute_constant_feature_summary,
-    compute_feature_missingness,
     compute_row_outlier_scores,
     compute_subject_outlier_burden,
     drop_epoch_outliers,
@@ -51,7 +49,12 @@ from .quality import (
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
 from .units import iter_analysis_units
-from .utils import normalize_subject_value, row_quality_score
+from .utils import (
+    compute_constant_feature_summary,
+    compute_feature_missingness,
+    normalize_subject_value,
+    row_quality_score,
+)
 
 if TYPE_CHECKING:
     from .dataset import BIDSDataset as BIDSDataset
