@@ -21,6 +21,7 @@ from coco_pipe.io.quality import (
     compute_subject_outlier_burden,
     drop_epoch_outliers,
     drop_subject_outliers,
+    group_labels,
     make_qc_flag,
     resolve_qc_status,
     run_qc,
@@ -528,6 +529,60 @@ def test_row_scores_by_family_separates_bad_family():
     assert result.loc[3, "outlier_fraction_complexity"] == 0.0
 
 
+def test_row_scores_by_family_uses_feature_schema():
+    df = pd.DataFrame(
+        {
+            "f0": [0.0, 0.0, 0.0, 100.0],
+            "f1": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    schema = pd.DataFrame(
+        {
+            "column": ["f0", "f1"],
+            "family": ["connectivity", "band"],
+        }
+    )
+
+    result = compute_row_outlier_scores(
+        df,
+        ["f0", "f1"],
+        z_threshold=3.0,
+        group_by="family",
+        feature_schema=schema,
+    )
+
+    assert result.loc[3, "outlier_fraction_connectivity"] == 1.0
+    assert result.loc[3, "outlier_fraction_band"] == 0.0
+
+
+def test_row_scores_partial_schema_enriches_missing_measure():
+    # Schema carries family but not measure; group_by='measure' must still split
+    # alpha vs. beta by enriching the missing column from the parseable names.
+    df = pd.DataFrame(
+        {
+            "band_abs_alpha_ch-Fz": [0.0, 0.0, 0.0, 100.0],
+            "band_abs_beta_ch-Fz": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    schema = pd.DataFrame(
+        {
+            "column": list(df.columns),
+            "family": ["band", "band"],
+        }
+    )
+
+    result = compute_row_outlier_scores(
+        df,
+        list(df.columns),
+        z_threshold=3.0,
+        group_by="measure",
+        feature_schema=schema,
+    )
+
+    assert result.loc[3, "outlier_fraction_abs_alpha"] == 1.0
+    assert result.loc[3, "outlier_fraction_abs_beta"] == 0.0
+
+
 def test_drop_subject_outliers_per_family_returns_masks():
     names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
     container = DataContainer(
@@ -943,6 +998,31 @@ def test_drop_epoch_outliers_group_by_feature():
     assert result.thresholds["group_by"] == "feature"
 
 
+def test_drop_epoch_outliers_group_by_reads_container_feature_schema():
+    X = np.ones((6, 2))
+    X[0, 0] = 1000.0
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["f0", "f1"],
+            "feature_family": ["connectivity", "band"],
+            "subject": np.array(["a"] * 6),
+        },
+        ids=np.arange(6).astype(str),
+    )
+
+    masks, result = drop_epoch_outliers(
+        container,
+        group_by="family",
+        outlier_fraction_threshold=0.0,
+    )
+
+    assert masks["connectivity"].tolist() == [False, True, True, True, True, True]
+    assert masks["band"].all()
+    assert result.per_family_dropped["connectivity"][0].obs_id == "0"
+
+
 def test_drop_epoch_outliers_group_by_min_obs_raises():
     with pytest.raises(RuntimeError, match="remain for family"):
         drop_epoch_outliers(_cov_flat_container(), group_by="feature", min_obs=999)
@@ -997,3 +1077,50 @@ def test_run_qc_with_feature_cols_subset():
         feature_cols=["f0", "f1"],
     )
     assert cleaned.X.shape[0] == container.X.shape[0]
+
+
+def test_group_labels_from_structured_schema():
+    # Opaque feature names: labels must come from the structured schema, not
+    # from parsing the column strings.
+    container = DataContainer(
+        X=np.zeros((1, 3)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["c0", "c1", "c2"],
+            "feature_family": ["band", "band", "connectivity"],
+            "feature_measure": ["alpha", "beta", "coherence"],
+        },
+    )
+
+    assert group_labels(container, "family") == ["band", "connectivity"]
+    assert group_labels(container, "measure") == ["alpha", "beta", "coherence"]
+    # group_by="feature" falls back to the column id per GROUP_BY_COLUMN.
+    assert group_labels(container, "feature") == ["c0", "c1", "c2"]
+
+
+def test_group_labels_enriches_partial_schema_for_measure():
+    # Schema carries only family; group_by="measure" must still split via the
+    # parser enrichment instead of collapsing to a single label.
+    container = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["band_abs_alpha_ch-Fz", "band_abs_beta_ch-Fz"],
+            "feature_family": ["band", "band"],
+        },
+    )
+
+    assert group_labels(container, "family") == ["band"]
+    assert group_labels(container, "measure") == ["abs_alpha", "abs_beta"]
+
+
+def test_group_labels_no_feature_axis_returns_empty():
+    container = DataContainer(
+        X=np.zeros((1, 2)),
+        dims=("obs", "channel"),
+        coords={"channel": ["Fz", "Cz"]},
+    )
+
+    assert group_labels(container, "family") == []
+    with pytest.raises(ValueError, match="group_by must be one of"):
+        group_labels(container, "nonsense")

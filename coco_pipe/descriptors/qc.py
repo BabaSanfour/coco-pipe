@@ -120,6 +120,8 @@ def _classify_cached(
 def classify_descriptor_columns(
     descriptor_names: list[str],
     known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
+    *,
+    feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Classify descriptor names into family, measure, channel, and scope.
 
@@ -129,6 +131,49 @@ def classify_descriptor_columns(
     returns a fresh, independently mutable DataFrame so caller changes cannot
     corrupt the cached canonical result.
     """
+    if feature_schema is not None:
+        out = feature_schema.copy()
+        if "column" not in out.columns:
+            raise ValueError("feature_schema must include a 'column' column.")
+        if out["column"].duplicated().any():
+            raise ValueError("feature_schema column values must be unique.")
+        out["column"] = out["column"].astype(str)
+        requested = [str(name) for name in descriptor_names]
+        missing = [name for name in requested if name not in set(out["column"])]
+        if missing:
+            raise ValueError(
+                "feature_schema is missing descriptor columns: "
+                f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
+        out = out.set_index("column").loc[requested].reset_index()
+        for col in CLASSIFICATION_COLUMNS:
+            if col not in out.columns:
+                out[col] = None
+        out = out.loc[:, CLASSIFICATION_COLUMNS]
+        fallback: pd.DataFrame | None = None
+        for col in ("family", "scope", "channel", "measure"):
+            gaps = out[col].isna()
+            if gaps.any():
+                if fallback is None:
+                    fallback = _classify_cached(tuple(requested), tuple(known_families))
+                out.loc[gaps, col] = fallback.loc[gaps.to_numpy(), col].to_numpy()
+        sub_gaps = out["subfamily"].isna()
+        if sub_gaps.any():
+            out.loc[sub_gaps, "subfamily"] = [
+                descriptor_subfamily(family, measure)
+                for family, measure in zip(
+                    out.loc[sub_gaps, "family"],
+                    out.loc[sub_gaps, "measure"],
+                    strict=True,
+                )
+            ]
+        desc_gaps = out["descriptor"].isna()
+        if desc_gaps.any():
+            out.loc[desc_gaps, "descriptor"] = [
+                descriptor_identity(measure)
+                for measure in out.loc[desc_gaps, "measure"]
+            ]
+        return out
     return _classify_cached(tuple(descriptor_names), tuple(known_families)).copy()
 
 
@@ -136,12 +181,18 @@ def compute_family_missingness(
     df: pd.DataFrame,
     descriptor_names: list[str],
     known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
+    *,
+    feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich per-column missingness with descriptor family metadata."""
     if not descriptor_names:
         return pd.DataFrame(columns=MISSINGNESS_COLUMNS)
     missingness = compute_feature_missingness(df, descriptor_names)
-    classification = classify_descriptor_columns(descriptor_names, known_families)
+    classification = classify_descriptor_columns(
+        descriptor_names,
+        known_families,
+        feature_schema=feature_schema,
+    )
     return missingness.merge(classification, on="column", how="left")
 
 
@@ -150,12 +201,18 @@ def compute_family_constant_summary(
     descriptor_names: list[str],
     tol: float = 1e-12,
     known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
+    *,
+    feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Enrich per-column constant-feature results with family metadata."""
     if not descriptor_names:
         return pd.DataFrame(columns=CONSTANT_COLUMNS)
     constants = compute_constant_feature_summary(df, descriptor_names, tol)
-    classification = classify_descriptor_columns(descriptor_names, known_families)
+    classification = classify_descriptor_columns(
+        descriptor_names,
+        known_families,
+        feature_schema=feature_schema,
+    )
     return constants.merge(classification, on="column", how="left")
 
 
@@ -464,6 +521,7 @@ def aggregate_family_qc(
     failures_df: pd.DataFrame | None = None,
     known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
     tol: float = 1e-12,
+    feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Aggregate descriptor health indicators to one row per family."""
     if not descriptor_names:
@@ -473,14 +531,16 @@ def aggregate_family_qc(
         df,
         descriptor_names,
         known_families,
+        feature_schema=feature_schema,
     )
     constants = compute_family_constant_summary(
         df,
         descriptor_names,
         tol,
         known_families,
+        feature_schema=feature_schema,
     )
-    present_families = set(missingness["family"].dropna().astype(str))
+    present_families = sorted(missingness["family"].dropna().astype(str).unique())
     n_observations = len(df)
     failure_families = pd.Series(dtype=object)
     if (
@@ -493,9 +553,7 @@ def aggregate_family_qc(
         )
 
     rows: list[dict[str, Any]] = []
-    for family in sorted(
-        family_name for family_name in known_families if family_name in present_families
-    ):
+    for family in present_families:
         family_missingness = missingness[missingness["family"] == family]
         family_constants = constants[constants["family"] == family]
         failure_count = int((failure_families == family).sum())

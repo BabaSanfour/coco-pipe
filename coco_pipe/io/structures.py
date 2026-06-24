@@ -128,13 +128,25 @@ class DataContainer:
     def _coord_axis(self, name: str, labels: Any, obs_dim_idx: int) -> int:
         """Resolve the data axis a coordinate aligns to, or ``-1`` if none.
 
-        A coordinate named exactly like a dimension aligns to that dimension.
-        Otherwise alignment is inferred by length, preferring the ``obs`` axis
-        when several dimensions share the same length so that observation-level
-        metadata is never mis-assigned to another axis.
+        Resolution order:
+
+        1. A coordinate named exactly like a dimension aligns to that dimension.
+        2. A *prefixed* coordinate ``{dim}_{suffix}`` (e.g. ``feature_family``)
+           is metadata for ``{dim}`` and aligns to that axis regardless of
+           lengths. This keeps auxiliary feature/sensor metadata bound to the
+           right axis even when two dimensions share a length.
+        3. Otherwise alignment is inferred by length, preferring the ``obs``
+           axis on ties so observation-level metadata is never mis-assigned.
         """
         if name in self.dims:
             return self.dims.index(name)
+        prefix_dim = max(
+            (dim for dim in self.dims if name.startswith(f"{dim}_")),
+            key=len,
+            default=None,
+        )
+        if prefix_dim is not None:
+            return self.dims.index(prefix_dim)
         length = len(labels)
         if obs_dim_idx != -1 and length == self.X.shape[obs_dim_idx]:
             return obs_dim_idx
@@ -983,7 +995,11 @@ class DataContainer:
 
         return replace(self, X=X_new, coords=final_coords, y=y_new, ids=ids_new)
 
-    def flatten(self, preserve: str | list[str] = "obs") -> "DataContainer":
+    def flatten(
+        self,
+        preserve: str | list[str] = "obs",
+        sep: str = "_",
+    ) -> "DataContainer":
         """
         Flatten dimensions NOT in `preserve` into a single 'feature' dimension.
 
@@ -1000,6 +1016,8 @@ class DataContainer:
             - 'obs': Result shape (N_obs, N_features). Standard specification.
             - ['obs', 'time']: Result shape (N_obs, N_time, N_features).
               Useful for time-resolved decoding distributions.
+        sep : str, default="_"
+            Separator used when generating composite feature names.
 
         Returns
         -------
@@ -1061,23 +1079,48 @@ class DataContainer:
                 if k not in self.dims and len(v) == n_obs:
                     new_coords[k] = v
 
-        flat_coords_list = []
+        primary_coords = []
+        parallel_by_dim: dict[str, dict[str, Any]] = {}
+        obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
         for d in to_flatten:
-            c = self.coords.get(d)
-            if c is not None:
-                flat_coords_list.append(c)
-            else:
-                flat_coords_list.append(np.arange(self.X.shape[self.dims.index(d)]))
+            axis = self.dims.index(d)
+            primary = self.coords.get(d)
+            if primary is None:
+                primary = np.arange(self.X.shape[axis])
+            primary_coords.append(primary)
+            extras = {
+                name: vals
+                for name, vals in self.coords.items()
+                if name not in self.dims
+                and self._coord_axis(name, vals, obs_dim_idx) == axis
+            }
+            if extras:
+                parallel_by_dim[d] = extras
 
         # Create Cartesian product
-        if flat_coords_list:
+        if primary_coords:
             # Check size first to avoid memory explosion?
-            total_size = np.prod([len(x) for x in flat_coords_list])
+            total_size = np.prod([len(x) for x in primary_coords])
             if total_size < 200000:  # Limit to ~200k features strings
+                index_product = list(
+                    itertools.product(*[range(len(c)) for c in primary_coords])
+                )
                 combo_labels = [
-                    "_".join(map(str, x)) for x in itertools.product(*flat_coords_list)
+                    sep.join(str(primary_coords[ax][i]) for ax, i in enumerate(combo))
+                    for combo in index_product
                 ]
                 new_coords["feature"] = combo_labels
+                for axis, d in enumerate(to_flatten):
+                    for name, vals in parallel_by_dim.get(d, {}).items():
+                        new_coords[name] = [
+                            vals[combo[axis]] for combo in index_product
+                        ]
+            else:
+                warnings.warn(
+                    f"flatten(): {total_size} features exceeds the 200000 label cap; "
+                    "'feature' coordinate names were not generated.",
+                    stacklevel=2,
+                )
 
         return replace(
             self,
@@ -1086,6 +1129,39 @@ class DataContainer:
             coords=new_coords,
             meta={**self.meta, "flattened_from": self.dims},
         )
+
+    def feature_schema(self) -> "pd.DataFrame | None":
+        """Return feature-axis metadata, or None when no feature coord exists.
+
+        Only coordinates aligned to the feature axis are included. ``feature_*``
+        metadata is mapped to canonical schema names such as ``family`` and
+        ``measure``; primary dimension coords folded by ``flatten()`` are used
+        in the feature labels and are not recovered as structured metadata.
+        """
+        if "feature" not in self.dims or "feature" not in self.coords:
+            return None
+        feature_axis = self.dims.index("feature")
+        obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
+        n = len(self.coords["feature"])
+        aliases = {
+            "feature_family": "family",
+            "feature_scope": "scope",
+            "feature_channel": "channel",
+            "feature_sensor": "channel",
+            "feature_measure": "measure",
+            "feature_subfamily": "subfamily",
+            "feature_descriptor": "descriptor",
+        }
+        data = {"column": list(self.coords["feature"])}
+        for name, vals in self.coords.items():
+            if name == "feature" or name in self.dims or len(vals) != n:
+                continue
+            if self._coord_axis(name, vals, obs_dim_idx) != feature_axis:
+                continue
+            schema_name = aliases.get(name, name)
+            if schema_name not in data:
+                data[schema_name] = list(vals)
+        return pd.DataFrame(data)
 
     def stack(self, dims: Sequence[str], new_dim: str = "obs") -> "DataContainer":
         """

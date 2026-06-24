@@ -9,6 +9,7 @@ from coco_pipe.descriptors.qc import (
     compute_family_constant_summary,
     compute_family_missingness,
 )
+from coco_pipe.io.structures import DataContainer
 
 
 def test_classify_sensor_columns():
@@ -159,6 +160,39 @@ def test_classify_mutation_does_not_corrupt_cache():
     assert second.loc[0, "family"] == "band"
 
 
+def test_classify_descriptor_columns_passthrough():
+    schema = pd.DataFrame(
+        {
+            "column": ["f1", "f0"],
+            "family": ["connectivity", "band"],
+            "scope": ["sensor", "sensor"],
+            "channel": ["Pz", "Fz"],
+            "measure": ["coherence", "alpha"],
+        }
+    )
+
+    result = classify_descriptor_columns(["f0", "f1"], feature_schema=schema)
+
+    assert result["column"].tolist() == ["f0", "f1"]
+    # Schema-provided columns pass through verbatim (names are opaque, so a
+    # value here proves parsing was bypassed for those fields).
+    assert result["family"].tolist() == ["band", "connectivity"]
+    assert result["measure"].tolist() == ["alpha", "coherence"]
+    # Absent columns (subfamily/descriptor) are enriched from the resolved
+    # family/measure rather than left null.
+    assert result["subfamily"].notna().all()
+    assert result["descriptor"].tolist() == ["alpha", "coherence"]
+    assert result.columns.tolist() == [
+        "column",
+        "family",
+        "scope",
+        "channel",
+        "measure",
+        "subfamily",
+        "descriptor",
+    ]
+
+
 def test_family_missingness_rates():
     df = pd.DataFrame(
         {
@@ -266,6 +300,80 @@ def test_aggregate_family_qc_counts():
     assert band["missing_rate_max"] == pytest.approx(1 / 3)
     assert param["n_features"] == 1
     assert param["n_constant_features"] == 0
+
+
+def test_aggregate_family_qc_uses_feature_schema():
+    df = pd.DataFrame(
+        {
+            "f0": [1.0, float("nan"), 3.0],
+            "f1": [1.0, 1.0, 1.0],
+        }
+    )
+    schema = pd.DataFrame(
+        {
+            "column": ["f0", "f1"],
+            "family": ["band", "band"],
+            "scope": ["sensor", "sensor"],
+            "channel": ["Fz", "Fz"],
+            "measure": ["alpha", "beta"],
+        }
+    )
+
+    result = aggregate_family_qc(df, list(df.columns), feature_schema=schema)
+    band = result[result["family"] == "band"].iloc[0]
+
+    assert band["n_features"] == 2
+    assert band["n_constant_features"] == 1
+
+
+def test_aggregate_family_qc_schema_supports_unknown_families():
+    df = pd.DataFrame(
+        {
+            "f0": [1.0, 2.0, 3.0],
+            "f1": [1.0, 1.0, 2.0],
+        }
+    )
+    schema = pd.DataFrame(
+        {
+            "column": ["f0", "f1"],
+            "family": ["connectivity", "band"],
+            "measure": ["coherence", "alpha"],
+        }
+    )
+
+    result = aggregate_family_qc(df, list(df.columns), feature_schema=schema)
+
+    assert result["family"].tolist() == ["band", "connectivity"]
+
+
+def test_flattened_axis_metadata_feeds_family_qc():
+    container = DataContainer(
+        X=np.asarray(
+            [
+                [1.0, 1.0],
+                [np.nan, 1.0],
+                [3.0, 1.0],
+            ]
+        ).reshape(3, 1, 2),
+        dims=("obs", "sensor", "feature"),
+        coords={
+            "sensor": ["Fz"],
+            "feature": ["m0", "m1"],
+            "feature_family": ["connectivity", "band"],
+        },
+    )
+    flat = container.flatten(preserve="obs")
+    schema = flat.feature_schema()
+    df = pd.DataFrame(flat.X, columns=flat.coords["feature"])
+
+    result = aggregate_family_qc(df, list(df.columns), feature_schema=schema)
+
+    assert schema is not None
+    assert flat.coords["feature"] == ["Fz_m0", "Fz_m1"]
+    assert schema["family"].tolist() == ["connectivity", "band"]
+    assert result["family"].tolist() == ["band", "connectivity"]
+    assert result.set_index("family").loc["band", "n_constant_features"] == 1
+    assert result.set_index("family").loc["connectivity", "missing_rate_max"] == 1 / 3
 
 
 def test_aggregate_family_qc_failure_rate():

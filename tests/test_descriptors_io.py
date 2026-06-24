@@ -58,6 +58,29 @@ def test_load_descriptor_table_flat(descriptor_files):
     assert container.y.tolist() == ["control", "case"]
 
 
+def test_load_descriptor_table_flat_exposes_full_schema(descriptor_files):
+    table_path, columns_path, feature_columns = descriptor_files
+
+    container = load_descriptor_table(table_path, columns_path, condition="baseline")
+    schema = container.feature_schema()
+
+    assert schema is not None
+    assert schema["column"].tolist() == feature_columns
+    assert schema["family"].tolist() == ["band", "band", "complexity", "complexity"]
+    # measure resolves the descriptor identity, so QC can split e.g. alpha vs.
+    # entropy without re-parsing the flat column names.
+    assert schema["measure"].tolist() == [
+        "abs_alpha",
+        "abs_alpha",
+        "sample_entropy",
+        "sample_entropy",
+    ]
+    assert schema["channel"].tolist() == ["Fz", "Cz", "Fz", "Cz"]
+    assert schema["scope"].tolist() == ["sensor"] * 4
+    assert schema["subfamily"].notna().all()
+    assert schema["descriptor"].notna().all()
+
+
 def test_load_descriptor_table_detects_csv_delimiter(tmp_path):
     columns = ["band_abs_alpha_ch-Fz"]
     table_path = tmp_path / "descriptors.csv"
@@ -97,6 +120,22 @@ def test_load_descriptor_table_sensor_mode(descriptor_files):
         "complexity",
     ]
     np.testing.assert_allclose(container.X[0], [[1.0, 0.1], [1.1, 0.4]])
+
+    # measure rides on the feature axis; scope rides on the sensor axis.
+    assert container.coords["feature_measure"].tolist() == [
+        "abs_alpha",
+        "sample_entropy",
+    ]
+    assert container.coords["sensor_scope"].tolist() == ["sensor", "sensor"]
+
+    # feature_schema() exposes measure even on the un-flattened 3-D container.
+    schema = container.feature_schema()
+    assert schema["column"].tolist() == ["abs_alpha", "sample_entropy"]
+    assert schema["measure"].tolist() == ["abs_alpha", "sample_entropy"]
+    assert schema["family"].tolist() == ["band", "complexity"]
+    # scope/channel are sensor-axis attributes here, not feature-axis ones.
+    assert "scope" not in schema.columns
+    assert "channel" not in schema.columns
 
 
 def test_load_descriptor_table_family_filter(descriptor_files):

@@ -408,8 +408,31 @@ def load_descriptor_table(
     if drop_degenerate_columns:
         meta_base["dropped_feature_columns"] = dropped_feature_columns
 
+    from .qc import descriptor_identity, descriptor_subfamily
+
     if analysis_mode == "flat":
+        by_column = {item["column"]: item for item in parsed}
+        ordered = [by_column[column] for column in feature_cols]
         coords["feature"] = np.asarray(feature_cols, dtype=object)
+        coords["feature_family"] = np.asarray(
+            [item["family"] for item in ordered], dtype=object
+        )
+        coords["feature_scope"] = np.asarray(
+            [item["scope"] for item in ordered], dtype=object
+        )
+        coords["feature_channel"] = np.asarray(
+            [item["sensor"] for item in ordered], dtype=object
+        )
+        coords["feature_measure"] = np.asarray(
+            [item["feature"] for item in ordered], dtype=object
+        )
+        coords["feature_subfamily"] = np.asarray(
+            [descriptor_subfamily(item["family"], item["feature"]) for item in ordered],
+            dtype=object,
+        )
+        coords["feature_descriptor"] = np.asarray(
+            [descriptor_identity(item["feature"]) for item in ordered], dtype=object
+        )
         return DataContainer(
             X=feature_df.to_numpy(dtype=float),
             dims=("obs", "feature"),
@@ -418,8 +441,6 @@ def load_descriptor_table(
             ids=ids,
             meta=meta_base,
         )
-
-    from .qc import descriptor_identity, descriptor_subfamily
 
     sensors = list(dict.fromkeys(item["sensor"] for item in parsed))
     features = list(dict.fromkeys(item["feature"] for item in parsed))
@@ -433,6 +454,7 @@ def load_descriptor_table(
     feature_descriptor = {
         item["feature"]: descriptor_identity(item["feature"]) for item in parsed
     }
+    sensor_scope = {item["sensor"]: item["scope"] for item in parsed}
 
     X = np.full(
         (len(feature_df), len(sensors), len(features)),
@@ -447,7 +469,12 @@ def load_descriptor_table(
         ] = feature_df[item["column"]].to_numpy(dtype=float)
 
     coords["sensor"] = np.asarray(sensors, dtype=object)
+    coords["sensor_scope"] = np.asarray(
+        [sensor_scope[sensor] for sensor in sensors],
+        dtype=object,
+    )
     coords["feature"] = np.asarray(features, dtype=object)
+    coords["feature_measure"] = np.asarray(features, dtype=object)
     coords["feature_family"] = np.asarray(
         [feature_family[feature] for feature in features],
         dtype=object,

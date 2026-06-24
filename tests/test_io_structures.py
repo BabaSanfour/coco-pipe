@@ -72,6 +72,115 @@ def test_flatten_and_stack(sample_container):
     assert stacked.coords["group"].tolist() == ["control"] * 4 + ["patient"] * 4
 
 
+def test_flatten_preserves_parallel_coords(data_container_cls):
+    container = data_container_cls(
+        X=np.zeros((2, 3)),
+        dims=("obs", "ch"),
+        coords={
+            "ch": ["Fz", "Cz", "Pz"],
+            "ch_family": ["frontal", "central", "parietal"],
+        },
+    )
+
+    flat = container.flatten(preserve="obs")
+
+    assert flat.coords["feature"] == ["Fz", "Cz", "Pz"]
+    # Parallel coords ride along under their own name (no cross-dim renaming).
+    assert flat.coords["ch_family"] == ["frontal", "central", "parietal"]
+
+
+def test_flatten_parallel_coords_cartesian(data_container_cls):
+    container = data_container_cls(
+        X=np.zeros((1, 2, 2)),
+        dims=("obs", "sensor", "feature"),
+        coords={
+            "sensor": ["Fz", "Cz"],
+            "sensor_region": ["frontal", "central"],
+            "feature": ["alpha", "beta"],
+            "feature_family": ["band", "connectivity"],
+        },
+    )
+
+    flat = container.flatten(preserve="obs", sep="-")
+
+    assert flat.coords["feature"] == ["Fz-alpha", "Fz-beta", "Cz-alpha", "Cz-beta"]
+    # Coords keep their own names; sensor metadata is zipped through the product
+    # alongside feature metadata.
+    assert flat.coords["sensor_region"] == [
+        "frontal",
+        "frontal",
+        "central",
+        "central",
+    ]
+    assert flat.coords["feature_family"] == [
+        "band",
+        "connectivity",
+        "band",
+        "connectivity",
+    ]
+
+
+def test_flatten_warns_past_label_cap(data_container_cls):
+    container = data_container_cls(
+        X=np.zeros((1, 200000)),
+        dims=("obs", "sample"),
+        coords={"sample": np.arange(200000)},
+    )
+
+    with pytest.warns(UserWarning, match="exceeds the 200000 label cap"):
+        flat = container.flatten(preserve="obs")
+
+    assert "feature" not in flat.coords
+
+
+def test_feature_schema_roundtrip(data_container_cls):
+    container = data_container_cls(
+        X=np.zeros((1, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["opaque0", "opaque1"],
+            "feature_family": ["band", "connectivity"],
+            "feature_measure": ["alpha", "coherence"],
+        },
+    )
+
+    schema = container.feature_schema()
+
+    assert schema is not None
+    assert schema.to_dict(orient="list") == {
+        "column": ["opaque0", "opaque1"],
+        "family": ["band", "connectivity"],
+        "measure": ["alpha", "coherence"],
+    }
+    no_feature = data_container_cls(
+        X=np.zeros((1, 2)),
+        dims=("obs", "channel"),
+        coords={"channel": ["Fz", "Cz"]},
+    )
+    assert no_feature.feature_schema() is None
+
+
+def test_isel_binds_prefixed_coords_to_named_axis(data_container_cls):
+    # sensor and feature axes share a length (2) -> length-based inference is
+    # ambiguous. ``feature_*`` coords must stay bound to the feature axis.
+    container = data_container_cls(
+        X=np.arange(2 * 2 * 2, dtype=float).reshape(2, 2, 2),
+        dims=("obs", "sensor", "feature"),
+        coords={
+            "sensor": ["Fz", "Cz"],
+            "feature": ["alpha", "beta"],
+            "feature_family": ["band", "connectivity"],
+        },
+    )
+
+    sliced = container.isel(sensor=0, feature=[0, 1])
+
+    assert sliced.X.shape == (2, 1, 2)
+    # feature_family followed the feature axis, not the sliced sensor axis.
+    assert list(sliced.coords["feature_family"]) == ["band", "connectivity"]
+    assert list(sliced.coords["sensor"]) == ["Fz"]
+
+
 def test_stack_unstack_round_trip_restores_metadata(sample_container):
     """unstack() must restore y, ids, and the stacked dim's coord."""
     stacked = sample_container.stack(dims=("obs", "time"), new_dim="obs")

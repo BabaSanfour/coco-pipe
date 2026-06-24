@@ -320,13 +320,18 @@ def _validate_group_by(value: str) -> None:
         raise ValueError("group_by must be one of 'family', 'measure', or 'feature'.")
 
 
-def _resolve_group_labels(descriptor_names: list[str], group_by: str) -> np.ndarray:
+def _resolve_group_labels(
+    descriptor_names: list[str],
+    group_by: str,
+    feature_schema: pd.DataFrame | None = None,
+) -> np.ndarray:
     """Map descriptor names to their grouping label at the chosen granularity."""
     _validate_group_by(group_by)
     from coco_pipe.descriptors.qc import classify_descriptor_columns
 
     classification = classify_descriptor_columns(
-        [str(name) for name in descriptor_names]
+        [str(name) for name in descriptor_names],
+        feature_schema=feature_schema,
     )
     return (
         classification[GROUP_BY_COLUMN[group_by]]
@@ -336,12 +341,48 @@ def _resolve_group_labels(descriptor_names: list[str], group_by: str) -> np.ndar
     )
 
 
+def group_labels(container: DataContainer, group_by: str = "family") -> list[str]:
+    """Unique feature-group labels a container spans, at ``group_by`` granularity.
+
+    Resolves labels from the container's structured
+    :meth:`~coco_pipe.io.structures.DataContainer.feature_schema` — enriched from
+    descriptor-name parsing when the schema is partial — and returns them
+    de-duplicated in first-seen order. This is the structured replacement for
+    hand-rolled "which families/measures does this analysis unit cover" helpers:
+    pass the sliced unit container from
+    :func:`~coco_pipe.io.units.iter_analysis_units` to learn which QC labels it
+    maps to.
+
+    Parameters
+    ----------
+    container
+        Any container with a ``feature`` axis (e.g. one analysis unit).
+    group_by
+        Grouping granularity: ``"family"``, ``"measure"``, or ``"feature"``.
+
+    Returns
+    -------
+    list of str
+        Distinct labels at the requested granularity; ``[]`` when the container
+        has no ``feature`` axis.
+    """
+    names = [str(name) for name in container.coords.get("feature", [])]
+    if not names:
+        _validate_group_by(group_by)
+        return []
+    labels = _resolve_group_labels(
+        names, group_by, feature_schema=container.feature_schema()
+    )
+    return list(dict.fromkeys(labels.tolist()))
+
+
 def compute_row_outlier_scores(
     df: pd.DataFrame,
     feature_cols: list[str],
     z_threshold: float = 5.0,
     descriptor_names: list[str] | None = None,
     group_by: str | None = None,
+    feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute per-row outlier fractions using MAD-based robust z-scores.
 
@@ -400,7 +441,7 @@ def compute_row_outlier_scores(
     names = descriptor_names or feature_cols
     if len(names) != len(feature_cols):
         raise ValueError("descriptor_names must align with feature_cols.")
-    labels = _resolve_group_labels(names, group_by)
+    labels = _resolve_group_labels(names, group_by, feature_schema=feature_schema)
     for label in dict.fromkeys(labels.tolist()):
         label_mask = labels == label
         label_count = outlier_flags[:, label_mask].sum(axis=1).astype(int)
@@ -676,6 +717,7 @@ def drop_epoch_outliers(
     descriptor_names: list[str] | None = None,
     group_by: str | None = None,
     min_obs: int | None = None,
+    feature_schema: pd.DataFrame | None = None,
 ) -> tuple[DataContainer | dict[str, np.ndarray], QCResult]:
     """Drop observations with a high fraction of MAD-based feature outliers.
 
@@ -696,12 +738,16 @@ def drop_epoch_outliers(
     n_obs_in = container.X.shape[0]
     n_subjects_in = _count_unique_subjects(container, subject_col)
     feature_df = _container_to_feature_df(container, feature_cols)
+    schema = (
+        feature_schema if feature_schema is not None else container.feature_schema()
+    )
     scores = compute_row_outlier_scores(
         feature_df,
         feature_df.columns.tolist(),
         z_threshold=z_threshold,
         descriptor_names=descriptor_names,
         group_by=group_by,
+        feature_schema=schema,
     )
     if group_by is not None:
         family_masks: dict[str, np.ndarray] = {}
@@ -797,6 +843,7 @@ def drop_subject_outliers(
     feature_cols: list[str] | None = None,
     descriptor_names: list[str] | None = None,
     group_by: str | None = None,
+    feature_schema: pd.DataFrame | None = None,
 ) -> tuple[DataContainer | dict[str, np.ndarray], QCResult]:
     """Drop subjects with a high cohort-level feature outlier burden.
 
@@ -813,6 +860,9 @@ def drop_subject_outliers(
     subject_ids = np.asarray(_get_subject_ids(container, subject_col), dtype=object)
     n_subjects_in = len(set(subject_ids.tolist()))
     feature_df = _container_to_feature_df(container, feature_cols).copy()
+    schema = (
+        feature_schema if feature_schema is not None else container.feature_schema()
+    )
     feature_df[subject_col] = subject_ids
     score_columns = [column for column in feature_df.columns if column != subject_col]
     if group_by is not None:
@@ -822,6 +872,7 @@ def drop_subject_outliers(
             z_threshold=z_threshold,
             descriptor_names=descriptor_names,
             group_by=group_by,
+            feature_schema=schema,
         ).copy()
         scores[subject_col] = subject_ids
         family_names = [
@@ -934,6 +985,7 @@ def run_qc(
     n_subjects_in = _count_unique_subjects(container, subject_col)
     meta = container.meta or {}
     current = container
+    schema = container.feature_schema()
     epochs_dropped: list[EpochDropRecord] = []
     subjects_dropped: list[SubjectDropRecord] = []
     subject_burden = None
@@ -945,6 +997,7 @@ def run_qc(
             outlier_fraction_threshold=epoch_outlier_fraction_threshold,
             subject_col=subject_col,
             feature_cols=feature_cols,
+            feature_schema=schema,
         )
         epochs_dropped = epoch_result.epochs_dropped
 
@@ -955,6 +1008,7 @@ def run_qc(
             outlier_fraction_threshold=subject_outlier_fraction_threshold,
             subject_col=subject_col,
             feature_cols=feature_cols,
+            feature_schema=schema,
         )
         subjects_dropped = subject_result.subjects_dropped
         subject_burden = subject_result.subject_outlier_burden
