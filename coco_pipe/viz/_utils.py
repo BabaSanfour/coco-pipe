@@ -419,6 +419,48 @@ def coerce_sensor_layout(
     return SensorLayout(coord_names, positions[:, :2])
 
 
+def info_from_montage(
+    names: Sequence[str],
+    montage: str = "standard_1020",
+    sfreq: float = 100.0,
+):
+    """Build an EEG ``mne.Info`` from channel names using a standard montage.
+
+    Resolves electrode positions for plotting when only channel names (and
+    values) are available, without a recording ``Info``. Names absent from the
+    montage are dropped, so the returned info may carry fewer channels than were
+    requested (or none).
+
+    Parameters
+    ----------
+    names
+        Channel names to place. Matched case-sensitively against the montage.
+    montage
+        Name of a standard MNE montage (e.g. ``"standard_1020"``).
+    sfreq
+        Nominal sampling frequency for the synthetic info; unused for layout.
+
+    Returns
+    -------
+    mne.Info
+        Info carrying the montage positions for the resolved channels.
+    """
+    try:
+        import mne
+    except Exception as exc:  # pragma: no cover - exercised only without mne
+        raise ImportError(
+            "info_from_montage requires 'mne'. Install the neuroviz extra."
+        ) from exc
+
+    montage_obj = mne.channels.make_standard_montage(montage)
+    montage_names = set(montage_obj.ch_names)
+    kept = [str(name) for name in names if str(name) in montage_names]
+    info = mne.create_info(kept, sfreq=sfreq, ch_types="eeg")
+    if kept:
+        info.set_montage(montage_obj, on_missing="ignore")
+    return info
+
+
 def prepare_embedding_frame(
     embedding: np.ndarray,
     labels: Sequence[Any] | None = None,

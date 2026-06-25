@@ -1,6 +1,7 @@
 """Curated plotting helpers for coco_pipe."""
 
 from . import interactive
+from ._utils import info_from_montage
 from .base import (
     accuracy_color_limits,
     centered_color_limits,
@@ -86,6 +87,7 @@ __all__ = [
     "centered_color_limits",
     "coco_theme",
     "figure_size",
+    "info_from_montage",
     "interactive",
     "plot_bar",
     "plot_calibration_curve",

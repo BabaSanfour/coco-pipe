@@ -20,6 +20,7 @@ from coco_pipe.viz._utils import (
     filter_metric_frame,
     finalize_axes,
     get_figure,
+    info_from_montage,
     prepare_component_loadings_frame,
     prepare_confusion_matrix,
     prepare_curve_group_data,
@@ -253,6 +254,16 @@ def test_coerce_sensor_layout():
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4], "Sensor": ["A", "B"]})
     layout3 = coerce_sensor_layout(coords=df)
     assert layout3.names == ["A", "B"]
+
+
+def test_info_from_montage():
+    pytest.importorskip("mne")
+    info = info_from_montage(["Cz", "Pz", "Fz", "NotAChannel"])
+    # Unknown channels are dropped; montage positions are attached.
+    assert info.ch_names == ["Cz", "Pz", "Fz"]
+    layout = coerce_sensor_layout(info=info)
+    assert set(layout.names) == {"Cz", "Pz", "Fz"}
+    assert layout.positions.shape == (3, 2)
 
 
 def test_prepare_embedding_frame():
