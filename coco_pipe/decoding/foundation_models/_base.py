@@ -314,10 +314,17 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
             self._training_groups_ = np.unique(groups_arr[train_idx])
             self._validation_groups_ = np.unique(groups_arr[valid_idx])
-            valid_ds = Dataset(X[valid_idx], np.asarray(y)[valid_idx])
-            X = X[train_idx]
-            y = np.asarray(y)[train_idx]
+            # X[fancy_index] copies the entire slice into RAM (up to 2× dataset
+            # size when done twice for train and valid).  Use Subset instead:
+            # it stores only the index list and defers array access to the
+            # DataLoader, so only one batch is materialised at a time.
+            import torch.utils.data as _tud
+            full_ds = Dataset(X, y_arr)
+            train_ds = _tud.Subset(full_ds, train_idx.tolist())
+            valid_ds = _tud.Subset(full_ds, valid_idx.tolist())
             net_kwargs["train_split"] = predefined_split(valid_ds)
+            X = train_ds
+            y = y_arr[train_idx]  # y is tiny (one int per sample); copy is fine
 
         callbacks = []
         patience = fit_params.get("early_stopping_patience")
@@ -331,6 +338,24 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                     load_best=True,
                 )
             )
+
+        from skorch.callbacks import Callback, GradientNormClipping
+
+        class _NaNGradientFilter(Callback):
+            # Replaces NaN/Inf gradients with zero so a single bad batch cannot
+            # corrupt weights.  Must run before GradientNormClipping because
+            # norm(NaN) = NaN and the clip condition never fires on NaN grads.
+            def on_backward_end(self, net, **kwargs):
+                import torch
+                for p in net.module_.parameters():
+                    if p.grad is not None and not torch.isfinite(p.grad).all():
+                        p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
+
+        callbacks.append(_NaNGradientFilter())
+
+        grad_clip = fit_params.get("grad_clip_norm", 1.0)
+        if grad_clip is not None:
+            callbacks.append(GradientNormClipping(gradient_clip_value=grad_clip))
 
         self._net_ = net_cls(
             module=self._get_skorch_module(),

@@ -30,7 +30,7 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "biot": ("BIOT", "braindecode.models"),
     "labram": ("Labram", "braindecode.models"),
     "eegpt": ("EEGPT", "braindecode.models"),
-    "signaljepa": ("SignalJEPA", "braindecode.models"),
+    "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
     "codebrain": ("CodeBrain", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
@@ -175,23 +175,29 @@ class BrainDecodeBackend(BackendBase):
         revision = kw.pop("revision", metadata.checkpoint_revision)
         filename = kw.pop("filename", metadata.checkpoint_filename)
         interpolate_channels = bool(kw.pop("interpolate_channels", False))
-        if model_key == "labram" and interpolate_channels:
-            for candidate in ("InterpolatedLaBraM", "InterpolatedLabram"):
+        _interpolated_class_map = {
+            "labram": ("InterpolatedLaBraM", "InterpolatedLabram"),
+            "biot": ("InterpolatedBIOT",),
+            "bendr": ("InterpolatedBENDR",),
+            "signaljepa": ("InterpolatedSignalJEPA",),
+        }
+        if interpolate_channels and model_key in _interpolated_class_map:
+            for candidate in _interpolated_class_map[model_key]:
                 if hasattr(models_module, candidate):
                     class_name = candidate
                     break
             else:
                 raise ImportError(
-                    "interpolate_channels=True requires InterpolatedLaBraM "
-                    "(braindecode>=1.5), which is not available in the "
-                    "installed braindecode version."
+                    f"interpolate_channels=True requires an Interpolated variant "
+                    f"for {model_key} (braindecode>=1.5), which is not available."
                 )
         model_cls = getattr(models_module, class_name)
 
-        if electrode_names and model_key in {"cbramod", "labram", "luna"}:
+        if electrode_names and model_key in {"cbramod", "labram", "luna", "biot", "bendr", "signaljepa"}:
             import mne
 
-            kw.setdefault("n_chans", len(electrode_names))
+            if not interpolate_channels:
+                kw.setdefault("n_chans", len(electrode_names))
             kw.setdefault("sfreq", sfreq)
             info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
             try:
@@ -217,6 +223,32 @@ class BrainDecodeBackend(BackendBase):
             # LaBraM adjusts it dynamically during forward, but overriding
             # n_times while loading makes the state dict shape incompatible.
             kw.pop("n_times", None)
+        elif model_key == "signaljepa":
+            # braindecode/signaljepa-pretrained was saved with 19-channel
+            # scratch mode (pos_encoder_spat shape [19,30]).  Use scratch so
+            # the checkpoint loads without shape mismatch.  strict=False lets
+            # the head weights be skipped.  NaN was from lr=1e-3 exploding
+            # during LoRA training — fixed by lowering lr to 1e-4.
+            kw.setdefault("strict", False)
+            kw.setdefault("channel_embedding", "scratch")
+            kw.setdefault("n_times", n_times)
+            kw.setdefault("input_window_seconds", n_times / sfreq)
+        elif model_key == "bendr":
+            # BENDR config.json stores n_chans_pretrained / chan_proj_max_norm
+            # which are not accepted by BENDR.__init__.  Wrap so that the hub
+            # mixin injects them into **kwargs but they get stripped before
+            # reaching the base class.
+            _bendr_extra = {"n_chans_pretrained", "chan_proj_max_norm", "activation"}
+            _orig_cls = model_cls
+
+            class _PatchedInterpolatedBENDR(_orig_cls):
+                def __init__(self, *args, **kwargs):
+                    for _k in _bendr_extra:
+                        kwargs.pop(_k, None)
+                    super().__init__(*args, **kwargs)
+
+            model_cls = _PatchedInterpolatedBENDR
+            kw.setdefault("strict", False)
 
         load_kwargs = dict(kw)
         if revision is not None:
@@ -230,6 +262,67 @@ class BrainDecodeBackend(BackendBase):
             load_kwargs["n_outputs"] = effective_outputs
         model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         model = model.to(device)
+
+        if model_key == "signaljepa":
+            # SignalJEPA uses nn.Transformer internally: encoder has 8
+            # TransformerEncoderLayer blocks, each containing nn.MultiheadAttention
+            # (d_model=64, nhead=8 → d_k=8 per head).
+            #
+            # ROOT CAUSE: attention logit = (x@W_Q_i)·(x@W_K_j)/sqrt(8).
+            # After LoRA training, W_Q/W_K norms can grow so that logits exceed
+            # ~89, causing exp() overflow → NaN in softmax → NaN propagates
+            # through LayerNorm (LayerNorm(NaN) = NaN) → entire residual stream
+            # becomes NaN → all subsequent layers output NaN → NaN predictions.
+            # The _NaNGradientFilter prevents weight corruption during training
+            # but does NOT stop NaN appearing in forward passes once weights have
+            # drifted (including at inference time).
+            #
+            # PREVIOUS HOOK PROBLEM: the old _qk_maxnorm_hook registered on
+            # nn.MultiheadAttention pre-hook received args=(query, key, value)
+            # where query/key are the full d_model=64 residual-stream vectors,
+            # NOT the per-head Q/K projections. A LayerNorm output has norm
+            # exactly sqrt(64)=8.0, so clipping to max-norm=5.0 shrank every
+            # single forward pass by factor 5/8=0.625 — degrading valid inputs
+            # while not reliably preventing overflow (weight norms were unconstrained).
+            #
+            # FIX — two defense-in-depth hooks on TransformerEncoderLayer:
+            #
+            # 1. PRE-HOOK: clamp the residual-stream input to norm ≤ 30.
+            #    Normal LayerNorm output has norm = sqrt(64) ≈ 8.  Threshold 30
+            #    is 3.75× normal so it never clips healthy activations but stops
+            #    actual explosions before they reach attention or FFN.
+            #
+            # 2. POST-HOOK: replace any surviving NaN/Inf in the output with 0.
+            #    This is the final safety net — if something slips through
+            #    (e.g., an un-normed path or a bad data sample), the NaN dies
+            #    at the layer boundary instead of infecting all downstream layers.
+            #
+            # Both hooks fire at every forward call (training and inference) and
+            # are no-ops for healthy activations, so they don't change model
+            # behaviour on clean inputs.
+            import torch as _torch
+            import torch.nn as _nn
+
+            _RESIDUAL_CLAMP = 30.0  # >> sqrt(64)=8, << actual explosion values
+
+            def _residual_clamp_pre_hook(module, args):
+                # args[0] is `src`: the residual-stream token tensor (B, T, d_model)
+                x = args[0]
+                norms = x.norm(dim=-1, keepdim=True)
+                scale = (_RESIDUAL_CLAMP / norms).clamp(max=1.0)
+                return (x * scale,) + args[1:]
+
+            def _nanfix_post_hook(module, inp, output):
+                if isinstance(output, _torch.Tensor) and (
+                    _torch.isnan(output).any() or _torch.isinf(output).any()
+                ):
+                    return _torch.nan_to_num(output, nan=0.0, posinf=1e4, neginf=-1e4)
+                return output
+
+            for _m in model.modules():
+                if isinstance(_m, _nn.TransformerEncoderLayer):
+                    _m.register_forward_pre_hook(_residual_clamp_pre_hook)
+                    _m.register_forward_hook(_nanfix_post_hook)
 
         if train_mode == "frozen":
             for param in model.parameters():
@@ -260,7 +353,7 @@ class BrainDecodeBackend(BackendBase):
             try:
                 model.reset_head(n_outputs)
             except NotImplementedError:
-                if model_key != "luna":
+                if model_key not in {"luna"}:
                     raise
         if train_mode == "frozen" and n_outputs is not None:
             for head_name in ("final_layer", "classifier", "head"):
@@ -281,7 +374,7 @@ class BrainDecodeBackend(BackendBase):
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
-        backend._uses_interpolation = model_key == "labram" and interpolate_channels
+        backend._uses_interpolation = interpolate_channels and model_key in {"labram", "biot", "bendr", "signaljepa"}
         backend._checkpoint_revision = revision
         backend._checkpoint_filename = filename
         return backend
@@ -432,9 +525,15 @@ class BrainDecodeBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        batch_size = 32
+        all_logits = []
         with self._no_grad():
-            out = self._model(self._to_tensor(X))
-            logits = out["logits"] if isinstance(out, dict) else out
+            for i in range(0, len(X), batch_size):
+                batch = self._to_tensor(X[i : i + batch_size])
+                out = self._model(batch)
+                logits = out["logits"] if isinstance(out, dict) else out
+                all_logits.append(logits)
+        logits = __import__("torch").cat(all_logits, dim=0)
         if getattr(self, "_task", "classification") == "regression":
             return self._from_tensor(logits).squeeze(-1)
         return self._from_tensor(logits.argmax(dim=-1))

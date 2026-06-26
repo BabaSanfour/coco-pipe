@@ -183,6 +183,8 @@ class HuggingFaceBackend(BackendBase):
                 stacklevel=2,
             )
 
+        import os
+
         hf_kw: dict = {
             "trust_remote_code": True,
             "token": token,
@@ -199,6 +201,9 @@ class HuggingFaceBackend(BackendBase):
                 and value is not None
             },
         }
+        offline = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
+        if offline:
+            hf_kw.setdefault("local_files_only", True)
 
         if train_mode == "qlora":
             from transformers import BitsAndBytesConfig
@@ -210,20 +215,27 @@ class HuggingFaceBackend(BackendBase):
                 bnb_4bit_use_double_quant=True,
             )
 
-        backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **hf_kw)
-        feat_dim: int = getattr(
-            backbone.config,
-            "hidden_size",
-            metadata.embedding_dim,
+        def _resolve(repo_id: str) -> str:
+            """Return local snapshot path when offline; fall back to repo_id."""
+            if not offline:
+                return repo_id
+            try:
+                from huggingface_hub import snapshot_download
+                return snapshot_download(
+                    repo_id,
+                    local_files_only=True,
+                    cache_dir=hf_kw.get("cache_dir"),
+                )
+            except Exception:
+                return repo_id
+
+        backbone = AutoModel.from_pretrained(_resolve(metadata.hub_repo), **hf_kw)
+        pos_bank = AutoModel.from_pretrained(_resolve("brain-bzh/reve-positions"), **hf_kw)
+        feat_dim: int = (
+            getattr(backbone.config, "embed_dim", None)
+            or getattr(backbone.config, "hidden_size", None)
+            or metadata.embedding_dim
         )
-        if pooling == "flatten":
-            n_ch = (
-                len(electrode_names)
-                if electrode_names
-                else metadata.pretrained_n_chans or 19
-            )
-            feat_dim = feat_dim * n_ch
 
         if train_mode in ("lora", "qlora"):
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -233,10 +245,10 @@ class HuggingFaceBackend(BackendBase):
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
-                target_modules=list(lora_target_modules),
+                target_modules=lora_target_modules,
                 lora_dropout=lora_dropout,
                 bias="none",
-                task_type="FEATURE_EXTRACTION",
+                task_type=None,
             )
             backbone = get_peft_model(backbone, lora_cfg)
         elif train_mode == "frozen":
@@ -302,12 +314,20 @@ class HuggingFaceBackend(BackendBase):
         n_channels = x_tensor.shape[1]
         elec = self._electrode_names or [f"e{i}" for i in range(n_channels)]
         pos = self._pos_bank(elec).unsqueeze(0).expand(len(x_tensor), -1, -1)
-        out = self._backbone(x_tensor, pos)
-        hidden = out.last_hidden_state
-        if self._pooling == "mean":
-            pooled = hidden.mean(dim=1)
+        out = self._backbone(x_tensor, pos=pos)
+        if hasattr(out, "last_hidden_state"):
+            hidden = out.last_hidden_state
+        elif isinstance(out, (list, tuple)):
+            hidden = out[-1]
         else:
-            pooled = hidden.flatten(start_dim=1)
+            hidden = out
+        if hidden.dim() > 2:
+            # REVE returns (B, C, H, E): average over all token positions so
+            # the backbone's cross-channel attention does the spatial reasoning
+            # and the head gets a compact (B, E) representation.
+            pooled = hidden.flatten(start_dim=1, end_dim=-2).mean(dim=1)
+        else:
+            pooled = hidden  # already (B, E)
         return pooled if return_embeddings else self._head(pooled)
 
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -343,6 +363,15 @@ class HuggingFaceBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        if self._net_ is not None:
+            # After skorch training, use the skorch network's predict_proba so
+            # inference runs in mini-batches and avoids sending the entire test
+            # set to the GPU in one allocation (which OOMs on large test folds).
+            proba = np.asarray(self._net_.predict_proba(X))
+            if self._task == "regression":
+                return proba.squeeze(-1)
+            return proba.argmax(axis=1)
+        # Fallback for headless / non-skorch use (e.g. frozen embedding mode).
         with self._no_grad():
             logits = self._reve_forward(self._to_tensor(X), return_embeddings=False)
         if self._task == "regression":
