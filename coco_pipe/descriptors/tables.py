@@ -139,6 +139,8 @@ def build_descriptor_tables(
     ratio_pairs: Sequence[tuple[str, str]] | None = None,
     ratio_floor: float = 0.0,
     ratio_prefixes: Sequence[tuple[str, str]] = DEFAULT_RATIO_PREFIXES,
+    min_count: int = 1,
+    on_insufficient: str = "raise",
 ) -> dict[str, Any]:
     """Build epoch- and group-aggregated subject-level descriptor tables.
 
@@ -166,6 +168,12 @@ def build_descriptor_tables(
     ratio_pairs, ratio_floor, ratio_prefixes
         When *ratio_pairs* is given, band ratios from the aggregated mean
         features are appended via :func:`add_aggregated_band_ratios`.
+    min_count, on_insufficient
+        Forwarded to :meth:`~coco_pipe.io.structures.DataContainer.aggregate`
+        and ``aggregate_groups``. With ``on_insufficient="warn"`` a group (or a
+        single descriptor family within ``aggregate_groups``) whose surviving
+        rows are all-NaN emits NaN features instead of raising, so the subject
+        is retained with whatever else is computable.
 
     Returns
     -------
@@ -211,7 +219,12 @@ def build_descriptor_tables(
         coords=coords,
     )
 
-    grouped_mean = work.aggregate(by=group_by, stats="mean")
+    grouped_mean = work.aggregate(
+        by=group_by,
+        stats="mean",
+        min_count=min_count,
+        on_insufficient=on_insufficient,
+    )
     agg_df = grouped_mean.obs_table(include_y=bool(target_col), y_col=target_col or "y")
     base_agg_features = pd.DataFrame(
         grouped_mean.X,
@@ -219,7 +232,12 @@ def build_descriptor_tables(
     )
 
     groups = list(aggregation_groups) if aggregation_groups else [{"stats": "mean"}]
-    grouped_features = work.aggregate_groups(by=group_by, groups=groups)
+    grouped_features = work.aggregate_groups(
+        by=group_by,
+        groups=groups,
+        min_count=min_count,
+        on_insufficient=on_insufficient,
+    )
     agg_features = pd.DataFrame(
         grouped_features.X,
         columns=[str(column) for column in grouped_features.coords["feature"]],
