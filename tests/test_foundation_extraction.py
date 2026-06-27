@@ -326,6 +326,54 @@ def test_embedding_extractor_3d_pooling_and_normalization():
     np.testing.assert_allclose(np.linalg.norm(res_flat.window_embeddings, axis=1), 1.0)
 
 
+def test_batch_size_chunks_forward_without_changing_output():
+    class CountingModel:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def bind_signal_metadata(self, metadata):
+            return self
+
+        def transform(self, X):
+            self.batch_sizes.append(len(X))
+            # Content-based (chunk-invariant) embedding: per-window mean broadcast
+            # to 4 features, so chunking must not change the result.
+            return X.mean(axis=(1, 2))[:, None] * np.ones((1, 4), dtype=np.float32)
+
+        def get_embedding_info(self):
+            return get_foundation_model_spec("cbramod")
+
+    n_windows = 10
+    epochs = np.arange(n_windows * 19 * 200, dtype=np.float32).reshape(
+        n_windows, 19, 200
+    )
+    meta = SignalMetadata(sfreq=200.0, ch_names=[f"ch{i}" for i in range(19)])
+
+    single = FoundationEmbeddingExtractor(
+        "cbramod", model=CountingModel(), normalize_embeddings=False, resample=False
+    )
+    single_out = single.extract(epochs, signal_metadata=meta).window_embeddings
+
+    counting = CountingModel()
+    batched = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=counting,
+        normalize_embeddings=False,
+        resample=False,
+        batch_size=4,
+    )
+    batched_out = batched.extract(epochs, signal_metadata=meta).window_embeddings
+
+    # Chunked into 4 + 4 + 2, capped at batch_size, and numerically identical.
+    assert counting.batch_sizes == [4, 4, 2]
+    np.testing.assert_array_equal(single_out, batched_out)
+
+
+def test_batch_size_rejects_non_positive():
+    with pytest.raises(ValueError, match="batch_size"):
+        FoundationEmbeddingExtractor("cbramod", batch_size=0)
+
+
 def _window_container(n_times, sfreq=200.0):
     from coco_pipe.io import DataContainer
 

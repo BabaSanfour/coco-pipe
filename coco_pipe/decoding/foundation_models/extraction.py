@@ -264,11 +264,14 @@ class FoundationEmbeddingExtractor:
         normalize_embeddings: bool = True,
         resample: bool = True,
         cache_embeddings: bool = False,
+        batch_size: int | None = None,
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
     ) -> None:
         if recording_pooling not in {"mean", "median", "max"}:
             raise ValueError("recording_pooling must be mean, median, or max.")
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer or None.")
         self.model_key = model_key
         self.backend = backend
         self.device = device
@@ -277,6 +280,7 @@ class FoundationEmbeddingExtractor:
         self.normalize_embeddings = normalize_embeddings
         self.resample = resample
         self.cache_embeddings = cache_embeddings
+        self.batch_size = batch_size
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
         self._embedding_cache: dict[str, np.ndarray] = {}
@@ -285,9 +289,31 @@ class FoundationEmbeddingExtractor:
         """Drop all memoized window embeddings."""
         self._embedding_cache.clear()
 
+    def _transform_batched(self, model: Any, model_input: np.ndarray) -> np.ndarray:
+        """Forward windows through the backbone, mini-batched along axis 0.
+
+        Transformer backbones (e.g. LaBraM) build an attention map per window, so
+        forwarding every window of a long recording at once can exhaust GPU
+        memory. When ``batch_size`` is set, windows are forwarded in chunks and
+        concatenated -- numerically identical to a single pass, since each window
+        is embedded independently -- capping peak memory at one chunk.
+        """
+        batch_size = self.batch_size
+        n_windows = len(model_input)
+        if not batch_size or n_windows <= batch_size:
+            return np.asarray(model.transform(model_input), dtype=np.float32)
+        parts = [
+            np.asarray(
+                model.transform(model_input[start : start + batch_size]),
+                dtype=np.float32,
+            )
+            for start in range(0, n_windows, batch_size)
+        ]
+        return np.concatenate(parts, axis=0)
+
     def _embed_windows(self, model: Any, model_input: np.ndarray) -> np.ndarray:
         """Run the backbone forward pass and pool/normalize to 2-D rows."""
-        embeddings = np.asarray(model.transform(model_input), dtype=np.float32)
+        embeddings = self._transform_batched(model, model_input)
         if embeddings.ndim > 2:
             if self.pooling == "flatten":
                 embeddings = embeddings.reshape(len(embeddings), -1)
