@@ -1,7 +1,6 @@
 """Tests for HuggingFaceBackend (REVE). All network I/O is mocked."""
 
 import warnings
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -34,12 +33,16 @@ def test_hugging_face_not_available_without_torch(monkeypatch):
 
 
 def _make_mock_backbone(hidden_size: int = 1024):
+    import torch
+
     backbone = MagicMock()
     backbone.config.hidden_size = hidden_size
     backbone.parameters.return_value = []
-    hidden_state = MagicMock()
-    hidden_state.mean.return_value = MagicMock()
-    backbone.return_value = SimpleNamespace(last_hidden_state=hidden_state)
+    # REVE's forward returns a raw (batch, channels, time_patches, embed_dim)
+    # tensor -- not a HF ModelOutput.
+    backbone.side_effect = lambda x, pos, *a, **kw: torch.zeros(
+        x.shape[0], x.shape[1], 1, hidden_size
+    )
     return backbone
 
 
@@ -122,7 +125,7 @@ def test_unsupported_model_key_raises():
         )
 
 
-def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19):
+def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19, pooling="mean"):
     """Build a HuggingFaceBackend with all internals mocked for unit testing."""
     import torch
 
@@ -130,25 +133,31 @@ def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19):
     backbone = MagicMock()
     pos_bank = MagicMock()
 
-    feat = torch.zeros(4, meta.embedding_dim)
-    hidden = MagicMock()
-    hidden.mean.return_value = feat
-    backbone.return_value = SimpleNamespace(last_hidden_state=hidden)
+    # REVE returns a raw (batch, channels, time_patches, embed_dim) tensor.
+    backbone.side_effect = lambda x, pos, *a, **kw: torch.zeros(
+        x.shape[0], x.shape[1], 1, meta.embedding_dim
+    )
+    # frozen backbone is the raw Reve module (no PeftModel.get_base_model);
+    # its attention read-out collapses channels+time -> (batch, embed_dim).
+    backbone.get_base_model = None
+    backbone.attention_pooling.side_effect = lambda out: out.mean(dim=2).mean(dim=1)
     pos_bank.return_value = torch.zeros(n_chans, 32)
+
+    feat_dim = meta.embedding_dim * (n_chans if pooling == "flatten" else 1)
 
     import torch.nn as nn
 
-    head = nn.Linear(meta.embedding_dim, n_outputs) if n_outputs else nn.Identity()
+    head = nn.Linear(feat_dim, n_outputs) if n_outputs else nn.Identity()
     adapter = HuggingFaceBackend(
         metadata=meta,
         backbone=backbone,
         pos_bank=pos_bank,
         head=head,
-        feat_dim=meta.embedding_dim,
+        feat_dim=feat_dim,
         n_outputs=n_outputs,
         device="cpu",
         train_mode="frozen",
-        pooling="mean",
+        pooling=pooling,
         electrode_names=None,
         task="classification",
     )
@@ -165,6 +174,19 @@ def test_transform_returns_ndarray():
     out = adapter.transform(X)
     assert isinstance(out, np.ndarray)
     assert out.shape == (4, 512)
+
+
+def test_transform_flatten_keeps_per_channel_dim():
+    adapter = _make_fitted_adapter(pooling="flatten", n_chans=19)
+    out = adapter.transform(np.zeros((4, 19, 400), dtype=np.float32))
+    assert out.shape == (4, 19 * 512)
+
+
+def test_transform_attention_pooling():
+    adapter = _make_fitted_adapter(pooling="attention")
+    out = adapter.transform(np.zeros((4, 19, 400), dtype=np.float32))
+    assert out.shape == (4, 512)
+    adapter._backbone.attention_pooling.assert_called()
 
 
 def test_transform_raises_before_fit():
@@ -276,9 +298,7 @@ def test_reve_skorch_module():
     meta = get_estimator_spec("reve")
 
     mock_backbone = MagicMock(spec=nn.Module)
-    mock_backbone.return_value = SimpleNamespace(
-        last_hidden_state=torch.zeros(2, 19, 512)
-    )
+    mock_backbone.return_value = torch.zeros(2, 19, 1, 512)
 
     mock_pos = MagicMock(spec=nn.Module)
     mock_pos.return_value = torch.zeros(19, 512)
@@ -318,9 +338,7 @@ def test_predict_and_checkpoint_components():
     meta = get_estimator_spec("reve")
 
     mock_backbone = MagicMock()
-    mock_backbone.return_value = SimpleNamespace(
-        last_hidden_state=torch.zeros(2, 19, 512)
-    )
+    mock_backbone.return_value = torch.zeros(2, 19, 1, 512)
     mock_pos = MagicMock()
     mock_pos.return_value = torch.zeros(19, 512)
 

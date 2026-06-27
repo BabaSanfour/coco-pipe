@@ -104,8 +104,11 @@ class HuggingFaceBackend(BackendBase):
         train_mode : str
             One of ``"frozen"``, ``"full"``, ``"lora"``, ``"qlora"``.
         pooling : str, default ``"mean"``
-            How to collapse the token dimension: ``"mean"`` (average pooling)
-            or ``"flatten"`` (concatenate all channel embeddings).
+            How to collapse the token dimension: ``"mean"`` (average over
+            channels and time -> ``embed_dim``), ``"flatten"`` (average over
+            time, concatenate channels -> ``embed_dim * n_chans``), or
+            ``"attention"`` (REVE's pretrained single-query attention read-out
+            over channels and time -> ``embed_dim``).
         electrode_names : list of str or None
             Channel names used by REVE's positional encoder. Falls back to
             generic ``["e0", "e1", …]`` when ``None``.
@@ -316,12 +319,31 @@ class HuggingFaceBackend(BackendBase):
         n_channels = x_tensor.shape[1]
         elec = self._electrode_names or [f"e{i}" for i in range(n_channels)]
         pos = self._pos_bank(elec).unsqueeze(0).expand(len(x_tensor), -1, -1)
+        # REVE's forward returns a raw tensor of per-patch embeddings with shape
+        # (batch, channels, time_patches, embed_dim) -- not a HF ModelOutput.
+        # Pool over the time-patch axis to get a per-channel embedding
+        # (batch, channels, embed_dim); ``flatten`` pooling then keeps the
+        # per-channel layout (feat_dim == embed_dim * n_chans), ``mean`` averages
+        # across channels (feat_dim == embed_dim).
         out = self._backbone(x_tensor, pos)
-        hidden = out.last_hidden_state
-        if self._pooling == "mean":
-            pooled = hidden.mean(dim=1)
+        if self._pooling == "attention":
+            # REVE's pretrained single-query attention read-out over the
+            # flattened channel+time tokens -> (batch, embed_dim). Under
+            # LoRA/QLoRA the backbone is a PeftModel wrapping the Reve module,
+            # so reach the base model that owns the method.
+            base = getattr(self._backbone, "get_base_model", None)
+            base = base() if base is not None else self._backbone
+            pooled = base.attention_pooling(out)
         else:
-            pooled = hidden.flatten(start_dim=1)
+            # Pool over the time-patch axis to get a per-channel embedding
+            # (batch, channels, embed_dim); ``flatten`` then keeps the
+            # per-channel layout (feat_dim == embed_dim * n_chans), ``mean``
+            # averages across channels (feat_dim == embed_dim).
+            hidden = out.mean(dim=2)
+            if self._pooling == "mean":
+                pooled = hidden.mean(dim=1)
+            else:
+                pooled = hidden.flatten(start_dim=1)
         return pooled if return_embeddings else self._head(pooled)
 
     def transform(self, X: np.ndarray) -> np.ndarray:
