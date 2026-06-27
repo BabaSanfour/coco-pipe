@@ -86,10 +86,14 @@ class ChannelPlan:
 
 
 def _index_map(source_names: Sequence[str]) -> dict[str, int]:
-    """First-occurrence name->index map over normalized source channels."""
+    """First-occurrence, case-insensitive name->index map over source channels.
+
+    Keyed by upper-cased name so the model's canonical all-caps electrode labels
+    (e.g. ``FP1``/``FZ``) resolve against standard mixed-case input (``Fp1``/``Fz``).
+    """
     index: dict[str, int] = {}
     for i, name in enumerate(source_names):
-        index.setdefault(name, i)
+        index.setdefault(name.upper(), i)
     return index
 
 
@@ -145,7 +149,8 @@ def _plan_biot(
     # The 16 TCP bipolar pairs (prest-16chs layout); modern names already.
     pairs = [tuple(label.split("-")) for label in BIOT_CHANNEL_ORDER[:16]]
     required = list(dict.fromkeys(e for pair in pairs for e in pair))
-    missing = [e for e in required if e not in set(names)]
+    present = {n.upper() for n in names}
+    missing = [e for e in required if e.upper() not in present]
     filled: list[str] = []
     fill_fn: Callable[[np.ndarray], np.ndarray] | None = None
     if missing:
@@ -163,7 +168,7 @@ def _plan_biot(
         names = names + missing
 
     index = _index_map(names)
-    pair_idx = [(index[a], index[b]) for a, b in pairs]
+    pair_idx = [(index[a.upper()], index[b.upper()]) for a, b in pairs]
 
     def adapter(X: np.ndarray) -> np.ndarray:
         if fill_fn is not None:
@@ -199,7 +204,8 @@ def _plan_bendr(
     # 19 standard EEG channels in BENDR order (drop the trailing SCALE entry);
     # normalize legacy T5/T6 -> P7/P8 to match our montage naming.
     order = normalize_channel_names(BENDR_CHANNEL_ORDER[:-1])
-    missing = [e for e in order if e not in set(names)]
+    present = {n.upper() for n in names}
+    missing = [e for e in order if e.upper() not in present]
     filled: list[str] = []
     fill_fn: Callable[[np.ndarray], np.ndarray] | None = None
     if missing:
@@ -217,7 +223,7 @@ def _plan_bendr(
         names = names + missing
 
     index = _index_map(names)
-    order_idx = [index[name] for name in order]
+    order_idx = [index[name.upper()] for name in order]
 
     def adapter(X: np.ndarray) -> np.ndarray:
         if fill_fn is not None:

@@ -208,6 +208,12 @@ class HuggingFaceBackend(BackendBase):
             },
         }
 
+        # The position bank lives in its own repo (``brain-bzh/reve-positions``)
+        # that is versioned independently of the backbone, so the backbone's
+        # ``revision`` must not be propagated to it. Quantization likewise only
+        # applies to the backbone, not the small position module.
+        pos_kw = {key: value for key, value in hf_kw.items() if key != "revision"}
+
         if train_mode == "qlora":
             from transformers import BitsAndBytesConfig
 
@@ -219,7 +225,7 @@ class HuggingFaceBackend(BackendBase):
             )
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **hf_kw)
+        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **pos_kw)
         feat_dim: int = getattr(
             backbone.config,
             "hidden_size",

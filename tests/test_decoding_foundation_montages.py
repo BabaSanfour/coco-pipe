@@ -89,6 +89,23 @@ def test_biot_missing_electrode_is_unsupported():
     assert "F7" in plan.reason
 
 
+def test_biot_matches_standard_mixed_case_names():
+    # Standard MNE 10-20 casing (Fp1/Fz/...) must resolve against the model's
+    # all-caps canonical labels (FP1/FZ/...) — case-insensitive matching.
+    mixed = [n.capitalize() if n[-1].isdigit() else n.title() for n in NAMES_19]
+    assert "Fp1" in mixed and "Fz" in mixed  # the case-only divergent labels
+    plan = _montages.plan_channels("biot", mixed)
+    assert plan.status == "available"
+    assert plan.model_n_chans == 16
+    rng = np.random.default_rng(7)
+    X = rng.standard_normal((2, 19, 40)).astype(np.float32)
+    out = plan.adapter(X)
+    index = {name.upper(): i for i, name in enumerate(mixed)}
+    for k, (anode, cathode) in enumerate(_biot_pairs()):
+        expected = X[:, index[anode.upper()], :] - X[:, index[cathode.upper()], :]
+        np.testing.assert_allclose(out[:, k, :], expected, rtol=1e-6)
+
+
 # --------------------------------------------------------------------------- #
 # BENDR — reorder + dn3 normalization + computed SCALE
 # --------------------------------------------------------------------------- #
@@ -127,6 +144,13 @@ def test_bendr_missing_electrode_is_unsupported():
     plan = _montages.plan_channels("bendr", [n for n in NAMES_19 if n != "CZ"])
     assert plan.status == "unsupported"
     assert "CZ" in plan.reason
+
+
+def test_bendr_matches_standard_mixed_case_names():
+    mixed = [n.capitalize() if n[-1].isdigit() else n.title() for n in NAMES_19]
+    plan = _montages.plan_channels("bendr", mixed)
+    assert plan.status == "available"
+    assert plan.model_n_chans == 20
 
 
 def test_min_max_normalize_constant_window_is_zero():
