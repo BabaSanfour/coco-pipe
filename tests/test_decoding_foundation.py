@@ -115,8 +115,8 @@ def test_validate_warns_on_sfreq_mismatch():
 
 
 def test_validate_raises_on_channel_count_mismatch():
-    adapter, _ = _make_bd_adapter("biot")
-    with pytest.raises(ValueError, match="16 channels"):
+    adapter, _ = _make_bd_adapter("labram")
+    with pytest.raises(ValueError, match="128 channels"):
         adapter.transform(np.zeros((2, 32, 400)))
 
 

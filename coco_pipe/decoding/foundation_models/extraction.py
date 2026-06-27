@@ -13,11 +13,31 @@ import numpy as np
 from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
+from . import _montages
+from ._channels import normalize_channel_names
 from ._loader import _BACKEND_MAP
-from ._prepare import normalize_channel_names, prepare_backend
+from ._prepare import prepare_backend
 
 if TYPE_CHECKING:
     from ...io import DataContainer
+
+_MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
+
+
+def _warn_if_not_microvolts(X: np.ndarray, spec) -> None:
+    """Warn once if a model expecting microvolts is fed volts-scale data."""
+    if not spec.expects_microvolts:
+        return
+    peak = float(np.max(np.abs(X))) if X.size else 0.0
+    # peak == 0 is empty/all-zero synthetic data, not a units mistake.
+    if 0.0 < peak < _MICROVOLT_MIN_PLAUSIBLE_PEAK:
+        warnings.warn(
+            f"{spec.display_name or spec.name} expects microvolt-scale EEG, but "
+            "the input peak amplitude is far below it — looks like volts. Convert "
+            "to microvolts (x1e6) before extraction; embeddings will otherwise be "
+            "unreliable.",
+            stacklevel=3,
+        )
 
 
 @dataclass(frozen=True)
@@ -106,6 +126,22 @@ def check_capability(
                 },
             )
     normalized = normalize_channel_names(ch_names or [])
+    # Fixed-montage models (biot/bendr/eegpt) use a faithful per-model channel
+    # construction; their availability is the required-electrode / name-vocab
+    # check, sharing one source of truth with the backend adapter.
+    if _montages.is_special(model_key):
+        fill_missing = bool((backend_kwargs or {}).get("fill_missing_channels", False))
+        plan = _montages.plan_channels(
+            model_key, normalized, fill_missing=fill_missing, sfreq=sfreq
+        )
+        if plan.status != "available":
+            return CapabilityResult(
+                model_key,
+                train_mode,
+                "incompatible_channels",
+                plan.reason,
+                {"normalized_channels": normalized},
+            )
     requires_adaptation = (
         spec.pretrained_n_chans is not None
         and len(normalized) != spec.pretrained_n_chans
@@ -137,6 +173,9 @@ def check_capability(
         "checkpoint_revision": spec.checkpoint_revision,
         "checkpoint_filename": spec.checkpoint_filename,
         "requires_auth": spec.requires_auth,
+        "expects_microvolts": spec.expects_microvolts,
+        "expected_passband": spec.expected_passband,
+        "expected_reference": spec.expected_reference,
     }
     if n_times is not None and sfreq is not None and spec.pretrained_n_times:
         model_n_times = round(n_times * spec.pretrained_sfreq / sfreq)
@@ -325,7 +364,7 @@ class FoundationEmbeddingExtractor:
             train_mode="frozen",
             n_outputs=None,
             sfreq=float(signal_metadata.sfreq),
-            ch_names=signal_metadata.ch_names,
+            ch_names=normalize_channel_names(signal_metadata.ch_names),
             pooling=self.pooling,
             backend_kwargs=self.backend_kwargs,
             model=self.model,
@@ -342,6 +381,15 @@ class FoundationEmbeddingExtractor:
             )
         model_input = prepared.adapt(X) if self.resample else X
         resampled = self.resample and prepared.source_sfreq != prepared.target_sfreq
+        _warn_if_not_microvolts(model_input, spec)
+        if spec.expected_passband is not None:
+            band = spec.expected_passband
+            warnings.warn(
+                f"{spec.display_name or spec.name} expects data filtered between "
+                f"{band[0]} and {band[1]} Hz. Ensure your input is bandpassed, "
+                "as extraction does not filter automatically.",
+                stacklevel=2,
+            )
         if self.cache_embeddings:
             embeddings = self._embed_windows_cached(model, model_input, prepared)
         else:
@@ -406,6 +454,13 @@ class FoundationEmbeddingExtractor:
             "within_window_pooling": self.pooling,
             "recording_pooling": self.recording_pooling,
             "normalize_embeddings": self.normalize_embeddings,
+            "expects_microvolts": bool(spec.expects_microvolts),
+            "expected_passband": (
+                list(spec.expected_passband)
+                if spec.expected_passband is not None
+                else None
+            ),
+            "expected_reference": spec.expected_reference,
             "embedding_shape": list(embeddings.shape),
             "embedding_dtype": str(embeddings.dtype),
             "window_count": len(X),

@@ -61,6 +61,7 @@ def load_data(
     tmax: float = 0.5,
     baseline: tuple[float | None, float | None] | None = None,
     drop_short_epochs: bool = True,
+    units: str | None = None,
     subject_metadata_df: Any | None = None,
     subject_key: str | None = None,
     # --- Embedding Arguments ---
@@ -248,6 +249,7 @@ def load_data(
             tmax=tmax,
             baseline=baseline,
             drop_short_epochs=drop_short_epochs,
+            units=units,
             pattern=pattern,
             dims=dims,
             coords=coords,
@@ -297,6 +299,7 @@ def load_data(
             tmax=dataset_cfg.tmax,
             baseline=dataset_cfg.baseline,
             drop_short_epochs=dataset_cfg.drop_short_epochs,
+            units=dataset_cfg.units,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
             subjects=dataset_cfg.subjects,
@@ -360,6 +363,7 @@ def _build_config(
     tmax,
     baseline,
     drop_short_epochs,
+    units,
     pattern,
     dims,
     coords,
@@ -401,6 +405,7 @@ def _build_config(
             tmax=tmax,
             baseline=baseline,
             drop_short_epochs=drop_short_epochs,
+            units=units,
         )
     if mode == "embedding":
         return EmbeddingConfig(

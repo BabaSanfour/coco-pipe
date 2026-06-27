@@ -82,6 +82,7 @@ def test_load_data_explicit_modes():
             tmin=-0.2,
             tmax=0.5,
             baseline=None,
+            units=None,
             drop_short_epochs=True,
             subject_metadata_df=None,
             subject_key=None,

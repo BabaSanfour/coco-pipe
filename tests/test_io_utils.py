@@ -198,7 +198,7 @@ def test_read_bids_entry_pre_epoched_event_id_filters(monkeypatch, tmp_path):
                 self.event_id,
             )
 
-        def get_data(self, copy=False):
+        def get_data(self, copy=False, units=None):
             return self._data
 
     mne_mock = MagicMock()
@@ -276,7 +276,7 @@ def test_read_bids_entry_pre_epoched_event_name_filters(
                 self.event_id,
             )
 
-        def get_data(self, copy=False):
+        def get_data(self, copy=False, units=None):
             return self._data
 
     mne_mock = MagicMock()
@@ -438,6 +438,9 @@ def test_read_bids_entry_evoked(monkeypatch):
             self.ch_names = ["C1", "C2"]
             self.info = {"sfreq": 100.0}
 
+        def get_data(self, units=None):
+            return self.data
+
     class MockMNE:
         def read_evokeds(self, *args, **kwargs):
             return [DummyEvoked()]
@@ -469,7 +472,7 @@ def test_read_bids_entry_raw_continuous(monkeypatch):
         def pick_types(self, **kwargs):
             pass
 
-        def get_data(self):
+        def get_data(self, units=None):
             return np.zeros((2, 10))
 
     monkeypatch.setattr(
@@ -495,7 +498,7 @@ def test_read_bids_entry_raw_fixed_epochs(monkeypatch):
         def pick_types(self, **kwargs):
             pass
 
-        def get_data(self):
+        def get_data(self, units=None):
             return np.zeros((2, 10))
 
     class DummyEpochs:
@@ -534,7 +537,7 @@ def test_read_bids_entry_raw_event_epochs(monkeypatch):
         def pick_types(self, **kwargs):
             pass
 
-        def get_data(self):
+        def get_data(self, units=None):
             return np.zeros((2, 10))
 
     class DummyEpochs:
@@ -576,7 +579,7 @@ def test_read_bids_entry_raw_no_length(monkeypatch):
         def pick_types(self, **kwargs):
             pass
 
-        def get_data(self):
+        def get_data(self, units=None):
             return np.zeros((2, 10))
 
     monkeypatch.setattr(

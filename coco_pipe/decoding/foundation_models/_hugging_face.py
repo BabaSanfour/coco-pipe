@@ -174,6 +174,14 @@ class HuggingFaceBackend(BackendBase):
         import torch.nn as nn
         from transformers import AutoModel
 
+        if token is None:
+            try:
+                from huggingface_hub import get_token
+
+                token = get_token()
+            except Exception:
+                token = None
+
         if not electrode_names:
             warnings.warn(
                 "REVE uses channel names for positional encoding, but "

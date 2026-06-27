@@ -12,6 +12,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .._cache import make_feature_cache_key
+from ._channels import normalize_channel_names
 from ._prepare import prepare_backend
 
 _FROZEN_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
@@ -58,7 +59,7 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
             train_mode="frozen",
             pooling=self.pooling,
             sfreq=self.sfreq,
-            ch_names=self.ch_names,
+            ch_names=normalize_channel_names(self.ch_names or []),
             backend_kwargs=self.backend_kwargs,
         )
         self.backend_ = self.prepared_.backend
@@ -192,7 +193,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             device=self.device,
             train_mode=train_mode,
             sfreq=self.sfreq,
-            ch_names=self.ch_names,
+            ch_names=normalize_channel_names(self.ch_names or []),
             backend_kwargs=backend_kwargs,
         )
         self.backend_ = self.prepared_.backend

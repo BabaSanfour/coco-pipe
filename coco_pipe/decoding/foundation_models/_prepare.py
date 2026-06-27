@@ -12,12 +12,7 @@ from .._specs import FoundationModelSpec, SignalMetadata
 from ..registry import get_foundation_model_spec
 from ._loader import load
 
-_CHANNEL_ALIASES = {"T3": "T7", "T4": "T8", "T5": "P7", "T6": "P8"}
-
-
-def normalize_channel_names(ch_names: Sequence[str]) -> list[str]:
-    """Normalize legacy 10-20 temporal labels."""
-    return [_CHANNEL_ALIASES.get(str(name), str(name)) for name in ch_names]
+__all__ = ["PreparedBackend", "prepare_backend"]
 
 
 @dataclass
@@ -79,14 +74,24 @@ def prepare_backend(
     backend_kwargs: Mapping[str, Any] | None = None,
     model: Any | None = None,
 ) -> PreparedBackend:
-    """Load and bind one backend using a common adaptation path."""
+    """Load and bind one backend using a common adaptation path.
+
+    ``ch_names`` is required and must already be normalized by the caller (see
+    ``normalize_channel_names``). Foundation-model embeddings are montage
+    dependent, so channel identity must be explicit — this function does not
+    fabricate generic placeholder names.
+    """
     values = np.asarray(X)
     if values.ndim != 3:
         raise ValueError("Foundation model input must be (sample, channel, time).")
+    if not ch_names:
+        raise ValueError(
+            "prepare_backend requires ch_names: foundation-model embeddings are "
+            "montage dependent, so channel names must be provided explicitly "
+            "(e.g. signal_metadata.ch_names), already normalized."
+        )
     spec = get_foundation_model_spec(model_key)
-    normalized = normalize_channel_names(
-        ch_names or [f"ch{index}" for index in range(values.shape[1])]
-    )
+    resolved_names = list(ch_names)
     source_sfreq = float(sfreq or spec.pretrained_sfreq)
     target_sfreq = float(spec.pretrained_sfreq)
     model_n_times = spec.pretrained_n_times or round(
@@ -98,7 +103,7 @@ def prepare_backend(
     kwargs.setdefault("revision", spec.checkpoint_revision)
     if spec.checkpoint_filename is not None:
         kwargs.setdefault("filename", spec.checkpoint_filename)
-    metadata = SignalMetadata(sfreq=target_sfreq, ch_names=normalized)
+    metadata = SignalMetadata(sfreq=target_sfreq, ch_names=resolved_names)
     if model is None:
         # Declared at load time — no separate binding step.
         model = load(
@@ -108,7 +113,7 @@ def prepare_backend(
             device=device,
             train_mode=train_mode,
             pooling=pooling,
-            electrode_names=normalized,
+            electrode_names=resolved_names,
             signal_metadata=metadata,
             **kwargs,
         )
@@ -122,6 +127,6 @@ def prepare_backend(
         spec=spec,
         source_sfreq=source_sfreq,
         target_sfreq=target_sfreq,
-        ch_names=normalized,
+        ch_names=resolved_names,
         model_n_times=model_n_times,
     )

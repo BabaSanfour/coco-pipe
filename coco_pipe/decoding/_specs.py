@@ -268,6 +268,10 @@ class FoundationModelSpec(EstimatorSpec):
     pretrained_n_times: int | None = None
     pretrained_ch_names: list[str] | None = None
     supports_channel_interpolation: bool = False
+    # Input-signal expectations (so callers/guardrails can match preprocessing).
+    expects_microvolts: bool = True
+    expected_passband: tuple[float, float] | None = None
+    expected_reference: str | None = None
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
     fallback_backends: tuple[str, ...] = ()
     paper_url: str | None = None
@@ -674,15 +678,18 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "biot",
         display_name="BIOT",
         hub_repo="braindecode/biot-pretrained-prest-16chs",
+        checkpoint_revision="f85518e962fa33a3d0c5e2255b38dfedf108a788",
         embedding_dim=256,
         pretrained_sfreq=200.0,
-        pretrained_n_chans=16,
-        supports_channel_interpolation=True,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         model_notes=(
-            "16-channel pretrained. "
-            "Channel interpolation available with braindecode>=1.5."
+            "Pretrained on the 16-channel TCP bipolar (double-banana) montage. "
+            "The backend constructs those 16 bipolar derivations by exact "
+            "subtraction V(A)-V(B) from a standard unipolar 10-20 montage "
+            "(never InterpolatedBIOT, whose midpoint interpolation is physically "
+            "wrong). Supported when the 16 lateral 10-20 electrodes are present; "
+            "set backend_kwargs.fill_missing_channels=True to interpolate gaps."
         ),
     ),
     "labram": _fm_spec(
@@ -723,41 +730,55 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "eegpt",
         display_name="EEGPT",
         hub_repo="braindecode/eegpt-pretrained",
-        embedding_dim=512,
+        checkpoint_revision="e41cb3ae2ce4fd9eb736862292c91f8128d15618",
+        embedding_dim=2048,
         pretrained_sfreq=250.0,
-        pretrained_n_chans=62,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
-        model_notes="Pretrained on 62-channel 250 Hz data.",
+        model_notes=(
+            "Pretrained at 250 Hz with a 62-name channel-embedding vocabulary. "
+            "EEGPT identifies channels by name (chans_id), so the backend builds "
+            "it on the input montage (chan_proj_type='none') and loads the full "
+            "name-indexed checkpoint; channels outside the 62-name vocabulary are "
+            "dropped. Time-flexible (rotary positions). Supported when at least "
+            "one input channel is in the vocabulary."
+        ),
     ),
     "signaljepa": _fm_spec(
         "signaljepa",
         display_name="SignalJEPA",
-        hub_repo="braindecode/signaljepa-pretrained",
-        embedding_dim=256,
+        hub_repo="braindecode/signal-jepa",
+        checkpoint_revision="51232ee0795a60e4378c17befe1e2ea5e94450c4",
+        embedding_dim=64,
         pretrained_sfreq=200.0,
-        pretrained_n_chans=62,
-        supports_channel_interpolation=True,
+        expected_passband=(0.5, 40.0),
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         model_notes=(
-            "62-channel pretrained. "
-            "Channel interpolation available with braindecode>=1.5."
+            "Pretrained at 200 Hz on a 62-channel layout, bandpass 0.5-40 Hz, "
+            "input rescaled to microvolts. The backend loads with "
+            "channel_embedding='pretrain_aligned': the pretrained per-channel "
+            "embeddings are indexed by name, so any montage that is a subset "
+            "of the 62-channel pretraining set is supported directly."
         ),
     ),
     "bendr": _fm_spec(
         "bendr",
         display_name="BENDR",
         hub_repo="braindecode/braindecode-bendr",
+        checkpoint_revision="191f221cd56de8203899ea9a8d0f43238724f8b6",
         embedding_dim=512,
         pretrained_sfreq=256.0,
-        pretrained_n_chans=20,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         model_notes=(
-            "20-channel 256 Hz pretrained. "
-            "API changed in braindecode>=1.5; "
-            "pin braindecode>=1.4,<1.6 if BENDR breaks."
+            "Pretrained at 256 Hz on 20 channels (19 standard 10-20 EEG + a "
+            "computed SCALE amplitude channel). The backend reorders the 19 EEG "
+            "into BENDR order, applies dn3 Deep1010 min-max normalization, and "
+            "appends the faithful SCALE = 2*(clamp(ptp/max_scale,1)-0.5) computed "
+            "from the raw microvolt window (TUEG max_scale=4860.63); never the "
+            "broken InterpolatedBENDR. Assumes input is in microvolts. Supported "
+            "when the 19 standard EEG channels are present."
         ),
     ),
 }

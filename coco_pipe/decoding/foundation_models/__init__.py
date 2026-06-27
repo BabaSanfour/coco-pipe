@@ -4,8 +4,8 @@ Foundation Models
 Pretrained EEG/MEG foundation model backends and loading utilities.
 """
 
+from ._channels import normalize_channel_names
 from ._loader import load, register_backend, unregister_backend
-from ._prepare import normalize_channel_names
 from .estimators import (
     FoundationClassifier,
     FrozenBackboneTransformer,

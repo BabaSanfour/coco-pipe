@@ -570,6 +570,7 @@ class BIDSDataset(BaseDataset):
         tmax: float = 0.5,
         baseline: tuple[float | None, float | None] | None = None,
         drop_short_epochs: bool = True,
+        units: str | None = None,
     ):
         self.root = Path(root)
         self.task = task
@@ -589,6 +590,7 @@ class BIDSDataset(BaseDataset):
         self.tmax = tmax
         self.baseline = baseline
         self.drop_short_epochs = drop_short_epochs
+        self.units = units
 
     def load(self) -> DataContainer:
         """
@@ -732,6 +734,7 @@ class BIDSDataset(BaseDataset):
                                 tmin=self.tmin,
                                 tmax=self.tmax,
                                 baseline=self.baseline,
+                                units=self.units,
                             )
                         )
 
@@ -916,5 +919,5 @@ class BIDSDataset(BaseDataset):
             ids=np.array(ids_list),
             dims=dims,
             coords=coords,
-            meta={"sfreq": sfreq, "source": str(self.root)},
+            meta={"sfreq": sfreq, "source": str(self.root), "units": self.units},
         )

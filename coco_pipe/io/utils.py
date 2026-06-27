@@ -209,6 +209,7 @@ def read_bids_entry(
     tmin: float = -0.2,
     tmax: float = 0.5,
     baseline: tuple[float | None, float | None] | None = None,
+    units: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str], float, np.ndarray | None]:
     mne_mod = _get_mne()
     if is_pre_epoched:
@@ -248,7 +249,7 @@ def read_bids_entry(
                     f"epochs with event_id={event_id}."
                 )
             epochs = filtered_epochs
-        data = epochs.get_data(copy=False)  # (N, C, T)
+        data = epochs.get_data(copy=False, units=units)  # (N, C, T)
         return (
             data,
             epochs.times,
@@ -267,7 +268,7 @@ def read_bids_entry(
 
         evokeds = mne_mod.read_evokeds(fpath, verbose=False)
         # Stack conditions (N_cond, C, T)
-        data = np.stack([e.data for e in evokeds], axis=0)
+        data = np.stack([e.get_data(units=units) for e in evokeds], axis=0)
         labels = np.arange(len(evokeds))
         return (
             data,
@@ -283,7 +284,7 @@ def read_bids_entry(
     raw.pick_types(eeg=True, meg=True, eog=False)
 
     if mode == "continuous":
-        data_raw = raw.get_data()  # (C, T)
+        data_raw = raw.get_data(units=units)  # (C, T)
         data = data_raw[np.newaxis, :, :]  # (1, C, T)
         times = raw.times
         labels = None
@@ -302,13 +303,13 @@ def read_bids_entry(
             preload=True,
             verbose=False,
         )
-        data = epochs.get_data(copy=False)
+        data = epochs.get_data(copy=False, units=units)
         times = epochs.times
         labels = epochs.events[:, -1]
     else:
         # Raw -> Fixed Length Epochs
         if window_length is None:
-            data_raw = raw.get_data()
+            data_raw = raw.get_data(units=units)
             data = data_raw[np.newaxis, :, :]
             times = raw.times
             labels = None
@@ -318,7 +319,7 @@ def read_bids_entry(
             epochs = mne_mod.make_fixed_length_epochs(
                 raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
             )
-            data = epochs.get_data(copy=False)
+            data = epochs.get_data(copy=False, units=units)
             times = epochs.times
             labels = epochs.events[:, -1]
 

@@ -86,6 +86,7 @@ class BIDSConfig(BaseDatasetConfig):
     tmax: float = 0.5
     baseline: tuple[float | None, float | None] | None = None
     drop_short_epochs: bool = True
+    units: str | None = Field(None, description="Units to load EEG data in.")
 
 
 class EmbeddingConfig(BaseDatasetConfig):

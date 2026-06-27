@@ -15,6 +15,24 @@ from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
 
 
+def test_warn_if_not_microvolts_fires_on_volts_scale():
+    from coco_pipe.decoding.foundation_models.extraction import _warn_if_not_microvolts
+
+    spec = SimpleNamespace(expects_microvolts=True, display_name="X", name="x")
+    volts = np.ones((2, 19, 100), dtype=np.float32) * 1e-4
+    with pytest.warns(UserWarning, match="microvolt"):
+        _warn_if_not_microvolts(volts, spec)
+
+
+def test_warn_if_not_microvolts_silent_on_microvolts_and_normalized(recwarn):
+    from coco_pipe.decoding.foundation_models.extraction import _warn_if_not_microvolts
+
+    spec = SimpleNamespace(expects_microvolts=True, display_name="X", name="x")
+    _warn_if_not_microvolts(np.ones((2, 19, 100), dtype=np.float32) * 30, spec)  # uV
+    _warn_if_not_microvolts(np.ones((2, 19, 100), dtype=np.float32) * 0.8, spec)  # norm
+    assert not [w for w in recwarn.list if "microvolt" in str(w.message)]
+
+
 class FakeFoundationModel:
     def bind_signal_metadata(self, metadata):
         self.metadata = metadata
@@ -174,13 +192,19 @@ def test_prepare_backend_and_adapt_paths():
     with pytest.raises(ValueError, match="must be \\(sample, channel, time\\)"):
         prepare_backend("cbramod", np.zeros((10, 10)))
 
+    # 1b. ch_names is required — no implicit generic-name fallback
+    with pytest.raises(ValueError, match="requires ch_names"):
+        prepare_backend("cbramod", np.zeros((2, 19, 200), dtype=np.float32))
+
     # 2. Resampling path in PreparedBackend.adapt()
     X = np.zeros((2, 19, 100), dtype=np.float32)
+    ch19 = [f"ch{i}" for i in range(19)]
     fake_model = FakeFoundationModel()
     prepared = prepare_backend(
         "cbramod",
         X,
         sfreq=100.0,
+        ch_names=ch19,
         model=fake_model,
     )
     assert prepared.source_sfreq == 100.0
@@ -195,6 +219,7 @@ def test_prepare_backend_and_adapt_paths():
         "cbramod",
         np.zeros((2, 19, 50), dtype=np.float32),
         sfreq=200.0,
+        ch_names=ch19,
         model=fake_model,
     )
     import dataclasses
@@ -221,7 +246,12 @@ def test_prepare_backend_fallback_binding():
         pass
 
     bare = BareModel()
-    prepared = prepare_backend("cbramod", np.zeros((2, 19, 200)), model=bare)
+    prepared = prepare_backend(
+        "cbramod",
+        np.zeros((2, 19, 200)),
+        ch_names=[f"ch{i}" for i in range(19)],
+        model=bare,
+    )
     assert hasattr(prepared.backend, "signal_metadata_")
 
 

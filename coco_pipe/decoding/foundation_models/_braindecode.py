@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
+from . import _montages
 from ._base import BackendBase
 
 if TYPE_CHECKING:
@@ -36,6 +37,10 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "luna": ("LUNA", "braindecode.models"),
 }
 
+_INTERPOLATED_CLASS: dict[str, str] = {
+    "labram": "InterpolatedLaBraM",
+}
+
 
 class BrainDecodeBackend(BackendBase):
     """Backend that delegates to braindecode.models.<Model>.from_pretrained().
@@ -50,6 +55,8 @@ class BrainDecodeBackend(BackendBase):
     """
 
     _uses_interpolation: bool = False
+    _channel_adapter = None
+    _channel_plan = None
 
     def __init__(
         self,
@@ -175,20 +182,53 @@ class BrainDecodeBackend(BackendBase):
         revision = kw.pop("revision", metadata.checkpoint_revision)
         filename = kw.pop("filename", metadata.checkpoint_filename)
         interpolate_channels = bool(kw.pop("interpolate_channels", False))
-        if model_key == "labram" and interpolate_channels:
-            for candidate in ("InterpolatedLaBraM", "InterpolatedLabram"):
-                if hasattr(models_module, candidate):
-                    class_name = candidate
-                    break
-            else:
+        uses_interpolation = interpolate_channels and model_key in _INTERPOLATED_CLASS
+        if (
+            interpolate_channels
+            and not uses_interpolation
+            and not _montages.is_special(model_key)
+        ):
+            raise ValueError(
+                f"interpolate_channels=True is not supported for '{model_key}'. "
+                f"Channel interpolation is available for: "
+                f"{sorted(_INTERPOLATED_CLASS)}."
+            )
+
+        # Faithful fixed-montage construction (BIOT bipolar derivation, BENDR
+        # reorder + computed SCALE, EEGPT name-indexed subset). The plan is the
+        # shared source of truth with the capability gate (see extraction.py);
+        # an unservable montage raises here and the extraction job records it.
+        channel_plan = None
+        if _montages.is_special(model_key):
+            fill_missing = bool(kw.pop("fill_missing_channels", False))
+            channel_plan = _montages.plan_channels(
+                model_key,
+                electrode_names or [],
+                fill_missing=fill_missing,
+                sfreq=sfreq,
+            )
+            if channel_plan.status != "available":
+                raise ValueError(
+                    f"{model_key} cannot be served on this montage: "
+                    f"{channel_plan.reason}"
+                )
+        if uses_interpolation:
+            shipped = _INTERPOLATED_CLASS[model_key]
+            if not hasattr(models_module, shipped):
                 raise ImportError(
-                    "interpolate_channels=True requires InterpolatedLaBraM "
+                    f"interpolate_channels=True requires {shipped} "
                     "(braindecode>=1.5), which is not available in the "
                     "installed braindecode version."
                 )
-        model_cls = getattr(models_module, class_name)
+            model_cls = getattr(models_module, shipped)
+        else:
+            model_cls = getattr(models_module, class_name)
 
-        if electrode_names and model_key in {"cbramod", "labram", "luna"}:
+        # Montage-dependent models need ``chs_info``: LaBraM/SignalJEPA resolve
+        # channel identity from it (SignalJEPA indexes its pretrained per-channel
+        # embeddings by name), and the LaBraM interpolation wrapper builds its
+        # interpolation matrix from it.
+        if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
             import mne
 
             kw.setdefault("n_chans", len(electrode_names))
@@ -217,6 +257,22 @@ class BrainDecodeBackend(BackendBase):
             # LaBraM adjusts it dynamically during forward, but overriding
             # n_times while loading makes the state dict shape incompatible.
             kw.pop("n_times", None)
+        elif model_key == "signaljepa":
+            # Load the full 62-row pretrained channel-embedding matrix and index
+            # the rows matching the input ``chs_info`` by name (braindecode#991),
+            # so any montage that is a subset of the pretraining set works.
+            kw.setdefault("channel_embedding", "pretrain_aligned")
+        elif model_key == "biot":
+            # Plain BIOT on the 16-channel TCP bipolar montage built by exact
+            # subtraction (see channel_plan.adapter); never InterpolatedBIOT.
+            kw["chs_info"] = channel_plan.target_chs_info
+            kw["n_chans"] = channel_plan.model_n_chans
+        elif model_key == "bendr":
+            # Plain BENDR on 20 channels (19 reordered EEG + computed SCALE);
+            # no chs_info → skip BENDR's exact-name check (the adapter already
+            # reorders into BENDR_CHANNEL_ORDER).
+            kw["n_chans"] = channel_plan.model_n_chans
+            kw.pop("chs_info", None)
 
         load_kwargs = dict(kw)
         if revision is not None:
@@ -224,11 +280,28 @@ class BrainDecodeBackend(BackendBase):
         if filename is not None:
             load_kwargs["filename"] = filename
         effective_outputs = (
-            1 if model_key in {"cbramod", "luna"} and n_outputs is None else n_outputs
+            1
+            if model_key in {"cbramod", "luna", "eegpt"} and n_outputs is None
+            else n_outputs
         )
         if effective_outputs is not None:
             load_kwargs["n_outputs"] = effective_outputs
-        model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        if model_key == "eegpt":
+            # EEGPT's checkpoint stores a 62-channel layout; from_pretrained
+            # cannot rebuild it on a subset montage. Build the model on the
+            # input channels (chan_proj_type="none") and reconcile the
+            # name-indexed state dict (see _load_eegpt).
+            model = cls._load_eegpt(
+                metadata,
+                channel_plan,
+                n_times=n_times,
+                n_outputs=effective_outputs,
+                revision=revision,
+                filename=filename,
+                device=device,
+            )
+        else:
+            model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         model = model.to(device)
 
         if train_mode == "frozen":
@@ -248,11 +321,16 @@ class BrainDecodeBackend(BackendBase):
             model = get_peft_model(model, lora_cfg)
         # full: no changes — all params trainable
 
+        probe_n_chans = (
+            channel_plan.model_n_chans
+            if channel_plan is not None
+            else (len(electrode_names) if electrode_names else None)
+        )
         feat_dim = cls._probe_feat_dim(
             model,
             metadata,
             device,
-            n_chans=len(electrode_names) if electrode_names else None,
+            n_chans=probe_n_chans,
             n_times=n_times,
         )
 
@@ -284,7 +362,84 @@ class BrainDecodeBackend(BackendBase):
         backend._uses_interpolation = model_key == "labram" and interpolate_channels
         backend._checkpoint_revision = revision
         backend._checkpoint_filename = filename
+        backend._channel_adapter = (
+            channel_plan.adapter if channel_plan is not None else None
+        )
+        backend._channel_plan = channel_plan
         return backend
+
+    @classmethod
+    def _load_eegpt(
+        cls,
+        metadata: FoundationModelSpec,
+        channel_plan,
+        *,
+        n_times: int,
+        n_outputs: int | None,
+        revision: str | None,
+        filename: str | None,
+        device: str,
+    ):
+        """Build EEGPT on the input montage and load the name-indexed checkpoint.
+
+        EEGPT identifies channels by name through a learnable channel-embedding
+        table indexed by ``chans_id``. The published checkpoint stores a
+        62-channel layout, so ``from_pretrained`` cannot rebuild it on a subset
+        montage. Instead we build the model with ``chan_proj_type="none"`` on the
+        kept channels (``chans_id`` recomputed from their names) and load every
+        pretrained weight, dropping only the derived ``chans_id`` buffer and the
+        unused classification head.
+        """
+        import mne
+        import torch
+        from braindecode.models import EEGPT
+        from huggingface_hub import hf_hub_download
+
+        names = channel_plan.model_ch_names
+        info = mne.create_info(names, sfreq=metadata.pretrained_sfreq, ch_types="eeg")
+        # Positions are unused by EEGPT (channels are identified by name via
+        # chans_id); resolve them best-effort and stay quiet on misses.
+        info.set_montage("standard_1020", match_case=False, on_missing="ignore")
+        model = EEGPT(
+            n_chans=len(names),
+            n_times=n_times,
+            chs_info=info["chs"],
+            n_outputs=n_outputs if n_outputs is not None else 1,
+            chan_proj_type="none",
+        )
+        weights = filename or "model.safetensors"
+        path = hf_hub_download(metadata.hub_repo, weights, revision=revision)
+        if path.endswith(".safetensors"):
+            from safetensors.torch import load_file
+
+            state = load_file(path)
+        else:
+            state = torch.load(path, map_location="cpu")
+        target = model.state_dict()
+        reconciled = {}
+        for key, value in state.items():
+            if key == "chans_id":
+                continue  # derived buffer, recomputed from chs_info
+            if (
+                key in target
+                and hasattr(value, "shape")
+                and value.shape != target[key].shape
+            ):
+                continue  # head/probe with a different n_outputs — left fresh
+            reconciled[key] = value
+        result = model.load_state_dict(reconciled, strict=False)
+        backbone_missing = [
+            k
+            for k in result.missing_keys
+            if k != "chans_id" and not k.startswith("final_layer")
+        ]
+        if backbone_missing or result.unexpected_keys:
+            raise RuntimeError(
+                "EEGPT checkpoint reconciliation left weights unloaded "
+                f"(missing={backbone_missing}, unexpected={result.unexpected_keys}); "
+                "embeddings would be partly random."
+            )
+        return model
 
     @classmethod
     def _probe_feat_dim(
@@ -372,6 +527,7 @@ class BrainDecodeBackend(BackendBase):
             Backbone feature vectors.
         """
         self._validate(X)
+        X = self._construct_channels(X)
         with self._no_grad():
             feats = self._forward_features(
                 self._model,
@@ -379,6 +535,17 @@ class BrainDecodeBackend(BackendBase):
                 self._metadata.name,
             )
         return self._from_tensor(feats)
+
+    def _construct_channels(self, X: np.ndarray) -> np.ndarray:
+        """Apply the faithful fixed-montage channel construction, if any.
+
+        Maps the validated source montage ``(n, n_source, t)`` to the model's
+        native layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT
+        name subset). A no-op when the model consumes channels as-is.
+        """
+        if self._channel_adapter is None:
+            return X
+        return self._channel_adapter(X)
 
     def checkpoint_components(self) -> dict:
         """BrainDecode keeps one model (LoRA-wrapped when applicable)."""
@@ -388,6 +555,18 @@ class BrainDecodeBackend(BackendBase):
         """Describe direct and interpolated channels from the real layer."""
         meta = self.signal_metadata_
         source = list(meta.ch_names) if meta is not None else []
+        if self._channel_plan is not None:
+            plan = self._channel_plan
+            provenance = dict(plan.provenance)
+            return {
+                "source_channels": source,
+                "target_channels": list(plan.model_ch_names or []),
+                "zero_filled_channels": [],
+                **provenance,
+                # ``filled_channels`` (provenance) are interpolated unipolar
+                # electrodes; surface them under the legacy key too.
+                "interpolated_channels": list(provenance.get("filled_channels", [])),
+            }
         if not self._uses_interpolation:
             return {
                 "source_channels": source,
@@ -432,6 +611,7 @@ class BrainDecodeBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        X = self._construct_channels(X)
         with self._no_grad():
             out = self._model(self._to_tensor(X))
             logits = out["logits"] if isinstance(out, dict) else out
