@@ -4,12 +4,15 @@ from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from coco_pipe.decoding.foundation_models import FoundationEmbeddingResult
 from coco_pipe.io.embeddings import (
     _json_value,
+    combined_embedding_table_path,
     discover_embedding_derivatives,
+    load_combined_embedding_table,
     load_embedding_derivatives,
     save_embedding_derivative,
     validate_embedding_derivative,
@@ -52,9 +55,9 @@ def test_embedding_derivative_round_trip(tmp_path):
     assert recording.X.shape == (1, 4)
     assert recording.coords["patient_group_id"].tolist() == ["p01"]
 
-    windows = load_embedding_derivatives(tmp_path, representation="window")
-    assert windows.X.shape == (3, 4)
-    assert windows.coords["window_index"].tolist() == [0, 1, 2]
+    epochs = load_embedding_derivatives(tmp_path, representation="epoch")
+    assert epochs.X.shape == (3, 4)
+    assert epochs.coords["window_index"].tolist() == [0, 1, 2]
 
 
 def test_loader_requires_one_model_space(tmp_path):
@@ -318,10 +321,14 @@ def test_load_embeddings_window(tmp_path):
     )
     sidecar1.write_text('{"model_key": "M1"}')
 
-    # Load directory
-    ds = load_embedding_derivatives(tmp_path, representation="window")
+    # Canonical "epoch" representation (one row per epoch).
+    ds = load_embedding_derivatives(tmp_path, representation="epoch")
     assert ds.shape == (2, 2)
-    assert ds.meta["representation"] == "window"
+    assert ds.meta["representation"] == "epoch"
+
+    # The old "window" name is no longer accepted.
+    with pytest.raises(ValueError, match=r"epoch.*recording"):
+        load_embedding_derivatives(tmp_path, representation="window")
 
 
 def test_load_embeddings_empty_dir(tmp_path):
@@ -341,8 +348,52 @@ def test_load_embedding_derivatives_aggregate_by(tmp_path):
     path = tmp_path / "sub-01" / "eeg" / "sub-01_desc-x_embedding.npz"
     save_embedding_derivative(result, path)
 
-    # Three windows, all subject "01" -> aggregating by subject yields one row.
+    # Three epochs, all subject "01" -> aggregating by subject yields one row.
     agg = load_embedding_derivatives(
-        tmp_path, representation="window", aggregate_by="subject"
+        tmp_path, representation="epoch", aggregate_by="subject"
     )
     assert agg.X.shape[0] == 1
+
+
+def _write_combined_table(tmp_path, model_key, condition, representation):
+    combined_dir = tmp_path / "combined"
+    combined_dir.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame(
+        {
+            "subject": ["sub-0001", "sub-0001", "sub-0002"],
+            "recording_id": ["sub-0001_run-01", "sub-0001_run-02", "sub-0002_run-01"],
+            "condition": [condition] * 3,
+            "model_key": [model_key] * 3,
+            "embedding_0000": [0.1, 0.2, 0.3],
+            "embedding_0001": [1.0, 1.1, 1.2],
+        }
+    )
+    path = combined_embedding_table_path(tmp_path, model_key, condition, representation)
+    frame.to_parquet(path, index=False)
+    return path
+
+
+def test_load_combined_embedding_table_roundtrip(tmp_path):
+    _write_combined_table(tmp_path, "cbramod", "EO_baseline", "recording")
+    container = load_combined_embedding_table(
+        tmp_path, "cbramod", "EO_baseline", "recording"
+    )
+    assert container.dims == ("obs", "feature")
+    assert container.X.shape == (3, 2)
+    assert list(container.coords["feature"]) == ["embedding_0000", "embedding_0001"]
+    assert "subject" in container.coords
+    assert container.meta["model_key"] == "cbramod"
+    assert container.meta["source"] == "combined_table"
+
+
+def test_load_combined_embedding_table_aggregate_by_subject(tmp_path):
+    _write_combined_table(tmp_path, "cbramod", "EO_baseline", "recording")
+    agg = load_combined_embedding_table(
+        tmp_path, "cbramod", "EO_baseline", "recording", aggregate_by="subject"
+    )
+    assert agg.X.shape[0] == 2  # two unique subjects
+
+
+def test_load_combined_embedding_table_missing_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_combined_embedding_table(tmp_path, "cbramod", "EO_baseline", "epoch")

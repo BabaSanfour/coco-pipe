@@ -22,7 +22,9 @@ from ._utils import _apply_layout
 __all__ = [
     "plot_bar",
     "plot_distribution_groups",
+    "plot_grouped_bar",
     "plot_heatmap",
+    "plot_scatter",
 ]
 
 
@@ -173,6 +175,225 @@ def plot_bar(
         yaxis_title=yaxis_title,
         height=height,
     )
+    return fig
+
+
+def _resolve_group_colors(
+    keys: Sequence[Any],
+    color_map: Mapping[Any, str] | None,
+) -> list[str]:
+    """Assign a color per group key, honoring ``color_map`` then the palette."""
+    colors: list[str] = []
+    for i, key in enumerate(keys):
+        if color_map is not None and key in color_map:
+            colors.append(color_map[key])
+        else:
+            colors.append(_COLORBLIND_COLORS[i % len(_COLORBLIND_COLORS)])
+    return colors
+
+
+def plot_scatter(
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    color: str | None = None,
+    text: str | None = None,
+    hovertemplate: str | None = None,
+    mode: str = "markers",
+    sort_x: bool | None = None,
+    color_map: Mapping[Any, str] | None = None,
+    marker_size: int = 8,
+    line_width: float = 2.0,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    legend_title: str | None = None,
+    height: int | None = None,
+) -> go.Figure:
+    """Interactive 2D scatter / line-scatter, optionally split into colored groups.
+
+    Parameters
+    ----------
+    data
+        Source DataFrame.
+    x, y
+        Column names for the x and y axes.
+    color
+        Optional column name. When given, one trace is drawn per unique value
+        (each gets a legend entry and palette color); otherwise a single trace
+        is drawn.
+    text
+        Optional column name supplying per-point hover/label text.
+    hovertemplate
+        Optional Plotly ``hovertemplate`` applied to every trace. ``%{text}``
+        refers to the ``text`` column.
+    mode
+        Plotly scatter mode, e.g. ``"markers"`` (default), ``"lines+markers"``,
+        or ``"lines"``.
+    sort_x
+        Whether to sort each trace by ``x`` before plotting. ``None`` (default)
+        auto-enables sorting when ``mode`` contains ``"lines"`` so line segments
+        connect in order.
+    color_map
+        Optional ``{group_value: color}`` overriding palette colors for groups.
+    marker_size
+        Marker size in pixels.
+    line_width
+        Line width for line modes.
+    title, xaxis_title, yaxis_title
+        Layout labels. Axis titles default to the ``x`` / ``y`` column names.
+    legend_title
+        Optional legend title (typically the ``color`` column name).
+    height
+        Figure height in pixels.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive scatter figure.
+
+    See Also
+    --------
+    plot_bar : Ranked bar chart.
+    plot_grouped_bar : Grouped bar chart from a long DataFrame.
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("`data` must be a pandas DataFrame.")
+    for col in (x, y, color, text):
+        if col is not None and col not in data.columns:
+            raise KeyError(f"Column {col!r} not found in `data`.")
+
+    if sort_x is None:
+        sort_x = "lines" in mode
+
+    if color is None:
+        groups: list[tuple[Any, pd.DataFrame]] = [(None, data)]
+    else:
+        groups = list(data.groupby(color, dropna=False, sort=False))
+
+    colors = _resolve_group_colors([key for key, _ in groups], color_map)
+    is_line = "lines" in mode
+
+    fig = go.Figure()
+    for (key, group), trace_color in zip(groups, colors, strict=False):
+        if sort_x:
+            group = group.sort_values(x)
+        trace_kwargs: dict[str, Any] = {
+            "x": group[x].tolist(),
+            "y": group[y].tolist(),
+            "mode": mode,
+            "marker": {"color": trace_color, "size": marker_size},
+            "showlegend": color is not None,
+        }
+        if color is not None:
+            trace_kwargs["name"] = str(key)
+        if is_line:
+            trace_kwargs["line"] = {"color": trace_color, "width": line_width}
+        if text is not None:
+            trace_kwargs["text"] = [str(t) for t in group[text].tolist()]
+        if hovertemplate is not None:
+            trace_kwargs["hovertemplate"] = hovertemplate
+        fig.add_trace(go.Scatter(**trace_kwargs))
+
+    _apply_layout(
+        fig,
+        title=title,
+        xaxis_title=xaxis_title if xaxis_title is not None else x,
+        yaxis_title=yaxis_title if yaxis_title is not None else y,
+        height=height,
+    )
+    if legend_title is not None:
+        fig.update_layout(legend_title_text=legend_title)
+    return fig
+
+
+def plot_grouped_bar(
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    group: str,
+    text: str | None = None,
+    text_position: str = "outside",
+    color_map: Mapping[Any, str] | None = None,
+    x_order: Sequence[Any] | None = None,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    legend_title: str | None = None,
+    height: int | None = None,
+) -> go.Figure:
+    """Interactive grouped bar chart (``barmode="group"``) from a long DataFrame.
+
+    Parameters
+    ----------
+    data
+        Long-format DataFrame: one row per ``(x, group)`` bar.
+    x
+        Column name for the category axis (shared across groups).
+    y
+        Column name for the bar values.
+    group
+        Column name defining the bar groups; one trace (legend entry) is drawn
+        per unique value.
+    text
+        Optional column name supplying per-bar text labels.
+    text_position
+        Plotly ``textposition`` for bar labels (default ``"outside"``).
+    color_map
+        Optional ``{group_value: color}`` overriding palette colors.
+    x_order
+        Optional explicit ordering for the category axis.
+    title, xaxis_title, yaxis_title
+        Layout labels. Axis titles default to the ``x`` / ``y`` column names.
+    legend_title
+        Optional legend title (typically the ``group`` column name).
+    height
+        Figure height in pixels.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive grouped bar chart.
+
+    See Also
+    --------
+    plot_bar : Single-series ranked bar chart.
+    plot_scatter : Scatter / line-scatter from a long DataFrame.
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("`data` must be a pandas DataFrame.")
+    for col in (x, y, group, text):
+        if col is not None and col not in data.columns:
+            raise KeyError(f"Column {col!r} not found in `data`.")
+
+    groups = list(data.groupby(group, dropna=False, sort=False))
+    colors = _resolve_group_colors([key for key, _ in groups], color_map)
+
+    fig = go.Figure()
+    for (key, sub), trace_color in zip(groups, colors, strict=False):
+        bar_kwargs: dict[str, Any] = {
+            "name": str(key),
+            "x": sub[x].tolist(),
+            "y": sub[y].tolist(),
+            "marker": {"color": trace_color},
+        }
+        if text is not None:
+            bar_kwargs["text"] = [str(t) for t in sub[text].tolist()]
+            bar_kwargs["textposition"] = text_position
+        fig.add_trace(go.Bar(**bar_kwargs))
+
+    _apply_layout(
+        fig,
+        title=title,
+        xaxis_title=xaxis_title if xaxis_title is not None else x,
+        yaxis_title=yaxis_title if yaxis_title is not None else y,
+        height=height,
+        barmode="group",
+    )
+    if x_order is not None:
+        fig.update_xaxes(categoryorder="array", categoryarray=[str(v) for v in x_order])
+    if legend_title is not None:
+        fig.update_layout(legend_title_text=legend_title)
     return fig
 
 

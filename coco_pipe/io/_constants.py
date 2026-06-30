@@ -25,6 +25,28 @@ QualityInput = pd.DataFrame | np.ndarray
 STATUS_ORDER: dict[str, int] = {"pass": 0, "warn": 1, "fail": 2}
 """Ordinal ranking used by ``resolve_qc_status`` to pick the worst level."""
 
+AGGREGATION_LEVELS: tuple[str, ...] = ("epoch", "recording", "subject")
+"""Canonical observation-granularity ladder, coarsening left → right.
+
+- ``epoch``     — one row per analysis window/epoch (finest).
+- ``recording`` — one row per recording = ``(subject, session, run)``.
+- ``subject``   — one row per subject, pooled across that subject's recordings.
+
+The single shared vocabulary for descriptor tables, foundation-embedding
+representations, and raw-EEG aggregation, so every pipeline names the same
+granularity the same way.
+"""
+
+
+EMBEDDING_COMBINED_TABLE_LABELS: dict[str, str] = {
+    "epoch": "epoch_embeddings",
+    "recording": "recording_embeddings",
+    "subject": "subject_embeddings",
+}
+"""Maps a ``representation`` granularity to the combined embedding table filename.
+"""
+
+
 GROUP_BY_COLUMN: dict[str, str] = {
     "family": "family",
     "subfamily": "subfamily",

@@ -14,7 +14,9 @@ from . import base, decoding, dim_reduction
 from .base import (
     plot_bar,
     plot_distribution_groups,
+    plot_grouped_bar,
     plot_heatmap,
+    plot_scatter,
     plot_timecourses,
 )
 from .decoding import (
@@ -83,6 +85,7 @@ __all__ = [
     "plot_fit_diagnostics",
     "plot_fold_score_dispersion",
     "plot_group_summary",
+    "plot_grouped_bar",
     "plot_heatmap",
     "plot_loss_history",
     "plot_metrics",
@@ -96,6 +99,7 @@ __all__ = [
     "plot_reduction_feature_importance",
     "plot_regression_diagnostics",
     "plot_roc_curve",
+    "plot_scatter",
     "plot_scree",
     "plot_search_results",
     "plot_shepard_diagram",

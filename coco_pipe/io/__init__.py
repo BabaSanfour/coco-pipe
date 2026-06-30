@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from ._constants import (
+    AGGREGATION_LEVELS,
     ANALYSIS_MODES,
     DESCRIPTOR_ONLY_ANALYSIS_MODES,
 )
@@ -22,8 +23,10 @@ from .config import (
     TabularConfig,
 )
 from .embeddings import (
+    combined_embedding_table_path,
     discover_embedding_derivatives,
     embedding_sidecar_path,
+    load_combined_embedding_table,
     load_embedding_derivatives,
     save_embedding_derivative,
     validate_embedding_derivative,
@@ -62,6 +65,7 @@ if TYPE_CHECKING:
     from .dataset import TabularDataset as TabularDataset
 
 __all__ = [
+    "AGGREGATION_LEVELS",
     "ANALYSIS_MODES",
     "DESCRIPTOR_ONLY_ANALYSIS_MODES",
     "BIDSConfig",
@@ -76,6 +80,7 @@ __all__ = [
     "SpatialWhitener",
     "SubjectDropRecord",
     "TabularConfig",
+    "combined_embedding_table_path",
     "compute_constant_feature_summary",
     "compute_feature_missingness",
     "compute_row_outlier_scores",
@@ -88,6 +93,7 @@ __all__ = [
     "fingerprint_container",
     "group_labels",
     "iter_analysis_units",
+    "load_combined_embedding_table",
     "load_data",
     "load_embedding_derivatives",
     "load_object",

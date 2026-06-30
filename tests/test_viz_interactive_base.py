@@ -6,7 +6,9 @@ import pytest
 from coco_pipe.viz.interactive.base import (
     plot_bar,
     plot_distribution_groups,
+    plot_grouped_bar,
     plot_heatmap,
+    plot_scatter,
     plot_timecourses,
 )
 
@@ -27,6 +29,76 @@ def test_plot_bar():
         top_n=2,
     )
     assert isinstance(fig_h, go.Figure)
+
+
+def test_plot_scatter():
+    df = pd.DataFrame(
+        {
+            "n": [1, 2, 3, 1, 2, 3],
+            "score": [0.1, 0.3, 0.5, 0.2, 0.4, 0.6],
+            "grp": ["a", "a", "a", "b", "b", "b"],
+            "label": ["p1", "p2", "p3", "q1", "q2", "q3"],
+        }
+    )
+    # Single trace, no grouping
+    fig = plot_scatter(df, x="n", y="score")
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 1
+    assert fig.data[0].showlegend is False
+
+    # Grouped line-scatter with text + hovertemplate + legend title
+    fig_g = plot_scatter(
+        df,
+        x="n",
+        y="score",
+        color="grp",
+        text="label",
+        hovertemplate="%{text}<extra></extra>",
+        mode="lines+markers",
+        color_map={"a": "red"},
+        legend_title="Group",
+        title="t",
+    )
+    assert isinstance(fig_g, go.Figure)
+    assert len(fig_g.data) == 2
+    # color_map override honored for group 'a'
+    assert fig_g.data[0].marker.color == "red"
+
+
+def test_plot_grouped_bar():
+    df = pd.DataFrame(
+        {
+            "condition": ["c1", "c2", "c1", "c2"],
+            "score": [0.5, 0.7, 0.6, 0.8],
+            "reducer": ["pca", "pca", "umap", "umap"],
+            "ntext": ["n=2", "n=3", "n=4", "n=5"],
+        }
+    )
+    fig = plot_grouped_bar(
+        df,
+        x="condition",
+        y="score",
+        group="reducer",
+        text="ntext",
+        x_order=["c2", "c1"],
+        legend_title="Reducer",
+        title="t",
+    )
+    assert isinstance(fig, go.Figure)
+    assert len(fig.data) == 2
+    assert fig.layout.barmode == "group"
+
+
+def test_plot_scatter_grouped_bar_errors():
+    df = pd.DataFrame({"a": [1], "b": [2]})
+    with pytest.raises(TypeError):
+        plot_scatter([[1, 2]], x="a", y="b")  # not a DataFrame
+    with pytest.raises(KeyError):
+        plot_scatter(df, x="a", y="missing")
+    with pytest.raises(TypeError):
+        plot_grouped_bar([[1, 2]], x="a", y="b", group="g")
+    with pytest.raises(KeyError):
+        plot_grouped_bar(df, x="a", y="b", group="missing")
 
 
 def test_plot_distribution_groups():

@@ -35,6 +35,7 @@ import logging
 import shutil
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -74,11 +75,35 @@ __all__ = [
     "run_eval",
     "run_fit",
     "run_fit_group",
+    "supports_nested_components",
     "valid_component_sweep",
     "valid_n_components_for_container",
 ]
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def supports_nested_components(method: str) -> bool:
+    """Whether *method* can synthesise its whole sweep from one max-n fit.
+
+    Nested reducers (PCA family, SVD) decompose once at the largest
+    ``n_components`` and slice the smaller sweep values out of that single fit;
+    everything else (UMAP, t-SNE, PHATE, Isomap, ICA, …) must fit independently
+    per dimension. Callers use this both to fit efficiently
+    (:func:`run_fit_group`) and to decide the parallel grain: a non-nested
+    reducer's sweep is a set of independent fits that can run as separate tasks
+    rather than one serial group. Cached because instantiating ``DimReduction``
+    only to read ``capabilities`` is wasteful to repeat per request.
+    """
+    try:
+        return bool(
+            DimReduction(method=method, n_components=2).capabilities.get(
+                "nested_components", False
+            )
+        )
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -271,14 +296,7 @@ def run_fit_group(
     method = str(requests[0]["fit_payload"]["reducer"])
     # A nested reducer (PCA family, SVD) lets the sweep be synthesised from one
     # max-n fit; anything else (ICA, UMAP, t-SNE, …) must fit per dimension.
-    try:
-        nested = bool(
-            DimReduction(method=method, n_components=2).capabilities.get(
-                "nested_components", False
-            )
-        )
-    except Exception:
-        nested = False
+    nested = supports_nested_components(method)
     if len(requests) == 1 or not nested:
         return [run_fit(**request, errors=errors) for request in requests]
 

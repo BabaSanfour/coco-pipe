@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ._constants import REQUIRED_ARRAYS
+from ._constants import EMBEDDING_COMBINED_TABLE_LABELS, REQUIRED_ARRAYS
 from .structures import DataContainer
 
 
@@ -161,7 +161,15 @@ def load_embedding_derivatives(
     aggregate_by: str | None = None,
     model_key: str | None = None,
 ) -> DataContainer:
-    """Load embedding artifacts into a 2-D DataContainer."""
+    """Load embedding artifacts into a 2-D DataContainer.
+
+    ``representation`` is ``"epoch"`` (one row per epoch, read from the on-disk
+    ``window_embeddings`` array) or ``"recording"`` (the pooled
+    ``recording_embedding``). A coarser ``"subject"`` level is produced by the
+    merge step, not here (it pools across recordings).
+    """
+    if representation not in {"epoch", "recording"}:
+        raise ValueError("representation must be 'epoch' or 'recording'.")
     if isinstance(paths, (str, Path)):
         candidate = Path(paths)
         resolved = (
@@ -171,11 +179,10 @@ def load_embedding_derivatives(
         )
     else:
         resolved = [Path(path) for path in paths]
-    if representation not in {"recording", "window"}:
-        raise ValueError("representation must be 'recording' or 'window'.")
     if not resolved:
         raise FileNotFoundError("No embedding derivatives were found.")
 
+    is_recording = representation == "recording"
     rows: list[np.ndarray] = []
     ids: list[str] = []
     metadata_rows: list[dict[str, Any]] = []
@@ -185,7 +192,7 @@ def load_embedding_derivatives(
         with np.load(path, allow_pickle=False) as payload:
             values = (
                 np.asarray(payload["recording_embedding"])[None, :]
-                if representation == "recording"
+                if is_recording
                 else np.asarray(payload["window_embeddings"])
             )
             if embedding_dim is None:
@@ -197,12 +204,12 @@ def load_embedding_derivatives(
                 )
             for idx, row in enumerate(values):
                 rows.append(row)
-                suffix = "" if representation == "recording" else f"_window-{idx:04d}"
+                suffix = "" if is_recording else f"_epoch-{idx:04d}"
                 ids.append(_observation_id(metadata, path, suffix))
                 obs_meta = dict(metadata)
                 obs_meta["artifact_path"] = str(path)
                 obs_meta["representation"] = representation
-                if representation == "window":
+                if not is_recording:
                     obs_meta.update(
                         {
                             "window_index": int(payload["window_index"][idx]),
@@ -248,6 +255,96 @@ def load_embedding_derivatives(
             "representation": representation,
             "model_key": next(iter(model_keys), None),
             "artifacts": [str(path) for path in resolved],
+        },
+    )
+    if aggregate_by is not None:
+        if aggregate_by not in container.coords:
+            raise KeyError(f"aggregate_by coordinate not found: {aggregate_by}")
+        container = container.aggregate(by=aggregate_by, stats="mean")
+    return container
+
+
+def combined_embedding_table_path(
+    derivative_root: str | Path,
+    model_key: str,
+    condition: str,
+    representation: str = "recording",
+) -> Path:
+    """Path to the merged per-(model, condition) embedding table.
+
+    Mirrors the ``combined/<model>_<condition>_<representation>_embeddings.parquet``
+    layout written by the merge step. ``representation`` is one of
+    :data:`~coco_pipe.io.AGGREGATION_LEVELS`.
+    """
+    if representation not in EMBEDDING_COMBINED_TABLE_LABELS:
+        raise ValueError(
+            f"representation must be one of {sorted(EMBEDDING_COMBINED_TABLE_LABELS)}."
+        )
+    label = EMBEDDING_COMBINED_TABLE_LABELS[representation]
+    return (
+        Path(derivative_root) / "combined" / f"{model_key}_{condition}_{label}.parquet"
+    )
+
+
+def load_combined_embedding_table(
+    derivative_root: str | Path,
+    model_key: str,
+    condition: str,
+    representation: str = "recording",
+    aggregate_by: str | None = None,
+) -> DataContainer:
+    """Load one merged per-(model, condition) embedding table as a 2-D container.
+
+    This reads the single parquet the merge step already materialized instead of
+    rescanning every per-recording NPZ and filtering — one table read per
+    condition, the same access pattern descriptors use. ``representation`` is one
+    of :data:`~coco_pipe.io.AGGREGATION_LEVELS`. The table carries id columns
+    (subject/session/run/condition/recording_id/model_key[/window_index]) plus
+    ``embedding_*`` feature columns; the former become coords, the latter ``X``.
+    """
+    path = combined_embedding_table_path(
+        derivative_root, model_key, condition, representation
+    )
+    if not path.exists():
+        raise FileNotFoundError(f"Combined embedding table not found: {path}")
+    frame = pd.read_parquet(path)
+    feature_cols = [c for c in frame.columns if str(c).startswith("embedding_")]
+    if not feature_cols:
+        raise ValueError(f"No embedding_* feature columns in {path}.")
+    id_cols = [c for c in frame.columns if c not in feature_cols]
+
+    X = frame[feature_cols].to_numpy(dtype=float)
+    coords: dict[str, Any] = {
+        "feature": np.asarray([str(c) for c in feature_cols], dtype=object)
+    }
+    for column in id_cols:
+        coords[column] = frame[column].to_numpy(dtype=object)
+
+    if "recording_id" in frame.columns:
+        base = frame["recording_id"].astype(str)
+        if representation == "epoch" and "window_index" in frame.columns:
+            ids = (
+                base
+                + "_epoch-"
+                + frame["window_index"].astype(int).map("{:04d}".format)
+            ).to_numpy(dtype=object)
+        else:
+            ids = base.to_numpy(dtype=object)
+    else:
+        ids = np.asarray([f"obs-{idx:06d}" for idx in range(len(frame))], dtype=object)
+
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords=coords,
+        ids=ids,
+        meta={
+            "input_mode": "foundation_embeddings",
+            "representation": representation,
+            "model_key": model_key,
+            "condition": condition,
+            "source": "combined_table",
+            "artifacts": [str(path)],
         },
     )
     if aggregate_by is not None:

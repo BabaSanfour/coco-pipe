@@ -54,6 +54,7 @@ from .pipeline import (
     run_eval,
     run_fit,
     run_fit_group,
+    supports_nested_components,
     valid_component_sweep,
     valid_n_components_for_container,
 )
@@ -152,6 +153,7 @@ __all__ = [
     # Artifact persistence
     "save_fit_artifact",
     "shepard_diagram_data",
+    "supports_nested_components",
     "trajectory_acceleration",
     "trajectory_auc_speed",
     "trajectory_cohesion",
