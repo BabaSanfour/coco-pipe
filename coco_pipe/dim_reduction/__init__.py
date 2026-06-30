@@ -53,6 +53,7 @@ from .pipeline import (
     prepare_eval_inputs,
     run_eval,
     run_fit,
+    run_fit_group,
     valid_component_sweep,
     valid_n_components_for_container,
 )
@@ -146,6 +147,7 @@ __all__ = [
     "prepare_eval_inputs",
     "run_eval",
     "run_fit",
+    "run_fit_group",
     "save_eval_artifact",
     # Artifact persistence
     "save_fit_artifact",

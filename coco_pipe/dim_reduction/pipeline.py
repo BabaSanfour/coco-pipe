@@ -73,6 +73,7 @@ __all__ = [
     "prepare_eval_inputs",
     "run_eval",
     "run_fit",
+    "run_fit_group",
     "valid_component_sweep",
     "valid_n_components_for_container",
 ]
@@ -83,6 +84,28 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Core fit / eval
 # ---------------------------------------------------------------------------
+
+
+def _evr_scalars(explained_variance: np.ndarray | None) -> dict[str, float]:
+    """Derive promoted scalar diagnostics from an explained-variance vector.
+
+    Returns ``participation_ratio`` (effective dimensionality,
+    ``(Σλ)² / Σλ²``) and ``cumulative_explained_variance`` (the fraction of
+    variance captured by the retained components, i.e. ``Σλ``).  Empty when
+    *explained_variance* is ``None``/empty so non-PCA reducers contribute no
+    such columns.
+    """
+    if explained_variance is None:
+        return {}
+    evr = np.asarray(explained_variance, dtype=float)
+    if evr.size == 0:
+        return {}
+    total = float(evr.sum())
+    participation_ratio = float(total**2 / float((evr**2).sum())) if total > 0 else 0.0
+    return {
+        "participation_ratio": participation_ratio,
+        "cumulative_explained_variance": total,
+    }
 
 
 def run_fit(
@@ -176,7 +199,9 @@ def run_fit(
             diagnostics["components"] = components
         explained_variance = getattr(reducer.reducer, "explained_variance_ratio_", None)
         if explained_variance is not None:
-            diagnostics["explained_variance_ratio"] = np.asarray(explained_variance)
+            explained_variance = np.asarray(explained_variance)
+            diagnostics["explained_variance_ratio"] = explained_variance
+            fit_payload = {**fit_payload, **_evr_scalars(explained_variance)}
 
         save_fit_artifact(
             out_path, embedding, ids, fit_payload, metrics_payload, diagnostics
@@ -201,6 +226,183 @@ def run_fit(
             FIT_METRIC_COLUMNS,
             error=str(err),
         )
+
+
+def _metrics_payload_from_scores(score_metrics: dict[str, Any]) -> dict[str, Any]:
+    """Promote geometry-quality scores to the canonical fit-metric columns.
+
+    Mirrors :func:`run_fit`: each :data:`FIT_METRIC_COLUMNS` entry becomes a
+    ``float`` or ``None`` (for missing/NaN values).
+    """
+    return {
+        metric_name: (
+            None
+            if np.isnan(score_metrics.get(metric_name, np.nan))
+            else float(score_metrics.get(metric_name))
+        )
+        for metric_name in FIT_METRIC_COLUMNS
+    }
+
+
+def run_fit_group(
+    requests: list[dict[str, Any]],
+    *,
+    errors: ErrorMode = "raise",
+) -> list[dict[str, Any]]:
+    """Fit a group of requests sharing one analysis unit and reducer.
+
+    All *requests* must describe the same container and reducer, differing only
+    in ``n_components`` (as produced by :func:`build_fit_request` for one unit's
+    sweep).  When the reducer is hierarchically nested, the largest
+    ``n_components`` is fitted once and the smaller sweep values are synthesised
+    by slicing the embedding, components, and explained-variance arrays —
+    avoiding a redundant decomposition per sweep value.  Non-nested reducers
+    (or singleton groups) fall back to an independent :func:`run_fit` per request,
+    so behaviour is unchanged for UMAP/t-SNE/ICA/etc.
+
+    Returns one inventory record per request, in the input order's resolution
+    (resumed first, then synthesised).
+    """
+    if errors not in {"raise", "record"}:
+        raise ValueError("errors must be 'raise' or 'record'.")
+    if not requests:
+        return []
+
+    method = str(requests[0]["fit_payload"]["reducer"])
+    # A nested reducer (PCA family, SVD) lets the sweep be synthesised from one
+    # max-n fit; anything else (ICA, UMAP, t-SNE, …) must fit per dimension.
+    try:
+        nested = bool(
+            DimReduction(method=method, n_components=2).capabilities.get(
+                "nested_components", False
+            )
+        )
+    except Exception:
+        nested = False
+    if len(requests) == 1 or not nested:
+        return [run_fit(**request, errors=errors) for request in requests]
+
+    output_root = requests[0]["output_root"]
+    records: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for request in requests:
+        out_path = request["out_path"]
+        if (out_path / "_SUCCESS").exists() and not request["overwrite"]:
+            artifact = load_fit_artifact(out_path)
+            records.append(
+                build_record(
+                    artifact["fit"],
+                    out_path,
+                    output_root,
+                    FIT_METRIC_COLUMNS,
+                    artifact["metrics"],
+                )
+            )
+        else:
+            pending.append(request)
+    if not pending:
+        return records
+
+    # Fit once at the largest pending target dimension, then slice downward.
+    try:
+        container = requests[0]["container"]
+        X = np.asarray(container.X)
+        if X.ndim != 2:
+            raise ValueError("run_fit_group expects a 2D matrix.")
+        if container.ids is None:
+            raise ValueError("Dim-reduction fits expect container.ids to be present.")
+        ids = np.asarray(container.ids, dtype=object).astype(str)
+        max_n = max(int(r["fit_payload"]["n_components"]) for r in pending)
+        reducer = DimReduction(method=method, n_components=max_n)
+        full_embedding = np.asarray(reducer.fit_transform(container).X)
+        try:
+            full_components = np.asarray(reducer.get_components())
+        except Exception:
+            full_components = None
+        full_evr = getattr(reducer.reducer, "explained_variance_ratio_", None)
+        full_evr = None if full_evr is None else np.asarray(full_evr)
+    except Exception as err:
+        if errors == "raise":
+            raise
+        logger.exception(
+            "Grouped fit failed for %s/%s/%s",
+            requests[0]["fit_payload"].get("condition"),
+            requests[0]["fit_payload"].get("unit_name"),
+            method,
+        )
+        for request in pending:
+            records.append(
+                build_record(
+                    {**request["fit_payload"], "status": "failed"},
+                    request["out_path"],
+                    output_root,
+                    FIT_METRIC_COLUMNS,
+                    error=str(err),
+                )
+            )
+        return records
+
+    for request in pending:
+        fit_payload = request["fit_payload"]
+        out_path = request["out_path"]
+        n_components = int(fit_payload["n_components"])
+        try:
+            if request["overwrite"] and out_path.exists():
+                shutil.rmtree(out_path)
+            embedding = full_embedding[:, :n_components]
+            components = (
+                None if full_components is None else full_components[:n_components]
+            )
+            evr = None if full_evr is None else full_evr[:n_components]
+            score_payload = reducer.score(embedding, X=X, metrics=FIT_METRIC_COLUMNS)
+            metrics_payload = _metrics_payload_from_scores(
+                dict(score_payload["metrics"])
+            )
+
+            diagnostics: dict[str, Any] = {"score_payload": score_payload}
+            if components is not None:
+                diagnostics["components"] = components
+            if evr is not None:
+                diagnostics["explained_variance_ratio"] = evr
+            synthesized_payload = {**fit_payload, **_evr_scalars(evr)}
+
+            save_fit_artifact(
+                out_path,
+                embedding,
+                ids,
+                synthesized_payload,
+                metrics_payload,
+                diagnostics,
+            )
+            records.append(
+                build_record(
+                    synthesized_payload,
+                    out_path,
+                    output_root,
+                    FIT_METRIC_COLUMNS,
+                    metrics_payload,
+                )
+            )
+        except Exception as err:
+            if errors == "raise":
+                raise
+            logger.exception(
+                "Sliced fit failed for %s/%s/%s/n%s",
+                fit_payload.get("condition"),
+                fit_payload.get("unit_name"),
+                method,
+                n_components,
+            )
+            records.append(
+                build_record(
+                    {**fit_payload, "status": "failed"},
+                    out_path,
+                    output_root,
+                    FIT_METRIC_COLUMNS,
+                    error=str(err),
+                )
+            )
+    return records
 
 
 def _eval_id(fit_id: str, eval_spec: dict[str, Any]) -> str:

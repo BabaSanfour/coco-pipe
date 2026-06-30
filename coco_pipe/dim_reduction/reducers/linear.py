@@ -148,6 +148,7 @@ class PCAReducer(BaseReducer):
             supported_diagnostics=_LINEAR_DIAGNOSTIC_ATTRS,
             supported_metadata=("n_components_", "noise_variance_"),
             is_linear=True,
+            nested_components=True,
         )
 
     def __init__(self, n_components: int = 2, **kwargs):
@@ -354,6 +355,7 @@ class IncrementalPCAReducer(BaseReducer):
             supported_diagnostics=_LINEAR_DIAGNOSTIC_ATTRS,
             supported_metadata=("n_components_", "noise_variance_", "n_samples_seen_"),
             is_linear=True,
+            nested_components=True,
         )
 
     def __init__(self, n_components: int = 2, batch_size: int | None = None, **kwargs):
@@ -604,6 +606,7 @@ class DaskPCAReducer(BaseReducer):
             supported_diagnostics=_LINEAR_DIAGNOSTIC_ATTRS,
             supported_metadata=("n_components_", "noise_variance_"),
             is_linear=True,
+            nested_components=True,
         )
 
     def __init__(self, n_components: int = 2, svd_solver: str = "auto", **kwargs):
@@ -833,6 +836,7 @@ class DaskTruncatedSVDReducer(BaseReducer):
             supported_diagnostics=_LINEAR_DIAGNOSTIC_ATTRS,
             supported_metadata=("algorithm",),
             is_linear=True,
+            nested_components=True,
         )
 
     def __init__(self, n_components: int = 2, algorithm: str = "tsqr", **kwargs):

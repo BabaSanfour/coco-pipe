@@ -83,6 +83,9 @@ class BaseReducer(ABC):
     - `has_native_plot` : whether the reducer exposes its own plotting path
     - `is_linear` : whether the reducer is linear
     - `is_stochastic` : whether repeated runs can vary without a fixed seed
+    - `nested_components` : whether the first ``k`` components of an ``n``-component
+      fit (``k < n``) equal a standalone ``k``-component fit, so a sweep can be
+      synthesised by slicing a single max-``n`` fit (true for PCA/SVD, not ICA)
 
     Examples
     --------
@@ -399,6 +402,7 @@ class BaseReducer(ABC):
             "has_native_plot": False,
             "is_linear": False,
             "is_stochastic": False,
+            "nested_components": False,
         }
 
     def _attribute_dict(self, obj: Any, attrs: Iterable[str]) -> dict[str, Any]:
