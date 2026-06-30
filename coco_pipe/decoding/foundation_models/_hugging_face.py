@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase
+from ._base import BackendBase, resolve_auto_lora_params
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -227,7 +227,23 @@ class HuggingFaceBackend(BackendBase):
                     cache_dir=hf_kw.get("cache_dir"),
                 )
             except Exception:
-                return repo_id
+                pass
+            # snapshot_download failed (e.g. lock contention on compute node);
+            # construct the path directly from the HF cache so trust_remote_code
+            # can load custom classes from local files rather than the hub.
+            import os
+            from pathlib import Path
+            cache_root = Path(
+                hf_kw.get("cache_dir")
+                or os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+            ) / "hub"
+            model_dir = cache_root / ("models--" + repo_id.replace("/", "--"))
+            snapshots_dir = model_dir / "snapshots"
+            if snapshots_dir.is_dir():
+                candidates = sorted(snapshots_dir.iterdir())
+                if candidates:
+                    return str(candidates[-1])
+            return repo_id
 
         backbone = AutoModel.from_pretrained(_resolve(metadata.hub_repo), **hf_kw)
         pos_bank = AutoModel.from_pretrained(_resolve("brain-bzh/reve-positions"), **hf_kw)
@@ -242,6 +258,9 @@ class HuggingFaceBackend(BackendBase):
 
             if train_mode == "qlora":
                 backbone = prepare_model_for_kbit_training(backbone)
+            lora_r, lora_alpha = resolve_auto_lora_params(
+                "reve", backbone, lora_target_modules, lora_r, lora_alpha
+            )
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,

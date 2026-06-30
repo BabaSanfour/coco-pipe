@@ -27,6 +27,7 @@ from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_V
 from ._engine import (
     GroupedSequentialFeatureSelector,
     _SafeSelectKBest,
+    _THRESHOLD_OPTIMISED,
     fit_and_score_fold,
 )
 from ._metrics import get_metric_spec
@@ -147,6 +148,8 @@ class Experiment:
             )
             has_score = caps.has_response("decision_function")
             for metric in self.config.get_all_evaluation_metrics():
+                if metric in _THRESHOLD_OPTIMISED:
+                    continue  # validated at compute time in _engine.py
                 m_spec = get_metric_spec(metric)
                 if m_spec.task != task:
                     raise ValueError(
@@ -765,6 +768,7 @@ class Experiment:
                 ),
                 force_serial=(n_jobs == 1),
                 sample_weight=sample_weight,
+                subject_level_metrics=getattr(self.config.cv, "subject_level_metrics", False),
             )
             for train_idx, test_idx in splits
         )
@@ -961,6 +965,7 @@ class Experiment:
                     "family": get_metric_spec(m).family,
                 }
                 for m in self.config.get_all_evaluation_metrics()
+                if m not in _THRESHOLD_OPTIMISED
             },
         }
 

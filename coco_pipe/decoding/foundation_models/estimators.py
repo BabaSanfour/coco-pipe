@@ -161,7 +161,15 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             batch_size=trainer.get("batch_size", 32),
             validation_fraction=trainer.get("validation_fraction", 0.2),
             lr=trainer.get("lr", 1e-3),
+            accumulate_grad_batches=trainer.get("accumulate_grad_batches", 1),
             early_stopping_patience=trainer.get("early_stopping_patience"),
+            lr_warmup=trainer.get("lr_warmup", True),
+            lr_warmup_epochs=trainer.get("lr_warmup_epochs", 0),
+            training_strategy=trainer.get("training_strategy", "ft_only"),
+            lp_epochs=trainer.get("lp_epochs", 5),
+            lp_lr=trainer.get("lp_lr"),
+            use_focal_loss=trainer.get("use_focal_loss", False),
+            focal_gamma=trainer.get("focal_gamma", 2.0),
         )
         self.checkpoint_path_ = None
         checkpoint = dict(self.checkpoints or {})

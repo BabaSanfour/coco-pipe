@@ -14,16 +14,57 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase
+from ._base import BackendBase, resolve_auto_lora_params
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
+
+_logger = logging.getLogger(__name__)
+
+# Per-model recommended LoRA (r, alpha) based on internal attention d_model.
+# alpha = 2*r is the standard ratio (scaling = alpha/r = 2).
+# r is chosen so that LoRA rank ≈ 5–16 % of the internal attention dimension.
+# resolve_auto_lora_params and LORA_AUTO_PARAMS live in _base.py (shared with HF backend)
+
+
+def _log_lora_injection(model, target_modules, model_key: str) -> None:
+    """Log LoRA injection stats and warn loudly if no adapters were added."""
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # PEFT marks adapter weights with lora_A / lora_B submodule names
+    lora_modules = [
+        name for name, m in model.named_modules()
+        if hasattr(m, "lora_A") and len(list(m.lora_A.parameters())) > 0
+    ]
+
+    pct = 100.0 * trainable / total if total else 0.0
+    _logger.info(
+        "[LoRA:%s] trainable params: %s / %s (%.2f%%)",
+        model_key, f"{trainable:,}", f"{total:,}", pct,
+    )
+
+    if lora_modules:
+        _logger.info("[LoRA:%s] adapters injected into %d module(s):", model_key, len(lora_modules))
+        for name in lora_modules:
+            _logger.info("  · %s", name)
+    else:
+        _logger.warning(
+            "[LoRA:%s] *** WARNING: PEFT found NO modules matching target_modules=%r. "
+            "The backbone is effectively FROZEN. "
+            "Run `print([n for n, _ in model.named_modules()])` to see available names.",
+            model_key, target_modules,
+        )
+        # Also dump the first 30 named modules so it's visible in the SLURM log
+        names = [n for n, _ in model.named_modules() if n][:30]
+        _logger.warning("[LoRA:%s] Available module names (first 30): %s", model_key, names)
 
 _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "cbramod": ("CBraMod", "braindecode.models"),
@@ -256,7 +297,9 @@ class BrainDecodeBackend(BackendBase):
         if filename is not None:
             load_kwargs["filename"] = filename
         effective_outputs = (
-            1 if model_key in {"cbramod", "luna"} and n_outputs is None else n_outputs
+            1
+            if model_key in {"cbramod", "luna", "signaljepa"} and n_outputs is None
+            else n_outputs
         )
         if effective_outputs is not None:
             load_kwargs["n_outputs"] = effective_outputs
@@ -331,6 +374,9 @@ class BrainDecodeBackend(BackendBase):
         elif train_mode == "lora":
             from peft import LoraConfig, get_peft_model
 
+            lora_r, lora_alpha = resolve_auto_lora_params(
+                model_key, model, lora_target_modules, lora_r, lora_alpha
+            )
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
@@ -339,6 +385,7 @@ class BrainDecodeBackend(BackendBase):
                 bias="none",
             )
             model = get_peft_model(model, lora_cfg)
+            _log_lora_injection(model, lora_target_modules, model_key)
         # full: no changes — all params trainable
 
         feat_dim = cls._probe_feat_dim(
@@ -451,6 +498,19 @@ class BrainDecodeBackend(BackendBase):
             ):
                 module.train()
 
+    def fit(self, X: np.ndarray, y=None, **fit_params):
+        """Fit the model, resampling X to the model's pretrained_sfreq first."""
+        X = self._maybe_resample(X)
+        return self._fit_with_skorch(X, y, **fit_params)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Return class probabilities, resampling X to pretrained_sfreq first."""
+        X = self._maybe_resample(X)
+        self._validate(X)
+        if self._net_ is None:
+            raise RuntimeError("Model must be fitted before predict_proba().")
+        return np.asarray(self._net_.predict_proba(X))
+
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Extract backbone embeddings without running the classification head.
 
@@ -464,6 +524,7 @@ class BrainDecodeBackend(BackendBase):
         embeddings : np.ndarray of shape (n_samples, embedding_dim)
             Backbone feature vectors.
         """
+        X = self._maybe_resample(X)
         self._validate(X)
         with self._no_grad():
             feats = self._forward_features(
@@ -524,6 +585,7 @@ class BrainDecodeBackend(BackendBase):
             Predicted class indices (classification) or continuous values
             (regression).
         """
+        X = self._maybe_resample(X)
         self._validate(X)
         batch_size = 32
         all_logits = []
