@@ -356,6 +356,7 @@ class Experiment:
                 n_outputs=_get_val(config, "n_outputs"),
                 sfreq=_get_val(config, "sfreq"),
                 ch_names=_get_val(config, "ch_names"),
+                pooling=_get_val(config, "pooling", "mean"),
                 trainer=trainer_payload,
                 lora=lora_payload,
                 backend_kwargs=_get_val(config, "backend_kwargs", {}),

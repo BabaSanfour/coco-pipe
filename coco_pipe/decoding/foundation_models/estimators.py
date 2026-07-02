@@ -122,6 +122,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         n_outputs: int | None = None,
         sfreq: float | None = None,
         ch_names: list[str] | None = None,
+        pooling: str = "mean",
         trainer: dict[str, Any] | None = None,
         lora: dict[str, Any] | None = None,
         backend_kwargs: dict[str, Any] | None = None,
@@ -136,6 +137,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         self.n_outputs = n_outputs
         self.sfreq = sfreq
         self.ch_names = ch_names
+        self.pooling = pooling
         self.trainer = trainer
         self.lora = lora
         self.backend_kwargs = backend_kwargs
@@ -192,6 +194,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             n_outputs=n_outputs,
             device=self.device,
             train_mode=train_mode,
+            pooling=self.pooling,
             sfreq=self.sfreq,
             ch_names=normalize_channel_names(self.ch_names or []),
             backend_kwargs=backend_kwargs,

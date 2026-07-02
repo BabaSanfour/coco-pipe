@@ -614,7 +614,7 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     backend: str = "auto"
     n_outputs: int | None = None
     train_mode: Literal["frozen", "full", "lora", "qlora"] = "frozen"
-    pooling: Literal["mean", "flatten"] = "mean"
+    pooling: Literal["mean", "flatten", "attention"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
     sfreq: float | None = Field(None, gt=0)
@@ -705,6 +705,10 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     n_outputs: int | None = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
+    # Read-out pooling forwarded to the backbone (e.g. REVE's pretrained
+    # single-query attention read-out). "attention" only applies to models
+    # that expose it; others fall back to their default.
+    pooling: Literal["mean", "flatten", "attention"] = "mean"
     optimizer: dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     device: DeviceConfig = Field(default_factory=DeviceConfig)
