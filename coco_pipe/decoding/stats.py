@@ -1520,15 +1520,23 @@ def _assess_paired_comparison_internal(
     """Internal core for paired comparison on a single coordinate."""
     from ._diagnostics import paired_unit_indices, score_frame
 
+    # Materialise bare-named columns from each side's suffixed columns, then drop
+    # ALL suffixed columns. Leaving e.g. "y_proba_0_A" in place pollutes downstream
+    # aggregation (score_frame collects every "y_proba_*" column and sorts them by
+    # their trailing integer, so a "_A"/"_B" token raises int('A')).
+    _suffixed = [c for c in merged.columns if c.endswith("_A") or c.endswith("_B")]
+
     frame_a = merged.copy()
     for col in merged.columns:
         if col.endswith("_A"):
             frame_a[col[:-2]] = merged[col]
+    frame_a = frame_a.drop(columns=_suffixed)
 
     frame_b = merged.copy()
     for col in merged.columns:
         if col.endswith("_B"):
             frame_b[col[:-2]] = merged[col]
+    frame_b = frame_b.drop(columns=_suffixed)
 
     score_a = score_frame(frame_a, metric)
     score_b = score_frame(frame_b, metric)
