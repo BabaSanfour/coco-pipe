@@ -188,6 +188,17 @@ def _pr_auc_score(y_true, probas_pred) -> float:
     return float(auc(recall, precision))
 
 
+def _balanced_accuracy_optimal_score(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """Balanced accuracy at the threshold that maximises it."""
+    thresholds = np.unique(y_score)
+    best = 0.0
+    for t in thresholds:
+        ba = balanced_accuracy_score(y_true, (y_score >= t).astype(int))
+        if ba > best:
+            best = ba
+    return float(best)
+
+
 METRIC_REGISTRY: dict[str, MetricSpec] = {
     # Classification from hard predictions (family="label" or "confusion")
     "accuracy": MetricSpec("accuracy", "classification", accuracy_score),
@@ -196,6 +207,13 @@ METRIC_REGISTRY: dict[str, MetricSpec] = {
         "classification",
         balanced_accuracy_score,
         family="confusion",
+    ),
+    "balanced_accuracy_optimal": MetricSpec(
+        "balanced_accuracy_optimal",
+        "classification",
+        _balanced_accuracy_optimal_score,
+        "proba_or_score",
+        family="threshold_sweep",
     ),
     "f1": MetricSpec(
         "f1",

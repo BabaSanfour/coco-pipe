@@ -623,12 +623,16 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
 
 
 class LoRAConfig(BaseModel):
-    """Low-Rank Adaptation (LoRA) configuration."""
+    """Low-Rank Adaptation (LoRA) configuration.
+
+    Set r or alpha to "auto" to let the backend inspect the model's linear
+    layer dimensions and choose a rank proportional to the internal d_model.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    r: int = Field(16, ge=1)
-    alpha: int = Field(32, ge=1)
+    r: int | Literal["auto"] = "auto"
+    alpha: int | Literal["auto"] = "auto"
     dropout: float = Field(0.0, ge=0.0, le=1.0)
     target_modules: str | list[str] = "all-linear"
 
@@ -672,6 +676,16 @@ class TrainerConfig(BaseModel):
     early_stopping_patience: int | None = Field(None, ge=1)
     batch_size: int = Field(32, ge=1)
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
+    lr: float = Field(1e-3, gt=0)
+    weight_decay: float = Field(0.01, ge=0)
+    accumulate_grad_batches: int = Field(1, ge=1)
+    lr_warmup: bool = Field(True)
+    lr_warmup_epochs: int = Field(0, ge=0)
+    training_strategy: Literal["ft_only", "lp_ft"] = Field("ft_only")
+    lp_epochs: int = Field(5, ge=1)
+    lp_lr: float | None = Field(None, gt=0)
+    use_focal_loss: bool = Field(False)
+    focal_gamma: float = Field(2.0, gt=0)
 
 
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
@@ -817,6 +831,14 @@ class CVConfig(BaseModel):
         description=(
             "Reduce grouped fold counts to the largest leakage-safe value supported "
             "by the observed groups and classes."
+        ),
+    )
+    subject_level_metrics: bool = Field(
+        False,
+        description=(
+            "If True, aggregate epoch-level predictions to subject level "
+            "(mean proba → argmax; majority vote when proba unavailable) "
+            "before computing CV metrics. Eliminates pseudoreplication."
         ),
     )
 

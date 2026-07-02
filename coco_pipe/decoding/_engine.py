@@ -36,6 +36,9 @@ from .scalers import SubjectStandardScaler
 
 logger = logging.getLogger(__name__)
 
+# Metrics handled via training-fold ROC curve (not in the standard registry)
+_THRESHOLD_OPTIMISED = {"balanced_accuracy_optimal"}
+
 
 class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
     """
@@ -131,6 +134,7 @@ def fit_and_score_fold(
     search_enabled: bool = False,
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
+    subject_level_metrics: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -268,6 +272,32 @@ def fit_and_score_fold(
             warning_records_to_dict("decision_function", warning_records)
         )
 
+    # 3a. Subject-level aggregation: collapse epoch predictions → one per subject
+    if subject_level_metrics and test_groups is not None:
+        _unique_subj = np.unique(test_groups)
+        if len(_unique_subj) < len(y_test):
+            _agg_y_true, _agg_y_pred = [], []
+            _has_proba = "y_proba" in fold_data
+            _agg_proba = [] if _has_proba else None
+            for _g in _unique_subj:
+                _m = test_groups == _g
+                _agg_y_true.append(int(np.bincount(y_test[_m].astype(int)).argmax()))
+                if _has_proba:
+                    _mp = fold_data["y_proba"][_m].mean(axis=0)
+                    _agg_proba.append(_mp)
+                    _agg_y_pred.append(int(np.argmax(_mp)))
+                else:
+                    _agg_y_pred.append(int(np.bincount(y_pred[_m].astype(int)).argmax()))
+            y_test = np.array(_agg_y_true)
+            y_pred = np.array(_agg_y_pred)
+            fold_data = {
+                **fold_data,
+                "y_true": y_test,
+                "y_pred": y_pred,
+                "group": _unique_subj,
+                **({"y_proba": np.array(_agg_proba)} if _has_proba else {}),
+            }
+
     # 4. Extract Feature Importances (Zero Guesswork)
     imp = (
         extract_feature_importances(
@@ -284,7 +314,10 @@ def fit_and_score_fold(
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
     is_multiclass = type_of_target(y_test) == "multiclass"
-    metric_specs = {m: get_metric_spec(m) for m in metrics}
+
+    # Separate metrics that require training-fold access (not in registry)
+    threshold_metrics = {m for m in metrics if m in _THRESHOLD_OPTIMISED}
+    metric_specs = {m: get_metric_spec(m) for m in metrics if m not in _THRESHOLD_OPTIMISED}
 
     score_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
@@ -310,6 +343,21 @@ def fit_and_score_fold(
             )
     captured_warnings.extend(warning_records_to_dict("score", warning_records))
     score_time = time.perf_counter() - score_start
+
+    # Youden's J threshold optimisation (train-fold ROC → no test leakage)
+    if "balanced_accuracy_optimal" in threshold_metrics and spec.supports_proba and "y_proba" in fold_data:
+        from sklearn.metrics import balanced_accuracy_score as _bac
+        from sklearn.metrics import roc_curve as _roc_curve
+
+        try:
+            _y_proba_tr = estimator.predict_proba(X_train)
+            if _y_proba_tr.ndim == 2 and _y_proba_tr.shape[1] == 2:
+                _fpr, _tpr, _thresh = _roc_curve(y_train, _y_proba_tr[:, 1])
+                _best = _thresh[np.argmax(_tpr - _fpr)]
+                _y_opt = (fold_data["y_proba"][:, 1] >= _best).astype(int)
+                scores["balanced_accuracy_optimal"] = float(_bac(y_test, _y_opt))
+        except Exception:
+            scores["balanced_accuracy_optimal"] = float("nan")
 
     # 6. Extract Metadata
     meta = extract_metadata(

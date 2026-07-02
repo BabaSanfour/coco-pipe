@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase
+from ._base import BackendBase, resolve_auto_lora_params
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -194,6 +194,8 @@ class HuggingFaceBackend(BackendBase):
                 stacklevel=2,
             )
 
+        import os
+
         hf_kw: dict = {
             "trust_remote_code": True,
             "token": token,
@@ -210,6 +212,9 @@ class HuggingFaceBackend(BackendBase):
                 and value is not None
             },
         }
+        offline = os.environ.get("HF_HUB_OFFLINE") or os.environ.get("TRANSFORMERS_OFFLINE")
+        if offline:
+            hf_kw.setdefault("local_files_only", True)
 
         # The position bank lives in its own repo (``brain-bzh/reve-positions``)
         # that is versioned independently of the backbone, so the backbone's
@@ -227,33 +232,60 @@ class HuggingFaceBackend(BackendBase):
                 bnb_4bit_use_double_quant=True,
             )
 
-        backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **pos_kw)
-        feat_dim: int = getattr(
-            backbone.config,
-            "hidden_size",
-            metadata.embedding_dim,
+        def _resolve(repo_id: str) -> str:
+            """Return local snapshot path when offline; fall back to repo_id."""
+            if not offline:
+                return repo_id
+            try:
+                from huggingface_hub import snapshot_download
+                return snapshot_download(
+                    repo_id,
+                    local_files_only=True,
+                    cache_dir=hf_kw.get("cache_dir"),
+                )
+            except Exception:
+                pass
+            # snapshot_download failed (e.g. lock contention on compute node);
+            # construct the path directly from the HF cache so trust_remote_code
+            # can load custom classes from local files rather than the hub.
+            import os
+            from pathlib import Path
+            cache_root = Path(
+                hf_kw.get("cache_dir")
+                or os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+            ) / "hub"
+            model_dir = cache_root / ("models--" + repo_id.replace("/", "--"))
+            snapshots_dir = model_dir / "snapshots"
+            if snapshots_dir.is_dir():
+                candidates = sorted(snapshots_dir.iterdir())
+                if candidates:
+                    return str(candidates[-1])
+            return repo_id
+
+        backbone = AutoModel.from_pretrained(_resolve(metadata.hub_repo), **hf_kw)
+        # Position bank is a separate repo; keep its own kwargs (no backbone revision).
+        pos_bank = AutoModel.from_pretrained(_resolve("brain-bzh/reve-positions"), **pos_kw)
+        feat_dim: int = (
+            getattr(backbone.config, "embed_dim", None)
+            or getattr(backbone.config, "hidden_size", None)
+            or metadata.embedding_dim
         )
-        if pooling == "flatten":
-            n_ch = (
-                len(electrode_names)
-                if electrode_names
-                else metadata.pretrained_n_chans or 19
-            )
-            feat_dim = feat_dim * n_ch
 
         if train_mode in ("lora", "qlora"):
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
             if train_mode == "qlora":
                 backbone = prepare_model_for_kbit_training(backbone)
+            lora_r, lora_alpha = resolve_auto_lora_params(
+                "reve", backbone, lora_target_modules, lora_r, lora_alpha
+            )
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
-                target_modules=list(lora_target_modules),
+                target_modules=lora_target_modules,
                 lora_dropout=lora_dropout,
                 bias="none",
-                task_type="FEATURE_EXTRACTION",
+                task_type=None,
             )
             backbone = get_peft_model(backbone, lora_cfg)
         elif train_mode == "frozen":
@@ -321,10 +353,6 @@ class HuggingFaceBackend(BackendBase):
         pos = self._pos_bank(elec).unsqueeze(0).expand(len(x_tensor), -1, -1)
         # REVE's forward returns a raw tensor of per-patch embeddings with shape
         # (batch, channels, time_patches, embed_dim) -- not a HF ModelOutput.
-        # Pool over the time-patch axis to get a per-channel embedding
-        # (batch, channels, embed_dim); ``flatten`` pooling then keeps the
-        # per-channel layout (feat_dim == embed_dim * n_chans), ``mean`` averages
-        # across channels (feat_dim == embed_dim).
         out = self._backbone(x_tensor, pos)
         if self._pooling == "attention":
             # REVE's pretrained single-query attention read-out over the
@@ -379,6 +407,15 @@ class HuggingFaceBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        if self._net_ is not None:
+            # After skorch training, use the skorch network's predict_proba so
+            # inference runs in mini-batches and avoids sending the entire test
+            # set to the GPU in one allocation (which OOMs on large test folds).
+            proba = np.asarray(self._net_.predict_proba(X))
+            if self._task == "regression":
+                return proba.squeeze(-1)
+            return proba.argmax(axis=1)
+        # Fallback for headless / non-skorch use (e.g. frozen embedding mode).
         with self._no_grad():
             logits = self._reve_forward(self._to_tensor(X), return_embeddings=False)
         if self._task == "regression":
