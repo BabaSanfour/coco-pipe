@@ -621,14 +621,20 @@ class BrainDecodeBackend(BackendBase):
                 module.train()
 
     def fit(self, X: np.ndarray, y=None, **fit_params):
-        """Fit the model, resampling X to the model's pretrained_sfreq first."""
+        """Fit the model, resampling X and constructing the model's montage first."""
         X = self._maybe_resample(X)
+        self._validate(X)
+        # Map the source montage to the model's native layout (e.g. BIOT bipolar,
+        # BENDR reorder+SCALE). Must match transform()/predict() or the model is
+        # trained on the wrong channel count. No-op when no adapter is set.
+        X = self._construct_channels(X)
         return self._fit_with_skorch(X, y, **fit_params)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Return class probabilities, resampling X to pretrained_sfreq first."""
+        """Return class probabilities, resampling + constructing channels first."""
         X = self._maybe_resample(X)
         self._validate(X)
+        X = self._construct_channels(X)
         if self._net_ is None:
             raise RuntimeError("Model must be fitted before predict_proba().")
         return np.asarray(self._net_.predict_proba(X))
