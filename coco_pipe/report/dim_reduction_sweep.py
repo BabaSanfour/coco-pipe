@@ -10,24 +10,43 @@ scope ordering, topomaps, report links) stays in the consuming project.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import contextlib
+import json
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from coco_pipe.dim_reduction import SEPARATION_METRIC_KEY
+from coco_pipe.dim_reduction import (
+    EVAL_METRIC_COLUMNS,
+    SEPARATION_METRIC_KEY,
+    load_fit_artifact,
+    load_fit_runs,
+)
+from coco_pipe.viz.topo import (
+    feature_names_are_channels,
+    plot_topomap_from_channel_values,
+    plot_topomap_selector,
+)
 
 from .core import Report, Section
+from .dim_reduction import reduction_embedding_element, reduction_loadings_element
 from .elements import (
     AccordionElement,
     CalloutElement,
     ColumnsElement,
+    ContainerElement,
+    ImageElement,
     InteractiveTableElement,
     PlotlyElement,
     StatCardElement,
     TableElement,
     TabsElement,
 )
+from .qc import build_qc_section
 from .tables import best_rows, split_by_status
 
 # Rank on structure preservation (trustworthiness, continuity) then class
@@ -530,12 +549,1599 @@ def _append_failures(
     report.add_section(section)
 
 
+@dataclass
+class DimReductionReportContext:
+    """Resolved configuration + injection seams for a dataset report.
+
+    Constructed once by the consuming project and threaded through the section
+    builders. Study-specific policy travels as **data** (metadata-exclusion
+    sets, topomap channel vocabulary, unit labels, failure columns); the single
+    behavioural seam is :attr:`container_builder`, which loads the dataset
+    container for a condition, plus the optional :func:`build_dataset_report`
+    ``overview_extras`` hook for cohort summaries.
+    """
+
+    analysis_mode: str
+    selection_metric: str
+    reducers: Sequence[str]
+    conditions: Sequence[str]
+    container_builder: Callable[[str], Any | None]
+    output_root: Path
+    eval_specs: Sequence[Mapping[str, Any]] = ()
+    interactive: bool = False
+    input_mode: str = ""
+    representation: str = ""
+    family_label: str = ""
+    run_pooled: bool = False
+    pooled_condition: str = ""
+    dataset_name: str = ""
+    report_title: str = "Dimensionality Reduction"
+    # Metadata policy (data-driven).
+    excluded_columns: frozenset[str] = frozenset()
+    excluded_normalized: frozenset[str] = frozenset()
+    excluded_normalized_substrings: tuple[str, ...] = ()
+    excluded_suffixes: tuple[str, ...] = ()
+    meta_extractors: Mapping[str, Callable[[dict[str, np.ndarray]], Any]] = field(
+        default_factory=dict
+    )
+    # Topomap policy (data-driven): channel vocabulary for the sensor gate.
+    topomap_channels: frozenset[str] | None = None
+    # Unit-label policy.
+    unit_labels: Mapping[str, str] = field(default_factory=dict)
+    # Failure-table columns.
+    fit_failure_columns: Sequence[str] = ()
+    eval_failure_columns: Sequence[str] = ()
+
+    def unit_label(self, default: str) -> str:
+        """Return the human-readable unit label for the current mode."""
+        return dict(self.unit_labels).get(self.analysis_mode, default)
+
+
+def _feature_names(container: Any) -> list[str] | None:
+    """Return the feature-axis names from a container, or None if unavailable."""
+    if container is None:
+        return None
+    try:
+        feat = (container.coords or {}).get("feature")
+        if feat is not None:
+            names = [str(f) for f in np.asarray(feat)]
+            return names if names else None
+    except Exception:
+        pass
+    return None
+
+
+def build_meta_dict(
+    container: Any,
+    ids: np.ndarray | None,
+    ctx: DimReductionReportContext,
+) -> dict[str, np.ndarray]:
+    """Build a plotting-metadata dict from a container's observation frame.
+
+    Filters excluded columns (per *ctx* policy), applies eval-spec label maps /
+    filters, and runs any registered :attr:`~DimReductionReportContext.meta_extractors`
+    (e.g. eye-state derivation). Rows are aligned to *ids* when provided.
+    """
+    # 1. Fetch and format metadata frame
+    frame = container.observation_frame()
+    frame = frame.drop(columns=["feature"], errors="ignore")
+    if container.y is not None and "y" not in frame.columns:
+        frame["y"] = np.asarray(container.y)
+    frame = frame.rename(columns={"sample_id": "obs_id"})
+
+    # 2. Align frame rows to match requested ids
+    if ids is not None and "obs_id" in frame.columns:
+        requested_ids = np.asarray(ids, dtype=object).astype(str)
+        is_aligned = len(requested_ids) == len(frame) and np.array_equal(
+            requested_ids, frame["obs_id"].astype(str).to_numpy()
+        )
+        if not is_aligned:
+            keyed = frame.set_index("obs_id")
+            if all(key in keyed.index for key in requested_ids):
+                frame = keyed.loc[requested_ids].reset_index()
+            elif len(frame) != len(requested_ids):
+                frame = pd.DataFrame()
+
+    if frame.empty:
+        return {}
+
+    meta: dict[str, np.ndarray] = {}
+
+    # 3. Extract valid standard columns
+    for col_name in frame.columns:
+        col_str = str(col_name)
+        normalized = "".join(ch for ch in col_str.lower() if ch.isalnum())
+
+        is_excluded = (
+            col_str in ctx.excluded_columns
+            or normalized in ctx.excluded_normalized
+            or any(sub in normalized for sub in ctx.excluded_normalized_substrings)
+            or (
+                bool(ctx.excluded_suffixes)
+                and col_str.endswith(tuple(ctx.excluded_suffixes))
+            )
+        )
+        if is_excluded:
+            continue
+
+        if 1 < frame[col_str].nunique(dropna=False) <= 200:
+            meta[col_str] = frame[col_str].to_numpy()
+
+    # 4. Extract columns defined in evaluation specs (YAML)
+    for spec in ctx.eval_specs:
+        target_col = spec.get("target_col")
+        if target_col not in frame.columns:
+            continue
+
+        labels = frame[target_col].astype(str)
+        if label_map := spec.get("label_map"):
+            labels = labels.map(lambda v: label_map.get(v, v))
+
+        labels = labels.replace({"nan": "unknown", "None": "unknown", "": "unknown"})
+
+        if filters := spec.get("filters"):
+            mask = pd.Series(True, index=frame.index)
+            for f_spec in filters:
+                col = f_spec["column"]
+                if col in frame.columns:
+                    valid_vals = {str(v) for v in f_spec["values"]}
+                    mask &= frame[col].astype(str).isin(valid_vals)
+                else:
+                    mask[:] = False
+                    break
+            labels = labels.where(mask, "unknown")
+
+        if 1 < labels.nunique(dropna=False) <= 200:
+            meta[str(spec["name"])] = labels.to_numpy(dtype=object)
+
+    # 5. Run registered post-hoc extractors (e.g. eye-state from condition)
+    for name, extractor in ctx.meta_extractors.items():
+        extracted = extractor(meta)
+        if extracted is not None:
+            meta[name] = extracted
+
+    return meta
+
+
+def build_best_fit_plots(
+    title: str,
+    artifact: dict[str, Any],
+    meta_dict: dict[str, np.ndarray],
+    ctx: DimReductionReportContext,
+    feature_names: list[str] | None = None,
+) -> Any:
+    """Build the embedding + component-loadings element for a best fit.
+
+    Renders the native 2-D / first-3-dims embedding scatter and, for the
+    component loadings, a scalp topomap when *feature_names* are montage
+    channels (per :attr:`~DimReductionReportContext.topomap_channels`), else a
+    generic loadings plot.
+    """
+    embedding = np.asarray(artifact["embedding"])
+    if embedding.ndim != 2:
+        return None
+
+    plots = []
+
+    if embedding.shape[1] == 2:
+        plots.append(
+            reduction_embedding_element(
+                embedding,
+                metadata=meta_dict,
+                title=f"{title} - native 2D",
+                dimensions=2,
+                interactive=ctx.interactive,
+            )
+        )
+    elif embedding.shape[1] >= 3:
+        plots.append(
+            reduction_embedding_element(
+                embedding[:, :3],
+                metadata=meta_dict,
+                title=f"{title} - first 3 dims",
+                dimensions=3,
+                interactive=ctx.interactive,
+            )
+        )
+
+    components = (artifact.get("diagnostics") or {}).get("components")
+    if components is not None:
+        loadings = np.asarray(components, dtype=float).T
+        if loadings.ndim == 2:
+            n_comp = min(loadings.shape[1], 10)
+            topo_fig = None
+            if feature_names_are_channels(feature_names, ctx.topomap_channels):
+                topo_fig = plot_topomap_selector(
+                    {
+                        f"PC{i + 1}": (feature_names, loadings[:, i])
+                        for i in range(n_comp)
+                    },
+                    title=f"{title} - component loadings (topomap, top {n_comp})",
+                    unit="loading",
+                )
+            if topo_fig is not None:
+                plots.append(PlotlyElement(topo_fig))
+            else:
+                loadings_element = reduction_loadings_element(
+                    loadings,
+                    feature_names=feature_names,
+                    n_components=n_comp,
+                    title=f"{title} - component loadings (top {n_comp})",
+                )
+                if loadings_element is not None:
+                    plots.append(loadings_element)
+
+    if plots:
+        return ColumnsElement(plots, cols=len(plots))
+    return None
+
+
+def build_flat_condition_section(
+    condition: str,
+    condition_runs: pd.DataFrame,
+    eval_frame: pd.DataFrame,
+    ctx: DimReductionReportContext,
+) -> Section:
+    """Build the per-condition section for ``analysis_mode == "flat"``."""
+    from coco_pipe.viz.interactive.base import plot_scatter
+
+    container = ctx.container_builder(condition)
+    artifacts = {
+        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        for _, row in condition_runs.iterrows()
+    }
+    fam_label = ctx.family_label
+    section = Section(condition, icon="🧠")
+
+    callout_text = (
+        f"Input mode: **{ctx.input_mode}**<br/>Representation: **{ctx.representation}**"
+    )
+    if fam_label:
+        callout_text += f"<br/>Descriptor families: **{fam_label}**"
+    section.add_element(
+        CalloutElement(callout_text, kind="info", title="Configuration Details")
+    )
+
+    section.add_element(
+        ColumnsElement(
+            [
+                StatCardElement(
+                    "Observations",
+                    container.meta.get("loaded_obs", container.X.shape[0]),
+                    color="blue",
+                ),
+                StatCardElement("Successful Fits", len(condition_runs), color="green"),
+            ],
+            cols=4,
+        )
+    )
+
+    ranking_df = condition_runs.merge(
+        eval_frame.loc[:, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]],
+        on="fit_id",
+        how="left",
+    )
+    section.add_element(
+        InteractiveTableElement(
+            ranking_df.loc[
+                :,
+                [
+                    col
+                    for col in [
+                        "reducer",
+                        "n_components",
+                        "eval_name",
+                        SEPARATION_METRIC_KEY,
+                        "trustworthiness",
+                        "continuity",
+                    ]
+                    if col in ranking_df.columns
+                ],
+            ].round(4),
+            title="Fit ranking",
+            selector_columns=["reducer", "eval_name"],
+            default_sort={"column": ctx.selection_metric, "direction": "desc"},
+            page_size=5,
+        )
+    )
+
+    reducer_tabs = {}
+    for reducer_name in ctx.reducers:
+        reducer_runs = condition_runs[condition_runs["reducer"] == reducer_name].copy()
+        if reducer_runs.empty:
+            continue
+        best_row = (
+            reducer_runs.merge(
+                eval_frame.loc[:, ["fit_id", "eval_name", SEPARATION_METRIC_KEY]],
+                on="fit_id",
+                how="left",
+            )
+            .sort_values(
+                [ctx.selection_metric],
+                ascending=[False],
+                na_position="last",
+            )
+            .iloc[0]
+        )
+        best_artifact = artifacts[str(best_row["fit_id"])]
+
+        tab_elements = []
+        meta_dict = build_meta_dict(container, best_artifact["ids"], ctx)
+
+        plots_elem = build_best_fit_plots(
+            f"{condition} - {reducer_name}",
+            best_artifact,
+            meta_dict,
+            ctx,
+            feature_names=_feature_names(container),
+        )
+        if plots_elem:
+            tab_elements.append(plots_elem)
+
+        sweep_df = reducer_runs.merge(
+            eval_frame.loc[
+                :, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
+            ],
+            on="fit_id",
+            how="left",
+        )
+        if not sweep_df.empty and SEPARATION_METRIC_KEY in sweep_df.columns:
+            sep_df = sweep_df.dropna(subset=[SEPARATION_METRIC_KEY]).copy()
+            sep_df["series"] = "separation: " + sep_df["eval_name"].astype(str)
+            fig = plot_scatter(
+                sep_df,
+                x="n_components",
+                y=SEPARATION_METRIC_KEY,
+                color="series",
+                mode="lines+markers",
+                title=f"{condition} - {reducer_name} separation vs n_components",
+                xaxis_title="n_components",
+                yaxis_title="score",
+            )
+            acc = AccordionElement("Show Hyperparameter Sweep Data", open=False)
+            acc.add_element(PlotlyElement(fig))
+
+            sweep_table = InteractiveTableElement(
+                sweep_df.loc[
+                    :,
+                    [
+                        col
+                        for col in [
+                            "n_components",
+                            "eval_name",
+                            SEPARATION_METRIC_KEY,
+                            "trustworthiness",
+                            "continuity",
+                        ]
+                        if col in sweep_df.columns
+                    ],
+                ].round(4),
+                title=f"{condition} - {reducer_name} sweep summary",
+                page_size=5,
+            )
+            acc.add_element(sweep_table)
+            tab_elements.append(acc)
+
+        if tab_elements:
+            reducer_tabs[reducer_name] = (
+                ColumnsElement(tab_elements, cols=1)
+                if len(tab_elements) > 1
+                else tab_elements[0]
+            )
+
+    if reducer_tabs:
+        section.add_element(TabsElement(reducer_tabs))
+
+    return section
+
+
+def build_unit_summary(
+    section: Section,
+    unit_runs: pd.DataFrame,
+    ctx: DimReductionReportContext,
+    *,
+    unit_label: str,
+    title_prefix: str,
+) -> None:
+    """Append unit-level ranking tables, bar charts, stability boxes + topomaps."""
+    from coco_pipe.viz.interactive.base import plot_bar, plot_distribution_groups
+
+    if unit_runs.empty:
+        return
+
+    selection_metric = ctx.selection_metric
+    unit_column = (
+        "unit_key" if ctx.analysis_mode == "descriptor_sensor" else "unit_name"
+    )
+
+    group_columns = [
+        column
+        for column in ["family", "subfamily", "eval_name", "target_col"]
+        if column in unit_runs.columns and unit_runs[column].notna().any()
+    ]
+    sort_columns = list(
+        dict.fromkeys(
+            column
+            for column in [
+                selection_metric,
+                "trustworthiness",
+                "continuity",
+                SEPARATION_METRIC_KEY,
+            ]
+            if column in unit_runs.columns
+        )
+    )
+    best_units = (
+        unit_runs.sort_values(
+            sort_columns,
+            ascending=[False] * len(sort_columns),
+            na_position="last",
+        )
+        .groupby([*group_columns, unit_column], dropna=False)
+        .head(1)
+        .copy()
+    )
+    display_columns = [
+        column
+        for column in [
+            *group_columns,
+            unit_column,
+            "reducer",
+            "n_components",
+            *sort_columns,
+        ]
+        if column in best_units.columns
+    ]
+    section.add_element(
+        InteractiveTableElement(
+            best_units.loc[:, display_columns].round(4),
+            title=f"{title_prefix} {unit_label} ranking",
+            selector_columns=[
+                column
+                for column in [*group_columns, "reducer"]
+                if column in best_units.columns
+            ],
+            default_sort=(
+                {"column": sort_columns[0], "direction": "desc"}
+                if sort_columns
+                else None
+            ),
+            page_size=5,
+        )
+    )
+
+    sweep_df = unit_runs.loc[
+        :,
+        [
+            column
+            for column in [
+                *group_columns,
+                unit_column,
+                "reducer",
+                "n_components",
+                *sort_columns,
+            ]
+            if column in unit_runs.columns
+        ],
+    ].copy()
+    acc = AccordionElement("Show Full Unit Sweep Data", open=False)
+    acc.add_element(
+        InteractiveTableElement(
+            sweep_df.round(4),
+            title=f"{title_prefix} {unit_label} sweep",
+            selector_columns=[
+                column
+                for column in [*group_columns, unit_column, "reducer"]
+                if column in sweep_df.columns
+            ],
+            page_size=5,
+        )
+    )
+    section.add_element(acc)
+
+    best_by_unit = best_units.copy()
+    plot_metric = sort_columns[0] if sort_columns else "trustworthiness"
+    grouped_best = (
+        list(best_by_unit.groupby(group_columns, dropna=False))
+        if group_columns
+        else [((), best_by_unit)]
+    )
+    grouped_sweep = (
+        list(sweep_df.groupby(group_columns, dropna=False))
+        if group_columns
+        else [((), sweep_df)]
+    )
+
+    perf_tabs = {}
+    stab_tabs = {}
+    topo_tabs = {}
+
+    for group_key, group_df in grouped_best:
+        plot_df = group_df.dropna(subset=[plot_metric]).copy()
+        if plot_df.empty:
+            continue
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        label_parts = [
+            str(value) for value in group_key if pd.notna(value) and str(value) != ""
+        ]
+        trace_label = " / ".join(label_parts) if label_parts else "All"
+
+        scores_series = plot_df.set_index(unit_column)[plot_metric]
+        n_comp_series = plot_df.set_index(unit_column)["n_components"]
+
+        sep_fig = plot_bar(
+            scores=scores_series,
+            title=f"{title_prefix} best {plot_metric} by {unit_label}",
+            xaxis_title=unit_label,
+            yaxis_title=plot_metric,
+        )
+
+        n_comp_fig = plot_bar(
+            scores=n_comp_series,
+            title=f"{title_prefix} optimal n_components",
+            xaxis_title=unit_label,
+            yaxis_title="n_components",
+            color="orange",
+        )
+        perf_tabs[trace_label] = ColumnsElement(
+            [PlotlyElement(sep_fig), PlotlyElement(n_comp_fig)], cols=2
+        )
+
+        if unit_label == "sensor":
+            topomaps = []
+            for topo_metric in [plot_metric, "trustworthiness", "continuity"]:
+                if topo_metric not in group_df.columns:
+                    continue
+                topo_df = group_df.dropna(subset=[topo_metric]).copy()
+                if topo_df.empty:
+                    continue
+
+                topo_groups = {
+                    topo_metric: (
+                        topo_df[unit_column].astype(str).tolist(),
+                        topo_df[topo_metric].astype(float).to_numpy(),
+                    )
+                }
+                topo_plot = plot_topomap_selector(
+                    topo_groups,
+                    title=f"{title_prefix} best {topo_metric}",
+                    unit=topo_metric,
+                )
+                if topo_plot is not None:
+                    topomaps.append(PlotlyElement(topo_plot))
+                else:
+                    topo_label, (topo_names, topo_values) = next(
+                        iter(topo_groups.items())
+                    )
+                    try:
+                        topo_fig = plot_topomap_from_channel_values(
+                            channel_names=topo_names,
+                            values=topo_values,
+                            title=f"{title_prefix} best {topo_metric} - {topo_label}",
+                            unit=topo_metric,
+                        )
+                        if topo_fig is not None:
+                            topomaps.append(ImageElement(topo_fig, width="100%"))
+                    except Exception:
+                        pass
+            if topomaps:
+                topo_tabs[trace_label] = ColumnsElement(topomaps, cols=len(topomaps))
+
+    for group_key, group_df in grouped_sweep:
+        plot_df = group_df.dropna(subset=[plot_metric]).copy()
+        if plot_df.empty:
+            continue
+
+        if not isinstance(group_key, tuple):
+            group_key = (group_key,)
+        label_parts = [
+            str(value) for value in group_key if pd.notna(value) and str(value) != ""
+        ]
+        trace_label = " / ".join(label_parts) if label_parts else "All"
+
+        units = plot_df[unit_column].unique()
+        groups = [plot_df[plot_df[unit_column] == u][plot_metric].values for u in units]
+
+        box_fig = plot_distribution_groups(
+            groups=groups,
+            labels=units,
+            kind="box",
+            title=f"{title_prefix} stability by {unit_label}",
+            xaxis_title=unit_label,
+            yaxis_title=plot_metric,
+        )
+        stab_tabs[trace_label] = PlotlyElement(box_fig)
+
+    viz_tabs = {}
+    if perf_tabs:
+        viz_tabs["Peak Performance"] = (
+            next(iter(perf_tabs.values()))
+            if len(perf_tabs) == 1
+            else TabsElement(perf_tabs)
+        )
+    if stab_tabs:
+        viz_tabs["Hyperparameter Stability"] = (
+            next(iter(stab_tabs.values()))
+            if len(stab_tabs) == 1
+            else TabsElement(stab_tabs)
+        )
+    if topo_tabs:
+        viz_tabs["Spatial Topomaps"] = (
+            next(iter(topo_tabs.values()))
+            if len(topo_tabs) == 1
+            else TabsElement(topo_tabs)
+        )
+
+    if viz_tabs:
+        section.add_element(TabsElement(viz_tabs))
+
+
+def build_nonflat_condition_section(
+    condition: str,
+    condition_runs: pd.DataFrame,
+    eval_frame: pd.DataFrame,
+    ctx: DimReductionReportContext,
+) -> Section:
+    """Build the per-condition section for non-flat modes (family/sensor/etc.)."""
+    from coco_pipe.viz.interactive.base import plot_scatter
+
+    unit_label = ctx.unit_label("analysis unit")
+    fam_label = ctx.family_label
+    section = Section(condition, icon="📊")
+    artifacts = {
+        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        for _, row in condition_runs.iterrows()
+    }
+    unit_label = ctx.unit_label(ctx.analysis_mode.replace("_", " "))
+    intro = f"Primary analysis unit: **{unit_label}**"
+    callout_text = f"Input mode: **{ctx.input_mode}**<br/>{intro}"
+    if fam_label:
+        callout_text += f"<br/>Descriptor families: **{fam_label}**"
+    section.add_element(
+        CalloutElement(callout_text, kind="info", title="Configuration Details")
+    )
+    section.add_element(
+        StatCardElement("Successful Fits", len(condition_runs), color="green")
+    )
+
+    merged = condition_runs.merge(
+        eval_frame.loc[:, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]],
+        on="fit_id",
+        how="left",
+    )
+    if ctx.analysis_mode == "family":
+        build_unit_summary(
+            section,
+            merged,
+            ctx,
+            unit_label="family",
+            title_prefix=condition,
+        )
+        family_container = ctx.container_builder(condition)
+
+        reducer_tabs = {}
+        for reducer_name in ctx.reducers:
+            reducer_runs = merged[merged["reducer"] == reducer_name].copy()
+            if reducer_runs.empty:
+                continue
+
+            tab_section = ContainerElement()
+
+            comparison_metrics = []
+            if SEPARATION_METRIC_KEY in reducer_runs.columns:
+                comparison_metrics.append(SEPARATION_METRIC_KEY)
+            for m in ["trustworthiness", "continuity"]:
+                if m in reducer_runs.columns:
+                    comparison_metrics.append(m)
+
+            curve_frames = []
+            for family, family_runs in reducer_runs.groupby("family", dropna=False):
+                family_best_by_n = family_runs.sort_values(
+                    [ctx.selection_metric, "trustworthiness", "continuity"],
+                    ascending=[False, False, False],
+                    na_position="last",
+                )
+                family_best_by_n = (
+                    family_best_by_n.groupby("n_components", dropna=False)
+                    .head(1)
+                    .sort_values("n_components")
+                )
+                for metric_name in comparison_metrics:
+                    metric_df = family_best_by_n.dropna(subset=[metric_name])
+                    if metric_df.empty:
+                        continue
+                    curve_frames.append(
+                        pd.DataFrame(
+                            {
+                                "n_components": metric_df["n_components"].to_numpy(),
+                                "score": metric_df[metric_name].to_numpy(),
+                                "series": f"{family}: {metric_name}",
+                            }
+                        )
+                    )
+
+            acc = AccordionElement(
+                f"Show {reducer_name} Hyperparameter Sweep Details", open=False
+            )
+            if curve_frames:
+                fig = plot_scatter(
+                    pd.concat(curve_frames, ignore_index=True),
+                    x="n_components",
+                    y="score",
+                    color="series",
+                    mode="lines+markers",
+                    title=(
+                        f"{condition} - {reducer_name} family comparison "
+                        "vs n_components"
+                    ),
+                    xaxis_title="n_components",
+                    yaxis_title="score",
+                )
+                acc.add_element(PlotlyElement(fig))
+
+            sweep_cols = ["family", "n_components"]
+            if "eval_name" in reducer_runs.columns:
+                sweep_cols.append("eval_name")
+            if SEPARATION_METRIC_KEY in reducer_runs.columns:
+                sweep_cols.append(SEPARATION_METRIC_KEY)
+            for gm in ["trustworthiness", "continuity"]:
+                if gm in reducer_runs.columns:
+                    sweep_cols.append(gm)
+            sweep_cols = list(dict.fromkeys(sweep_cols))
+
+            acc.add_element(
+                InteractiveTableElement(
+                    reducer_runs.loc[:, sweep_cols].round(4),
+                    title=f"{condition} - {reducer_name} family sweep",
+                    selector_columns=["family", "eval_name"]
+                    if "eval_name" in sweep_cols
+                    else ["family"],
+                    page_size=5,
+                )
+            )
+            tab_section.add_element(acc)
+            reducer_tabs[reducer_name] = tab_section
+
+        if reducer_tabs:
+            section.add_element(TabsElement(reducer_tabs))
+
+        family_tabs = {}
+        for family, family_runs in merged.groupby("family", dropna=False):
+            best_row = family_runs.sort_values(
+                [ctx.selection_metric, "trustworthiness", "continuity"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).iloc[0]
+            best_artifact = artifacts[str(best_row["fit_id"])]
+            family_meta = build_meta_dict(family_container, best_artifact["ids"], ctx)
+
+            fam_container = ContainerElement()
+            fam_container.add_element(
+                CalloutElement(
+                    f"Best fit for family **{family}** uses **{best_row['reducer']}** "
+                    f"with n={int(best_row['n_components'])}",
+                    kind="tip",
+                )
+            )
+
+            plots_elem = build_best_fit_plots(
+                f"{condition} - {family}",
+                best_artifact,
+                family_meta,
+                ctx,
+                feature_names=_feature_names(family_container),
+            )
+            if plots_elem:
+                fam_container.add_element(plots_elem)
+
+            sweep_cols = ["reducer", "n_components"]
+            if "eval_name" in family_runs.columns:
+                sweep_cols.append("eval_name")
+            if SEPARATION_METRIC_KEY in family_runs.columns:
+                sweep_cols.append(SEPARATION_METRIC_KEY)
+            for gm in ["trustworthiness", "continuity"]:
+                if gm in family_runs.columns:
+                    sweep_cols.append(gm)
+            sweep_cols = list(dict.fromkeys(sweep_cols))
+
+            acc = AccordionElement("Show Reducer Sweep Details", open=False)
+            acc.add_element(
+                InteractiveTableElement(
+                    family_runs.loc[:, sweep_cols].round(4),
+                    title=f"{condition} - {family} reducer/n sweep",
+                    selector_columns=["reducer", "eval_name"]
+                    if "eval_name" in sweep_cols
+                    else ["reducer"],
+                    page_size=5,
+                )
+            )
+            fam_container.add_element(acc)
+            family_tabs[str(family)] = fam_container
+
+        if family_tabs:
+            section.add_element(TabsElement(family_tabs))
+
+        return section
+    if ctx.analysis_mode in {"sensor_within_family", "sensor_within_subfamily"}:
+        group_columns = ["family"]
+        if (
+            ctx.analysis_mode == "sensor_within_subfamily"
+            and "subfamily" in merged.columns
+        ):
+            group_columns.append("subfamily")
+        for group_key, family_runs in merged.groupby(group_columns, dropna=False):
+            group_values = group_key if isinstance(group_key, tuple) else (group_key,)
+            group_label = " / ".join(str(value) for value in group_values)
+            section.add_markdown(f"### {group_label}")
+            build_unit_summary(
+                section,
+                family_runs,
+                ctx,
+                unit_label="sensor",
+                title_prefix=f"{condition} - {group_label}",
+            )
+        return section
+
+    build_unit_summary(
+        section,
+        merged,
+        ctx,
+        unit_label=unit_label,
+        title_prefix=condition,
+    )
+    if ctx.analysis_mode != "family":
+        top_n = 2 if ctx.analysis_mode == "sensor" else 1
+        sensor_container = ctx.container_builder(condition)
+
+        reducer_tabs = {}
+        for reducer_name in ctx.reducers:
+            reducer_runs = merged[merged["reducer"] == reducer_name].copy()
+            if reducer_runs.empty:
+                continue
+
+            tab_section = ContainerElement()
+
+            sensor_group_columns = [
+                column
+                for column in ["eval_name", "target_col"]
+                if column in reducer_runs.columns and reducer_runs[column].notna().any()
+            ]
+            sensor_groups = (
+                list(reducer_runs.groupby(sensor_group_columns, dropna=False))
+                if sensor_group_columns
+                else [((), reducer_runs)]
+            )
+            for group_key, group_df in sensor_groups:
+                best_rows_df = group_df.sort_values(
+                    [ctx.selection_metric, "trustworthiness", "continuity"],
+                    ascending=[False, False, False],
+                    na_position="last",
+                ).head(top_n)
+
+                for rank, (_, best_row) in enumerate(best_rows_df.iterrows(), 1):
+                    best_artifact = artifacts[str(best_row["fit_id"])]
+                    sensor_meta = build_meta_dict(
+                        sensor_container, best_artifact["ids"], ctx
+                    )
+                    if not isinstance(group_key, tuple):
+                        group_key = (group_key,)
+                    label_parts = [
+                        str(value)
+                        for value in group_key
+                        if pd.notna(value) and str(value) != ""
+                    ]
+                    label_suffix = (
+                        f" [{' / '.join(label_parts)}]" if label_parts else ""
+                    )
+
+                    rank_prefix = f"#{rank} " if top_n > 1 else ""
+                    n_comp = int(best_row["n_components"])
+                    tab_section.add_element(
+                        CalloutElement(
+                            f"**{reducer_name}{label_suffix}** {rank_prefix}best unit: "
+                            f"{best_row['unit_name']} (n={n_comp})",
+                            kind="tip",
+                        )
+                    )
+
+                    title = (
+                        f"{condition} - {reducer_name}{label_suffix} - "
+                        f"Rank {rank} ({best_row['unit_name']})"
+                    )
+                    plots_elem = build_best_fit_plots(
+                        title,
+                        best_artifact,
+                        sensor_meta or {},
+                        ctx,
+                        feature_names=_feature_names(sensor_container),
+                    )
+                    if plots_elem:
+                        tab_section.add_element(plots_elem)
+
+            reducer_tabs[reducer_name] = tab_section
+
+        if reducer_tabs:
+            section.add_element(TabsElement(reducer_tabs))
+
+    return section
+
+
+def build_pooled_section(
+    pooled_runs: pd.DataFrame,
+    pooled_eval_runs: pd.DataFrame,
+    ctx: DimReductionReportContext,
+) -> Section | None:
+    """Build the pooled multi-condition section, or None when there are no runs."""
+    from coco_pipe.viz.interactive.base import plot_scatter
+
+    if pooled_runs.empty:
+        return None
+    fam_label = ctx.family_label
+    section = Section("Pooled Multi-condition", icon="🌐")
+    artifacts = {
+        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        for _, row in pooled_runs.iterrows()
+    }
+    callout_text = (
+        "Shared fits across all requested conditions.<br/>Condition-separation scores "
+        "show EO vs EC-style pooled separability when available."
+    )
+    if fam_label:
+        callout_text += f"<br/>Descriptor families: **{fam_label}**"
+    section.add_element(
+        CalloutElement(callout_text, kind="info", title="Pooled Configuration")
+    )
+    section.add_element(
+        StatCardElement("Pooled Fits", len(pooled_runs), color="purple")
+    )
+    merged = pooled_runs.merge(
+        pooled_eval_runs.loc[
+            :, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
+        ]
+        if not pooled_eval_runs.empty
+        else pd.DataFrame(
+            columns=["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
+        ),
+        on="fit_id",
+        how="left",
+    )
+    pooled_container = None
+    with contextlib.suppress(Exception):
+        pooled_container = ctx.container_builder(ctx.conditions[0])
+
+    if ctx.analysis_mode == "family":
+        build_unit_summary(
+            section,
+            merged,
+            ctx,
+            unit_label="family",
+            title_prefix="Pooled",
+        )
+        reducer_tabs = {}
+        for reducer_name in ctx.reducers:
+            reducer_runs = merged[merged["reducer"] == reducer_name].copy()
+            if reducer_runs.empty:
+                continue
+
+            tab_section = ContainerElement()
+            comparison_metrics = [
+                metric
+                for metric in ["trustworthiness", "continuity", "shepard_correlation"]
+                if metric in reducer_runs.columns
+            ]
+            if SEPARATION_METRIC_KEY in reducer_runs.columns:
+                comparison_metrics.append(SEPARATION_METRIC_KEY)
+            comparison_metrics = list(dict.fromkeys(comparison_metrics))
+            curve_frames = []
+            for family, family_runs in reducer_runs.groupby("family", dropna=False):
+                family_best_by_n = (
+                    family_runs.sort_values(
+                        [ctx.selection_metric, "trustworthiness", "continuity"],
+                        ascending=[False, False, False],
+                        na_position="last",
+                    )
+                    .groupby("n_components", dropna=False)
+                    .head(1)
+                    .sort_values("n_components")
+                )
+                for metric_name in comparison_metrics:
+                    metric_df = family_best_by_n.dropna(subset=[metric_name])
+                    if metric_df.empty:
+                        continue
+                    curve_frames.append(
+                        pd.DataFrame(
+                            {
+                                "n_components": metric_df["n_components"].to_numpy(),
+                                "score": metric_df[metric_name].to_numpy(),
+                                "series": f"{family}: {metric_name}",
+                            }
+                        )
+                    )
+            if curve_frames:
+                fig = plot_scatter(
+                    pd.concat(curve_frames, ignore_index=True),
+                    x="n_components",
+                    y="score",
+                    color="series",
+                    mode="lines+markers",
+                    title=f"Pooled - {reducer_name} family comparison vs n_components",
+                    xaxis_title="n_components",
+                    yaxis_title="score",
+                )
+                acc = AccordionElement(
+                    "Show Family Comparison Sweep Curves", open=False
+                )
+                acc.add_element(PlotlyElement(fig))
+
+                sweep_cols = ["reducer", "n_components"]
+                if "eval_name" in reducer_runs.columns:
+                    sweep_cols.append("eval_name")
+                if SEPARATION_METRIC_KEY in reducer_runs.columns:
+                    sweep_cols.append(SEPARATION_METRIC_KEY)
+                for gm in ["trustworthiness", "continuity"]:
+                    if gm in reducer_runs.columns:
+                        sweep_cols.append(gm)
+                sweep_cols = list(dict.fromkeys(sweep_cols))
+                acc.add_element(
+                    InteractiveTableElement(
+                        reducer_runs.loc[
+                            :, [c for c in sweep_cols if c in reducer_runs.columns]
+                        ].round(4),
+                        title=f"Pooled - {reducer_name} sweep",
+                        selector_columns=["reducer", "eval_name"]
+                        if "eval_name" in sweep_cols
+                        else ["reducer"],
+                        page_size=5,
+                    )
+                )
+                tab_section.add_element(acc)
+            reducer_tabs[reducer_name] = tab_section
+
+        if reducer_tabs:
+            section.add_element(CalloutElement("Family Sweeps by Reducer", kind="info"))
+            section.add_element(TabsElement(reducer_tabs))
+
+        family_tabs = {}
+        top_n = 2
+        for family, family_runs in merged.groupby("family", dropna=False):
+            family_best = family_runs.sort_values(
+                [ctx.selection_metric, "trustworthiness", "continuity"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).head(top_n)
+
+            fam_container = ContainerElement()
+            for rank, (_, best_row) in enumerate(family_best.iterrows(), 1):
+                best_artifact = artifacts[str(best_row["fit_id"])]
+                pool_meta = (
+                    build_meta_dict(pooled_container, best_artifact["ids"], ctx)
+                    if pooled_container is not None
+                    else {}
+                )
+
+                rank_prefix = f"#{rank} " if top_n > 1 else ""
+                n_comp = int(best_row["n_components"])
+                fam_container.add_element(
+                    CalloutElement(
+                        f"**{family}** {rank_prefix}best fit uses "
+                        f"**{best_row['reducer']}** with n={n_comp}",
+                        kind="tip",
+                    )
+                )
+
+                plots_elem = build_best_fit_plots(
+                    f"Pooled - {family} - Rank {rank}",
+                    best_artifact,
+                    pool_meta,
+                    ctx,
+                    feature_names=_feature_names(pooled_container)
+                    if pooled_container
+                    else None,
+                )
+                if plots_elem:
+                    fam_container.add_element(plots_elem)
+            if fam_container.elements:
+                family_tabs[str(family)] = fam_container
+
+        if family_tabs:
+            section.add_element(TabsElement(family_tabs))
+
+        return section
+
+    if ctx.analysis_mode == "flat":
+        acc = AccordionElement("Show Hyperparameter Sweep Tables", open=False)
+        sweep_cols = ["reducer", "n_components"]
+        if "eval_name" in merged.columns:
+            sweep_cols.append("eval_name")
+        if SEPARATION_METRIC_KEY in merged.columns:
+            sweep_cols.append(SEPARATION_METRIC_KEY)
+        for gm in ["trustworthiness", "continuity"]:
+            if gm in merged.columns:
+                sweep_cols.append(gm)
+        sweep_cols = list(dict.fromkeys(sweep_cols))
+        acc.add_element(
+            InteractiveTableElement(
+                merged.loc[:, [c for c in sweep_cols if c in merged.columns]].round(4),
+                title="Pooled fit ranking",
+                selector_columns=["reducer", "eval_name"]
+                if "eval_name" in sweep_cols
+                else ["reducer"],
+                default_sort={"column": ctx.selection_metric, "direction": "desc"},
+                page_size=5,
+            )
+        )
+        section.add_element(acc)
+
+        reducer_tabs = {}
+        for reducer_name in ctx.reducers:
+            reducer_runs = merged[merged["reducer"] == reducer_name].copy()
+            if reducer_runs.empty:
+                continue
+            best_row = reducer_runs.sort_values(
+                [ctx.selection_metric, "trustworthiness", "continuity"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).iloc[0]
+            best_artifact = artifacts[str(best_row["fit_id"])]
+            pool_meta = (
+                build_meta_dict(pooled_container, best_artifact["ids"], ctx)
+                if pooled_container is not None
+                else {}
+            )
+
+            plots_elem = build_best_fit_plots(
+                f"Pooled - {reducer_name}",
+                best_artifact,
+                pool_meta,
+                ctx,
+                feature_names=_feature_names(pooled_container)
+                if pooled_container
+                else None,
+            )
+            if plots_elem:
+                reducer_tabs[f"{reducer_name} (n={int(best_row['n_components'])})"] = (
+                    plots_elem
+                )
+        if reducer_tabs:
+            section.add_element(TabsElement(reducer_tabs))
+
+        return section
+
+    unit_label = ctx.unit_label("analysis unit")
+    build_unit_summary(
+        section,
+        merged,
+        ctx,
+        unit_label=unit_label,
+        title_prefix="Pooled",
+    )
+
+    top_n = 2 if ctx.analysis_mode == "sensor" else 1
+    reducer_tabs = {}
+    for reducer_name in ctx.reducers:
+        reducer_runs = merged[merged["reducer"] == reducer_name].copy()
+        if reducer_runs.empty:
+            continue
+
+        tab_section = ContainerElement()
+        sensor_group_columns = [
+            column
+            for column in ["eval_name", "target_col"]
+            if column in reducer_runs.columns and reducer_runs[column].notna().any()
+        ]
+        sensor_groups = (
+            list(reducer_runs.groupby(sensor_group_columns, dropna=False))
+            if sensor_group_columns
+            else [((), reducer_runs)]
+        )
+
+        for group_key, group_df in sensor_groups:
+            best_rows_df = group_df.sort_values(
+                [ctx.selection_metric, "trustworthiness", "continuity"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).head(top_n)
+
+            for rank, (_, best_row) in enumerate(best_rows_df.iterrows(), 1):
+                best_artifact = artifacts[str(best_row["fit_id"])]
+                pool_meta = (
+                    build_meta_dict(pooled_container, best_artifact["ids"], ctx)
+                    if pooled_container is not None
+                    else {}
+                )
+
+                label_parts = [
+                    str(value)
+                    for value in group_key
+                    if pd.notna(value) and str(value) != ""
+                ]
+                label_suffix = f" [{' / '.join(label_parts)}]" if label_parts else ""
+
+                rank_prefix = f"#{rank} " if top_n > 1 else ""
+                unit_name = best_row.get("unit_name", "unit")
+                n_comp = int(best_row["n_components"])
+                tab_section.add_element(
+                    CalloutElement(
+                        f"**{reducer_name}{label_suffix}** {rank_prefix}best unit: "
+                        f"{unit_name} (n={n_comp})",
+                        kind="tip",
+                    )
+                )
+
+                title = (
+                    f"Pooled - {reducer_name}{label_suffix} - "
+                    f"Rank {rank} ({best_row.get('unit_name', 'unit')})"
+                )
+                plots_elem = build_best_fit_plots(
+                    title,
+                    best_artifact,
+                    pool_meta,
+                    ctx,
+                    feature_names=_feature_names(pooled_container)
+                    if pooled_container
+                    else None,
+                )
+                if plots_elem:
+                    tab_section.add_element(plots_elem)
+
+        reducer_tabs[reducer_name] = tab_section
+
+    if reducer_tabs:
+        section.add_element(TabsElement(reducer_tabs))
+
+    return section
+
+
+def build_data_availability_summary(
+    overview_sec: Section,
+    ctx: DimReductionReportContext,
+    dataset_stats: list[dict[str, Any]] | None,
+    fit_runs_df: pd.DataFrame,
+) -> None:
+    """Append a data-availability accordion to *overview_sec* (no-op if empty)."""
+    scopes_conditions = [("condition", c) for c in ctx.conditions]
+    if ctx.run_pooled:
+        scopes_conditions.append(("pooled", ctx.pooled_condition))
+
+    stats_map = {(s.get("scope"), s.get("condition")): s for s in (dataset_stats or [])}
+
+    rows = []
+    for scope, condition in scopes_conditions:
+        stat_dict = stats_map.get((scope, condition), {})
+
+        condition_runs = pd.DataFrame()
+        if not fit_runs_df.empty:
+            condition_runs = fit_runs_df[
+                (fit_runs_df["scope"] == scope)
+                & (fit_runs_df["condition"] == condition)
+                & (fit_runs_df["status"] == "success")
+            ]
+
+        if not stat_dict and condition_runs.empty:
+            continue
+
+        reducers_str = ""
+        n_comps_str = ""
+        if not condition_runs.empty:
+            if "reducer" in condition_runs.columns:
+                reducers_str = ", ".join(
+                    sorted(condition_runs["reducer"].dropna().astype(str).unique())
+                )
+            if "n_components" in condition_runs.columns:
+                n_comps_str = ", ".join(
+                    map(
+                        str,
+                        sorted(
+                            condition_runs["n_components"].dropna().astype(int).unique()
+                        ),
+                    )
+                )
+
+        rows.append(
+            {
+                "scope": scope,
+                "condition": condition,
+                "loaded_observations": stat_dict.get("loaded_observations", ""),
+                "samples_used": stat_dict.get("samples_used", ""),
+                "unique_subjects": stat_dict.get("unique_subjects", ""),
+                "unique_recordings": stat_dict.get("unique_recordings", ""),
+                "successful_fits": len(condition_runs),
+                "reducers": reducers_str,
+                "valid_n_components": n_comps_str,
+            }
+        )
+
+    if rows:
+        acc = AccordionElement("Show Data Availability", open=False)
+        acc.add_element(
+            InteractiveTableElement(
+                pd.DataFrame(rows), title="Data Availability", page_size=10
+            )
+        )
+        overview_sec.add_element(acc)
+
+
+def build_failure_sections(
+    report: Report,
+    fit_runs_df: pd.DataFrame,
+    eval_runs_df: pd.DataFrame,
+    ctx: DimReductionReportContext,
+) -> None:
+    """Append fit/eval failure sections to *report* when failures exist."""
+    fit_failures = split_by_status(fit_runs_df)[1]
+    if not fit_failures.empty:
+        failures_sec = Section("Fit Failures", icon="⚠️")
+        acc = AccordionElement("Show Fit Failures", open=False)
+        acc.add_element(
+            InteractiveTableElement(
+                fit_failures.loc[
+                    :,
+                    [
+                        column
+                        for column in ctx.fit_failure_columns
+                        if column in fit_failures.columns
+                    ],
+                ],
+                title="Failed fits",
+                selector_columns=[
+                    column
+                    for column in [
+                        "scope",
+                        "condition",
+                        "family",
+                        "unit_name",
+                        "reducer",
+                    ]
+                    if column in fit_failures.columns
+                ],
+                default_sort={"column": "condition", "direction": "asc"}
+                if "condition" in fit_failures.columns
+                else None,
+                page_size=5,
+            )
+        )
+        failures_sec.add_element(acc)
+        report.add_section(failures_sec)
+
+    eval_failures = split_by_status(eval_runs_df)[1]
+    if not eval_failures.empty:
+        failures_sec = Section("Eval Failures", icon="⚠️")
+        acc = AccordionElement("Show Eval Failures", open=False)
+        acc.add_element(
+            InteractiveTableElement(
+                eval_failures.loc[
+                    :,
+                    [
+                        column
+                        for column in ctx.eval_failure_columns
+                        if column in eval_failures.columns
+                    ],
+                ],
+                title="Failed evals",
+                selector_columns=[
+                    column
+                    for column in [
+                        "scope",
+                        "condition",
+                        "family",
+                        "unit_name",
+                        "reducer",
+                        "eval_name",
+                    ]
+                    if column in eval_failures.columns
+                ],
+                default_sort={"column": "condition", "direction": "asc"}
+                if "condition" in eval_failures.columns
+                else None,
+                page_size=5,
+            )
+        )
+        failures_sec.add_element(acc)
+        report.add_section(failures_sec)
+
+
+def build_dataset_report(
+    ctx: DimReductionReportContext,
+    *,
+    fit_runs_path: Path,
+    eval_runs_path: Path,
+    containers_by_scope: dict[tuple[str, str], Any] | None = None,
+    dataset_stats: list[dict[str, Any]] | None = None,
+    overview_extras: Callable[[Section], None] | None = None,
+) -> Report:
+    """Assemble the full per-dataset dimensionality-reduction report.
+
+    Builds the Overview (config + data availability + best-run cards, plus any
+    *overview_extras* such as a cohort summary), QC sections, evaluation
+    results, condition ranking, per-condition sections, the pooled section and
+    failure tables. All study-specific policy is carried by *ctx*.
+    """
+    fit_runs_df = pd.DataFrame(load_fit_runs(fit_runs_path))
+
+    if eval_runs_path.exists():
+        eval_runs_df = pd.DataFrame(
+            json.loads(eval_runs_path.read_text(encoding="utf-8"))
+        )
+    else:
+        eval_runs_df = pd.DataFrame()
+
+    if not eval_runs_df.empty and ctx.eval_specs:
+        wanted_eval_names = {spec["name"] for spec in ctx.eval_specs}
+        if "eval_name" in eval_runs_df.columns:
+            eval_runs_df = eval_runs_df[
+                eval_runs_df["eval_name"].isin(wanted_eval_names)
+            ]
+
+    available_eval_metrics = [
+        col for col in EVAL_METRIC_COLUMNS if col in eval_runs_df.columns
+    ]
+    if eval_runs_df.empty or not available_eval_metrics:
+        eval_frame = pd.DataFrame()
+    else:
+        eval_base_cols = [
+            "fit_id",
+            "scope",
+            "condition",
+            "analysis_mode",
+            "family",
+            "unit_name",
+            "eval_name",
+            "target_col",
+            "reducer",
+            "n_components",
+        ]
+        cols_to_keep = [
+            c
+            for c in [*eval_base_cols, *available_eval_metrics]
+            if c in eval_runs_df.columns
+        ]
+        eval_frame = eval_runs_df.loc[
+            eval_runs_df["status"] == "success", cols_to_keep
+        ].copy()
+
+    fit_success = split_by_status(fit_runs_df)[0]
+    eval_merge_cols = ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
+
+    if not eval_frame.empty:
+        eval_subset = eval_frame.loc[
+            :, [c for c in eval_merge_cols if c in eval_frame.columns]
+        ]
+        fit_eval_ranking = fit_success.merge(eval_subset, on="fit_id", how="left")
+    else:
+        empty_evals = pd.DataFrame(columns=eval_merge_cols)
+        fit_eval_ranking = fit_success.merge(empty_evals, on="fit_id", how="left")
+
+    fam_label = ctx.family_label
+    report = Report(title=ctx.report_title)
+
+    overview_sec = Section("Overview", icon="📋")
+    config_cards = [
+        StatCardElement("Dataset", ctx.dataset_name, color="blue"),
+        StatCardElement("Input Mode", ctx.input_mode, color="purple"),
+        StatCardElement("Analysis Mode", ctx.analysis_mode, color="indigo"),
+    ]
+    if ctx.representation:
+        config_cards.append(
+            StatCardElement("Representation", ctx.representation, color="cyan")
+        )
+
+    overview_sec.add_element(ColumnsElement(config_cards, cols=len(config_cards)))
+
+    config_html = (
+        f"**Conditions**: {', '.join(ctx.conditions)}<br/>"
+        f"**Reducers**: {', '.join(ctx.reducers)}"
+    )
+    if fam_label:
+        config_html += f"<br/>**Families**: {fam_label}"
+    overview_sec.add_element(
+        CalloutElement(config_html, kind="info", title="Run Configuration Details")
+    )
+
+    build_data_availability_summary(overview_sec, ctx, dataset_stats, fit_runs_df)
+
+    # Best overall run per condition — shared coco-pipe card layout.
+    add_reduction_best_run_cards(
+        overview_sec,
+        fit_eval_ranking,
+        selection_metric=ctx.selection_metric,
+    )
+
+    if overview_extras is not None:
+        overview_extras(overview_sec)
+    report.add_section(overview_sec)
+
+    if containers_by_scope:
+        for (scope, condition), container in containers_by_scope.items():
+            qc_result = (container.meta or {}).get("qc_result")
+            if qc_result is None:
+                continue
+            qc_section = build_qc_section(qc_result)
+            qc_section.title = f"Data Quality (QC): {scope} / {condition}"
+            report.add_section(qc_section)
+
+    eval_sec = build_reduction_eval_results_section(eval_frame)
+    if eval_sec is not None:
+        report.add_section(eval_sec)
+
+    # Condition ranking table + cross-condition bar + reducer radar.
+    condition_runs = fit_eval_ranking[
+        (fit_eval_ranking["scope"] == "condition")
+        & (fit_eval_ranking["status"] == "success")
+    ].copy()
+    ranking_sec = build_reduction_condition_ranking_section(
+        condition_runs,
+        conditions=ctx.conditions,
+        reducers=ctx.reducers,
+        selection_metric=ctx.selection_metric,
+    )
+    if ranking_sec is not None:
+        report.add_section(ranking_sec)
+
+    # --- Per-condition sections ---
+    section_builder = (
+        build_flat_condition_section
+        if ctx.analysis_mode == "flat"
+        else build_nonflat_condition_section
+    )
+    for condition in ctx.conditions:
+        condition_fit_runs = fit_runs_df[
+            (fit_runs_df["scope"] == "condition")
+            & (fit_runs_df["condition"] == condition)
+            & (fit_runs_df["status"] == "success")
+        ].copy()
+        if condition_fit_runs.empty:
+            continue
+        report.add_section(
+            section_builder(
+                condition,
+                condition_fit_runs,
+                eval_frame[eval_frame["condition"] == condition].copy()
+                if not eval_frame.empty
+                else pd.DataFrame(),
+                ctx,
+            )
+        )
+
+    if ctx.run_pooled:
+        pooled_runs = fit_runs_df[
+            (fit_runs_df["scope"] == "pooled")
+            & (fit_runs_df["condition"] == ctx.pooled_condition)
+            & (fit_runs_df["status"] == "success")
+        ].copy()
+        pooled_eval = (
+            eval_frame[
+                (eval_frame["scope"] == "pooled")
+                & (eval_frame["condition"] == ctx.pooled_condition)
+            ].copy()
+            if not eval_frame.empty
+            else pd.DataFrame()
+        )
+        pooled_section = build_pooled_section(pooled_runs, pooled_eval, ctx)
+        if pooled_section is not None:
+            report.add_section(pooled_section)
+
+    build_failure_sections(report, fit_runs_df, eval_runs_df, ctx)
+
+    return report
+
+
 __all__ = [
     "DEFAULT_REDUCTION_TIE_BREAKERS",
+    "DimReductionReportContext",
     "add_reduction_best_run_cards",
+    "build_best_fit_plots",
+    "build_data_availability_summary",
+    "build_dataset_report",
+    "build_failure_sections",
+    "build_flat_condition_section",
+    "build_meta_dict",
+    "build_nonflat_condition_section",
+    "build_pooled_section",
     "build_reduction_condition_ranking_section",
     "build_reduction_eval_results_section",
     "build_reduction_rollup_report",
+    "build_unit_summary",
     "merge_fit_eval",
     "rank_reduction_runs",
 ]

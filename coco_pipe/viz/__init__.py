@@ -77,6 +77,12 @@ from .theme import (
     save_figure,
     set_coco_theme,
 )
+from .topo import (
+    feature_names_are_channels,
+    plot_topomap_from_channel_values,
+    plot_topomap_selector,
+    standard_montage_channels,
+)
 
 __all__ = [
     "DIVERGING",
@@ -86,6 +92,7 @@ __all__ = [
     "accuracy_color_limits",
     "centered_color_limits",
     "coco_theme",
+    "feature_names_are_channels",
     "figure_size",
     "info_from_montage",
     "interactive",
@@ -140,10 +147,13 @@ __all__ = [
     "plot_temporal_statistical_assessment",
     "plot_timecourses",
     "plot_topomap",
+    "plot_topomap_from_channel_values",
+    "plot_topomap_selector",
     "plot_training_history",
     "plot_trajectory",
     "plot_trajectory_metric_series",
     "plot_trajectory_separation",
     "save_figure",
     "set_coco_theme",
+    "standard_montage_channels",
 ]

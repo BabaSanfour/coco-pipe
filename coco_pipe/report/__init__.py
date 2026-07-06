@@ -220,6 +220,43 @@ _LAZY_EXPORTS = {
         "coco_pipe.report.dim_reduction_sweep",
         "DEFAULT_REDUCTION_TIE_BREAKERS",
     ),
+    "DimReductionReportContext": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "DimReductionReportContext",
+    ),
+    "build_dataset_report": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_dataset_report",
+    ),
+    "build_meta_dict": ("coco_pipe.report.dim_reduction_sweep", "build_meta_dict"),
+    "build_best_fit_plots": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_best_fit_plots",
+    ),
+    "build_flat_condition_section": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_flat_condition_section",
+    ),
+    "build_nonflat_condition_section": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_nonflat_condition_section",
+    ),
+    "build_pooled_section": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_pooled_section",
+    ),
+    "build_unit_summary": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_unit_summary",
+    ),
+    "build_data_availability_summary": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_data_availability_summary",
+    ),
+    "build_failure_sections": (
+        "coco_pipe.report.dim_reduction_sweep",
+        "build_failure_sections",
+    ),
     "split_by_status": ("coco_pipe.report.tables", "split_by_status"),
     "sort_by_metrics": ("coco_pipe.report.tables", "sort_by_metrics"),
     "best_rows": ("coco_pipe.report.tables", "best_rows"),
