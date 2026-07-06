@@ -4,6 +4,7 @@ import pytest
 
 from coco_pipe.descriptors._constants import KNOWN_FAMILY_TOKENS
 from coco_pipe.descriptors.naming import (
+    build_descriptor_feature_metadata,
     parse_descriptor_feature_column,
     split_family_token,
 )
@@ -84,3 +85,21 @@ def test_parse_honours_caller_supplied_family_tokens():
     parsed = parse_descriptor_feature_column("custom_metric_ch-Fz", ("custom",))
     assert parsed["family"] == "custom"
     assert parsed["feature"] == "metric"
+
+
+def test_build_descriptor_feature_metadata_from_columns():
+    metadata = build_descriptor_feature_metadata(
+        [
+            "band_log_abs_alpha_ch-Fz",
+            "band_log_abs_alpha_ch-Cz",
+            "complexity_sample_entropy_ch-Fz",
+        ],
+        feature_names=["Fz_log_abs_alpha", "Fz_sample_entropy"],
+    )
+
+    assert list(metadata["FeatureName"]) == [
+        "Fz_log_abs_alpha",
+        "Fz_sample_entropy",
+    ]
+    assert list(metadata["Sensor"]) == ["Fz", "Fz"]
+    assert list(metadata["FeatureFamily"]) == ["log_abs", "entropy"]

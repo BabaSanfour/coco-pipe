@@ -982,6 +982,37 @@ class StatisticalAssessmentConfig(BaseModel):
     custom_aggregation: Literal["mean", "majority"] = "mean"
 
 
+def grouped_chance_assessment(
+    method: str = "permutation",
+    *,
+    metric: str = "accuracy",
+    n_permutations: int = 100,
+    store_null: bool = False,
+    unit_column: str = "group_id",
+) -> StatisticalAssessmentConfig:
+    """Chance assessment whose independent unit is a group, not a sample.
+
+    Keeps every sweep on an identical inferential contract: ``method="permutation"``
+    builds an empirical null by shuffling labels *within groups* (via
+    *unit_column*), so significance reflects the number of independent units
+    (e.g. subjects) rather than the theoretical chance level; ``method="binomial"``
+    falls back to the analytical chance level. Permutation refits the full pipeline
+    per shuffle, so cost scales with *n_permutations*.
+    """
+    return StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=[metric],
+        chance=ChanceAssessmentConfig(
+            method=method,
+            n_permutations=n_permutations,
+            temporal_correction="none",
+            store_null_distribution=store_null,
+        ),
+        unit_of_inference="custom",
+        custom_unit_column=unit_column,
+    )
+
+
 ModelConfigType = Annotated[
     ClassicalModelType
     | FoundationEmbeddingModelConfig

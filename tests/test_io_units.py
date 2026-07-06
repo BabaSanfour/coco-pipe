@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from coco_pipe.io import DataContainer, iter_analysis_units
+from coco_pipe.io import DataContainer, iter_analysis_units, split_unit_sensor
 
 
 def _descriptor_container():
@@ -209,6 +209,12 @@ def test_iter_analysis_units_descriptor_sensor():
         "sample_entropy_Fz",
     }
     assert units[0]["container"].X.shape == (5, 2)  # alpha mean+iqr at Fz, one unit
+
+
+def test_split_unit_sensor_uses_descriptor_sensor_key_contract():
+    assert split_unit_sensor("log_abs_alpha", "log_abs_alpha_Fz") == "Fz"
+    assert split_unit_sensor("log_abs_alpha", "other_Fz") is None
+    assert split_unit_sensor("log_abs_alpha", "log_abs_alpha_") is None
 
 
 def test_iter_analysis_units_descriptor_requires_coord():

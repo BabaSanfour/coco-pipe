@@ -659,7 +659,8 @@ def prepare_eval_inputs(
 
     Returns
     -------
-    tuple of (selected_index, selected_ids, labels, groups)
+    tuple
+        A tuple of `(selected_index, selected_ids, labels, groups)`.
         *selected_index* is the pandas :class:`~pandas.Index` into the
         aligned frame (suitable for slicing the embedding array).
         The remaining three are numpy arrays of strings.

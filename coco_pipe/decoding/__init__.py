@@ -25,6 +25,7 @@ from .configs import (
     TemporalDecoderConfig,
     TrainerConfig,
     TuningConfig,
+    grouped_chance_assessment,
 )
 from .experiment import Experiment
 from .persistence import (
@@ -32,7 +33,19 @@ from .persistence import (
     config_hash,
     load_completed_result_records,
     redact_sensitive,
+    resolve_primary_metric_name,
+    stamp_primary_metric,
     write_run_status,
+)
+from .pipeline import (
+    DecodingUnit,
+    allocate_inner_jobs,
+    allocate_outer_inner,
+    build_leaderboard,
+    execute_decoding_sweep,
+    load_sweep_records,
+    run_decoding_unit,
+    write_run_summary,
 )
 from .registry import (
     EstimatorCapabilities,
@@ -58,6 +71,7 @@ __all__ = [
     "ChanceAssessmentConfig",
     "CheckpointConfig",
     "ClassicalModelConfig",
+    "DecodingUnit",
     "DeviceConfig",
     "EstimatorCapabilities",
     # Execution
@@ -78,23 +92,34 @@ __all__ = [
     "TrainerConfig",
     "TuningConfig",
     "aggregate_predictions_for_inference",
+    # Sweep orchestration
+    "allocate_inner_jobs",
+    "allocate_outer_inner",
     "benjamini_hochberg",
     "binomial_accuracy_test",
+    "build_leaderboard",
     "completed_for_config",
     "config_hash",
     "correct_sweep_pvalues",
+    "execute_decoding_sweep",
     "get_capabilities",
     "get_foundation_model_spec",
+    "grouped_chance_assessment",
     "list_capabilities",
     "list_foundation_models",
     "load_completed_result_records",
+    "load_sweep_records",
     "prepare_target",
     "redact_sensitive",
     # Model Discovery & Metadata
     "register_estimator",
     "register_estimator_spec",
+    "resolve_primary_metric_name",
+    "run_decoding_unit",
     # Stats Utilities
     "run_statistical_assessment",
     "safe_group_n_splits",
+    "stamp_primary_metric",
     "write_run_status",
+    "write_run_summary",
 ]

@@ -36,6 +36,18 @@ CLASSICAL_FAMILIES = {
 RESULT_SCHEMA_VERSION = "decoding_result_v1"
 """Version identifier for the serialized ExperimentResult payload."""
 
+# --- Sweep artifact layout ---
+# Filenames written by a sweep under its output root (a ``runs/`` subdir holds the
+# resumable inventory), shared by the runner and any study driving it.
+
+RESULTS_FILENAME = "sweep_results.csv"
+FAILURES_FILENAME = "failures.csv"
+CONFIG_SNAPSHOT_FILENAME = "config_used.yaml"
+RUNS_DIRNAME = "runs"
+SWEEP_RUNS_FILENAME = "sweep_runs.json"
+RUN_SUMMARY_FILENAME = "run_summary.json"
+LEADERBOARD_FILENAME = "leaderboard.json"
+
 # --- Common Literal Types ---
 
 MetricTask = Literal["classification", "regression"]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,44 @@ import pandas as pd
 from coco_pipe.utils import stable_hash
 
 _SENSITIVE_KEY_PARTS = ("token", "password", "secret", "api_key", "apikey")
+
+
+def resolve_primary_metric_name(
+    available: Sequence[str],
+    metrics: Sequence[str] | None = None,
+) -> str | None:
+    """Pick the primary metric name from available ``<metric>_mean`` columns.
+
+    Preference order: ``balanced_accuracy`` (the group-robust default), then the
+    first configured metric that has a ``_mean`` column, then the first available
+    ``*_mean`` column. Returns ``None`` when no scalar metric column is present.
+    """
+    mean_metrics = [str(col)[:-5] for col in available if str(col).endswith("_mean")]
+    if not mean_metrics:
+        return None
+    if "balanced_accuracy" in mean_metrics:
+        return "balanced_accuracy"
+    for metric in metrics or ():
+        if metric in mean_metrics:
+            return metric
+    return mean_metrics[0]
+
+
+def stamp_primary_metric(
+    record: dict[str, Any],
+    metrics: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Add ``primary_metric_name`` + ``primary_metric`` to a summary record in place.
+
+    Keeps every downstream consumer (leaderboards, head-to-head, reports) on one
+    metric contract instead of re-deriving it. No-op when the record carries no
+    scalar ``*_mean`` metric column.
+    """
+    name = resolve_primary_metric_name(record.keys(), metrics)
+    if name is not None:
+        record["primary_metric_name"] = name
+        record["primary_metric"] = record[f"{name}_mean"]
+    return record
 
 
 def redact_sensitive(value: Any) -> Any:
@@ -62,6 +100,8 @@ def completed_for_config(
 def load_completed_result_records(
     output_dir: str | Path,
     context: Mapping[str, Any],
+    *,
+    metrics: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Rehydrate aggregate rows for a safely resumed experiment."""
     output = Path(output_dir)
@@ -89,15 +129,18 @@ def load_completed_result_records(
             if not model_stats.empty:
                 p_value = float(model_stats.iloc[0]["PValue"])
         records.append(
-            {
-                **dict(context),
-                "model": model,
-                "status": "success",
-                "reason": "resumed",
-                "output_dir": str(output),
-                **row,
-                **({"p_value": p_value} if p_value is not None else {}),
-            }
+            stamp_primary_metric(
+                {
+                    **dict(context),
+                    "model": model,
+                    "status": "success",
+                    "reason": "resumed",
+                    "output_dir": str(output),
+                    **row,
+                    **({"p_value": p_value} if p_value is not None else {}),
+                },
+                metrics,
+            )
         )
     return records
 
