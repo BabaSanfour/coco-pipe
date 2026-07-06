@@ -14,7 +14,6 @@ from coco_pipe.report.decoding import (
     SectionDataUnavailable,
     _accepted_kwargs,
     _result_frame,
-    add_decoding_diagnostics,
     add_decoding_features,
     add_decoding_neural_artifacts,
     add_decoding_statistical_assessment,
@@ -34,7 +33,8 @@ from coco_pipe.report.decoding import (
     build_temporal_section,
     build_topomaps_section,
     build_tuning_section,
-    make_decoding_report,
+    make_decoding_result_report,
+    render_unit_reports,
 )
 from tests.fixtures.synthetic_result import (
     make_synthetic_feature_metadata,
@@ -44,7 +44,7 @@ from tests.fixtures.synthetic_result import (
 
 def test_decoding_report_builder_renders_html(tmp_path):
     result = make_synthetic_result()
-    report = make_decoding_report(
+    report = make_decoding_result_report(
         result,
         sections=["overview", "performance", "provenance", "features", "temporal"],
     )
@@ -64,7 +64,7 @@ def test_full_decoding_report_covers_all_builders(interactive):
     result = make_synthetic_result()
     metadata = pd.DataFrame(make_synthetic_feature_metadata())
     coords = metadata.drop_duplicates("Sensor").set_index("Sensor")[["x", "y"]]
-    report = make_decoding_report(
+    report = make_decoding_result_report(
         result,
         sections="full",
         feature_metadata=metadata,
@@ -96,7 +96,7 @@ def test_decoding_report_renders_qc_result():
         n_subjects_out=4,
     )
 
-    html = make_decoding_report(
+    html = make_decoding_result_report(
         result,
         sections=["overview"],
         qc_result=qc_result,
@@ -106,12 +106,44 @@ def test_decoding_report_renders_qc_result():
     assert "QC Funnel Summary" in html
 
 
+def test_render_unit_reports_from_successful_records(tmp_path):
+    output_dir = tmp_path / "flat"
+    make_synthetic_result(n_models=1, n_times=1).save(output_dir / "result.joblib")
+
+    render_unit_reports(
+        [
+            {
+                "status": "success",
+                "analysis_mode": "flat",
+                "target": "adhd",
+                "unit_name": "all",
+                "selection_mode": "baseline",
+                "output_dir": str(output_dir),
+            },
+            {
+                "status": "success",
+                "analysis_mode": "sensor",
+                "output_dir": str(tmp_path / "sensor"),
+            },
+        ],
+        modes=["flat"],
+        asset_urls={
+            "plotly": "about:blank",
+            "tailwind": "about:blank",
+            "pako": "about:blank",
+        },
+        title_fn=lambda record: f"{record['target']} {record['unit_name']}",
+    )
+
+    assert (output_dir / "report.html").exists()
+    assert not (tmp_path / "sensor" / "report.html").exists()
+
+
 def test_all_decoding_report_methods_run():
     result = make_synthetic_result()
     report = Report("Diagnostics")
     report.add_decoding_overview(result)
     report.add_decoding_summary(result)
-    report.add_decoding_diagnostics(result)
     report.add_decoding_statistical_assessment(result)
     report.add_decoding_neural_artifacts(result)
     report.add_decoding_performance(result)
@@ -126,10 +158,12 @@ def test_decoding_report_feature_metadata_is_explicit():
     result = make_synthetic_result()
     result.meta["feature_metadata"] = make_synthetic_feature_metadata()
 
-    without_explicit = make_decoding_report(result, sections=["features"]).render()
+    without_explicit = make_decoding_result_report(
+        result, sections=["features"]
+    ).render()
     assert "Feature Metadata" not in without_explicit
 
-    with_explicit = make_decoding_report(
+    with_explicit = make_decoding_result_report(
         result,
         feature_metadata=make_synthetic_feature_metadata(),
         sections=["features"],
@@ -149,7 +183,7 @@ def test_decoding_report_api_and_core_reexports():
 def test_decoding_report_rejects_unknown_sections():
     result = make_synthetic_result()
     with pytest.raises(ValueError, match="Unknown decoding report section"):
-        make_decoding_report(result, sections=["unknown_section_name"])
+        make_decoding_result_report(result, sections=["unknown_section_name"])
 
 
 def test_decoding_report_empty_edge_cases():
@@ -182,7 +216,6 @@ def test_decoding_report_empty_edge_cases():
     # Should not raise any errors, just return self
     report.add_decoding_temporal(result)
     report.add_decoding_summary(result)
-    report.add_decoding_diagnostics(result)
     report.add_decoding_statistical_assessment(result)
     report.add_decoding_neural_artifacts(result)
     assert len(report.children) == 0
@@ -259,7 +292,6 @@ def test_decoding_full_coverage():
     report = Report("Full")
     report.add_decoding_temporal(result, metric="accuracy", model="A")
     report.add_decoding_summary(result)
-    report.add_decoding_diagnostics(result, metric="accuracy", model="A")
     report.add_decoding_statistical_assessment(result, metric="accuracy", model="A")
     report.add_decoding_neural_artifacts(result, model="A")
 
@@ -318,19 +350,6 @@ def test_add_decoding_performance_exception(mock_plot, mock_log):
     from coco_pipe.report.decoding import add_decoding_performance
 
     add_decoding_performance(rep, MockResultForExceptions())
-    mock_log.assert_called()
-
-
-# `add_decoding_diagnostics` now composes the CV + probability blocks; patch a plot
-# that the CV builder actually calls (fit diagnostics moved to its own section).
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_fold_score_dispersion",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_decoding_diagnostics_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_decoding_diagnostics(rep, MockResultForExceptions())
     mock_log.assert_called()
 
 
@@ -397,12 +416,14 @@ def test_make_decoding_report_interactive_uses_plotly():
     result = make_synthetic_result()
     sections = ["cv", "performance", "statistical"]
 
-    interactive = make_decoding_report(result, sections=sections, interactive=True)
+    interactive = make_decoding_result_report(
+        result, sections=sections, interactive=True
+    )
     elements = list(_walk_elements(interactive))
     assert any(isinstance(e, PlotlyElement) for e in elements)
     assert "lazy-plot" in interactive.render()
 
-    static = make_decoding_report(result, sections=sections, interactive=False)
+    static = make_decoding_result_report(result, sections=sections, interactive=False)
     static_elements = list(_walk_elements(static))
     assert any(isinstance(e, ImageElement) for e in static_elements)
     assert not any(isinstance(e, PlotlyElement) for e in static_elements)
@@ -636,7 +657,7 @@ def test_caveats_and_export_inventory_branches():
 def test_make_decoding_report_output_path(tmp_path):
     """L1095: output_path triggers report.save."""
     path = tmp_path / "out.html"
-    make_decoding_report(
+    make_decoding_result_report(
         make_synthetic_result(), sections=["overview"], output_path=str(path)
     )
     assert path.exists() and "<html" in path.read_text()

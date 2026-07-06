@@ -24,7 +24,11 @@ from .io import (
     merge_descriptor_tables,
     save_descriptor_table,
 )
-from .naming import parse_descriptor_feature_column, split_family_token
+from .naming import (
+    build_descriptor_feature_metadata,
+    parse_descriptor_feature_column,
+    split_family_token,
+)
 from .tables import (
     add_aggregated_band_ratios,
     build_descriptor_tables,
@@ -36,6 +40,7 @@ __all__ = [
     "DescriptorConfig",
     "DescriptorPipeline",
     "add_aggregated_band_ratios",
+    "build_descriptor_feature_metadata",
     "build_descriptor_tables",
     "check_feature_column_consistency",
     "load_descriptor_table",

@@ -21,15 +21,9 @@ import os
 import urllib.request
 from pathlib import Path
 
+from ._constants import ASSET_USER_AGENT, INLINE_SENTINEL, VENDORED_URLS
+
 logger = logging.getLogger(__name__)
-
-VENDORED_URLS: dict[str, str] = {
-    "plotly": "https://cdn.plot.ly/plotly-2.27.0.min.js",
-    "tailwind": "https://cdn.tailwindcss.com",
-    "pako": "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js",
-}
-
-INLINE_SENTINEL = "inline"
 
 
 def _cache_dir() -> Path:
@@ -40,9 +34,6 @@ def _cache_dir() -> Path:
     return Path.home() / ".cache" / "coco-pipe" / "report-assets"
 
 
-_USER_AGENT = "coco-pipe/asset-vendor (+https://github.com/BabaSanfour/coco-pipe)"
-
-
 def _download_to(path: Path, url: str, timeout: float = 30.0) -> None:
     """Fetch ``url`` into ``path`` atomically.
 
@@ -51,7 +42,7 @@ def _download_to(path: Path, url: str, timeout: float = 30.0) -> None:
     ``Python-urllib/...`` UA.
     """
     tmp = path.with_suffix(path.suffix + ".part")
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    request = urllib.request.Request(url, headers={"User-Agent": ASSET_USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             tmp.write_bytes(resp.read())

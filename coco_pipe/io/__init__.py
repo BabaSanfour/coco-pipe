@@ -51,7 +51,7 @@ from .quality import (
 )
 from .structures import DataContainer
 from .transform import SklearnWrapper, SpatialWhitener
-from .units import iter_analysis_units
+from .units import iter_analysis_units, split_unit_sensor
 from .utils import (
     compute_constant_feature_summary,
     compute_feature_missingness,
@@ -108,6 +108,7 @@ __all__ = [
     "save_npz",
     "save_object",
     "smart_reader",
+    "split_unit_sensor",
     "validate_embedding_derivative",
     "write_embedding_dataset_description",
     "write_embedding_manifest",

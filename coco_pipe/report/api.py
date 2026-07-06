@@ -392,7 +392,7 @@ def from_experiment_result(
 
     See Also
     --------
-    coco_pipe.report.decoding.make_decoding_report : Lower-level factory.
+    coco_pipe.report.decoding.make_decoding_result_report : Lower-level factory.
     merge_reports : Combine multiple reports for cross-run comparison.
 
     Examples
@@ -400,9 +400,9 @@ def from_experiment_result(
     >>> report = from_experiment_result(result, title="EEG Decoding")
     >>> report.save("decoding.html")
     """
-    from .decoding import make_decoding_report
+    from .decoding import make_decoding_result_report
 
-    report = make_decoding_report(
+    report = make_decoding_result_report(
         result,
         feature_metadata=feature_metadata,
         info=info,
@@ -442,7 +442,7 @@ def from_experiment_results(
 ) -> Report:
     """Build one report from many labelled
     ``~coco_pipe.decoding.result.ExperimentResult`` objects or paths."""
-    from .decoding_comparison import make_experiment_results_report
+    from .decoding_sweep import make_experiment_results_report
 
     return make_experiment_results_report(
         items,
@@ -461,6 +461,82 @@ def from_experiment_results(
         output_path=output_path,
         on_error=on_error,
     )
+
+
+def from_decoding_sweep(records, **kwargs) -> Report:
+    """Build the classical decoding sweep report from per-unit records.
+
+    Thin façade over
+    :func:`coco_pipe.report.decoding.make_decoding_report`; every keyword
+    argument is forwarded unchanged (see that function for the full parameter
+    set, e.g. ``title``, ``scope_order``, ``feature_metadata``, ``output_path``).
+
+    Parameters
+    ----------
+    records
+        Per-unit classical decoding rows (one mapping per analysis unit).
+
+    Returns
+    -------
+    Report
+
+    See Also
+    --------
+    from_foundation_sweep : The foundation-model counterpart.
+    from_experiment_results : Compare a handful of loaded result objects.
+    """
+    from .decoding import make_decoding_report
+
+    return make_decoding_report(records, **kwargs)
+
+
+def from_foundation_sweep(records, **kwargs) -> Report:
+    """Build the foundation-model decoding sweep report from per-model records.
+
+    Thin façade over
+    :func:`coco_pipe.report.foundation.make_foundation_decoding_report`; every
+    keyword argument is forwarded unchanged (e.g. ``capability_records``,
+    ``group_by``, ``per_result_sections``, ``output_path``).
+
+    Parameters
+    ----------
+    records
+        Per-model foundation decoding rows.
+
+    Returns
+    -------
+    Report
+
+    See Also
+    --------
+    from_decoding_sweep : The classical counterpart.
+    """
+    from .foundation import make_foundation_decoding_report
+
+    return make_foundation_decoding_report(records, **kwargs)
+
+
+def from_head_to_head(comparison_frame, **kwargs) -> Report:
+    """Build the head-to-head comparison report from a tagged comparison frame.
+
+    Thin façade over
+    :func:`coco_pipe.report.decoding_sweep.make_head_to_head_report`; every
+    keyword argument is forwarded unchanged. ``baseline_family`` is required by
+    the underlying builder.
+
+    Parameters
+    ----------
+    comparison_frame
+        A frame carrying ``comparison_family`` plus per-run metrics (e.g. built
+        with :func:`coco_pipe.report.collect_comparison_runs`).
+
+    Returns
+    -------
+    Report
+    """
+    from .decoding_sweep import make_head_to_head_report
+
+    return make_head_to_head_report(comparison_frame, **kwargs)
 
 
 def merge_reports(*reports: Report, title: str = "Comparison Report") -> Report:
@@ -493,8 +569,8 @@ def merge_reports(*reports: Report, title: str = "Comparison Report") -> Report:
 
     Examples
     --------
-    >>> r1 = make_decoding_report(result_cohort_a)
-    >>> r2 = make_decoding_report(result_cohort_b)
+    >>> r1 = make_decoding_result_report(result_cohort_a)
+    >>> r2 = make_decoding_result_report(result_cohort_b)
     >>> merged = merge_reports(r1, r2, title="Cross-Cohort Comparison")
     >>> merged.save("comparison.html")
     """

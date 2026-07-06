@@ -33,8 +33,6 @@ underlying data is absent.
      - ``result.meta``
    * - :func:`~coco_pipe.report.decoding.add_decoding_summary`
      - ``result.get_detailed_scores()``
-   * - :func:`~coco_pipe.report.decoding.add_decoding_diagnostics`
-     - ``result.get_detailed_scores()`` + ``result.get_splits()``
    * - :func:`~coco_pipe.report.decoding.add_decoding_performance`
      - ``result.get_roc_curve()`` / ``get_pr_curve()`` / ``get_calibration_curve()``
    * - :func:`~coco_pipe.report.decoding.add_decoding_temporal`
@@ -111,18 +109,7 @@ best model per metric.
 
    report.add_decoding_summary(result, name="Model Performance")
 
-3.3 ``add_decoding_diagnostics``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Cross-validation diagnostics: per-fold scores, fold sizes, group
-counts (when group-based CV), and any
-fit/predict warnings (e.g., LinearAlgebra warnings).
-
-.. code-block:: python
-
-   report.add_decoding_diagnostics(result, model="SVM")   # filter to one model
-
-3.4 ``add_decoding_performance``
+3.3 ``add_decoding_performance``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ROC, precision-recall, calibration curves — interactive Plotly
@@ -133,7 +120,7 @@ probabilities.
 
    report.add_decoding_performance(result, metric="roc_auc")
 
-3.5 ``add_decoding_temporal``
+3.4 ``add_decoding_temporal``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For sliding / generalizing decoders: time-resolved score curves and,
@@ -144,7 +131,7 @@ heatmap.
 
    report.add_decoding_temporal(result, metric="accuracy")
 
-3.6 ``add_decoding_statistical_assessment``
+3.5 ``add_decoding_statistical_assessment``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The full assessment view: observed score, null distribution histogram,
@@ -154,7 +141,7 @@ p-value, max-stat-corrected p-values for temporal decoders.
 
    report.add_decoding_statistical_assessment(result, metric="accuracy")
 
-3.7 ``add_decoding_neural_artifacts``
+3.6 ``add_decoding_neural_artifacts``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Loss / metric training curves, learning-rate schedules, and any
@@ -165,7 +152,7 @@ artifacts stored by neural-network estimators
 
    report.add_decoding_neural_artifacts(result)
 
-3.8 ``add_decoding_features``
+3.7 ``add_decoding_features``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Top-N feature importances, stability across folds, feature scores
@@ -177,7 +164,7 @@ when a univariate selector was used. Accepts an optional
 
    report.add_decoding_features(result, feature_metadata=meta_df)
 
-3.9 ``add_decoding_topomaps``
+3.8 ``add_decoding_topomaps``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Sensor-level topomaps of feature importance. Requires either an MNE

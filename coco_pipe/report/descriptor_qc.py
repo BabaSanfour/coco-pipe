@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ._constants import FAMILY_DIAGNOSTIC_COLUMNS
 from .core import Report, Section
 from .elements import ImageElement, InteractiveTableElement, TableElement
 
@@ -56,44 +57,6 @@ def _add_images(
             )
 
 
-# Family-specific diagnostic columns added by
-# :func:`coco_pipe.descriptors.qc.add_family_diagnostics`, keyed by the
-# descriptor family they apply to.
-_FAMILY_DIAGNOSTIC_COLUMNS: dict[str, tuple[str, str, list[str]]] = {
-    "band": (
-        "Band Power Sanity",
-        "🎚️",
-        [
-            "band_abs_negative_rate",
-            "band_rel_out_of_range_rate",
-            "band_corr_rel_out_of_range_rate",
-            "band_ratio_nan_rate",
-        ],
-    ),
-    "param": (
-        "FOOOF Fit Quality",
-        "📐",
-        [
-            "param_r_squared_median",
-            "param_r_squared_p05",
-            "param_fit_error_median",
-            "param_fit_error_p95",
-            "param_peak_count_missing_rate",
-            "param_alpha_peak_freq_missing_rate",
-        ],
-    ),
-    "complexity": (
-        "Complexity Measure Sanity",
-        "🌀",
-        [
-            "complexity_measure_missingness_max",
-            "complexity_measure_missingness_median",
-            "complexity_nonfinite_rate",
-        ],
-    ),
-}
-
-
 def _add_family_diagnostic_sections(
     report: Report, family_summary_df: pd.DataFrame | None
 ) -> None:
@@ -105,7 +68,7 @@ def _add_family_diagnostic_sections(
     """
     if family_summary_df is None or family_summary_df.empty:
         return
-    for family, (title, icon, columns) in _FAMILY_DIAGNOSTIC_COLUMNS.items():
+    for family, (title, icon, columns) in FAMILY_DIAGNOSTIC_COLUMNS.items():
         if "family" not in family_summary_df.columns:
             continue
         present_columns = [

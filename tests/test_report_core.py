@@ -244,7 +244,6 @@ def test_fluent_stubs():
         "add_decoding_overview",
         "add_decoding_temporal",
         "add_decoding_summary",
-        "add_decoding_diagnostics",
         "add_decoding_statistical_assessment",
         "add_decoding_neural_artifacts",
         "add_decoding_performance",

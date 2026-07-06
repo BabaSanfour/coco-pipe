@@ -6,15 +6,17 @@ import pytest
 
 from coco_pipe.io.quality import QCResult
 from coco_pipe.report.api import from_experiment_results
-from coco_pipe.report.decoding_comparison import (
+from coco_pipe.report.decoding_sweep import (
     ResultCollection,
-    _load_result,
     build_comparison_section,
     build_result_tabs,
     collect_results,
     make_experiment_results_report,
 )
-from coco_pipe.report.elements import AccordionElement, TabsElement
+from coco_pipe.report.elements import (
+    AccordionElement,
+    TabsElement,
+)
 from tests.fixtures.synthetic_result import make_synthetic_result
 
 
@@ -205,29 +207,6 @@ def test_comparison_unknown_kind_warns_and_returns_none():
     assert section is None
 
 
-def test_paired_delta_success_path():
-    collection = collect_results(
-        [
-            ({"comparison": name}, make_synthetic_result(n_models=1, n_times=1))
-            for name in ("A", "B")
-        ],
-        by=("comparison",),
-    )
-    collection.summary = pd.DataFrame(
-        {
-            "comparison": ["A", "B"],
-            "delta": [0.02, -0.01],
-            "ci_lower": [0.0, -0.03],
-            "ci_upper": [0.04, 0.01],
-            "_status": ["success", "success"],
-        }
-    )
-    section = build_comparison_section(
-        collection, kind="paired_delta", axis="comparison", value="delta"
-    )
-    assert section is not None and section.children
-
-
 def test_showcase_preset_renders_multiple_comparison_views():
     from coco_pipe.report import make_experiment_results_report
 
@@ -250,44 +229,13 @@ def test_showcase_preset_renders_multiple_comparison_views():
     assert "Per-Result Diagnostics" in titles
 
 
-def test_paired_delta_rejects_mismatched_cv_designs():
-    frame = pd.DataFrame(
-        {
-            "comparison": ["A", "B"],
-            "delta": [0.02, -0.01],
-            "cv_signature": ["groupkfold-5", "groupkfold-10"],
-            "_status": ["success", "success"],
-        }
-    )
-    collection = collect_results(
-        [
-            (
-                {"comparison": name},
-                make_synthetic_result(n_models=1, n_times=1),
-            )
-            for name in ("A", "B")
-        ],
-        by=("comparison",),
-    )
-    collection.summary = frame
-
-    section = build_comparison_section(
-        collection,
-        kind="paired_delta",
-        axis="comparison",
-        value="delta",
-    )
-
-    assert section is not None
-    assert "Incompatible comparison design" in section.render()
-
-
 def test_collect_results_and_result_collection_edge_cases(tmp_path):
     summary = pd.DataFrame({"scope": ["EO"], "accuracy_mean": [0.9]})
     coll = ResultCollection(by=("scope",), results={}, contexts={}, summary=summary)
     assert "_status" not in coll.successful_summary.columns
-    with pytest.raises(FileNotFoundError):
-        _load_result(tmp_path)  # directory exists, result.joblib inside does not
+    # A directory without result.joblib is recorded as a failed load, not raised.
+    missing = collect_results([({"scope": "EO"}, tmp_path)], by=("scope",))
+    assert (missing.summary["_status"] == "failed").all()
 
     with pytest.raises(ValueError, match="by must contain"):
         collect_results([], by=())

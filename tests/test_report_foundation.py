@@ -2,6 +2,7 @@ from coco_pipe.report.foundation import (
     make_foundation_decoding_report,
     make_foundation_embedding_report,
 )
+from tests.fixtures.synthetic_result import make_synthetic_result
 
 
 def test_foundation_embedding_report_renders_offline(tmp_path, monkeypatch):
@@ -60,22 +61,44 @@ def test_foundation_embedding_report_empty():
 
 
 def test_foundation_decoding_report(tmp_path):
-    class DummyResult:
-        pass
-
-    from unittest.mock import patch
-
-    with patch("coco_pipe.report.foundation.make_decoding_report") as mock_make:
-        from coco_pipe.report.core import Report
-
-        mock_report = Report("Dummy")
-        mock_make.return_value = mock_report
-
-        path = tmp_path / "decoding.html"
-        report = make_foundation_decoding_report(
-            DummyResult(),
-            capability_records=[{"model": "test", "capability": "yes"}],
-            output_path=str(path),
+    records = []
+    for model_key in ("labram", "cbramod"):
+        output_dir = tmp_path / f"{model_key}_linear_probe"
+        make_synthetic_result(n_models=1, n_times=1).save(output_dir / "result.joblib")
+        records.append(
+            {
+                "status": "success",
+                "condition": "EO",
+                "target": "adhd",
+                "model_key": model_key,
+                "train_mode": "linear_probe",
+                "primary_metric": 0.7,
+                "primary_metric_name": "balanced_accuracy",
+                "output_dir": str(output_dir),
+            }
         )
-        assert path.exists()
-        assert "Foundation Capability Matrix" in report.render()
+
+    path = tmp_path / "decoding.html"
+    report = make_foundation_decoding_report(
+        records,
+        capability_records=[
+            {"model_key": "labram", "train_mode": "linear_probe", "status": "ok"}
+        ],
+        dataset_name="DemoDS",
+        output_path=str(path),
+        asset_urls={"plotly": "", "tailwind": "", "pako": ""},
+    )
+    assert path.exists()
+    html = report.render()
+    assert "Scientific Overview" in html
+    assert "Foundation Capability Matrix" in html
+    assert "Linear Probe Leaderboard" in html
+    assert "Training-Mode Comparison" in html
+    assert "Per-Result Diagnostics" in html
+
+
+def test_foundation_decoding_report_empty_records():
+    report = make_foundation_decoding_report(
+        [], asset_urls={"plotly": "", "tailwind": "", "pako": ""}
+    )
+    assert "No foundation decoding units were produced." in report.render()

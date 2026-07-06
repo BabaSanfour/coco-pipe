@@ -4,6 +4,7 @@ import pandas as pd
 
 from coco_pipe.report._utils import _config_element, _table_from_mapping
 from coco_pipe.report.elements import CodeBlockElement, TableElement
+from coco_pipe.report.tables import display_frame
 
 
 def test_table_from_mapping():
@@ -89,6 +90,32 @@ def test_config_element_string_is_not_nested():
         element.data["Value"].iloc[0]
         == "this is a string, which is technically a sequence"
     )
+
+
+def test_display_frame_uses_decoding_defaults_and_overrides():
+    frame = pd.DataFrame(
+        [
+            {
+                "target": "adhd",
+                "unit_name": "all",
+                "model": "rf",
+                "status": "success",
+                "accuracy_mean": 0.7,
+                "output_dir": "/tmp/run",
+            }
+        ]
+    )
+
+    display = display_frame(frame, labels={"model": "Estimator"})
+
+    assert list(display.columns) == [
+        "Target",
+        "Analysis Unit",
+        "Estimator",
+        "Status",
+        "Accuracy",
+    ]
+    assert "output_dir" not in display
 
 
 def test_report_lazy_getattr():

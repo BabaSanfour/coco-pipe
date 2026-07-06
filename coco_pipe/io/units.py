@@ -45,7 +45,23 @@ from .structures import DataContainer
 
 __all__ = [
     "iter_analysis_units",
+    "split_unit_sensor",
 ]
+
+
+def split_unit_sensor(unit_name: str, unit_key: str) -> str | None:
+    """Return the sensor suffix from a ``{unit_name}_{sensor}`` unit key.
+
+    ``descriptor_sensor`` units use ``unit_name`` for the descriptor and
+    ``unit_key`` for the descriptor/sensor pair. Returns ``None`` when the key
+    does not follow that explicit convention.
+    """
+    prefix = f"{unit_name}_"
+    key = str(unit_key)
+    if not key.startswith(prefix):
+        return None
+    sensor = key[len(prefix) :]
+    return sensor or None
 
 
 def iter_analysis_units(

@@ -11,6 +11,7 @@ import pandas as pd
 
 from coco_pipe.io.quality import QCResult
 
+from ._constants import DEFAULT_REDUCTION_SECTIONS, VALID_REDUCTION_SECTIONS
 from ._utils import _coerce_kind, _resolve_sections
 from .core import Report, Section
 from .elements import (
@@ -67,20 +68,6 @@ def _trajectory_times(
 
     time_values = np.asarray(diagnostic_times).reshape(-1)
     return time_values if time_values.size > 0 else None
-
-
-DEFAULT_REDUCTION_SECTIONS: list[str] = [
-    "overview",
-    "embedding",
-    "metrics",
-    "diagnostics",
-    "coranking",
-    "interpretation",
-    "components",
-    "trajectory",
-    "trajectory_separation",
-]
-VALID_REDUCTION_SECTIONS = set(DEFAULT_REDUCTION_SECTIONS)
 
 
 def _metrics_summary_table(metrics: Any) -> pd.DataFrame:
@@ -222,6 +209,68 @@ def add_reduction_embedding(
         return self
     self.add_section(sec)
     return self
+
+
+def reduction_embedding_element(
+    embedding: Any,
+    *,
+    metadata: Any = None,
+    title: str = "Embedding",
+    dimensions: int = 2,
+    interactive: bool = False,
+) -> Any:
+    """Build an embedding-scatter element (2-D or 3-D, static or interactive).
+
+    Pure ``array -> element`` helper shared by any report that renders a reduced
+    embedding. Returns a :class:`PlotlyElement` when *interactive*, else an
+    :class:`ImageElement`. The caller owns metadata/label preparation.
+    """
+    if interactive:
+        from coco_pipe.viz.interactive.dim_reduction import (
+            plot_embedding as plot_embedding_interactive,
+        )
+
+        return PlotlyElement(
+            plot_embedding_interactive(
+                embedding=embedding,
+                metadata=metadata,
+                title=title,
+                dimensions=dimensions,
+            )
+        )
+    from coco_pipe.viz.dim_reduction import plot_embedding
+
+    dims = (0, 1) if dimensions == 2 else (0, 1, 2)
+    fig, _ = plot_embedding(X_emb=embedding, metadata=metadata, dims=dims, title=title)
+    return ImageElement(fig)
+
+
+def reduction_loadings_element(
+    loadings: Any,
+    *,
+    feature_names: list[str] | None = None,
+    n_components: int = 10,
+    title: str = "Component loadings",
+) -> Any:
+    """Build an interactive component-loadings element from a loadings matrix.
+
+    *loadings* is a ``(n_features, n_components)`` array. Returns a
+    :class:`PlotlyElement`, or ``None`` when the matrix is not 2-D.
+    """
+    matrix = np.asarray(loadings, dtype=float)
+    if matrix.ndim != 2:
+        return None
+    from coco_pipe.viz.interactive.dim_reduction import plot_component_loadings
+
+    n_comp = min(matrix.shape[1], n_components)
+    return PlotlyElement(
+        plot_component_loadings(
+            matrix,
+            feature_names=feature_names,
+            n_components=n_comp,
+            title=title,
+        )
+    )
 
 
 def add_reduction_metrics(
@@ -733,7 +782,7 @@ def make_reduction_report(
     See Also
     --------
     coco_pipe.report.api.from_reductions : Thin public wrapper.
-    make_decoding_report : Equivalent factory for decoding results.
+    make_decoding_result_report : Equivalent factory for decoding results.
 
     Examples
     --------
@@ -1201,6 +1250,8 @@ __all__ = [
     "add_reduction_trajectory",
     "add_reduction_trajectory_separation",
     "make_reduction_report",
+    "reduction_embedding_element",
+    "reduction_loadings_element",
 ]
 
 # Bind section adders as Report methods. Reversing the dependency this way

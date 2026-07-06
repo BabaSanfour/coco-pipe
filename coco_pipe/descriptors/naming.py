@@ -10,9 +10,17 @@ consumes it (:mod:`coco_pipe.descriptors.qc`) and shares the single
 
 from __future__ import annotations
 
-from ._constants import DESCRIPTOR_SCOPE_RE
+from collections.abc import Sequence
 
-__all__ = ["parse_descriptor_feature_column", "split_family_token"]
+import pandas as pd
+
+from ._constants import DESCRIPTOR_SCOPE_RE, KNOWN_FAMILY_TOKENS
+
+__all__ = [
+    "build_descriptor_feature_metadata",
+    "parse_descriptor_feature_column",
+    "split_family_token",
+]
 
 
 def split_family_token(
@@ -84,3 +92,36 @@ def parse_descriptor_feature_column(
         "scope": "sensor_group" if scope == "chgrp" else "sensor",
         "sensor": sensor,
     }
+
+
+def build_descriptor_feature_metadata(
+    columns: Sequence[str],
+    *,
+    known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
+    feature_names: Sequence[str] | None = None,
+) -> pd.DataFrame:
+    """Build decoding feature metadata from descriptor feature-column names."""
+    from .qc import descriptor_subfamily
+
+    rows = []
+    for column in columns:
+        item = parse_descriptor_feature_column(str(column), known_families)
+        rows.append(
+            {
+                "FeatureName": f"{item['sensor']}_{item['feature']}",
+                "Sensor": item["sensor"],
+                "Feature": item["feature"],
+                "FeatureFamily": descriptor_subfamily(
+                    item["family"],
+                    item["feature"],
+                ),
+            }
+        )
+    metadata = pd.DataFrame(
+        rows,
+        columns=("FeatureName", "Sensor", "Feature", "FeatureFamily"),
+    ).drop_duplicates("FeatureName")
+    if feature_names is not None:
+        requested = {str(value) for value in feature_names}
+        metadata = metadata[metadata["FeatureName"].isin(requested)]
+    return metadata.reset_index(drop=True)

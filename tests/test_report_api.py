@@ -6,9 +6,12 @@ from coco_pipe.io.quality import QCResult
 from coco_pipe.report.api import (
     from_bids,
     from_container,
+    from_decoding_sweep,
     from_embeddings,
     from_experiment_result,
     from_experiment_results,
+    from_foundation_sweep,
+    from_head_to_head,
     from_reductions,
     from_tabular,
     merge_reports,
@@ -145,7 +148,7 @@ def test_from_reductions_with_container(mock_make):
     mock_report.save.assert_called_once_with("red.html")
 
 
-@patch("coco_pipe.report.decoding.make_decoding_report")
+@patch("coco_pipe.report.decoding.make_decoding_result_report")
 def test_from_experiment_result(mock_make):
     mock_report = MagicMock()
     mock_make.return_value = mock_report
@@ -156,7 +159,7 @@ def test_from_experiment_result(mock_make):
     assert mock_make.call_args[1]["title"] == "Dec"
 
 
-@patch("coco_pipe.report.decoding.make_decoding_report")
+@patch("coco_pipe.report.decoding.make_decoding_result_report")
 def test_from_experiment_result_forwards_qc_result(mock_make):
     mock_make.return_value = MagicMock()
     qc_result = QCResult(
@@ -171,7 +174,7 @@ def test_from_experiment_result_forwards_qc_result(mock_make):
     assert mock_make.call_args.kwargs["qc_result"] is qc_result
 
 
-@patch("coco_pipe.report.decoding.make_decoding_report")
+@patch("coco_pipe.report.decoding.make_decoding_result_report")
 def test_from_experiment_result_forwards_composition_options(mock_make):
     mock_make.return_value = MagicMock()
     coords = {"Fp1": (-0.2, 0.4)}
@@ -192,7 +195,7 @@ def test_from_experiment_result_forwards_composition_options(mock_make):
     assert kwargs["section_options"] is section_options
 
 
-@patch("coco_pipe.report.decoding_comparison.make_experiment_results_report")
+@patch("coco_pipe.report.decoding_sweep.make_experiment_results_report")
 def test_from_experiment_results(mock_make):
     mock_make.return_value = MagicMock()
     items = [({"scope": "EO"}, "result.joblib")]
@@ -203,6 +206,43 @@ def test_from_experiment_results(mock_make):
     assert mock_make.call_args.args[0] == items
     assert mock_make.call_args.kwargs["by"] == ("scope",)
     assert mock_make.call_args.kwargs["title"] == "Many"
+
+
+@patch("coco_pipe.report.decoding.make_decoding_report")
+def test_from_decoding_sweep_forwards(mock_make):
+    mock_make.return_value = MagicMock()
+    records = [{"scope": "EO", "analysis_mode": "flat"}]
+
+    from_decoding_sweep(records, title="Classical", scope_order=["EO"])
+
+    mock_make.assert_called_once()
+    assert mock_make.call_args.args[0] == records
+    assert mock_make.call_args.kwargs["title"] == "Classical"
+    assert mock_make.call_args.kwargs["scope_order"] == ["EO"]
+
+
+@patch("coco_pipe.report.foundation.make_foundation_decoding_report")
+def test_from_foundation_sweep_forwards(mock_make):
+    mock_make.return_value = MagicMock()
+    records = [{"condition": "EO", "train_mode": "linear_probe"}]
+
+    from_foundation_sweep(records, title="Foundation")
+
+    mock_make.assert_called_once()
+    assert mock_make.call_args.args[0] == records
+    assert mock_make.call_args.kwargs["title"] == "Foundation"
+
+
+@patch("coco_pipe.report.decoding_sweep.make_head_to_head_report")
+def test_from_head_to_head_forwards(mock_make):
+    mock_make.return_value = MagicMock()
+    frame = MagicMock()
+
+    from_head_to_head(frame, baseline_family="descriptor_flat_baseline", title="H2H")
+
+    mock_make.assert_called_once()
+    assert mock_make.call_args.args[0] is frame
+    assert mock_make.call_args.kwargs["baseline_family"] == "descriptor_flat_baseline"
 
 
 def test_merge_reports_errors():

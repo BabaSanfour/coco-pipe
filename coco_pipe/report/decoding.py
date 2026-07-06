@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import partial
+from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
 
+from coco_pipe.decoding import ExperimentResult
 from coco_pipe.io.quality import QCResult
 
+from ._constants import (
+    DECODING_PRESETS,
+    DEFAULT_SECTIONS,
+    INTERACTIVE_AWARE_SECTIONS,
+    SECTION_ALIASES,
+)
 from ._utils import (
     _add_tabs_or_single,
     _config_element,
@@ -31,61 +41,11 @@ from .elements import (
 )
 from .qc import build_qc_section
 
+LOGGER = logging.getLogger(__name__)
+
 
 class SectionDataUnavailable(RuntimeError):
     """Signal that a report section is inapplicable because its data is absent."""
-
-
-DECODING_PRESETS: dict[str, list[str]] = {
-    "compact": [
-        "overview",
-        "model_summary",
-        "cv",
-        "probability",
-        "statistical",
-        "features",
-        "topomaps",
-    ],
-    "default": [
-        "overview",
-        "configuration",
-        "provenance",
-        "model_summary",
-        "cv",
-        "performance",
-        "statistical",
-        "probability",
-        "temporal",
-        "features",
-        "fit_diagnostics",
-        "tuning",
-        "caveats",
-        "export_inventory",
-    ],
-    "full": [
-        "overview",
-        "configuration",
-        "provenance",
-        "model_summary",
-        "cv",
-        "performance",
-        "statistical",
-        "probability",
-        "temporal",
-        "features",
-        "topomaps",
-        "fit_diagnostics",
-        "tuning",
-        "neural",
-        "caveats",
-        "export_inventory",
-    ],
-}
-DEFAULT_SECTIONS = DECODING_PRESETS["default"]
-_SECTION_ALIASES = {
-    "cv_summary": "cv",
-    "confusion_probability": "probability",
-}
 
 
 def _accepted_kwargs(method: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -335,56 +295,6 @@ def build_probability_section(
         section.add_element(next(iter(model_blocks.values())))
     elif model_blocks:
         section.add_element(TabsElement(model_blocks))
-    return section
-
-
-def build_decoding_diagnostics_section(
-    result: Any,
-    *,
-    metric: str | None = None,
-    model: str | None = None,
-    name: str = "Decoding Diagnostics",
-    include_tables: bool = False,
-    interactive: bool = False,
-) -> Section:
-    """Combine the now-separated CV and probability blocks into one section.
-
-    Legacy-only: this re-colocates diagnostics that the presets deliberately keep
-    apart. It backs the deprecated :func:`add_decoding_diagnostics` method and is
-    intentionally absent from every preset, so it cannot reintroduce the historical
-    double-render. Prefer ``build_cv_section`` + ``build_probability_section``.
-    """
-    section = Section(title=name)
-    builders = (
-        (
-            build_cv_section,
-            {
-                "metric": metric,
-                "model": model,
-                "include_tables": include_tables,
-                "interactive": interactive,
-            },
-        ),
-        (
-            build_probability_section,
-            {
-                "model": model,
-                "include_tables": include_tables,
-                "interactive": interactive,
-            },
-        ),
-    )
-    for builder, kwargs in builders:
-        try:
-            child = builder(result, **kwargs)
-        except SectionDataUnavailable:
-            continue
-        accordion = AccordionElement(child.title, open=True)
-        for element in child.children:
-            accordion.add_element(element)
-        section.add_element(accordion)
-    if not section.children:
-        raise SectionDataUnavailable("No decoding diagnostics are available.")
     return section
 
 
@@ -934,19 +844,7 @@ DECODING_SECTION_BUILDERS: dict[str, Callable[..., Section]] = {
     "caveats": build_caveats_section,
     "export_inventory": build_export_inventory_section,
 }
-VALID_SECTIONS = set(DECODING_SECTION_BUILDERS) | set(_SECTION_ALIASES)
-
-_INTERACTIVE_AWARE_SECTIONS = {
-    "cv",
-    "probability",
-    "statistical",
-    "temporal",
-    "performance",
-    "features",
-    "fit_diagnostics",
-    "tuning",
-    "neural",
-}
+VALID_SECTIONS = set(DECODING_SECTION_BUILDERS) | set(SECTION_ALIASES)
 
 
 def _resolve_decoding_sections(
@@ -959,7 +857,7 @@ def _resolve_decoding_sections(
                 f"Unknown decoding report preset {sections!r}. Choose from: {choices}."
             )
         return list(DECODING_PRESETS[sections])
-    selected = [_SECTION_ALIASES.get(key, key) for key in sections]
+    selected = [SECTION_ALIASES.get(key, key) for key in sections]
     unknown = [key for key in selected if key not in DECODING_SECTION_BUILDERS]
     if unknown:
         raise ValueError(f"Unknown decoding report section(s): {', '.join(unknown)}")
@@ -992,7 +890,7 @@ def _builder_kwargs(
         "neural",
     }:
         kwargs.setdefault("include_tables", verbose)
-    if key in _INTERACTIVE_AWARE_SECTIONS:
+    if key in INTERACTIVE_AWARE_SECTIONS:
         kwargs.setdefault("interactive", interactive)
     return kwargs
 
@@ -1009,13 +907,34 @@ def build_decoding_sections(
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[Section]:
-    """Build ordered decoding sections without creating or mutating a report."""
+    """Build ordered decoding sections without creating or mutating a report.
+
+    Parameters
+    ----------
+    sections
+        A preset name (``"compact"``, ``"default"``, ``"full"``) or an explicit
+        list of section keys from :data:`DECODING_SECTION_BUILDERS`.
+    verbose
+        Controls the ``include_tables`` flag passed to table-bearing sections
+        (``cv``, ``probability``, ``temporal``, ``features``, ``fit_diagnostics``,
+        ``tuning``, ``neural``). When ``None`` it defaults to ``True`` only for the
+        ``"full"`` preset, so detailed tables appear in full reports and are
+        suppressed in the leaner presets.
+    section_options
+        Per-section keyword overrides, keyed by section name; the inner mapping is
+        forwarded to that section's builder. For example
+        ``{"cv": {"metric": "accuracy"}, "features": {"top_n": 30}}``. Explicit
+        keys here take precedence over the values derived from *feature_metadata*,
+        *info*, *coords*, *verbose*, and *interactive*.
+    """
     # Even interactive reports embed Matplotlib images for static-only plots
     # (topomaps, sensor maps), so the headless backend is always required.
     _ensure_static_matplotlib_backend()
     if on_error not in {"raise", "warn", "placeholder"}:
         raise ValueError("on_error must be 'raise', 'warn', or 'placeholder'.")
     selected = _resolve_decoding_sections(sections)
+    # `verbose` toggles detailed per-section tables; default it on for the "full"
+    # preset only so leaner presets stay compact.
     include_tables = sections == "full" if verbose is None else bool(verbose)
     options = section_options or {}
     built: list[Section] = []
@@ -1052,7 +971,7 @@ def build_decoding_sections(
     return built
 
 
-def make_decoding_report(
+def make_decoding_result_report(
     result: Any,
     *,
     feature_metadata: pd.DataFrame | None = None,
@@ -1070,7 +989,10 @@ def make_decoding_report(
     on_error: Literal["raise", "warn", "placeholder"] = "warn",
     section_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Report:
-    """Build a decoding report from one ``~coco_pipe.decoding.result.ExperimentResult``.
+    """Build a report for one ``~coco_pipe.decoding.result.ExperimentResult``.
+
+    This is the single-result renderer (one model set on one analysis unit). For
+    a whole classical sweep, see :func:`make_decoding_report`.
 
     With ``interactive=True``, chart-like sections render Plotly figures; topomap
     and sensor-map sections remain Matplotlib images (no Plotly twin exists).
@@ -1096,6 +1018,130 @@ def make_decoding_report(
     return report
 
 
+_CLASSICAL_STRATEGY_NOTE = (
+    "The flat baseline (all sensors x all features) is the primary classical "
+    "result; sensor, family and single-descriptor analyses localize where the "
+    "signal lives, and feature-selection runs test how compact it can get."
+)
+_CLASSICAL_LEADERBOARDS = (
+    {
+        "title": "Primary Leaderboard",
+        "table_title": "Flat baseline leaderboard",
+        "filters": {"analysis_mode": "flat", "selection_mode": "baseline"},
+        "comparison_axis": "model",
+        "group_by": ("scope", "target"),
+    },
+)
+
+
+def make_decoding_report(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    title: str = "Classical Decoding",
+    dataset_name: str = "dataset",
+    strategy_note: str | None = None,
+    leaderboards: Sequence[Mapping[str, Any]] | None = None,
+    body: Callable[[Report, pd.DataFrame], None] | None = None,
+    pre_sections: Iterable[Section] = (),
+    feature_metadata: pd.DataFrame | None = None,
+    section_builders: Mapping[str, Callable[..., Any]] | None = None,
+    scope_order: Sequence[str] | None = None,
+    include_hp_tuning: bool = True,
+    frame: pd.DataFrame | None = None,
+    scope_from: str | None = None,
+    default_scope: str | None = "all",
+    config: Mapping[str, Any] | None = None,
+    output_path: str | Path | None = None,
+    asset_urls: dict[str, str] | str | None = "inline",
+) -> Report:
+    """Build the classical decoding sweep report.
+
+    The classical counterpart to
+    :func:`~coco_pipe.report.foundation.make_foundation_decoding_report`: the same
+    shared skeleton (scientific overview -> primary leaderboard -> body -> failures)
+    with the analysis-unit taxonomy (flat/sensor/family/descriptor) as the default
+    body. ``records`` are the per-unit classical decoding rows. Pass *scope_order*,
+    *section_builders* or a custom *body* to override the study-specific layout;
+    everything else falls back to the generic classical defaults.
+    """
+    from .decoding_sweep import (
+        build_classical_taxonomy_sections,
+        hp_tuning_section,
+        make_decoding_sweep_report,
+    )
+
+    domain_body = body or partial(
+        build_classical_taxonomy_sections,
+        feature_metadata=feature_metadata,
+        section_builders=section_builders,
+        scope_order=scope_order,
+    )
+
+    def _body(report: Report, body_frame: pd.DataFrame) -> None:
+        domain_body(report, body_frame)
+        if include_hp_tuning:
+            tuning = hp_tuning_section(body_frame, feature_metadata=feature_metadata)
+            if tuning is not None:
+                report.add_section(tuning)
+
+    return make_decoding_sweep_report(
+        records,
+        frame=frame,
+        title=title,
+        kind="classical",
+        dataset_name=dataset_name,
+        strategy_note=strategy_note or _CLASSICAL_STRATEGY_NOTE,
+        leaderboards=_CLASSICAL_LEADERBOARDS if leaderboards is None else leaderboards,
+        pre_sections=pre_sections,
+        body=_body,
+        scope_from=scope_from,
+        default_scope=default_scope,
+        config=config,
+        asset_urls=asset_urls,
+        output_path=output_path,
+    )
+
+
+def render_unit_reports(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    modes: Sequence[str],
+    feature_metadata: pd.DataFrame | None = None,
+    asset_urls: dict[str, str] | str | None = "inline",
+    title_fn: Callable[[Mapping[str, Any]], str] | None = None,
+    sections: str | Sequence[str] = "compact",
+    on_error: Literal["raise", "warn", "placeholder"] = "placeholder",
+) -> None:
+    """Render per-unit decoding reports from successful sweep artifacts."""
+    report_modes = {str(mode) for mode in modes}
+    seen: set[str] = set()
+    for record in records:
+        if record.get("status") != "success" or record.get("reason") == "resumed":
+            continue
+        if str(record.get("analysis_mode")) not in report_modes:
+            continue
+        output_dir = record.get("output_dir")
+        if not output_dir or str(output_dir) in seen:
+            continue
+        seen.add(str(output_dir))
+        result_path = Path(str(output_dir)) / "result.joblib"
+        if not result_path.exists():
+            continue
+        try:
+            result = ExperimentResult.load(result_path)
+            make_decoding_result_report(
+                result,
+                title=title_fn(record) if title_fn is not None else "Decoding Report",
+                feature_metadata=feature_metadata,
+                sections=sections,
+                on_error=on_error,
+                asset_urls=asset_urls,
+                output_path=str(Path(str(output_dir)) / "report.html"),
+            )
+        except Exception as exc:
+            LOGGER.warning("Failed to render report for %s: %s", output_dir, exc)
+
+
 def _append_section(
     report: Report,
     builder: Callable[..., Section],
@@ -1117,23 +1163,6 @@ def add_decoding_summary(
     self: Report, result: Any, name: str = "Decoding Summary"
 ) -> Report:
     return _append_section(self, build_decoding_summary_section, result, name=name)
-
-
-def add_decoding_diagnostics(
-    self: Report,
-    result: Any,
-    metric: str | None = None,
-    model: str | None = None,
-    name: str = "Decoding Diagnostics",
-) -> Report:
-    return _append_section(
-        self,
-        build_decoding_diagnostics_section,
-        result,
-        metric=metric,
-        model=model,
-        name=name,
-    )
 
 
 def add_decoding_statistical_assessment(
@@ -1239,7 +1268,6 @@ __all__ = [
     "DEFAULT_SECTIONS",
     "VALID_SECTIONS",
     "SectionDataUnavailable",
-    "add_decoding_diagnostics",
     "add_decoding_features",
     "add_decoding_neural_artifacts",
     "add_decoding_overview",
@@ -1251,7 +1279,6 @@ __all__ = [
     "build_caveats_section",
     "build_configuration_section",
     "build_cv_section",
-    "build_decoding_diagnostics_section",
     "build_decoding_overview_section",
     "build_decoding_sections",
     "build_decoding_summary_section",
@@ -1267,12 +1294,13 @@ __all__ = [
     "build_topomaps_section",
     "build_tuning_section",
     "make_decoding_report",
+    "make_decoding_result_report",
+    "render_unit_reports",
 ]
 
 Report.add_decoding_overview = add_decoding_overview
 Report.add_decoding_temporal = add_decoding_temporal
 Report.add_decoding_summary = add_decoding_summary
-Report.add_decoding_diagnostics = add_decoding_diagnostics
 Report.add_decoding_statistical_assessment = add_decoding_statistical_assessment
 Report.add_decoding_neural_artifacts = add_decoding_neural_artifacts
 Report.add_decoding_performance = add_decoding_performance

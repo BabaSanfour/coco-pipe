@@ -3,13 +3,14 @@ Jinja template rendering for HTML reports.
 """
 
 import functools
-from pathlib import Path
 from typing import Any
 
 import jinja2
 
-MODULE_DIR = Path(__file__).resolve().parent
-TEMPLATE_DIR = MODULE_DIR / "templates"
+from . import _constants
+
+MODULE_DIR = _constants.MODULE_DIR
+TEMPLATE_DIR = _constants.TEMPLATE_DIR
 
 
 @functools.lru_cache(maxsize=1)
