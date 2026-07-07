@@ -1,4 +1,7 @@
+import warnings
+
 import numpy as np
+import pandas as pd
 import pytest
 
 from coco_pipe.descriptors import DescriptorPipeline
@@ -1533,6 +1536,26 @@ def test_observation_frame_extra():
     df = dc2.observation_frame()
     assert "sample_id" in df.columns
     assert df["sample_id"].iloc[0] == "sample-000000"
+
+
+def test_observation_frame_many_coords_avoids_fragmentation_warning():
+    coords = {f"coord_{idx}": np.asarray([idx, idx + 1]) for idx in range(150)}
+    dc = DataContainer(
+        X=np.zeros((2, 2)),
+        dims=("obs", "feature"),
+        coords=coords,
+        ids=np.asarray(["a", "b"]),
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", pd.errors.PerformanceWarning)
+        frame = dc.observation_frame()
+
+    assert frame.shape[1] == 151
+    assert frame["sample_id"].tolist() == ["a", "b"]
+    assert not any(
+        isinstance(item.message, pd.errors.PerformanceWarning) for item in caught
+    )
 
 
 def test_concat_extra():

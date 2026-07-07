@@ -174,16 +174,16 @@ class DataContainer:
         if "obs" not in self.dims:
             raise ValueError("DataContainer has no 'obs' dimension.")
         n_obs = self.X.shape[self.dims.index("obs")]
-        frame = pd.DataFrame(index=np.arange(n_obs))
+        columns: dict[str, Any] = {}
         for key, values in self.coords.items():
             array = np.asarray(values)
             if array.ndim == 1 and len(array) == n_obs:
-                frame[str(key)] = array
+                columns[str(key)] = array
         if self.ids is not None:
-            frame["sample_id"] = np.asarray(self.ids).astype(str)
-        elif "sample_id" not in frame:
-            frame["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
-        return frame
+            columns["sample_id"] = np.asarray(self.ids).astype(str)
+        elif "sample_id" not in columns:
+            columns["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
+        return pd.DataFrame(columns, index=np.arange(n_obs))
 
     @classmethod
     def load(cls, path: str | Any) -> "DataContainer":
