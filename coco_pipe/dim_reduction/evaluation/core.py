@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     # type-only reference does not register as an import cycle edge.
     from coco_pipe.dim_reduction import DimReduction
 
+from .._constants import DEFAULT_MAX_CORANKING_SAMPLES
 from ..config import EvaluationConfig
 from ._supervised import _cross_validate_score
 from .geometry import (
@@ -307,6 +308,7 @@ def _evaluate_standard_metrics(
     n_neighbors: int,
     k_values: Sequence[int] | None,
     random_state: int | None,
+    max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """
     Compute standard co-ranking and Shepard-based metrics for a 2D embedding.
@@ -358,16 +360,25 @@ def _evaluate_standard_metrics(
 
     n_samples = X_eval.shape[0]
     if requested_k_metrics:
-        Q = compute_coranking_matrix(X_eval, X_emb_eval)
+        X_coranking, X_emb_coranking = X_eval, X_emb_eval
+        if max_eval_samples is not None and n_samples > max_eval_samples:
+            rng = np.random.default_rng(random_state)
+            subsample = np.sort(
+                rng.choice(n_samples, size=max_eval_samples, replace=False)
+            )
+            X_coranking = X_eval[subsample]
+            X_emb_coranking = X_emb_eval[subsample]
+        n_coranking = X_coranking.shape[0]
+        Q = compute_coranking_matrix(X_coranking, X_emb_coranking)
         diagnostics_payload["coranking_matrix_"] = Q
         valid_k: list[int] = []
         needs_positive_normalizer = bool(
             {"trustworthiness", "continuity"} & requested_k_metrics
         )
         for k in [n_neighbors] if k_values is None else list(k_values):
-            if k <= 0 or k >= (n_samples - 1):
+            if k <= 0 or k >= (n_coranking - 1):
                 continue
-            if needs_positive_normalizer and (2 * n_samples - 3 * k - 1) <= 0:
+            if needs_positive_normalizer and (2 * n_coranking - 3 * k - 1) <= 0:
                 continue
             valid_k.append(k)
 
@@ -454,6 +465,7 @@ def evaluate_embedding(
     n_neighbors: int = 5,
     k_values: Sequence[int] | None = None,
     separation_method: str | None = None,
+    max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
     config: EvaluationConfig | None = None,
 ) -> dict[str, Any]:
     """
@@ -501,6 +513,13 @@ def evaluate_embedding(
         Separation definition passed to ``trajectory_separation`` when
         trajectory labels are available. ``None`` defers to ``config`` and
         otherwise falls back to ``"centroid"``.
+    max_eval_samples : int, optional
+        Row cap for the dense co-ranking geometry metrics
+        (trustworthiness/continuity/lcmc/mrre). Above this count they are
+        estimated on one random subsample of rows shared between ``X`` and
+        ``X_emb``; ``None`` disables the cap. Defaults to
+        :data:`DEFAULT_MAX_CORANKING_SAMPLES`. The Shepard correlation samples
+        its own pairs independently and is unaffected.
     config : EvaluationConfig, optional
         Typed evaluation configuration. Supplies ``metrics``, ``k_values`` (from
         ``config.k_range``), and ``separation_method`` for any of those left
@@ -628,6 +647,7 @@ def evaluate_embedding(
                 n_neighbors=n_neighbors,
                 k_values=k_values,
                 random_state=random_state,
+                max_eval_samples=max_eval_samples,
             )
             metrics_payload.update(std_metrics)
             diagnostics_payload.update(std_diagnostics)

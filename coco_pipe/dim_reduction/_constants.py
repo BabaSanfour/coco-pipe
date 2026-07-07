@@ -43,6 +43,14 @@ FIT_METRIC_COLUMNS: list[str] = [
 EVAL_METRIC_COLUMNS: list[str] = [SEPARATION_METRIC_KEY]
 """Eval metrics recorded in eval run inventory rows."""
 
+DEFAULT_MAX_CORANKING_SAMPLES: int = 3000
+"""Row cap for the co-ranking geometry metrics (trustworthiness/continuity/lcmc/
+mrre). The co-ranking matrix is dense ``(n, n)`` in the sample count, so at epoch
+granularity (tens of thousands of rows) it is the dominant OOM driver. These
+metrics are neighborhood-preservation *estimates*, so above this cap they are
+computed on one random subsample of rows (shared between the original and
+embedded spaces) instead of the full set. ``None`` disables the cap."""
+
 # --- Run-inventory identity -------------------------------------------------
 
 FIT_RUN_KEY_FIELDS: tuple[str, ...] = ("fit_id",)

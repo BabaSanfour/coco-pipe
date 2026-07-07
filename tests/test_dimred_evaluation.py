@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_blobs
 
+from coco_pipe.dim_reduction._constants import DEFAULT_MAX_CORANKING_SAMPLES
 from coco_pipe.dim_reduction.analysis import perturbation_importance
 from coco_pipe.dim_reduction.core import DimReduction
 from coco_pipe.dim_reduction.evaluation import (
@@ -973,6 +974,91 @@ def test_dimreduction_score_respects_metric_selection():
     assert set(payload["metrics"]) == {"trustworthiness"}
     assert "coranking_matrix_" in payload["diagnostics"]
     assert "shepard_distances_" not in payload["diagnostics"]
+
+
+def _coranking_metrics():
+    """The dense co-ranking metrics that the row cap protects."""
+    return ["trustworthiness", "continuity", "lcmc", "mrre_total"]
+
+
+def test_coranking_subsample_caps_matrix_size():
+    # Above the cap, the co-ranking matrix is (m-1, m-1) in the SUBSAMPLE size m,
+    # not (n-1, n-1) -- this is the epoch-granularity OOM guard.
+    rng = np.random.default_rng(0)
+    n, cap = 400, 50
+    X = rng.standard_normal((n, 6))
+    X_emb = X[:, :2] + 0.01 * rng.standard_normal((n, 2))
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=_coranking_metrics(), max_eval_samples=cap
+    )
+    Q = payload["diagnostics"]["coranking_matrix_"]
+    assert Q.shape == (cap - 1, cap - 1)
+    # Metrics stay valid estimates in their expected ranges.
+    assert 0.0 <= payload["metrics"]["trustworthiness"] <= 1.0
+    assert 0.0 <= payload["metrics"]["continuity"] <= 1.0
+    assert np.isfinite(payload["metrics"]["mrre_total"])
+
+
+def test_coranking_no_subsample_below_cap():
+    # At or below the cap, the full matrix is used (no behavioral change).
+    rng = np.random.default_rng(1)
+    n = 40
+    X = rng.standard_normal((n, 5))
+    X_emb = X[:, :2]
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=["trustworthiness"], max_eval_samples=100
+    )
+    assert payload["diagnostics"]["coranking_matrix_"].shape == (n - 1, n - 1)
+
+
+def test_coranking_subsample_disabled_with_none():
+    # max_eval_samples=None restores exact full-N behaviour.
+    rng = np.random.default_rng(2)
+    n = 120
+    X = rng.standard_normal((n, 5))
+    X_emb = X[:, :2]
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=["trustworthiness"], max_eval_samples=None
+    )
+    assert payload["diagnostics"]["coranking_matrix_"].shape == (n - 1, n - 1)
+
+
+def test_coranking_subsample_is_deterministic_in_random_state():
+    # A fixed random_state makes the subsample -- and therefore the metric --
+    # reproducible.
+    rng = np.random.default_rng(3)
+    n, cap = 300, 60
+    X = rng.standard_normal((n, 6))
+    X_emb = X[:, :2] + 0.05 * rng.standard_normal((n, 2))
+
+    kwargs = {
+        "metrics": ["trustworthiness"],
+        "max_eval_samples": cap,
+        "random_state": 7,
+    }
+    first = evaluate_embedding(X_emb, X=X, **kwargs)["metrics"]["trustworthiness"]
+    second = evaluate_embedding(X_emb, X=X, **kwargs)["metrics"]["trustworthiness"]
+    assert first == second
+
+
+def test_score_applies_default_coranking_cap():
+    # The fit path (DimReduction.score) inherits the default cap, so a large
+    # embedding still produces a bounded co-ranking matrix without opting in.
+    rng = np.random.default_rng(4)
+    n = DEFAULT_MAX_CORANKING_SAMPLES + 500
+    X = rng.standard_normal((n, 5))
+    reducer = DimReduction("PCA", n_components=2)
+    embedding = reducer.fit_transform(X)
+
+    payload = reducer.score(embedding, X=X, metrics=["trustworthiness"])
+    Q = payload["diagnostics"]["coranking_matrix_"]
+    assert Q.shape == (
+        DEFAULT_MAX_CORANKING_SAMPLES - 1,
+        DEFAULT_MAX_CORANKING_SAMPLES - 1,
+    )
 
 
 def test_method_selector_best_method_uses_primary_metric():

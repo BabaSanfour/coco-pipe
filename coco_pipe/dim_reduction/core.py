@@ -20,6 +20,7 @@ import numpy as np
 
 from coco_pipe.io.structures import DataContainer
 
+from ._constants import DEFAULT_MAX_CORANKING_SAMPLES
 from .analysis import interpret_features
 from .config import BaseReducerConfig, EvaluationConfig, get_reducer_class
 from .reducers.base import BaseReducer
@@ -334,6 +335,7 @@ class DimReduction:
         groups: np.ndarray | None = None,
         times: np.ndarray | None = None,
         separation_method: str | None = None,
+        max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
         config: EvaluationConfig | None = None,
     ) -> dict[str, dict[str, Any]]:
         """
@@ -375,6 +377,10 @@ class DimReduction:
             Separation definition passed to trajectory evaluation when labels
             are available for native 3D trajectory embeddings. ``None`` defers to
             ``config`` and otherwise falls back to ``"centroid"``.
+        max_eval_samples : int, optional
+            Row cap for the dense co-ranking geometry metrics; above it they are
+            estimated on a shared random row subsample. ``None`` disables the cap.
+            Defaults to :data:`DEFAULT_MAX_CORANKING_SAMPLES`.
         config : EvaluationConfig, optional
             Typed evaluation configuration. Supplies ``metrics``, ``k_values``
             (from ``config.k_range``), and ``separation_method`` when those are
@@ -414,6 +420,7 @@ class DimReduction:
             n_neighbors=n_neighbors,
             k_values=k_values,
             separation_method=separation_method,
+            max_eval_samples=max_eval_samples,
             config=config,
         )
 
