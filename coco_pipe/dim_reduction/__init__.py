@@ -7,6 +7,7 @@ from .artifacts import (
     FIT_METRIC_COLUMNS,
     FIT_RUN_KEY_FIELDS,
     SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
     build_availability_record,
     build_record,
     load_fit_artifact,
@@ -117,6 +118,7 @@ __all__ = [
     "POOLED_CONDITION",
     # Artifact constants
     "SEPARATION_METRIC_KEY",
+    "SEPARATION_RF_METRIC_KEY",
     "BaseReducer",
     "DimReduction",
     "IncrementalPCAReducer",

@@ -23,6 +23,7 @@ import pandas as pd
 from coco_pipe.dim_reduction import (
     EVAL_METRIC_COLUMNS,
     SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
     load_fit_artifact,
     load_fit_runs,
 )
@@ -49,12 +50,12 @@ from .elements import (
 from .qc import build_qc_section
 from .tables import best_rows, split_by_status
 
-# Rank on structure preservation (trustworthiness, continuity) then class
-# separation. ``(column, ascending)`` tuples; all descending here.
+# Rank on the primary metric first; use LR separation before geometry as a
+# tie-breaker when RF is the primary metric. ``(column, ascending)`` tuples.
 DEFAULT_REDUCTION_TIE_BREAKERS: tuple[tuple[str, bool], ...] = (
+    (SEPARATION_METRIC_KEY, False),
     ("trustworthiness", False),
     ("continuity", False),
-    (SEPARATION_METRIC_KEY, False),
 )
 
 _DEFAULT_ROLLUP_SELECTORS = (
@@ -67,12 +68,61 @@ _DEFAULT_ROLLUP_SELECTORS = (
 )
 
 
+def _available_eval_metrics(frame: pd.DataFrame) -> list[str]:
+    return [column for column in EVAL_METRIC_COLUMNS if column in frame.columns]
+
+
+def _eval_merge_frame(
+    eval_frame: pd.DataFrame,
+    *,
+    include_target: bool = True,
+) -> pd.DataFrame:
+    base_columns = ["fit_id", "eval_name"]
+    if include_target:
+        base_columns.append("target_col")
+    columns = [*base_columns, *EVAL_METRIC_COLUMNS]
+    if eval_frame.empty:
+        return pd.DataFrame(columns=columns)
+    return eval_frame.loc[
+        :, [column for column in columns if column in eval_frame.columns]
+    ]
+
+
+def _score_sort_columns(frame: pd.DataFrame, selection_metric: str) -> list[str]:
+    columns = [selection_metric, *EVAL_METRIC_COLUMNS, "trustworthiness", "continuity"]
+    return list(dict.fromkeys(column for column in columns if column in frame.columns))
+
+
+def _sort_by_score(frame: pd.DataFrame, selection_metric: str) -> pd.DataFrame:
+    sort_columns = _score_sort_columns(frame, selection_metric)
+    if not sort_columns:
+        return frame
+    return frame.sort_values(
+        sort_columns,
+        ascending=[False] * len(sort_columns),
+        na_position="last",
+    )
+
+
+def _selection_or_fallback(
+    frame: pd.DataFrame,
+    selection_metric: str,
+    fallback_metric: str,
+) -> str:
+    if selection_metric in frame.columns:
+        return selection_metric
+    for metric in EVAL_METRIC_COLUMNS:
+        if metric in frame.columns:
+            return metric
+    return fallback_metric
+
+
 def merge_fit_eval(
     fit_runs: Any,
     eval_runs: Any = None,
     *,
     eval_name: str | None = None,
-    metrics: Sequence[str] = (SEPARATION_METRIC_KEY,),
+    metrics: Sequence[str] = tuple(EVAL_METRIC_COLUMNS),
     key: str = "fit_id",
 ) -> pd.DataFrame:
     """Left-merge successful evaluation metrics onto fit runs by *key*.
@@ -113,7 +163,7 @@ def rank_reduction_runs(
     eval_name: str | None = None,
     tie_breakers: Sequence[tuple[str, bool]] = DEFAULT_REDUCTION_TIE_BREAKERS,
     reducers: Sequence[str] | None = None,
-    metrics: Sequence[str] = (SEPARATION_METRIC_KEY,),
+    metrics: Sequence[str] = tuple(EVAL_METRIC_COLUMNS),
 ) -> pd.DataFrame:
     """Return the best successful fit run per group.
 
@@ -137,7 +187,8 @@ def rank_reduction_runs(
 
 
 _DEFAULT_BEST_RUN_METRICS: tuple[tuple[str, str, str], ...] = (
-    (SEPARATION_METRIC_KEY, "Separation", "blue"),
+    (SEPARATION_RF_METRIC_KEY, "RF Balanced Accuracy", "blue"),
+    (SEPARATION_METRIC_KEY, "LR Balanced Accuracy", "cyan"),
     ("trustworthiness", "Trustworthiness", "green"),
     ("continuity", "Continuity", "yellow"),
 )
@@ -163,9 +214,7 @@ def add_reduction_best_run_cards(
     success = split_by_status(pd.DataFrame(runs))[0]
     if success.empty:
         return
-    sort_metric = (
-        selection_metric if selection_metric in success.columns else fallback_metric
-    )
+    sort_metric = _selection_or_fallback(success, selection_metric, fallback_metric)
     best_per_group = best_rows(
         success, [group_col], sort_metric, tie_breakers=tie_breakers
     )[0]
@@ -217,9 +266,10 @@ def build_reduction_eval_results_section(
     frame = pd.DataFrame(eval_frame)
     if frame.empty:
         return None
+    available_metrics = _available_eval_metrics(frame)
     resolved_sort = sort_col or (
-        SEPARATION_METRIC_KEY
-        if SEPARATION_METRIC_KEY in frame.columns
+        available_metrics[0]
+        if available_metrics
         else str(frame.columns[-1])
         if len(frame.columns)
         else "eval_name"
@@ -335,10 +385,10 @@ def build_reduction_condition_ranking_section(
         "unit_name",
         "reducer",
         "n_components",
+        "eval_name",
+        *EVAL_METRIC_COLUMNS,
         "trustworthiness",
         "continuity",
-        "eval_name",
-        SEPARATION_METRIC_KEY,
     ),
     selector_columns: Sequence[str] = (
         "condition",
@@ -351,9 +401,9 @@ def build_reduction_condition_ranking_section(
         "trustworthiness",
         "continuity",
         "shepard_correlation",
-        SEPARATION_METRIC_KEY,
+        *EVAL_METRIC_COLUMNS,
     ),
-    default_sort: str = "trustworthiness",
+    default_sort: str | None = None,
     title: str = "Condition Ranking",
 ) -> Section | None:
     """Build the condition-ranking table + cross-condition bar + reducer radar.
@@ -367,6 +417,9 @@ def build_reduction_condition_ranking_section(
     if runs.empty:
         return None
     columns = [column for column in ranking_columns if column in runs.columns]
+    resolved_sort = default_sort or _selection_or_fallback(
+        runs, selection_metric, fallback_metric
+    )
     section = Section(title, icon="🏁")
     section.add_element(
         InteractiveTableElement(
@@ -375,11 +428,11 @@ def build_reduction_condition_ranking_section(
             selector_columns=[
                 column for column in selector_columns if column in columns
             ],
-            default_sort={"column": default_sort, "direction": "desc"},
+            default_sort={"column": resolved_sort, "direction": "desc"},
             page_size=5,
         )
     )
-    metric = selection_metric if selection_metric in runs.columns else fallback_metric
+    metric = _selection_or_fallback(runs, selection_metric, fallback_metric)
     tabs: dict[str, Any] = {}
     bar = _condition_reducer_bar(
         runs,
@@ -403,7 +456,7 @@ def build_reduction_rollup_report(
     *,
     title: str,
     x_metric: str = "trustworthiness",
-    y_metric: str = SEPARATION_METRIC_KEY,
+    y_metric: str = SEPARATION_RF_METRIC_KEY,
     sort_col: str | None = None,
     mode_label_map: Mapping[str, str] | None = None,
     strategy_note: str | None = None,
@@ -817,9 +870,12 @@ def build_flat_condition_section(
     )
 
     ranking_df = condition_runs.merge(
-        eval_frame.loc[:, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]],
+        _eval_merge_frame(eval_frame),
         on="fit_id",
         how="left",
+    )
+    ranking_sort = _selection_or_fallback(
+        ranking_df, ctx.selection_metric, SEPARATION_METRIC_KEY
     )
     section.add_element(
         InteractiveTableElement(
@@ -831,7 +887,7 @@ def build_flat_condition_section(
                         "reducer",
                         "n_components",
                         "eval_name",
-                        SEPARATION_METRIC_KEY,
+                        *EVAL_METRIC_COLUMNS,
                         "trustworthiness",
                         "continuity",
                     ]
@@ -840,7 +896,7 @@ def build_flat_condition_section(
             ].round(4),
             title="Fit ranking",
             selector_columns=["reducer", "eval_name"],
-            default_sort={"column": ctx.selection_metric, "direction": "desc"},
+            default_sort={"column": ranking_sort, "direction": "desc"},
             page_size=5,
         )
     )
@@ -852,15 +908,11 @@ def build_flat_condition_section(
             continue
         best_row = (
             reducer_runs.merge(
-                eval_frame.loc[:, ["fit_id", "eval_name", SEPARATION_METRIC_KEY]],
+                _eval_merge_frame(eval_frame, include_target=False),
                 on="fit_id",
                 how="left",
             )
-            .sort_values(
-                [ctx.selection_metric],
-                ascending=[False],
-                na_position="last",
-            )
+            .pipe(_sort_by_score, ctx.selection_metric)
             .iloc[0]
         )
         best_artifact = artifacts[str(best_row["fit_id"])]
@@ -879,19 +931,20 @@ def build_flat_condition_section(
             tab_elements.append(plots_elem)
 
         sweep_df = reducer_runs.merge(
-            eval_frame.loc[
-                :, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
-            ],
+            _eval_merge_frame(eval_frame),
             on="fit_id",
             how="left",
         )
-        if not sweep_df.empty and SEPARATION_METRIC_KEY in sweep_df.columns:
-            sep_df = sweep_df.dropna(subset=[SEPARATION_METRIC_KEY]).copy()
+        sweep_metric = _selection_or_fallback(
+            sweep_df, ctx.selection_metric, SEPARATION_METRIC_KEY
+        )
+        if not sweep_df.empty and sweep_metric in sweep_df.columns:
+            sep_df = sweep_df.dropna(subset=[sweep_metric]).copy()
             sep_df["series"] = "separation: " + sep_df["eval_name"].astype(str)
             fig = plot_scatter(
                 sep_df,
                 x="n_components",
-                y=SEPARATION_METRIC_KEY,
+                y=sweep_metric,
                 color="series",
                 mode="lines+markers",
                 title=f"{condition} - {reducer_name} separation vs n_components",
@@ -909,7 +962,7 @@ def build_flat_condition_section(
                         for col in [
                             "n_components",
                             "eval_name",
-                            SEPARATION_METRIC_KEY,
+                            *EVAL_METRIC_COLUMNS,
                             "trustworthiness",
                             "continuity",
                         ]
@@ -959,27 +1012,18 @@ def build_unit_summary(
         for column in ["family", "subfamily", "eval_name", "target_col"]
         if column in unit_runs.columns and unit_runs[column].notna().any()
     ]
-    sort_columns = list(
-        dict.fromkeys(
-            column
-            for column in [
-                selection_metric,
-                "trustworthiness",
-                "continuity",
-                SEPARATION_METRIC_KEY,
-            ]
-            if column in unit_runs.columns
-        )
-    )
-    best_units = (
+    sort_columns = _score_sort_columns(unit_runs, selection_metric)
+    ranked_units = (
         unit_runs.sort_values(
             sort_columns,
             ascending=[False] * len(sort_columns),
             na_position="last",
         )
-        .groupby([*group_columns, unit_column], dropna=False)
-        .head(1)
-        .copy()
+        if sort_columns
+        else unit_runs
+    )
+    best_units = (
+        ranked_units.groupby([*group_columns, unit_column], dropna=False).head(1).copy()
     )
     display_columns = [
         column
@@ -1206,7 +1250,7 @@ def build_nonflat_condition_section(
     )
 
     merged = condition_runs.merge(
-        eval_frame.loc[:, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]],
+        _eval_merge_frame(eval_frame),
         on="fit_id",
         how="left",
     )
@@ -1228,20 +1272,14 @@ def build_nonflat_condition_section(
 
             tab_section = ContainerElement()
 
-            comparison_metrics = []
-            if SEPARATION_METRIC_KEY in reducer_runs.columns:
-                comparison_metrics.append(SEPARATION_METRIC_KEY)
+            comparison_metrics = _available_eval_metrics(reducer_runs)
             for m in ["trustworthiness", "continuity"]:
                 if m in reducer_runs.columns:
                     comparison_metrics.append(m)
 
             curve_frames = []
             for family, family_runs in reducer_runs.groupby("family", dropna=False):
-                family_best_by_n = family_runs.sort_values(
-                    [ctx.selection_metric, "trustworthiness", "continuity"],
-                    ascending=[False, False, False],
-                    na_position="last",
-                )
+                family_best_by_n = _sort_by_score(family_runs, ctx.selection_metric)
                 family_best_by_n = (
                     family_best_by_n.groupby("n_components", dropna=False)
                     .head(1)
@@ -1283,8 +1321,9 @@ def build_nonflat_condition_section(
             sweep_cols = ["family", "n_components"]
             if "eval_name" in reducer_runs.columns:
                 sweep_cols.append("eval_name")
-            if SEPARATION_METRIC_KEY in reducer_runs.columns:
-                sweep_cols.append(SEPARATION_METRIC_KEY)
+            for metric in EVAL_METRIC_COLUMNS:
+                if metric in reducer_runs.columns:
+                    sweep_cols.append(metric)
             for gm in ["trustworthiness", "continuity"]:
                 if gm in reducer_runs.columns:
                     sweep_cols.append(gm)
@@ -1308,11 +1347,7 @@ def build_nonflat_condition_section(
 
         family_tabs = {}
         for family, family_runs in merged.groupby("family", dropna=False):
-            best_row = family_runs.sort_values(
-                [ctx.selection_metric, "trustworthiness", "continuity"],
-                ascending=[False, False, False],
-                na_position="last",
-            ).iloc[0]
+            best_row = _sort_by_score(family_runs, ctx.selection_metric).iloc[0]
             best_artifact = artifacts[str(best_row["fit_id"])]
             family_meta = build_meta_dict(family_container, best_artifact["ids"], ctx)
 
@@ -1338,8 +1373,9 @@ def build_nonflat_condition_section(
             sweep_cols = ["reducer", "n_components"]
             if "eval_name" in family_runs.columns:
                 sweep_cols.append("eval_name")
-            if SEPARATION_METRIC_KEY in family_runs.columns:
-                sweep_cols.append(SEPARATION_METRIC_KEY)
+            for metric in EVAL_METRIC_COLUMNS:
+                if metric in family_runs.columns:
+                    sweep_cols.append(metric)
             for gm in ["trustworthiness", "continuity"]:
                 if gm in family_runs.columns:
                     sweep_cols.append(gm)
@@ -1413,11 +1449,9 @@ def build_nonflat_condition_section(
                 else [((), reducer_runs)]
             )
             for group_key, group_df in sensor_groups:
-                best_rows_df = group_df.sort_values(
-                    [ctx.selection_metric, "trustworthiness", "continuity"],
-                    ascending=[False, False, False],
-                    na_position="last",
-                ).head(top_n)
+                best_rows_df = _sort_by_score(group_df, ctx.selection_metric).head(
+                    top_n
+                )
 
                 for rank, (_, best_row) in enumerate(best_rows_df.iterrows(), 1):
                     best_artifact = artifacts[str(best_row["fit_id"])]
@@ -1496,13 +1530,7 @@ def build_pooled_section(
         StatCardElement("Pooled Fits", len(pooled_runs), color="purple")
     )
     merged = pooled_runs.merge(
-        pooled_eval_runs.loc[
-            :, ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
-        ]
-        if not pooled_eval_runs.empty
-        else pd.DataFrame(
-            columns=["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
-        ),
+        _eval_merge_frame(pooled_eval_runs),
         on="fit_id",
         how="left",
     )
@@ -1527,20 +1555,19 @@ def build_pooled_section(
             tab_section = ContainerElement()
             comparison_metrics = [
                 metric
-                for metric in ["trustworthiness", "continuity", "shepard_correlation"]
+                for metric in [
+                    *EVAL_METRIC_COLUMNS,
+                    "trustworthiness",
+                    "continuity",
+                    "shepard_correlation",
+                ]
                 if metric in reducer_runs.columns
             ]
-            if SEPARATION_METRIC_KEY in reducer_runs.columns:
-                comparison_metrics.append(SEPARATION_METRIC_KEY)
             comparison_metrics = list(dict.fromkeys(comparison_metrics))
             curve_frames = []
             for family, family_runs in reducer_runs.groupby("family", dropna=False):
                 family_best_by_n = (
-                    family_runs.sort_values(
-                        [ctx.selection_metric, "trustworthiness", "continuity"],
-                        ascending=[False, False, False],
-                        na_position="last",
-                    )
+                    _sort_by_score(family_runs, ctx.selection_metric)
                     .groupby("n_components", dropna=False)
                     .head(1)
                     .sort_values("n_components")
@@ -1577,8 +1604,9 @@ def build_pooled_section(
                 sweep_cols = ["reducer", "n_components"]
                 if "eval_name" in reducer_runs.columns:
                     sweep_cols.append("eval_name")
-                if SEPARATION_METRIC_KEY in reducer_runs.columns:
-                    sweep_cols.append(SEPARATION_METRIC_KEY)
+                for metric in EVAL_METRIC_COLUMNS:
+                    if metric in reducer_runs.columns:
+                        sweep_cols.append(metric)
                 for gm in ["trustworthiness", "continuity"]:
                     if gm in reducer_runs.columns:
                         sweep_cols.append(gm)
@@ -1605,11 +1633,7 @@ def build_pooled_section(
         family_tabs = {}
         top_n = 2
         for family, family_runs in merged.groupby("family", dropna=False):
-            family_best = family_runs.sort_values(
-                [ctx.selection_metric, "trustworthiness", "continuity"],
-                ascending=[False, False, False],
-                na_position="last",
-            ).head(top_n)
+            family_best = _sort_by_score(family_runs, ctx.selection_metric).head(top_n)
 
             fam_container = ContainerElement()
             for rank, (_, best_row) in enumerate(family_best.iterrows(), 1):
@@ -1654,8 +1678,9 @@ def build_pooled_section(
         sweep_cols = ["reducer", "n_components"]
         if "eval_name" in merged.columns:
             sweep_cols.append("eval_name")
-        if SEPARATION_METRIC_KEY in merged.columns:
-            sweep_cols.append(SEPARATION_METRIC_KEY)
+        for metric in EVAL_METRIC_COLUMNS:
+            if metric in merged.columns:
+                sweep_cols.append(metric)
         for gm in ["trustworthiness", "continuity"]:
             if gm in merged.columns:
                 sweep_cols.append(gm)
@@ -1667,7 +1692,12 @@ def build_pooled_section(
                 selector_columns=["reducer", "eval_name"]
                 if "eval_name" in sweep_cols
                 else ["reducer"],
-                default_sort={"column": ctx.selection_metric, "direction": "desc"},
+                default_sort={
+                    "column": _selection_or_fallback(
+                        merged, ctx.selection_metric, SEPARATION_METRIC_KEY
+                    ),
+                    "direction": "desc",
+                },
                 page_size=5,
             )
         )
@@ -1678,11 +1708,7 @@ def build_pooled_section(
             reducer_runs = merged[merged["reducer"] == reducer_name].copy()
             if reducer_runs.empty:
                 continue
-            best_row = reducer_runs.sort_values(
-                [ctx.selection_metric, "trustworthiness", "continuity"],
-                ascending=[False, False, False],
-                na_position="last",
-            ).iloc[0]
+            best_row = _sort_by_score(reducer_runs, ctx.selection_metric).iloc[0]
             best_artifact = artifacts[str(best_row["fit_id"])]
             pool_meta = (
                 build_meta_dict(pooled_container, best_artifact["ids"], ctx)
@@ -1737,11 +1763,7 @@ def build_pooled_section(
         )
 
         for group_key, group_df in sensor_groups:
-            best_rows_df = group_df.sort_values(
-                [ctx.selection_metric, "trustworthiness", "continuity"],
-                ascending=[False, False, False],
-                na_position="last",
-            ).head(top_n)
+            best_rows_df = _sort_by_score(group_df, ctx.selection_metric).head(top_n)
 
             for rank, (_, best_row) in enumerate(best_rows_df.iterrows(), 1):
                 best_artifact = artifacts[str(best_row["fit_id"])]
@@ -2001,7 +2023,7 @@ def build_dataset_report(
         ].copy()
 
     fit_success = split_by_status(fit_runs_df)[0]
-    eval_merge_cols = ["fit_id", "eval_name", "target_col", SEPARATION_METRIC_KEY]
+    eval_merge_cols = ["fit_id", "eval_name", "target_col", *available_eval_metrics]
 
     if not eval_frame.empty:
         eval_subset = eval_frame.loc[

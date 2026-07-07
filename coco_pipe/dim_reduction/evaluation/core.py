@@ -32,6 +32,7 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
 if TYPE_CHECKING:
@@ -39,7 +40,11 @@ if TYPE_CHECKING:
     # type-only reference does not register as an import cycle edge.
     from coco_pipe.dim_reduction import DimReduction
 
-from .._constants import DEFAULT_MAX_CORANKING_SAMPLES
+from .._constants import (
+    DEFAULT_MAX_CORANKING_SAMPLES,
+    SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
+)
 from ..config import EvaluationConfig
 from ._supervised import _cross_validate_score
 from .geometry import (
@@ -65,7 +70,8 @@ from .metrics import (
 __all__ = ["MethodSelector", "evaluate_embedding"]
 
 METRIC_COLUMNS = ("method", "metric", "value", "scope", "scope_value")
-SEPARATION_LOGREG_BALANCED_ACCURACY = "separation_logreg_balanced_accuracy"
+SEPARATION_RF_BALANCED_ACCURACY = SEPARATION_RF_METRIC_KEY
+SEPARATION_LOGREG_BALANCED_ACCURACY = SEPARATION_METRIC_KEY
 SWEEP_METRICS = (
     "trustworthiness",
     "continuity",
@@ -93,6 +99,7 @@ RANKING_DIRECTIONS = {
     "continuity": "desc",
     "lcmc": "desc",
     "shepard_correlation": "desc",
+    SEPARATION_RF_BALANCED_ACCURACY: "desc",
     SEPARATION_LOGREG_BALANCED_ACCURACY: "desc",
     "mrre_intrusion": "asc",
     "mrre_extrusion": "asc",
@@ -600,7 +607,10 @@ def evaluate_embedding(
     metric_selection = None if metrics is None else set(metrics)
 
     standard_metric_names = set(SWEEP_METRICS) | {"shepard_correlation"}
-    supervised_metric_names = {SEPARATION_LOGREG_BALANCED_ACCURACY}
+    supervised_metric_names = {
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    }
     trajectory_metric_names = set(DEFAULT_SCORE_METRICS) - standard_metric_names
 
     metrics_payload: dict[str, Any] = {}
@@ -652,12 +662,38 @@ def evaluate_embedding(
             metrics_payload.update(std_metrics)
             diagnostics_payload.update(std_diagnostics)
             records.extend(std_records)
+        if supervised_selection and (labels is None or groups is None):
+            requested = ", ".join(sorted(supervised_selection))
+            raise ValueError(f"`labels` and `groups` are required for {requested}.")
+        if SEPARATION_RF_BALANCED_ACCURACY in supervised_selection:
+            separation_score = _cross_validate_score(
+                RandomForestClassifier(
+                    n_estimators=300,
+                    class_weight="balanced",
+                    n_jobs=1,
+                    random_state=42,
+                ),
+                X_emb,
+                labels,
+                groups=groups,
+                cv_strategy="stratified_group_kfold",
+                n_splits=5,
+                shuffle=True,
+                random_state=42,
+                metric="balanced_accuracy",
+                use_scaler=False,
+            )
+            metrics_payload[SEPARATION_RF_BALANCED_ACCURACY] = separation_score
+            records.append(
+                {
+                    "method": method_name,
+                    "metric": SEPARATION_RF_BALANCED_ACCURACY,
+                    "value": separation_score,
+                    "scope": "global",
+                    "scope_value": "global",
+                }
+            )
         if SEPARATION_LOGREG_BALANCED_ACCURACY in supervised_selection:
-            if labels is None or groups is None:
-                raise ValueError(
-                    f"`labels` and `groups` are required for "
-                    f"'{SEPARATION_LOGREG_BALANCED_ACCURACY}'."
-                )
             separation_score = _cross_validate_score(
                 LogisticRegression(max_iter=1000, class_weight="balanced"),
                 X_emb,

@@ -32,6 +32,7 @@ from coco_pipe.dim_reduction.evaluation import (
 )
 from coco_pipe.dim_reduction.evaluation.core import (
     SEPARATION_LOGREG_BALANCED_ACCURACY,
+    SEPARATION_RF_BALANCED_ACCURACY,
     evaluate_embedding,
 )
 from coco_pipe.dim_reduction.evaluation.geometry import (
@@ -149,6 +150,40 @@ def test_evaluate_embedding_supervised_metric_records():
     assert records.iloc[0]["metric"] == SEPARATION_LOGREG_BALANCED_ACCURACY
     assert records.iloc[0]["scope"] == "global"
     assert records.iloc[0]["scope_value"] == "global"
+
+
+def test_evaluate_embedding_supervised_rf_and_logreg_metric_records():
+    rng = np.random.RandomState(123)
+    group_labels = np.array([0] * 12 + [1] * 12)
+    group_features = rng.normal(
+        loc=group_labels[:, None] * 3.0, scale=0.35, size=(24, 5)
+    )
+    X_emb = np.repeat(group_features[:, :2], 2, axis=0)
+    X_emb = X_emb + rng.normal(scale=0.05, size=X_emb.shape)
+    y = np.repeat(group_labels, 2)
+    groups = np.repeat(np.arange(24), 2)
+
+    payload = evaluate_embedding(
+        X_emb,
+        metrics=[
+            SEPARATION_RF_BALANCED_ACCURACY,
+            SEPARATION_LOGREG_BALANCED_ACCURACY,
+        ],
+        labels=y,
+        groups=groups,
+    )
+
+    assert set(payload["metrics"]) == {
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    }
+    assert 0.0 <= payload["metrics"][SEPARATION_RF_BALANCED_ACCURACY] <= 1.0
+    assert 0.0 <= payload["metrics"][SEPARATION_LOGREG_BALANCED_ACCURACY] <= 1.0
+    records = pd.DataFrame.from_records(payload["records"])
+    assert records["metric"].tolist() == [
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    ]
 
 
 def test_evaluate_embedding_supervised_metric_requires_labels_and_groups():

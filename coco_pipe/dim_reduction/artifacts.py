@@ -26,6 +26,8 @@ Constants
 SEPARATION_METRIC_KEY
     Canonical key for the logistic-regression separation metric returned by
     :func:`coco_pipe.dim_reduction.evaluation.core.evaluate_embedding`.
+SEPARATION_RF_METRIC_KEY
+    Canonical key for the random-forest separation metric.
 FIT_METRIC_COLUMNS
     Ordered list of geometry quality metric names written by fit artifacts.
 EVAL_METRIC_COLUMNS
@@ -54,6 +56,7 @@ from coco_pipe.dim_reduction._constants import (
     FIT_METRIC_COLUMNS,
     FIT_RUN_KEY_FIELDS,
     SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
 )
 from coco_pipe.io import read_json, save_npz, write_json
 from coco_pipe.io.structures import DataContainer
@@ -65,6 +68,7 @@ __all__ = [
     "FIT_RUN_KEY_FIELDS",
     # Constants
     "SEPARATION_METRIC_KEY",
+    "SEPARATION_RF_METRIC_KEY",
     "build_availability_record",
     # Record builder
     "build_record",

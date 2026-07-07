@@ -26,6 +26,9 @@ POOLED_CONDITION: str = "pooled_all"
 
 # --- Metric taxonomies -----------------------------------------------------
 
+SEPARATION_RF_METRIC_KEY: str = "separation_rf_balanced_accuracy"
+"""Canonical key for the random-forest separation metric."""
+
 SEPARATION_METRIC_KEY: str = "separation_logreg_balanced_accuracy"
 """Canonical key for the logistic-regression separation metric."""
 
@@ -40,7 +43,7 @@ FIT_METRIC_COLUMNS: list[str] = [
 ]
 """Geometry quality metrics recorded in fit run inventory rows."""
 
-EVAL_METRIC_COLUMNS: list[str] = [SEPARATION_METRIC_KEY]
+EVAL_METRIC_COLUMNS: list[str] = [SEPARATION_RF_METRIC_KEY, SEPARATION_METRIC_KEY]
 """Eval metrics recorded in eval run inventory rows."""
 
 DEFAULT_MAX_CORANKING_SAMPLES: int = 3000

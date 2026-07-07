@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from coco_pipe.dim_reduction.artifacts import load_fit_artifact
+from coco_pipe.dim_reduction.artifacts import (
+    SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
+    load_fit_artifact,
+)
 from coco_pipe.dim_reduction.pipeline import (
     build_auto_pooled_eval_spec,
     build_eval_request,
@@ -124,6 +128,8 @@ def test_run_eval(tmp_path, dummy_container):
     )
     assert record["status"] == "success"
     assert (eval_out / "_SUCCESS").exists()
+    assert 0.0 <= record[SEPARATION_RF_METRIC_KEY] <= 1.0
+    assert 0.0 <= record[SEPARATION_METRIC_KEY] <= 1.0
 
     # Run eval without overwrite
     record2 = run_eval(
@@ -135,6 +141,8 @@ def test_run_eval(tmp_path, dummy_container):
         overwrite=False,
     )
     assert record2["status"] == "success"
+    assert record2[SEPARATION_RF_METRIC_KEY] == record[SEPARATION_RF_METRIC_KEY]
+    assert record2[SEPARATION_METRIC_KEY] == record[SEPARATION_METRIC_KEY]
 
     # run_eval is tolerant of a DataContainer embedding in the fit artifact.
     assert isinstance(fit_artifact["embedding_container"], DataContainer)

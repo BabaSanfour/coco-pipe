@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from coco_pipe.dim_reduction import SEPARATION_METRIC_KEY
+from coco_pipe.dim_reduction import SEPARATION_METRIC_KEY, SEPARATION_RF_METRIC_KEY
 from coco_pipe.dim_reduction.artifacts import save_fit_artifact
 from coco_pipe.io import DataContainer
 from coco_pipe.report.core import Report, Section
@@ -88,6 +88,33 @@ def test_merge_fit_eval_left_merges_success_metric():
     assert merged.loc[merged["fit_id"] == "a", SEPARATION_METRIC_KEY].iloc[0] == 0.60
 
 
+def test_merge_fit_eval_left_merges_rf_and_logreg_metrics():
+    eval_runs = pd.DataFrame(
+        [
+            {
+                "fit_id": "a",
+                "status": "success",
+                "eval_name": "sep",
+                SEPARATION_RF_METRIC_KEY: 0.55,
+                SEPARATION_METRIC_KEY: 0.60,
+            },
+            {
+                "fit_id": "b",
+                "status": "success",
+                "eval_name": "sep",
+                SEPARATION_RF_METRIC_KEY: 0.80,
+                SEPARATION_METRIC_KEY: 0.50,
+            },
+        ]
+    )
+
+    merged = merge_fit_eval(_fit_runs(), eval_runs, eval_name="sep")
+
+    assert {SEPARATION_RF_METRIC_KEY, SEPARATION_METRIC_KEY} <= set(merged.columns)
+    assert merged.loc[merged["fit_id"] == "b", SEPARATION_RF_METRIC_KEY].iloc[0] == 0.80
+    assert merged.loc[merged["fit_id"] == "b", SEPARATION_METRIC_KEY].iloc[0] == 0.50
+
+
 def test_merge_fit_eval_returns_fit_when_no_eval():
     fit = _fit_runs()
     out = merge_fit_eval(fit, None)
@@ -107,6 +134,58 @@ def test_rank_reduction_runs_best_per_group_excludes_failures():
     # EO winner is the umap run (0.90), not the failed pca run (0.99)
     assert best.loc[best["condition"] == "EO", "fit_id"].iloc[0] == "b"
     assert SEPARATION_METRIC_KEY in best.columns  # eval metric merged in
+
+
+def test_rank_reduction_runs_can_select_by_rf_before_lr_or_geometry():
+    fit = pd.DataFrame(
+        [
+            {
+                "fit_id": "a",
+                "scope": "condition",
+                "condition": "EO",
+                "reducer": "pca",
+                "status": "success",
+                "trustworthiness": 0.95,
+            },
+            {
+                "fit_id": "b",
+                "scope": "condition",
+                "condition": "EO",
+                "reducer": "umap",
+                "status": "success",
+                "trustworthiness": 0.60,
+            },
+        ]
+    )
+    eval_runs = pd.DataFrame(
+        [
+            {
+                "fit_id": "a",
+                "status": "success",
+                "eval_name": "sep",
+                SEPARATION_RF_METRIC_KEY: 0.50,
+                SEPARATION_METRIC_KEY: 0.90,
+            },
+            {
+                "fit_id": "b",
+                "status": "success",
+                "eval_name": "sep",
+                SEPARATION_RF_METRIC_KEY: 0.75,
+                SEPARATION_METRIC_KEY: 0.40,
+            },
+        ]
+    )
+
+    best = rank_reduction_runs(
+        fit,
+        eval_runs,
+        selection_metric=SEPARATION_RF_METRIC_KEY,
+        group_by=("scope", "condition"),
+    )
+
+    assert best.loc[0, "fit_id"] == "b"
+    assert best.loc[0, SEPARATION_RF_METRIC_KEY] == 0.75
+    assert best.loc[0, SEPARATION_METRIC_KEY] == 0.40
 
 
 def test_rank_reduction_runs_reducer_filter():

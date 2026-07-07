@@ -6,6 +6,8 @@ import pytest
 from coco_pipe.dim_reduction.artifacts import (
     EVAL_METRIC_COLUMNS,
     FIT_METRIC_COLUMNS,
+    SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
     _embedding_container,
     _load_eval_payload,
     build_availability_record,
@@ -174,15 +176,17 @@ def test_build_records(tmp_path):
     assert rec2["error"] == "failed"
     assert np.isnan(rec2["trustworthiness"])
 
-    # Eval record
+    # Eval record keeps RF first and promotes both separation probes.
+    assert EVAL_METRIC_COLUMNS == [SEPARATION_RF_METRIC_KEY, SEPARATION_METRIC_KEY]
     rec3 = build_record(
         payload,
         tmp_path / "art",
         tmp_path,
         EVAL_METRIC_COLUMNS,
-        {"separation_logreg_balanced_accuracy": 0.8},
+        {SEPARATION_RF_METRIC_KEY: 0.7, SEPARATION_METRIC_KEY: 0.8},
     )
-    assert rec3["separation_logreg_balanced_accuracy"] == 0.8
+    assert rec3[SEPARATION_RF_METRIC_KEY] == 0.7
+    assert rec3[SEPARATION_METRIC_KEY] == 0.8
 
 
 def test_write_run_status(tmp_path):
