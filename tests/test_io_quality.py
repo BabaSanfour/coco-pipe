@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -508,6 +510,42 @@ def test_row_scores_partial_schema_enriches_missing_measure():
 
     assert result.loc[3, "outlier_fraction_abs_alpha"] == 1.0
     assert result.loc[3, "outlier_fraction_abs_beta"] == 0.0
+
+
+def test_row_scores_many_groups_avoids_fragmentation_warning():
+    columns = [f"feature_{index}" for index in range(120)]
+    df = pd.DataFrame(
+        np.vstack(
+            [
+                np.zeros(len(columns)),
+                np.zeros(len(columns)),
+                np.zeros(len(columns)),
+                np.full(len(columns), 100.0),
+            ]
+        ),
+        columns=columns,
+    )
+    schema = pd.DataFrame(
+        {
+            "column": columns,
+            "measure": [f"measure_{index}" for index in range(len(columns))],
+        }
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", pd.errors.PerformanceWarning)
+        result = compute_row_outlier_scores(
+            df,
+            columns,
+            z_threshold=3.0,
+            group_by="measure",
+            feature_schema=schema,
+        )
+
+    assert result.loc[3, "outlier_fraction_measure_0"] == 1.0
+    assert not any(
+        isinstance(item.message, pd.errors.PerformanceWarning) for item in caught
+    )
 
 
 def test_drop_subject_outliers_per_family_returns_masks():

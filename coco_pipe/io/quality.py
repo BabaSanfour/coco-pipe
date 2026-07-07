@@ -359,13 +359,18 @@ def compute_row_outlier_scores(
     if len(names) != len(feature_cols):
         raise ValueError("descriptor_names must align with feature_cols.")
     labels = _resolve_group_labels(names, group_by, feature_schema=feature_schema)
+    group_columns: dict[str, np.ndarray] = {}
     for label in dict.fromkeys(labels.tolist()):
         label_mask = labels == label
         label_count = outlier_flags[:, label_mask].sum(axis=1).astype(int)
-        result[f"outlier_fraction_{label}"] = label_count.astype(float) / int(
+        group_columns[f"outlier_fraction_{label}"] = label_count.astype(float) / int(
             label_mask.sum()
         )
-        result[f"n_outlier_features_{label}"] = label_count
+        group_columns[f"n_outlier_features_{label}"] = label_count
+    if group_columns:
+        result = pd.concat(
+            [result, pd.DataFrame(group_columns, index=df.index)], axis=1
+        )
     return result
 
 
