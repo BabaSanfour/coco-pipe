@@ -6,8 +6,7 @@ import contextlib
 import inspect
 import logging
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from functools import partial
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -992,7 +991,8 @@ def make_decoding_result_report(
     """Build a report for one ``~coco_pipe.decoding.result.ExperimentResult``.
 
     This is the single-result renderer (one model set on one analysis unit). For
-    a whole classical sweep, see :func:`make_decoding_report`.
+    a whole classical sweep, see
+    :func:`coco_pipe.report.decoding_sweep.make_decoding_report`.
 
     With ``interactive=True``, chart-like sections render Plotly figures; topomap
     and sensor-map sections remain Matplotlib images (no Plotly twin exists).
@@ -1016,90 +1016,6 @@ def make_decoding_result_report(
     if output_path is not None:
         report.save(output_path)
     return report
-
-
-_CLASSICAL_STRATEGY_NOTE = (
-    "The flat baseline (all sensors x all features) is the primary classical "
-    "result; sensor, family and single-descriptor analyses localize where the "
-    "signal lives, and feature-selection runs test how compact it can get."
-)
-_CLASSICAL_LEADERBOARDS = (
-    {
-        "title": "Primary Leaderboard",
-        "table_title": "Flat baseline leaderboard",
-        "filters": {"analysis_mode": "flat", "selection_mode": "baseline"},
-        "comparison_axis": "model",
-        "group_by": ("scope", "target"),
-    },
-)
-
-
-def make_decoding_report(
-    records: Iterable[Mapping[str, Any]],
-    *,
-    title: str = "Classical Decoding",
-    dataset_name: str = "dataset",
-    strategy_note: str | None = None,
-    leaderboards: Sequence[Mapping[str, Any]] | None = None,
-    body: Callable[[Report, pd.DataFrame], None] | None = None,
-    pre_sections: Iterable[Section] = (),
-    feature_metadata: pd.DataFrame | None = None,
-    section_builders: Mapping[str, Callable[..., Any]] | None = None,
-    scope_order: Sequence[str] | None = None,
-    include_hp_tuning: bool = True,
-    frame: pd.DataFrame | None = None,
-    scope_from: str | None = None,
-    default_scope: str | None = "all",
-    config: Mapping[str, Any] | None = None,
-    output_path: str | Path | None = None,
-    asset_urls: dict[str, str] | str | None = "inline",
-) -> Report:
-    """Build the classical decoding sweep report.
-
-    The classical counterpart to
-    :func:`~coco_pipe.report.foundation.make_foundation_decoding_report`: the same
-    shared skeleton (scientific overview -> primary leaderboard -> body -> failures)
-    with the analysis-unit taxonomy (flat/sensor/family/descriptor) as the default
-    body. ``records`` are the per-unit classical decoding rows. Pass *scope_order*,
-    *section_builders* or a custom *body* to override the study-specific layout;
-    everything else falls back to the generic classical defaults.
-    """
-    from .decoding_sweep import (
-        build_classical_taxonomy_sections,
-        hp_tuning_section,
-        make_decoding_sweep_report,
-    )
-
-    domain_body = body or partial(
-        build_classical_taxonomy_sections,
-        feature_metadata=feature_metadata,
-        section_builders=section_builders,
-        scope_order=scope_order,
-    )
-
-    def _body(report: Report, body_frame: pd.DataFrame) -> None:
-        domain_body(report, body_frame)
-        if include_hp_tuning:
-            tuning = hp_tuning_section(body_frame, feature_metadata=feature_metadata)
-            if tuning is not None:
-                report.add_section(tuning)
-
-    return make_decoding_sweep_report(
-        records,
-        frame=frame,
-        title=title,
-        kind="classical",
-        dataset_name=dataset_name,
-        strategy_note=strategy_note or _CLASSICAL_STRATEGY_NOTE,
-        leaderboards=_CLASSICAL_LEADERBOARDS if leaderboards is None else leaderboards,
-        pre_sections=pre_sections,
-        body=_body,
-        scope_from=scope_from,
-        default_scope=default_scope,
-        config=config,
-        asset_urls=asset_urls,
-        output_path=output_path,
-    )
 
 
 def render_unit_reports(
@@ -1293,7 +1209,6 @@ __all__ = [
     "build_temporal_section",
     "build_topomaps_section",
     "build_tuning_section",
-    "make_decoding_report",
     "make_decoding_result_report",
     "render_unit_reports",
 ]

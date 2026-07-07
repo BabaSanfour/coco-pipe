@@ -406,7 +406,7 @@ def _ctx(tmp_path, **overrides):
         "selection_metric": "trustworthiness",
         "reducers": ["pca"],
         "conditions": ["EO", "EC"],
-        "container_builder": lambda condition: _container(condition),
+        "container_builder": _container,
         "output_root": tmp_path,
         "eval_specs": (),
         "interactive": False,

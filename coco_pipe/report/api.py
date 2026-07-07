@@ -467,7 +467,7 @@ def from_decoding_sweep(records, **kwargs) -> Report:
     """Build the classical decoding sweep report from per-unit records.
 
     Thin façade over
-    :func:`coco_pipe.report.decoding.make_decoding_report`; every keyword
+    :func:`coco_pipe.report.decoding_sweep.make_decoding_report`; every keyword
     argument is forwarded unchanged (see that function for the full parameter
     set, e.g. ``title``, ``scope_order``, ``feature_metadata``, ``output_path``).
 
@@ -485,7 +485,7 @@ def from_decoding_sweep(records, **kwargs) -> Report:
     from_foundation_sweep : The foundation-model counterpart.
     from_experiment_results : Compare a handful of loaded result objects.
     """
-    from .decoding import make_decoding_report
+    from .decoding_sweep import make_decoding_report
 
     return make_decoding_report(records, **kwargs)
 

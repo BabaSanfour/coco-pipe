@@ -208,7 +208,7 @@ def test_from_experiment_results(mock_make):
     assert mock_make.call_args.kwargs["title"] == "Many"
 
 
-@patch("coco_pipe.report.decoding.make_decoding_report")
+@patch("coco_pipe.report.decoding_sweep.make_decoding_report")
 def test_from_decoding_sweep_forwards(mock_make):
     mock_make.return_value = MagicMock()
     records = [{"scope": "EO", "analysis_mode": "flat"}]

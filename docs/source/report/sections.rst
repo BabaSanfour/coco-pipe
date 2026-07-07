@@ -50,7 +50,7 @@ Two private adders (``_add_configuration``, ``_add_provenance``,
 ``_add_confusion_probability``, ``_add_fit_diagnostics``,
 ``_add_caveats``, ``_add_export_inventory``) handle administrative
 sections — they're invoked by
-:func:`~coco_pipe.report.decoding.make_decoding_report` but aren't
+:func:`~coco_pipe.report.decoding_sweep.make_decoding_report` but aren't
 exposed as part of the fluent API. See the source if you need to
 replicate their behavior in custom workflows.
 

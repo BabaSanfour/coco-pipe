@@ -2,7 +2,6 @@ import pandas as pd
 import pytest
 
 from coco_pipe.report.core import Report, Section
-from coco_pipe.report.decoding import make_decoding_report
 from coco_pipe.report.decoding_sweep import (
     add_scientific_overview,
     build_classical_taxonomy_sections,
@@ -15,6 +14,7 @@ from coco_pipe.report.decoding_sweep import (
     flat_section,
     hp_tuning_section,
     leaderboard_section,
+    make_decoding_report,
     make_decoding_sweep_report,
     make_head_to_head_report,
     paired_delta_vs_baseline,

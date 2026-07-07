@@ -669,8 +669,9 @@ def _feature_names(container: Any) -> list[str] | None:
         if feat is not None:
             names = [str(f) for f in np.asarray(feat)]
             return names if names else None
-    except Exception:
-        pass
+    except (AttributeError, TypeError, KeyError, ValueError):
+        # Container/coords may be absent or non-conforming; treat as unavailable.
+        return None
     return None
 
 
@@ -1180,8 +1181,14 @@ def build_unit_summary(
                         )
                         if topo_fig is not None:
                             topomaps.append(ImageElement(topo_fig, width="100%"))
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        topomaps.append(
+                            CalloutElement(
+                                f"Topomap rendering failed for '{topo_metric}' "
+                                f"({trace_label}): {exc}",
+                                kind="warning",
+                            )
+                        )
             if topomaps:
                 topo_tabs[trace_label] = ColumnsElement(topomaps, cols=len(topomaps))
 
@@ -1243,7 +1250,6 @@ def build_nonflat_condition_section(
     """Build the per-condition section for non-flat modes (family/sensor/etc.)."""
     from coco_pipe.viz.interactive.base import plot_scatter
 
-    unit_label = ctx.unit_label("analysis unit")
     fam_label = ctx.family_label
     section = Section(condition, icon="📊")
     artifacts = {

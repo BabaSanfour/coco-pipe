@@ -277,6 +277,7 @@ filterwarnings = [
   "ignore:.*groups parameter is ignored.*:UserWarning",
   "ignore:.*enable_nested_tensor.*:UserWarning",
   "ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning",
+  "ignore:.*pyriemann.utils.* is deprecated.*:DeprecationWarning",
   "ignore:.*default value of .init. will change.*:FutureWarning",
   "ignore:.*number of connected components.*:UserWarning",
   "ignore:.*Graph is not fully connected.*:UserWarning",

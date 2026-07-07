@@ -2177,6 +2177,84 @@ def make_head_to_head_report(
     return report
 
 
+_CLASSICAL_STRATEGY_NOTE = (
+    "The flat baseline (all sensors x all features) is the primary classical "
+    "result; sensor, family and single-descriptor analyses localize where the "
+    "signal lives, and feature-selection runs test how compact it can get."
+)
+_CLASSICAL_LEADERBOARDS = (
+    {
+        "title": "Primary Leaderboard",
+        "table_title": "Flat baseline leaderboard",
+        "filters": {"analysis_mode": "flat", "selection_mode": "baseline"},
+        "comparison_axis": "model",
+        "group_by": ("scope", "target"),
+    },
+)
+
+
+def make_decoding_report(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    title: str = "Classical Decoding",
+    dataset_name: str = "dataset",
+    strategy_note: str | None = None,
+    leaderboards: Sequence[Mapping[str, Any]] | None = None,
+    body: Callable[[Report, pd.DataFrame], None] | None = None,
+    pre_sections: Iterable[Section] = (),
+    feature_metadata: pd.DataFrame | None = None,
+    section_builders: Mapping[str, Callable[..., Any]] | None = None,
+    scope_order: Sequence[str] | None = None,
+    include_hp_tuning: bool = True,
+    frame: pd.DataFrame | None = None,
+    scope_from: str | None = None,
+    default_scope: str | None = "all",
+    config: Mapping[str, Any] | None = None,
+    output_path: str | Path | None = None,
+    asset_urls: dict[str, str] | str | None = "inline",
+) -> Report:
+    """Build the classical decoding sweep report.
+
+    The classical counterpart to
+    :func:`~coco_pipe.report.foundation.make_foundation_decoding_report`: the same
+    shared skeleton (scientific overview -> primary leaderboard -> body -> failures)
+    with the analysis-unit taxonomy (flat/sensor/family/descriptor) as the default
+    body. ``records`` are the per-unit classical decoding rows. Pass *scope_order*,
+    *section_builders* or a custom *body* to override the study-specific layout;
+    everything else falls back to the generic classical defaults.
+    """
+    domain_body = body or partial(
+        build_classical_taxonomy_sections,
+        feature_metadata=feature_metadata,
+        section_builders=section_builders,
+        scope_order=scope_order,
+    )
+
+    def _body(report: Report, body_frame: pd.DataFrame) -> None:
+        domain_body(report, body_frame)
+        if include_hp_tuning:
+            tuning = hp_tuning_section(body_frame, feature_metadata=feature_metadata)
+            if tuning is not None:
+                report.add_section(tuning)
+
+    return make_decoding_sweep_report(
+        records,
+        frame=frame,
+        title=title,
+        kind="classical",
+        dataset_name=dataset_name,
+        strategy_note=strategy_note or _CLASSICAL_STRATEGY_NOTE,
+        leaderboards=_CLASSICAL_LEADERBOARDS if leaderboards is None else leaderboards,
+        pre_sections=pre_sections,
+        body=_body,
+        scope_from=scope_from,
+        default_scope=default_scope,
+        config=config,
+        asset_urls=asset_urls,
+        output_path=output_path,
+    )
+
+
 __all__ = [
     "CLASSICAL_MODE_TITLES",
     "DEFAULT_CLASSICAL_SECTION_BUILDERS",
@@ -2201,6 +2279,7 @@ __all__ = [
     "grouped_section",
     "hp_tuning_section",
     "leaderboard_section",
+    "make_decoding_report",
     "make_decoding_sweep_report",
     "make_experiment_results_report",
     "make_head_to_head_report",

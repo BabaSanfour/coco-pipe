@@ -14,13 +14,66 @@ from collections.abc import Sequence
 
 import pandas as pd
 
-from ._constants import DESCRIPTOR_SCOPE_RE, KNOWN_FAMILY_TOKENS
+from ._constants import (
+    AGG_STAT_PREFIXES,
+    BAND_SUBFAMILY_PATTERNS,
+    COMPLEXITY_SUBFAMILY,
+    DESCRIPTOR_SCOPE_RE,
+    KNOWN_FAMILY_TOKENS,
+    PARAM_SUBFAMILY,
+)
 
 __all__ = [
     "build_descriptor_feature_metadata",
+    "descriptor_identity",
+    "descriptor_subfamily",
     "parse_descriptor_feature_column",
     "split_family_token",
 ]
+
+
+def _strip_stat_prefix(measure: str) -> str:
+    head, _, tail = str(measure).partition("_")
+    return tail if head in AGG_STAT_PREFIXES and tail else str(measure)
+
+
+def descriptor_identity(measure: str) -> str:
+    """Return a measure's descriptor identity (aggregation-stat prefix removed).
+
+    Collapses the per-stat columns of one descriptor — e.g.
+    ``mean_log_abs_alpha`` and ``iqr_log_abs_alpha`` both map to
+    ``log_abs_alpha`` — so location and spread stay together as one unit.
+    """
+    return _strip_stat_prefix(measure)
+
+
+def descriptor_subfamily(family: str | None, measure: str) -> str:
+    """Map a ``(family, measure)`` pair to its descriptor sub-family.
+
+    A sub-family is the *output type* within a family — finer than ``family``
+    but coarser than ``measure``:
+
+    - **band** → ``log_abs`` / ``rel`` / ``corr_log_abs`` / ``corr_rel`` /
+      ``abs`` / ``corr_abs`` / ``ratio`` / ``corr_ratio`` (band name stripped)
+    - **param** → ``aperiodic`` / ``peaks`` / ``fit_quality``
+    - **complexity** → ``entropy`` / ``fractal_complexity`` / ``signal_dynamics``
+
+    Robust to subject-level aggregation-stat prefixes (``median_…``). Unknown
+    families/measures fall back to ``"<family>_other"`` (or ``"unknown"``).
+    """
+    if family is None:
+        return "unknown"
+    core = _strip_stat_prefix(measure)
+    if family == "band":
+        for pattern, label in BAND_SUBFAMILY_PATTERNS:
+            if pattern in core:
+                return label
+        return "band_other"
+    if family == "param":
+        return PARAM_SUBFAMILY.get(core, "param_other")
+    if family == "complexity":
+        return COMPLEXITY_SUBFAMILY.get(core, "complexity_other")
+    return str(family)
 
 
 def split_family_token(
@@ -101,8 +154,6 @@ def build_descriptor_feature_metadata(
     feature_names: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Build decoding feature metadata from descriptor feature-column names."""
-    from .qc import descriptor_subfamily
-
     rows = []
     for column in columns:
         item = parse_descriptor_feature_column(str(column), known_families)

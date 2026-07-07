@@ -10,7 +10,7 @@ Three concerns live here, each a single-place edit point:
 * **Sub-family vocabulary** — ``AGG_STAT_PREFIXES``,
   ``BAND_SUBFAMILY_PATTERNS``, ``PARAM_SUBFAMILY``, and
   ``COMPLEXITY_SUBFAMILY`` drive
-  :func:`coco_pipe.descriptors.qc.descriptor_subfamily`.
+  :func:`coco_pipe.descriptors.naming.descriptor_subfamily`.
 * **QC output schemas** — the ``_*_COLUMNS`` lists and
   ``FAILURE_FAMILY_ALIASES`` dict are the canonical column orderings for every
   DataFrame produced by :mod:`coco_pipe.descriptors.qc`.

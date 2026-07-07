@@ -301,7 +301,7 @@ def load_descriptor_table(
             )
 
     if exclude_subfamilies:
-        from .qc import descriptor_subfamily
+        from .naming import descriptor_subfamily
 
         excluded = {str(value).strip() for value in exclude_subfamilies}
         parsed = [
@@ -408,7 +408,7 @@ def load_descriptor_table(
     if drop_degenerate_columns:
         meta_base["dropped_feature_columns"] = dropped_feature_columns
 
-    from .qc import descriptor_identity, descriptor_subfamily
+    from .naming import descriptor_identity, descriptor_subfamily
 
     if analysis_mode == "flat":
         by_column = {item["column"]: item for item in parsed}

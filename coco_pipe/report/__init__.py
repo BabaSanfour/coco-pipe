@@ -37,7 +37,7 @@ _LAZY_EXPORTS = {
     "from_foundation_sweep": ("coco_pipe.report.api", "from_foundation_sweep"),
     "from_head_to_head": ("coco_pipe.report.api", "from_head_to_head"),
     "merge_reports": ("coco_pipe.report.api", "merge_reports"),
-    "make_decoding_report": ("coco_pipe.report.decoding", "make_decoding_report"),
+    "make_decoding_report": ("coco_pipe.report.decoding_sweep", "make_decoding_report"),
     "make_decoding_result_report": (
         "coco_pipe.report.decoding",
         "make_decoding_result_report",
