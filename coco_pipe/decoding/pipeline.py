@@ -15,9 +15,10 @@ layers live here and are deliberately free of any report/visualization imports
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,6 +60,7 @@ __all__ = [
     "allocate_outer_inner",
     "build_leaderboard",
     "execute_decoding_sweep",
+    "execute_decoding_sweep_streaming",
     "load_sweep_records",
     "run_decoding_unit",
     "write_run_summary",
@@ -318,6 +320,91 @@ def execute_decoding_sweep(
     correction, capability matrices) inject via *frame_post* / *extra_outputs*.
     """
     total_jobs = resolve_n_jobs(int(config["n_jobs"]))
+    raw_records = _run_unit_batch(
+        units,
+        total_jobs=total_jobs,
+        reallocate_inner_jobs=reallocate_inner_jobs,
+    )
+    return _finalize_sweep(
+        raw_records,
+        failures,
+        config=config,
+        output_root=output_root,
+        results_filename=results_filename,
+        primary_mask=primary_mask,
+        leaderboard_group_fields=leaderboard_group_fields,
+        frame_post=frame_post,
+        extra_outputs=extra_outputs,
+        run_metadata=run_metadata,
+    )
+
+
+def execute_decoding_sweep_streaming(
+    unit_batches: Iterable[Sequence[DecodingUnit]],
+    failures: list[dict[str, Any]],
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    results_filename: str = RESULTS_FILENAME,
+    primary_mask: PrimaryMask | None = None,
+    leaderboard_group_fields: Sequence[str] = (),
+    reallocate_inner_jobs: bool = False,
+    frame_post: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+    extra_outputs: (
+        Callable[[pd.DataFrame, list[dict[str, Any]], Path], None] | None
+    ) = None,
+    run_metadata: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], pd.DataFrame]:
+    """Run a decoding sweep from a lazy stream of per-scope unit batches.
+
+    Behaves like :func:`execute_decoding_sweep` but consumes *unit_batches* one
+    batch at a time — running and then releasing each batch (and, via the
+    generator, its source data container) before the next is materialized — so
+    only one scope's worth of arrays is resident at once. This keeps host memory
+    bounded to the largest single scope rather than the whole sweep. *failures*
+    is the caller-owned list of enumeration-time skips, extended in place with
+    runtime failures (so any *extra_outputs* closure over it sees them all), and
+    every batch shares the same job budget/parallelism policy as the one-shot
+    variant. Outputs are persisted once, after the stream is exhausted.
+    """
+    total_jobs = resolve_n_jobs(int(config["n_jobs"]))
+    raw_records: list[dict[str, Any]] = []
+    for batch in unit_batches:
+        raw_records.extend(
+            _run_unit_batch(
+                batch,
+                total_jobs=total_jobs,
+                reallocate_inner_jobs=reallocate_inner_jobs,
+            )
+        )
+        # Drop the batch's units (and their X arrays) before pulling the next
+        # scope so peak RSS tracks one scope, not the accumulated sweep.
+        del batch
+        gc.collect()
+    return _finalize_sweep(
+        raw_records,
+        failures,
+        config=config,
+        output_root=output_root,
+        results_filename=results_filename,
+        primary_mask=primary_mask,
+        leaderboard_group_fields=leaderboard_group_fields,
+        frame_post=frame_post,
+        extra_outputs=extra_outputs,
+        run_metadata=run_metadata,
+    )
+
+
+def _run_unit_batch(
+    units: Sequence[DecodingUnit],
+    *,
+    total_jobs: int,
+    reallocate_inner_jobs: bool,
+) -> list[dict[str, Any]]:
+    """Run one batch of decoding units and return their flat records."""
+    units = list(units)
+    if not units:
+        return []
     outer_workers, inner_n_jobs = allocate_outer_inner(total_jobs, len(units))
     if reallocate_inner_jobs and inner_n_jobs != 1:
         for unit in units:
@@ -330,12 +417,27 @@ def execute_decoding_sweep(
         outer_workers,
         inner_n_jobs,
     )
-
-    raw_records: list[dict[str, Any]] = [
+    return [
         record
         for unit_records in run_task_batch(units, run_decoding_unit, outer_workers)
         for record in unit_records
     ]
+
+
+def _finalize_sweep(
+    raw_records: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+    *,
+    config: dict[str, Any],
+    output_root: Path,
+    results_filename: str,
+    primary_mask: PrimaryMask | None,
+    leaderboard_group_fields: Sequence[str],
+    frame_post: Callable[[pd.DataFrame], pd.DataFrame] | None,
+    extra_outputs: Callable[[pd.DataFrame, list[dict[str, Any]], Path], None] | None,
+    run_metadata: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], pd.DataFrame]:
+    """Persist the sweep's flat result table + resumable ``runs/`` inventory."""
     failures.extend(
         record for record in raw_records if record.get("status") == "failed"
     )

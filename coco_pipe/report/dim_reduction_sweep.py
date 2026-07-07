@@ -34,7 +34,7 @@ from coco_pipe.viz.topo import (
 )
 
 from .core import Report, Section
-from .dim_reduction import reduction_embedding_element, reduction_loadings_element
+from .dim_reduction import reduction_embedding_element
 from .elements import (
     AccordionElement,
     CalloutElement,
@@ -366,6 +366,7 @@ def _reducer_radar(
     return PlotlyElement(
         plot_radar_comparison(
             pd.DataFrame(rows).T,
+            normalize=False,
             title="Reducer comparison — best metric across conditions",
         )
     )
@@ -443,9 +444,18 @@ def build_reduction_condition_ranking_section(
     )
     if bar is not None:
         tabs["Cross-Condition Summary"] = bar
-    radar = _reducer_radar(runs, reducers=reducers, radar_metrics=radar_metrics)
-    if radar is not None:
-        tabs["Reducer Profile"] = radar
+    radar_overall = _reducer_radar(runs, reducers=reducers, radar_metrics=radar_metrics)
+    if radar_overall is not None:
+        tabs["Reducer Profile (Overall)"] = radar_overall
+
+    for condition in conditions:
+        sub_runs = runs[runs["condition"] == condition]
+        if not sub_runs.empty:
+            radar_cond = _reducer_radar(
+                sub_runs, reducers=reducers, radar_metrics=radar_metrics
+            )
+            if radar_cond is not None:
+                tabs[f"Reducer Profile ({condition})"] = radar_cond
     if tabs:
         section.add_element(TabsElement(tabs))
     return section
@@ -763,12 +773,14 @@ def build_best_fit_plots(
     ctx: DimReductionReportContext,
     feature_names: list[str] | None = None,
 ) -> Any:
-    """Build the embedding + component-loadings element for a best fit.
+    """Build the best-fit diagnostics element for a single reducer fit.
 
-    Renders the native 2-D / first-3-dims embedding scatter and, for the
-    component loadings, a scalp topomap when *feature_names* are montage
-    channels (per :attr:`~DimReductionReportContext.topomap_channels`), else a
-    generic loadings plot.
+    Renders the native 2-D / first-3-dims embedding scatter and, when
+    available, a scalp topomap of the component loadings (only when
+    *feature_names* are montage channels per
+    :attr:`~DimReductionReportContext.topomap_channels`) and a scree plot of
+    the ``explained_variance_ratio`` diagnostic. Returns ``None`` when the
+    embedding is not 2-D.
     """
     embedding = np.asarray(artifact["embedding"])
     if embedding.ndim != 2:
@@ -814,15 +826,16 @@ def build_best_fit_plots(
                 )
             if topo_fig is not None:
                 plots.append(PlotlyElement(topo_fig))
-            else:
-                loadings_element = reduction_loadings_element(
-                    loadings,
-                    feature_names=feature_names,
-                    n_components=n_comp,
-                    title=f"{title} - component loadings (top {n_comp})",
-                )
-                if loadings_element is not None:
-                    plots.append(loadings_element)
+
+    explained_variance = (artifact.get("diagnostics") or {}).get(
+        "explained_variance_ratio"
+    )
+    if explained_variance is not None:
+        from coco_pipe.viz.interactive.dim_reduction import plot_scree
+
+        scree_fig = plot_scree(np.asarray(explained_variance, dtype=float))
+        scree_fig.update_layout(title=f"{title} - Scree Plot")
+        plots.append(PlotlyElement(scree_fig))
 
     if plots:
         return ColumnsElement(plots, cols=len(plots))
@@ -1505,6 +1518,7 @@ def build_pooled_section(
     pooled_runs: pd.DataFrame,
     pooled_eval_runs: pd.DataFrame,
     ctx: DimReductionReportContext,
+    pooled_container: Any | None = None,
 ) -> Section | None:
     """Build the pooled multi-condition section, or None when there are no runs."""
     from coco_pipe.viz.interactive.base import plot_scatter
@@ -1534,9 +1548,14 @@ def build_pooled_section(
         on="fit_id",
         how="left",
     )
-    pooled_container = None
-    with contextlib.suppress(Exception):
-        pooled_container = ctx.container_builder(ctx.conditions[0])
+    if pooled_container is None:
+        with contextlib.suppress(Exception):
+            from coco_pipe.io.structures import DataContainer
+
+            source_containers = [ctx.container_builder(cond) for cond in ctx.conditions]
+            valid_containers = [c for c in source_containers if c is not None]
+            if valid_containers:
+                pooled_container = DataContainer.concat(valid_containers)
 
     if ctx.analysis_mode == "family":
         build_unit_summary(
@@ -2139,7 +2158,12 @@ def build_dataset_report(
             if not eval_frame.empty
             else pd.DataFrame()
         )
-        pooled_section = build_pooled_section(pooled_runs, pooled_eval, ctx)
+        pooled_container = None
+        if containers_by_scope is not None:
+            pooled_container = containers_by_scope.get(("pooled", ctx.pooled_condition))
+        pooled_section = build_pooled_section(
+            pooled_runs, pooled_eval, ctx, pooled_container=pooled_container
+        )
         if pooled_section is not None:
             report.add_section(pooled_section)
 

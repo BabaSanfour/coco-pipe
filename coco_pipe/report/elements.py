@@ -27,6 +27,29 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+def _render_markdown(text: str, *, inline: bool = False) -> str:
+    """Render markdown ``text`` to HTML, escaping if the library is missing.
+
+    When ``inline`` is True and the output is a single top-level paragraph,
+    the wrapping ``<p>`` tags are stripped so the result can be dropped into
+    an existing inline context (e.g. a callout body).
+    """
+    try:
+        import markdown
+    except ImportError:
+        return html.escape(text)
+
+    rendered = markdown.markdown(text, extensions=["extra"])
+    if (
+        inline
+        and rendered.count("<p>") == 1
+        and rendered.startswith("<p>")
+        and rendered.endswith("</p>")
+    ):
+        rendered = rendered[len("<p>") : -len("</p>")]
+    return rendered
+
+
 class Element(ABC):
     """
     Abstract base class for all report elements.
@@ -623,12 +646,13 @@ class CalloutElement(Element):
             if self.title
             else ""
         )
+        text_html = _render_markdown(self.text, inline=True)
         return (
             f'<div class="flex items-start p-4 my-3 rounded-md border-l-4 '
             f'text-sm {cls}">'
             f'<span class="mr-3 shrink-0 rounded border px-1.5 py-0.5 text-[10px] '
             f'font-semibold tracking-wide">{icon}</span>'
-            f"<div>{title_html}{html.escape(self.text)}</div>"
+            f"<div>{title_html}{text_html}</div>"
             f"</div>"
         )
 
@@ -962,10 +986,11 @@ class TabsElement(ContainerElement):
             self.add_element(elem)
 
     def render(self) -> str:
-        parts = [
-            f'<div id="tabs-{self._group_id}" class="flex border-b border-gray-200 '
-            f'dark:border-gray-700 mb-4">'
-        ]
+        parts = [f'<div id="tabs-{self._group_id}" class="coco-tabs">']
+        parts.append(
+            '<div class="coco-tab-bar flex border-b border-gray-200 '
+            'dark:border-gray-700 mb-4">'
+        )
         for idx, (title, _) in enumerate(self.tabs.items()):
             active_class = (
                 "text-blue-600 border-blue-600 dark:text-blue-500 "
@@ -984,7 +1009,7 @@ class TabsElement(ContainerElement):
             )
         parts.append("</div>")
 
-        parts.append('<div class="tab-panels">')
+        parts.append('<div class="coco-tab-panels">')
         for idx, (_, elem) in enumerate(self.tabs.items()):
             hidden = "" if idx == 0 else "hidden"
             parts.append(
@@ -992,23 +1017,31 @@ class TabsElement(ContainerElement):
                 f'class="tab-panel {hidden}">{elem.render()}</div>'
             )
         parts.append("</div>")
+        parts.append("</div>")
 
         script = """
 <script>
 if (typeof window.cocoSwitchTab === 'undefined') {
     window.cocoSwitchTab = function(btn, panelId, groupId) {
-        const group = document.getElementById(groupId);
-        const panels = group.parentElement.querySelectorAll('.tab-panel');
-        panels.forEach(p => p.classList.add('hidden'));
-        const buttons = group.querySelectorAll('button');
-        buttons.forEach(b => {
-            b.classList.remove('text-blue-600', 'border-blue-600',
-                               'dark:text-blue-500', 'dark:border-blue-500',
-                               'active-tab');
-            b.classList.add('border-transparent', 'hover:text-gray-600',
-                            'hover:border-gray-300', 'dark:hover:text-gray-300');
-        });
-        document.getElementById(panelId).classList.remove('hidden');
+        const root = document.getElementById(groupId);
+        if (!root) return;
+        // Scope to direct children so nested tab groups are unaffected.
+        const panelHost = root.querySelector(':scope > .coco-tab-panels');
+        if (panelHost) {
+            Array.from(panelHost.children).forEach(p => p.classList.add('hidden'));
+        }
+        const barHost = root.querySelector(':scope > .coco-tab-bar');
+        if (barHost) {
+            Array.from(barHost.children).forEach(b => {
+                b.classList.remove('text-blue-600', 'border-blue-600',
+                                   'dark:text-blue-500', 'dark:border-blue-500',
+                                   'active-tab');
+                b.classList.add('border-transparent', 'hover:text-gray-600',
+                                'hover:border-gray-300', 'dark:hover:text-gray-300');
+            });
+        }
+        const target = document.getElementById(panelId);
+        if (target) target.classList.remove('hidden');
         btn.classList.remove('border-transparent', 'hover:text-gray-600',
                              'hover:border-gray-300', 'dark:hover:text-gray-300');
         btn.classList.add('text-blue-600', 'border-blue-600',
@@ -1019,7 +1052,6 @@ if (typeof window.cocoSwitchTab === 'undefined') {
 </script>
         """
         parts.append(script)
-        parts.append("</div>")
         return "".join(parts)
 
 

@@ -347,7 +347,9 @@ def test_build_reduction_condition_ranking_section_table_and_tabs():
     # multi-condition + multi-reducer -> cross-condition bar and reducer radar tabs
     rendered = section.render()
     assert "Cross-Condition Summary" in rendered
-    assert "Reducer Profile" in rendered
+    assert "Reducer Profile (Overall)" in rendered
+    assert "Reducer Profile (EO)" in rendered
+    assert "Reducer Profile (EC)" in rendered
 
 
 def test_build_reduction_condition_ranking_section_empty():
@@ -468,12 +470,24 @@ def test_build_meta_dict_skips_extractor_without_condition(tmp_path):
 # --- build_best_fit_plots ---------------------------------------------------
 
 
-def test_best_fit_plots_uses_loadings_for_non_channel_features(tmp_path):
+def test_best_fit_plots_embedding_only_for_non_channel_features(tmp_path):
     ctx = _ctx(tmp_path)
     element = build_best_fit_plots(
         "title", _artifact(2, 4), {}, ctx, feature_names=_FEATURES
     )
-    assert element is not None  # embedding + loadings columns
+    assert element is not None
+    assert len(element.children) == 1  # embedding scatter only, no loadings fallback
+
+
+def test_best_fit_plots_renders_scree_from_explained_variance(tmp_path):
+    ctx = _ctx(tmp_path)
+    artifact = _artifact(3, 4)
+    artifact["diagnostics"]["explained_variance_ratio"] = [0.6, 0.3, 0.1]
+    element = build_best_fit_plots("title", artifact, {}, ctx, feature_names=_FEATURES)
+    assert element is not None
+    # embedding scatter + scree plot (no topomap for non-channel features)
+    assert len(element.children) == 2
+    assert "Scree Plot" in element.render()
 
 
 def test_best_fit_plots_topomap_gate_for_channel_features(tmp_path):

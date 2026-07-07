@@ -26,6 +26,7 @@ from coco_pipe.report.elements import (
     TableElement,
     TabsElement,
     TimelineElement,
+    _render_markdown,
 )
 
 
@@ -221,6 +222,41 @@ def test_callout_element():
     assert "bg-yellow-50" in html
 
 
+def test_callout_element_renders_inline_markdown():
+    """Callout body renders markdown and unwraps the single top-level <p>."""
+    html = CalloutElement("This is **bold** text").render()
+    assert "<strong>bold</strong>" in html
+    assert "**" not in html  # raw markdown syntax must not leak through
+    assert "<p>" not in html  # single paragraph is unwrapped for inline use
+
+
+def test_callout_element_keeps_paragraphs_for_multiblock_markdown():
+    """Multi-paragraph markdown keeps its <p> wrappers (not unwrapped)."""
+    html = CalloutElement("First para.\n\nSecond para.").render()
+    assert html.count("<p>") == 2
+
+
+def test_callout_markdown_fallback_when_package_missing(monkeypatch):
+    """Without the markdown package, the callout body is HTML-escaped."""
+    monkeypatch.setitem(sys.modules, "markdown", None)
+    html = CalloutElement("a **b** <c>").render()
+    assert "&lt;c&gt;" in html  # escaped
+    assert "<strong>" not in html
+
+
+def test_render_markdown_helper_inline_and_block():
+    assert _render_markdown("**b**", inline=True) == "<strong>b</strong>"
+    # Block mode keeps the wrapping paragraph.
+    assert _render_markdown("**b**", inline=False) == "<p><strong>b</strong></p>"
+    # Multi-paragraph is never unwrapped, even inline.
+    assert _render_markdown("a\n\nb", inline=True).count("<p>") == 2
+
+
+def test_render_markdown_helper_escapes_without_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "markdown", None)
+    assert _render_markdown("<b> & **x**") == "&lt;b&gt; &amp; **x**"
+
+
 def test_code_block_element():
     cb = CodeBlockElement(
         'print("Hello")', language="python", title="Snippet", copyable=True
@@ -308,6 +344,35 @@ def test_tabs_element():
     assert "Tab 2 Content" in html_out
     assert "cocoSwitchTab" in html_out
     assert "hidden" in html_out
+
+
+def test_tabs_element_single_root_container():
+    """The whole element is wrapped in one root div so it can't leak into or
+    corrupt its parent's markup (regression: a stray </div> broke the layout)."""
+    elem = TabsElement({"A": HtmlElement("a"), "B": HtmlElement("b")})
+    html_out = elem.render()
+    # Exactly one wrapping root, carrying the group id and coco-tabs class.
+    assert html_out.startswith(f'<div id="tabs-{elem._group_id}" class="coco-tabs">')
+    assert 'class="coco-tab-bar' in html_out
+    assert 'class="coco-tab-panels"' in html_out
+    # The switch script scopes to this root's *direct* children.
+    assert ":scope > .coco-tab-panels" in html_out
+    assert ":scope > .coco-tab-bar" in html_out
+    # Divs are balanced (the switch script contains no div tags).
+    assert html_out.count("<div") == html_out.count("</div>")
+
+
+def test_tabs_element_nested_groups_have_distinct_scopes():
+    """Nested tab groups must not share ids so switching one leaves the other
+    untouched (guards the direct-child scoping in the switch script)."""
+    inner = TabsElement({"X": HtmlElement("x"), "Y": HtmlElement("y")})
+    outer = TabsElement({"Outer": inner, "Other": HtmlElement("o")})
+    html_out = outer.render()
+    assert inner._group_id != outer._group_id
+    assert f'id="tabs-{inner._group_id}"' in html_out
+    assert f'id="tabs-{outer._group_id}"' in html_out
+    # Both groups nest their panels, so all divs must stay balanced.
+    assert html_out.count("<div") == html_out.count("</div>")
 
 
 def test_download_asset_element_bytes():
