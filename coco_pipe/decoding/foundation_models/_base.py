@@ -37,6 +37,18 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     _expected_n_chans: int | None = None
     signal_metadata_: SignalMetadata | None = None
     _net_ = None
+    _model = None
+
+    def release_memory(self) -> None:
+        """Drop references to loaded torch modules so GC can reclaim them.
+
+        Called after a fold is scored to keep peak memory tracking one fitted
+        backbone at a time rather than accumulating across the CV loop. The
+        backend is unusable afterwards; callers must not predict/transform with
+        it once released.
+        """
+        self._model = None
+        self._net_ = None
 
     @abstractmethod
     def reset_head(self, n_outputs: int) -> BackendBase:

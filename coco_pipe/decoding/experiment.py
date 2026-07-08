@@ -11,6 +11,7 @@ import logging
 import time
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any
@@ -77,6 +78,10 @@ class Experiment:
         self.result_: ExperimentResult | None = None
         self._model_specs: dict[str, Any] = {}
         self._model_capabilities: dict[str, Any] = {}
+        # Maps model name -> on-disk joblib path when ``low_memory`` offloading
+        # is active. Populated during ``run`` and drained by rehydration before
+        # the ExperimentResult is assembled.
+        self._offloaded_results: dict[str, Path] = {}
         self._propagate_random_state()
         self._validate_config()
 
@@ -493,6 +498,28 @@ class Experiment:
             **kwargs,
         )
 
+    def _offload_result(self, name: str, offload_dir: Path) -> None:
+        """Spill one model's CV results to disk to free host memory.
+
+        Only successful result payloads are offloaded; failure sentinels are
+        tiny and are kept resident so the final assembly can report them
+        directly. The in-memory slot is set to ``None`` and the on-disk path is
+        recorded in ``self._offloaded_results`` for later rehydration.
+        """
+        payload = self.results.get(name)
+        if not isinstance(payload, dict) or "error" in payload:
+            return
+        path = offload_dir / f"model_{len(self._offloaded_results)}.joblib"
+        joblib.dump(payload, path)
+        self._offloaded_results[name] = path
+        self.results[name] = None
+
+    def _rehydrate_results(self) -> None:
+        """Load every offloaded model payload back into ``self.results``."""
+        for name, path in self._offloaded_results.items():
+            self.results[name] = joblib.load(path)
+        self._offloaded_results.clear()
+
     def run(
         self,
         X: np.ndarray,
@@ -657,35 +684,51 @@ class Experiment:
         if self.config.task == "classification" and type_of_target(y) == "continuous":
             raise ValueError("Task is 'classification' but target is 'continuous'.")
 
-        for name, cfg in self.config.models.items():
-            label = getattr(cfg, "method", getattr(cfg, "kind", "Unknown"))
-            logger.info(f"Evaluating Model: {name} ({label})")
-            try:
-                # 1. Resolve Spec & Capabilities
-                from .registry import resolve_estimator_spec
+        # When low_memory is on, each finished model's results are spilled to a
+        # scratch directory so only the currently-fitting model's payload stays
+        # resident. The directory is removed once results are rehydrated below.
+        offload_dir: Path | None = None
+        if self.config.low_memory:
+            offload_dir = Path(mkdtemp(prefix="coco_lowmem_"))
 
-                spec = resolve_estimator_spec(cfg)
+        try:
+            for name, cfg in self.config.models.items():
+                label = getattr(cfg, "method", getattr(cfg, "kind", "Unknown"))
+                logger.info(f"Evaluating Model: {name} ({label})")
+                try:
+                    # 1. Resolve Spec & Capabilities
+                    from .registry import resolve_estimator_spec
 
-                # 2. Parallelism Safety
-                is_fm = spec.family in {"foundation", "neural"}
-                model_n_jobs = 1 if is_fm else self.config.n_jobs
+                    spec = resolve_estimator_spec(cfg)
 
-                est = self._prepare_estimator(name, cfg)
-                self.results[name] = self._cross_validate(
-                    est,
-                    X,
-                    y,
-                    groups,
-                    self._sample_ids,
-                    self._sample_metadata,
-                    n_jobs=model_n_jobs,
-                    spec=spec,
-                    model_name=name,
-                    sample_weight=sample_weight,
-                )
-            except Exception as e:
-                logger.error(f"Failed model '{name}': {e}", exc_info=True)
-                self.results[name] = {"error": str(e), "status": "failed"}
+                    # 2. Parallelism Safety
+                    is_fm = spec.family in {"foundation", "neural"}
+                    model_n_jobs = 1 if is_fm else self.config.n_jobs
+
+                    est = self._prepare_estimator(name, cfg)
+                    self.results[name] = self._cross_validate(
+                        est,
+                        X,
+                        y,
+                        groups,
+                        self._sample_ids,
+                        self._sample_metadata,
+                        n_jobs=model_n_jobs,
+                        spec=spec,
+                        model_name=name,
+                        sample_weight=sample_weight,
+                    )
+                    if offload_dir is not None:
+                        self._offload_result(name, offload_dir)
+                except Exception as e:
+                    logger.error(f"Failed model '{name}': {e}", exc_info=True)
+                    self.results[name] = {"error": str(e), "status": "failed"}
+
+            if offload_dir is not None:
+                self._rehydrate_results()
+        finally:
+            if offload_dir is not None:
+                rmtree(offload_dir, ignore_errors=True)
 
         logger.info(f"Experiment Completed in {time.time() - start_time:.2f}s")
         from .result import ExperimentResult

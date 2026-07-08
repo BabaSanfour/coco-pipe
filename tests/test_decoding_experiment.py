@@ -1,4 +1,7 @@
 import warnings
+from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -753,3 +756,81 @@ def test_experiment_run_with_statistical_assessment():
     res = Experiment(config).run(X, y)
     assert "statistical_assessment" in res.meta
     assert "statistical_assessment" in res.raw["lr"]
+
+
+def _low_memory_config(low_memory):
+    return ExperimentConfig(
+        task="classification",
+        models={
+            "lr": LogisticRegressionConfig(),
+            "rf": RandomForestClassifierConfig(n_estimators=10),
+        },
+        cv=CVConfig(strategy="stratified", n_splits=2),
+        metrics=["accuracy"],
+        verbose=False,
+        n_jobs=1,
+        low_memory=low_memory,
+    )
+
+
+def test_low_memory_matches_default_results():
+    """Offloading to disk must be behaviourally transparent: the assembled
+    results are identical to a standard in-memory run."""
+    X, y = _classification_data(n_samples=24)
+
+    baseline = Experiment(_low_memory_config(False)).run(X, y)
+    exp = Experiment(_low_memory_config(True))
+    offloaded = exp.run(X, y)
+
+    for name in ("lr", "rf"):
+        assert offloaded.raw[name]["status"] == "success"
+
+    pd.testing.assert_frame_equal(baseline.summary(), offloaded.summary())
+    # Everything was rehydrated; no dangling on-disk references remain.
+    assert exp._offloaded_results == {}
+
+
+def test_low_memory_cleans_up_scratch_dir(tmp_path, monkeypatch):
+    """The temporary offload directory is removed once results are rehydrated."""
+    spill = tmp_path / "spill"
+
+    def fake_mkdtemp(*args, **kwargs):
+        spill.mkdir()
+        return str(spill)
+
+    monkeypatch.setattr("coco_pipe.decoding.experiment.mkdtemp", fake_mkdtemp)
+
+    X, y = _classification_data(n_samples=24)
+    res = Experiment(_low_memory_config(True)).run(X, y)
+
+    assert res.raw["lr"]["status"] == "success"
+    assert not spill.exists()
+
+
+def test_low_memory_offload_skips_failure_sentinels():
+    """Failure sentinels stay resident (tiny + must remain queryable); only
+    successful payloads are spilled and then restored verbatim."""
+    exp = Experiment(_low_memory_config(True))
+    exp.results["ok"] = {"status": "success", "scores": {"accuracy": [0.9, 0.8]}}
+    exp.results["bad"] = {"error": "boom", "status": "failed"}
+
+    spill = Path(mkdtemp())
+    try:
+        exp._offload_result("ok", spill)
+        exp._offload_result("bad", spill)
+
+        # Success payload is off-loaded (slot cleared, path recorded); failure
+        # sentinel is untouched.
+        assert exp.results["ok"] is None
+        assert "ok" in exp._offloaded_results
+        assert exp.results["bad"] == {"error": "boom", "status": "failed"}
+        assert "bad" not in exp._offloaded_results
+
+        exp._rehydrate_results()
+        assert exp.results["ok"] == {
+            "status": "success",
+            "scores": {"accuracy": [0.9, 0.8]},
+        }
+        assert exp._offloaded_results == {}
+    finally:
+        rmtree(spill, ignore_errors=True)

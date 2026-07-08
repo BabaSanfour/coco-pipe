@@ -207,6 +207,58 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
     )
 
 
+def test_release_memory_tears_down_fitted_classifier():
+    """release_memory drops the fitted backend and its torch modules so the
+    garbage collector can reclaim them between CV folds (#2)."""
+    X, y, groups = _data()
+    classifier = FoundationClassifier(
+        "cbramod",
+        backend="fake",
+        train_mode="linear_probe",
+        sfreq=200,
+        ch_names=["C3", "C4"],
+        trainer={"max_epochs": 1, "batch_size": 4, "validation_fraction": 0.25},
+    ).fit(X, y, groups=groups)
+
+    backend = classifier.backend_
+    assert backend is not None and backend._model is not None
+
+    classifier.release_memory()
+
+    # Estimator no longer references the backend or the adapted-input prep.
+    assert classifier.backend_ is None
+    assert classifier.prepared_ is None
+    # And the backend itself has dropped its torch modules.
+    assert backend._model is None
+    assert backend._net_ is None
+
+
+def test_release_memory_tears_down_frozen_transformer():
+    """FrozenBackboneTransformer exposes the same teardown hook."""
+    X, y, _ = _data()
+    transformer = FrozenBackboneTransformer(
+        "cbramod", backend="fake", sfreq=200, ch_names=["C3", "C4"]
+    ).fit(X, y)
+
+    backend = transformer.backend_
+    assert backend is not None
+
+    transformer.release_memory()
+    assert transformer.backend_ is None
+    assert backend._model is None
+
+
+def test_backend_base_release_memory_is_idempotent():
+    """BackendBase.release_memory can run on an already-released backend without
+    error (teardown must be best-effort)."""
+    backend = FakeFoundationBackend.load(
+        "cbramod", metadata={}, n_outputs=2, device="cpu", train_mode="frozen"
+    )
+    backend.release_memory()
+    backend.release_memory()  # second call must not raise
+    assert backend._model is None and backend._net_ is None
+
+
 def test_frozen_backbone_embedding_cache_matches_uncached_and_memoizes():
     X, _, _ = _data()
     clear_frozen_embedding_cache()

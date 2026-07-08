@@ -37,6 +37,48 @@ from .scalers import SubjectStandardScaler
 logger = logging.getLogger(__name__)
 
 
+def _release_foundation_memory(estimator: Any) -> None:
+    """Release a fitted foundation/neural estimator's torch modules after a fold.
+
+    Walks the (possibly pipeline/search/calibration-wrapped) *estimator*, calls
+    ``release_memory`` on any component that exposes it, then forces a GC pass
+    and clears the CUDA cache. This keeps peak memory bounded to roughly one
+    fold's model instead of accumulating loaded backbones across the CV loop.
+    Best-effort: teardown must never fail a fold that already produced its
+    scores, so component errors are swallowed. No-op for estimators without a
+    ``release_memory`` hook (i.e. all classical models).
+    """
+    seen: set[int] = set()
+    stack: list[Any] = [estimator]
+    while stack:
+        obj = stack.pop()
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        release = getattr(obj, "release_memory", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:
+                logger.debug("release_memory failed for %r", type(obj), exc_info=True)
+        # Unwrap the common sklearn containers to reach the wrapped model.
+        for attr in ("estimator", "best_estimator_", "base_estimator"):
+            stack.append(getattr(obj, attr, None))
+        steps = getattr(obj, "named_steps", None)
+        if steps:
+            stack.extend(steps.values())
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
     """
     SequentialFeatureSelector that accepts groups via Pipeline fit parameters.
@@ -319,6 +361,13 @@ def fit_and_score_fold(
         search_enabled=search_enabled,
         feature_names=feature_names,
     )
+
+    # 7. Release the fitted backbone. Foundation fits hold large torch modules;
+    # tearing them down here keeps peak host/GPU memory bounded to one fold
+    # instead of accumulating loaded backbones across the CV loop. Gated to the
+    # foundation family so classical folds skip the gc/torch overhead entirely.
+    if spec.family == "foundation":
+        _release_foundation_memory(estimator)
 
     return {
         "test_idx": test_idx,

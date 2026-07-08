@@ -23,6 +23,23 @@ def clear_frozen_embedding_cache() -> None:
     _FROZEN_EMBEDDING_CACHE.clear()
 
 
+def _release_fitted_backend(estimator: Any) -> None:
+    """Release a fitted foundation estimator's torch backend after scoring.
+
+    Drops the estimator's references to its loaded backend/backbone so the
+    garbage collector can reclaim the model between CV folds. The estimator is
+    unusable for prediction afterwards, so this must only run once the fold's
+    predictions and metadata have been extracted.
+    """
+    backend = getattr(estimator, "backend_", None)
+    if backend is not None and hasattr(backend, "release_memory"):
+        backend.release_memory()
+    if hasattr(estimator, "backend_"):
+        estimator.backend_ = None
+    if hasattr(estimator, "prepared_"):
+        estimator.prepared_ = None
+
+
 class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
     """Target-independent frozen feature extractor suitable for sklearn pipelines."""
 
@@ -104,6 +121,10 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
             for offset, index in enumerate(missing):
                 _FROZEN_EMBEDDING_CACHE[keys[index]] = computed[offset]
         return np.stack([_FROZEN_EMBEDDING_CACHE[key] for key in keys])
+
+    def release_memory(self) -> None:
+        """Release the fitted backend's torch modules (see BackendBase)."""
+        _release_fitted_backend(self)
 
 
 class FoundationClassifier(BaseEstimator, ClassifierMixin):
@@ -279,6 +300,10 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         check_is_fitted(self)
         return np.asarray(self.backend_.predict_proba(self.prepared_.adapt(X)))
+
+    def release_memory(self) -> None:
+        """Release the fitted backend's torch modules (see BackendBase)."""
+        _release_fitted_backend(self)
 
     def get_training_history(self) -> list[dict[str, Any]]:
         return self.backend_.training_history() if self.backend_ is not None else []

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from coco_pipe.decoding import Experiment, ExperimentConfig
 from coco_pipe.decoding._engine import (
     GroupedSequentialFeatureSelector,
+    _release_foundation_memory,
     _SafeSelectKBest,
     compact_search_results,
     compute_metric_safe,
@@ -704,3 +706,100 @@ def test_extract_feature_importances_edge_cases():
     pipe.fit(X, y)
     imp3 = extract_feature_importances(pipe, spec_svc, fs_enabled=True)
     assert imp3 is None
+
+
+def test_release_foundation_memory_walks_wrappers():
+    """release_memory is called on every component reachable through the
+    standard sklearn container attributes (pipeline steps, search/calibration
+    wrappers)."""
+    step_hook = Mock()
+    inner_hook = Mock()
+    inner = MockEstimator(release_memory=inner_hook)
+    step = MockEstimator(release_memory=step_hook, base_estimator=inner)
+    pipe = Pipeline([("scaler", StandardScaler()), ("clf", step)])
+
+    _release_foundation_memory(pipe)
+
+    step_hook.assert_called_once()
+    inner_hook.assert_called_once()
+
+
+def test_release_foundation_memory_noop_on_classical():
+    """An estimator without a release_memory hook is left untouched and does
+    not raise (classical models must be unaffected)."""
+    # No exception, returns None; nothing to assert beyond "does not blow up".
+    _release_foundation_memory(MockEstimator())
+    _release_foundation_memory(None)
+
+
+def test_release_foundation_memory_swallows_hook_errors():
+    """A component whose release_memory raises must not fail the fold that
+    already produced its scores."""
+    boom = Mock(side_effect=RuntimeError("gpu gone"))
+    est = MockEstimator(release_memory=boom)
+
+    # Should not propagate.
+    _release_foundation_memory(est)
+    boom.assert_called_once()
+
+
+def test_release_foundation_memory_handles_cycles():
+    """The seen-set prevents infinite loops when wrappers reference themselves
+    (MockEstimator.best_estimator_ defaults to self)."""
+    hook = Mock()
+    est = MockEstimator(release_memory=hook)  # best_estimator_ is self
+    _release_foundation_memory(est)
+    hook.assert_called_once()
+
+
+def _run_fold_with_family(family, estimator, monkeypatch):
+    """Drive fit_and_score_fold with a minimal spec of the given family."""
+    from coco_pipe.decoding import _engine as engine
+    from coco_pipe.decoding._metrics import MetricSpec
+
+    monkeypatch.setattr(
+        engine,
+        "get_metric_spec",
+        lambda m: MetricSpec(m, "classification", lambda yt, yp: yp.mean(), "predict"),
+    )
+    spec = SimpleNamespace(
+        supports_proba=False,
+        supports_decision_function=False,
+        importance=("unavailable",),
+        supports_groups=True,
+        grouped_metadata="none",
+        is_sparse_capable=False,
+        family=family,
+    )
+    X, y = np.zeros((4, 2)), np.array([0, 0, 1, 1])
+    ids = np.array(["a", "b", "c", "d"])
+    return fit_and_score_fold(
+        estimator,
+        X,
+        y,
+        None,
+        ids,
+        None,
+        train_idx=np.array([0, 2]),
+        test_idx=np.array([1, 3]),
+        metrics=["m1"],
+        feature_selection_config=MockConfig(),
+        calibration_config=MockConfig(),
+        spec=spec,
+    )
+
+
+def test_fit_and_score_fold_releases_foundation_only(monkeypatch):
+    """The teardown fires for the foundation family and is skipped for
+    classical families so their folds pay no gc/torch overhead."""
+    fired = {"count": 0}
+    monkeypatch.setattr(
+        "coco_pipe.decoding._engine._release_foundation_memory",
+        lambda est: fired.__setitem__("count", fired["count"] + 1),
+    )
+
+    _run_fold_with_family("linear", MockEstimator(), monkeypatch)
+    assert fired["count"] == 0
+
+    _run_fold_with_family("foundation", MockEstimator(), monkeypatch)
+    assert fired["count"] == 1

@@ -1076,6 +1076,19 @@ class ExperimentConfig(BaseModel):
     )
     n_jobs: int = -1
     verbose: bool = True
+    low_memory: bool = Field(
+        False,
+        description=(
+            "If True, each model's cross-validation results are offloaded to a "
+            "temporary directory on disk immediately after they are produced, "
+            "and rehydrated only when the final ExperimentResult is assembled. "
+            "This bounds peak host memory to roughly one model's results plus "
+            "the currently-fitting model, rather than accumulating every "
+            "model's fold predictions/splits in RAM for the whole sweep. "
+            "Intended for memory-constrained runs (e.g. foundation models on "
+            "SLURM); off by default so standard runs are unaffected."
+        ),
+    )
 
     def get_all_evaluation_metrics(self) -> list[str]:
         """Union of primary experiment metrics and stats-specific metrics."""
