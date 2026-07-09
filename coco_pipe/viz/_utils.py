@@ -487,8 +487,8 @@ def prepare_embedding_frame(
     Returns
     -------
     pandas.DataFrame
-        Frame with columns ``x``, ``y`` and optionally ``z`` plus label and
-        metadata columns.
+        Frame with coordinate columns ``dim1``, ``dim2`` and optionally ``dim3``
+        plus label and metadata columns.
 
     Raises
     ------
@@ -509,9 +509,9 @@ def prepare_embedding_frame(
         raise ValueError(msg)
 
     n_samples = embedding.shape[0]
-    data: dict[str, Any] = {"x": embedding[:, 0], "y": embedding[:, 1]}
+    data: dict[str, Any] = {"dim1": embedding[:, 0], "dim2": embedding[:, 1]}
     if dimensions == 3:
-        data["z"] = embedding[:, 2]
+        data["dim3"] = embedding[:, 2]
 
     if labels is not None:
         if label_kind not in {"categorical", "continuous"}:
@@ -529,11 +529,15 @@ def prepare_embedding_frame(
     if metadata is not None:
         if not isinstance(metadata, Mapping):
             raise TypeError("`metadata` must be a mapping of column names to values.")
+        reserved = set(data)
         for key, value in metadata.items():
             value = np.asarray(value)
             if value.shape[0] != n_samples:
                 raise ValueError(f"Metadata column '{key}' must align with samples.")
-            data[str(key)] = value
+            col = str(key)
+            while col in reserved:
+                col = f"{col}_meta"
+            data[col] = value
 
     return pd.DataFrame(data)
 

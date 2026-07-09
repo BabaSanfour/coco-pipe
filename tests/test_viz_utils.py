@@ -269,7 +269,8 @@ def test_info_from_montage():
 def test_prepare_embedding_frame():
     emb = np.random.randn(10, 2)
     df = prepare_embedding_frame(emb)
-    assert "x" in df.columns
+    assert "dim1" in df.columns
+    assert "dim2" in df.columns
 
     df2 = prepare_embedding_frame(emb, labels=[1] * 10, metadata={"meta": [2] * 10})
     assert "Label" in df2.columns
@@ -283,6 +284,24 @@ def test_prepare_embedding_frame():
 
     with pytest.raises(ValueError):
         prepare_embedding_frame(emb, dimensions=3)
+
+
+def test_prepare_embedding_frame_metadata_named_y_does_not_overwrite_axis():
+    """A metadata column literally called ``y`` must not clobber a coordinate.
+
+    Regression: coordinates used to be named ``x``/``y``/``z``, so a target
+    column named ``y`` overwrote the second axis with the discrete label,
+    producing artificially clean, discrete 3-D embedding plots.
+    """
+    emb = np.arange(30, dtype=float).reshape(10, 3)
+    labels = np.array([1, 2, 3, 1, 2, 3, 1, 2, 3, 1])
+    df = prepare_embedding_frame(emb, metadata={"y": labels}, dimensions=3)
+
+    # Coordinates are preserved and untouched by the metadata key "y".
+    np.testing.assert_array_equal(df["dim2"].to_numpy(), emb[:, 1])
+    # The metadata "y" is still present as its own (colour-selectable) column.
+    np.testing.assert_array_equal(df["y"].to_numpy(), labels)
+    assert df["dim2"].nunique() == 10  # continuous PC, not the 3-value label
 
 
 def test_prepare_metrics_frame():
@@ -1033,7 +1052,7 @@ def test_prepare_embedding_frame_continuous_label():
     df = prepare_embedding_frame(
         emb, labels=[1.0] * 10, dimensions=3, label_kind="continuous"
     )
-    assert "z" in df.columns
+    assert "dim3" in df.columns
 
     with pytest.raises(ValueError):
         prepare_embedding_frame(emb, labels=[1] * 10, label_kind="invalid")

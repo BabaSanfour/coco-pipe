@@ -173,10 +173,10 @@ def plot_embedding(
             scatter_kwargs["color"] = sns.color_palette(palette, 1)[0]
 
         if len(dims) == 2:
-            fig, ax = plot_scatter2d(frame["x"], frame["y"], **scatter_kwargs)
+            fig, ax = plot_scatter2d(frame["dim1"], frame["dim2"], **scatter_kwargs)
         else:
             fig, ax = plot_scatter3d(
-                frame["x"], frame["y"], frame["z"], **scatter_kwargs
+                frame["dim1"], frame["dim2"], frame["dim3"], **scatter_kwargs
             )
         finalize_axes(
             ax,

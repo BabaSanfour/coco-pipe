@@ -118,7 +118,7 @@ def plot_embedding(
         color_columns.append("Label")
     if metadata:
         color_columns.extend([str(key) for key in metadata if str(key) in df.columns])
-    hover_cols = [col for col in df.columns if col not in {"x", "y", "z"}]
+    hover_cols = [col for col in df.columns if col not in {"dim1", "dim2", "dim3"}]
     custom_data = df[hover_cols].values if hover_cols else None
     hovertemplate = (
         "<br>".join(
@@ -140,11 +140,11 @@ def plot_embedding(
                 restyle=False,
             )
         )
-    if dimensions == 3 and "z" in df.columns:
+    if dimensions == 3 and "dim3" in df.columns:
         trace = go.Scatter3d(
-            x=df["x"],
-            y=df["y"],
-            z=df["z"],
+            x=df["dim1"],
+            y=df["dim2"],
+            z=df["dim3"],
             mode="markers",
             marker=marker,
             customdata=custom_data,
@@ -154,8 +154,8 @@ def plot_embedding(
     else:
         trace_class = go.Scattergl if len(df) > 15000 else go.Scatter
         trace = trace_class(
-            x=df["x"],
-            y=df["y"],
+            x=df["dim1"],
+            y=df["dim2"],
             mode="markers",
             marker=marker,
             customdata=custom_data,
