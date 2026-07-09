@@ -812,6 +812,8 @@ def build_meta_dict(
     frame = frame.drop(columns=["feature"], errors="ignore")
     if container.y is not None and "y" not in frame.columns:
         frame["y"] = np.asarray(container.y)
+    if "sample_id" in frame.columns:
+        frame = frame.drop(columns=["obs_id"], errors="ignore")
     frame = frame.rename(columns={"sample_id": "obs_id"})
 
     # 2. Align frame rows to match requested ids. Observation ids are not unique,
