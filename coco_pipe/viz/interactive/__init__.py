@@ -16,6 +16,7 @@ from .base import (
     plot_distribution_groups,
     plot_grouped_bar,
     plot_heatmap,
+    plot_ranked_bar,
     plot_scatter,
     plot_timecourses,
 )
@@ -95,6 +96,7 @@ __all__ = [
     "plot_pr_curve",
     "plot_probability_diagnostics",
     "plot_radar_comparison",
+    "plot_ranked_bar",
     "plot_raw_preview",
     "plot_reduction_feature_importance",
     "plot_regression_diagnostics",

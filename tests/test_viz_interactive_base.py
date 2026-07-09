@@ -8,6 +8,7 @@ from coco_pipe.viz.interactive.base import (
     plot_distribution_groups,
     plot_grouped_bar,
     plot_heatmap,
+    plot_ranked_bar,
     plot_scatter,
     plot_timecourses,
 )
@@ -87,6 +88,126 @@ def test_plot_grouped_bar():
     assert isinstance(fig, go.Figure)
     assert len(fig.data) == 2
     assert fig.layout.barmode == "group"
+
+
+def test_plot_grouped_bar_horizontal():
+    df = pd.DataFrame(
+        {
+            "unit": ["u1", "u2", "u3"],
+            "score": [0.5, 0.7, 0.6],
+            "grp": ["a", "a", "b"],
+            "ntext": ["n=2", "n=3", "n=4"],
+        }
+    )
+    fig = plot_grouped_bar(
+        df,
+        x="unit",
+        y="score",
+        group="grp",
+        text="ntext",
+        orientation="horizontal",
+        x_order=["u3", "u2", "u1"],
+        xaxis_title="score",
+        yaxis_title="unit",
+    )
+    assert isinstance(fig, go.Figure)
+    # Values land on the x-axis, categories on the y-axis.
+    assert all(trace.orientation == "h" for trace in fig.data)
+    assert list(fig.data[0].x) == [0.5, 0.7]
+    assert list(fig.data[0].y) == ["u1", "u2"]
+    # x_order drives the (category) y-axis ordering.
+    assert fig.layout.yaxis.categoryorder == "array"
+    assert list(fig.layout.yaxis.categoryarray) == ["u3", "u2", "u1"]
+    assert fig.layout.xaxis.title.text == "score"
+    assert fig.layout.yaxis.title.text == "unit"
+
+
+def test_plot_ranked_bar():
+    df = pd.DataFrame(
+        {
+            "lab": ["a", "b", "c", "d"],
+            "v": [3.0, 1.0, 4.0, 2.0],
+            "grp": ["x", "x", "y", "y"],
+            "t": ["t1", "t2", "t3", "t4"],
+        }
+    )
+    fig = plot_ranked_bar(
+        df,
+        value="v",
+        category="lab",
+        color="grp",
+        text="t",
+        top_n=3,
+        value_title="V",
+        category_title="L",
+        legend_title="Group",
+    )
+    assert isinstance(fig, go.Figure)
+    # Only the top-3 rows survive (c=4, a=3, d=2); b=1 is dropped.
+    assert sum(len(trace.x) for trace in fig.data) == 3
+    assert all(trace.orientation == "h" for trace in fig.data)
+    # Highest-ranked category ends up last so it renders at the top.
+    assert list(fig.layout.yaxis.categoryarray) == ["d", "a", "c"]
+    assert fig.layout.xaxis.title.text == "V"
+    assert fig.layout.yaxis.title.text == "L"
+    assert fig.layout.legend.title.text == "Group"
+
+
+def test_plot_ranked_bar_vertical_keeps_rank_order():
+    df = pd.DataFrame({"lab": ["a", "b", "c"], "v": [1.0, 3.0, 2.0], "grp": ["x"] * 3})
+    fig = plot_ranked_bar(
+        df, value="v", category="lab", color="grp", orientation="vertical"
+    )
+    # Vertical keeps left-to-right rank order (b=3, c=2, a=1).
+    assert list(fig.layout.xaxis.categoryarray) == ["b", "c", "a"]
+
+
+def test_plot_grouped_bar_baseline_and_value_range():
+    df = pd.DataFrame(
+        {
+            "unit": ["u1", "u2"],
+            "score": [0.55, 0.62],
+            "grp": ["a", "b"],
+        }
+    )
+    fig = plot_grouped_bar(
+        df,
+        x="unit",
+        y="score",
+        group="grp",
+        orientation="horizontal",
+        baseline=0.5,
+        baseline_label="chance",
+        value_range=(0.5, 0.7),
+    )
+    # Horizontal -> value axis is x: range applied there, reference line vertical.
+    assert list(fig.layout.xaxis.range) == [0.5, 0.7]
+    assert any(
+        shape.type == "line" and shape.x0 == 0.5 and shape.x1 == 0.5
+        for shape in fig.layout.shapes
+    )
+
+
+def test_plot_distribution_groups_baseline():
+    fig = plot_distribution_groups(
+        [[0.55, 0.6], [0.5, 0.58]],
+        labels=["u1", "u2"],
+        baseline=0.5,
+        baseline_label="chance",
+        value_range=(0.4, 0.7),
+    )
+    # Vertical -> value axis is y: range there, reference line horizontal.
+    assert list(fig.layout.yaxis.range) == [0.4, 0.7]
+    assert any(
+        shape.type == "line" and shape.y0 == 0.5 and shape.y1 == 0.5
+        for shape in fig.layout.shapes
+    )
+
+
+def test_plot_ranked_bar_missing_column_raises():
+    df = pd.DataFrame({"v": [1.0], "lab": ["a"], "grp": ["x"]})
+    with pytest.raises(KeyError):
+        plot_ranked_bar(df, value="v", category="lab", color="missing")
 
 
 def test_plot_scatter_grouped_bar_errors():

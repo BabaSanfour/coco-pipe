@@ -16,6 +16,7 @@ from coco_pipe.report.dim_reduction_sweep import (
     build_reduction_condition_ranking_section,
     build_reduction_eval_results_section,
     build_reduction_rollup_report,
+    build_unit_summary,
     merge_fit_eval,
     rank_reduction_runs,
 )
@@ -336,6 +337,46 @@ def test_build_reduction_eval_results_section():
     assert build_reduction_eval_results_section(pd.DataFrame()) is None
 
 
+def test_build_reduction_eval_results_section_topn_bars():
+    """The eval section adds top-N unit bars below the table: eval tabs, per
+    condition, colored by unit with n_components labels."""
+    rows = []
+    for eval_name in ("med_adhd_vs_ctrl", "sex_separation"):
+        for condition in ("EC", "EO"):
+            for unit in ("Frontal", "Central", "Parietal"):
+                for reducer in ("PCA", "UMAP"):
+                    for n_components, score in ((5, 0.60), (10, 0.72)):
+                        rows.append(
+                            {
+                                "scope": "condition",
+                                "condition": condition,
+                                "analysis_mode": "family",
+                                "family": unit,
+                                "unit_name": unit,
+                                "eval_name": eval_name,
+                                "reducer": reducer,
+                                "n_components": n_components,
+                                SEPARATION_RF_METRIC_KEY: score,
+                            }
+                        )
+    frame = pd.DataFrame(rows)
+    section = build_reduction_eval_results_section(
+        frame,
+        selection_metric=SEPARATION_RF_METRIC_KEY,
+        eval_name_order=["med_adhd_vs_ctrl", "sex_separation"],
+        conditions=["EC", "EO"],
+        top_n=15,
+    )
+    assert section is not None
+    # accordion table + top-N bar tabs
+    assert len(section.children) == 2
+    rendered = section.render()
+    assert "med_adhd_vs_ctrl" in rendered and "sex_separation" in rendered
+    assert "EC" in rendered and "EO" in rendered
+    # the on-bar n_components label wins its unit's sweep (best score is n=10)
+    assert "n=10" in rendered
+
+
 def test_build_reduction_condition_ranking_section_table_and_tabs():
     section = build_reduction_condition_ranking_section(
         _condition_runs(),
@@ -344,12 +385,57 @@ def test_build_reduction_condition_ranking_section_table_and_tabs():
         selection_metric="trustworthiness",
     )
     assert section is not None and section.title == "Condition Ranking"
-    # multi-condition + multi-reducer -> cross-condition bar and reducer radar tabs
+    # multi-reducer -> reducer-profile radar tabs (no cross-condition bar)
     rendered = section.render()
-    assert "Cross-Condition Summary" in rendered
+    assert "Cross-Condition Summary" not in rendered
     assert "Reducer Profile (Overall)" in rendered
     assert "Reducer Profile (EO)" in rendered
     assert "Reducer Profile (EC)" in rendered
+
+
+def test_build_unit_summary_tabs_by_eval_not_unit():
+    """Peak/stability visuals tab by eval (comparing all units), not one tab per
+    unit — and the standalone 'optimal n_components' chart is gone."""
+    rows = []
+    for eval_name in ("med_adhd_vs_ctrl", "sex_separation"):
+        for subfamily in ("abs", "rel", "log_abs"):
+            for reducer in ("pca", "umap"):
+                for n_components, score in ((5, 0.55), (10, 0.61)):
+                    rows.append(
+                        {
+                            "scope": "condition",
+                            "condition": "EO",
+                            "analysis_mode": "subfamily",
+                            "family": "band",
+                            "subfamily": subfamily,
+                            "unit_name": subfamily,
+                            "eval_name": eval_name,
+                            "target_col": "t",
+                            "reducer": reducer,
+                            "n_components": n_components,
+                            SEPARATION_RF_METRIC_KEY: score,
+                        }
+                    )
+    unit_runs = pd.DataFrame(rows)
+    ctx = DimReductionReportContext(
+        analysis_mode="subfamily",
+        selection_metric=SEPARATION_RF_METRIC_KEY,
+        reducers=["pca", "umap"],
+        conditions=["EO"],
+        container_builder=lambda _c: None,
+        output_root=".",
+    )
+    section = Section("EO")
+    build_unit_summary(
+        section, unit_runs, ctx, unit_label="subfamily", title_prefix="EO"
+    )
+    rendered = section.render()
+    assert "Peak Performance" in rendered and "Hyperparameter Stability" in rendered
+    # eval names are the tabs; the redundant per-unit n_components chart is gone
+    assert "med_adhd_vs_ctrl" in rendered and "sex_separation" in rendered
+    assert "optimal n_components" not in rendered
+    # winning n_components is folded into the bar labels
+    assert "n=10" in rendered
 
 
 def test_build_reduction_condition_ranking_section_empty():
@@ -452,6 +538,32 @@ def test_build_meta_dict_applies_exclusions_and_extractors(tmp_path):
     assert "age" not in meta  # excluded via excluded_normalized
     assert "feature" not in meta  # feature column always dropped
     assert set(np.unique(meta["eye_state"])) == {"OPEN", "CLOSED"}  # extractor ran
+
+
+def test_build_meta_dict_aligns_duplicate_ids_reordered_subset(tmp_path):
+    # Observation ids repeat, and the fit used a reordered subset — the naive
+    # obs_id lookup used to explode/bail to empty here. Metadata must still align.
+    ctx = _ctx(tmp_path)
+    container = DataContainer(
+        X=np.zeros((5, 2)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a", "b"],
+            "group": np.array(["A", "B", "C", "D", "E"]),
+        },
+        ids=np.array(["a", "a", "b", "c", "c"], dtype=object),
+    )
+    fit_ids = np.array(["c", "a", "a", "c"], dtype=object)  # rows [3, 0, 1, 4]
+    meta = build_meta_dict(container, fit_ids, ctx)
+    assert len(meta) > 0  # not empty
+    assert list(meta["group"]) == ["D", "A", "B", "E"]  # aligned to fit order
+
+
+def test_build_meta_dict_empty_when_ids_unalignable(tmp_path):
+    ctx = _ctx(tmp_path)
+    container = _container("EO")
+    meta = build_meta_dict(container, np.array(["not-present"], dtype=object), ctx)
+    assert meta == {}
 
 
 def test_build_meta_dict_skips_extractor_without_condition(tmp_path):

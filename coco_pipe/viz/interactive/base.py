@@ -24,6 +24,7 @@ __all__ = [
     "plot_distribution_groups",
     "plot_grouped_bar",
     "plot_heatmap",
+    "plot_ranked_bar",
     "plot_scatter",
 ]
 
@@ -192,6 +193,41 @@ def _resolve_group_colors(
     return colors
 
 
+def _apply_value_baseline(
+    fig: go.Figure,
+    *,
+    horizontal: bool,
+    baseline: float | None,
+    baseline_label: str | None,
+    value_range: Sequence[float] | None,
+) -> None:
+    """Clamp the value axis and draw a dashed reference line at *baseline*.
+
+    ``horizontal`` selects which visual axis carries the values (x for
+    horizontal bars, y otherwise). Used to anchor an axis at a meaningful floor
+    (e.g. chance for balanced accuracy) and mark that level.
+    """
+    if value_range is not None:
+        if horizontal:
+            fig.update_xaxes(range=list(value_range))
+        else:
+            fig.update_yaxes(range=list(value_range))
+    if baseline is None:
+        return
+    kwargs: dict[str, Any] = {
+        "line_dash": "dash",
+        "line_color": "#888",
+        "line_width": 1.5,
+    }
+    if baseline_label:
+        kwargs["annotation_text"] = baseline_label
+        kwargs["annotation_position"] = "top left" if horizontal else "top right"
+    if horizontal:
+        fig.add_vline(x=baseline, **kwargs)
+    else:
+        fig.add_hline(y=baseline, **kwargs)
+
+
 def plot_scatter(
     data: pd.DataFrame,
     x: str,
@@ -316,10 +352,14 @@ def plot_grouped_bar(
     text_position: str = "outside",
     color_map: Mapping[Any, str] | None = None,
     x_order: Sequence[Any] | None = None,
+    orientation: Literal["vertical", "horizontal"] = "vertical",
     title: str | None = None,
     xaxis_title: str | None = None,
     yaxis_title: str | None = None,
     legend_title: str | None = None,
+    baseline: float | None = None,
+    baseline_label: str | None = None,
+    value_range: Sequence[float] | None = None,
     height: int | None = None,
 ) -> go.Figure:
     """Interactive grouped bar chart (``barmode="group"``) from a long DataFrame.
@@ -329,7 +369,8 @@ def plot_grouped_bar(
     data
         Long-format DataFrame: one row per ``(x, group)`` bar.
     x
-        Column name for the category axis (shared across groups).
+        Column name for the category axis (shared across groups). Placed on the
+        x-axis when vertical and the y-axis when horizontal.
     y
         Column name for the bar values.
     group
@@ -342,11 +383,25 @@ def plot_grouped_bar(
     color_map
         Optional ``{group_value: color}`` overriding palette colors.
     x_order
-        Optional explicit ordering for the category axis.
+        Optional explicit ordering for the category (``x``) axis, applied to
+        whichever visual axis carries the categories.
+    orientation
+        ``"vertical"`` (default) or ``"horizontal"``. Horizontal puts the
+        category (``x``) on the y-axis and the values (``y``) on the x-axis,
+        which reads better for many long category labels.
     title, xaxis_title, yaxis_title
-        Layout labels. Axis titles default to the ``x`` / ``y`` column names.
+        Layout labels. Axis titles refer to the literal visual axes and default
+        to the appropriate column name for the orientation.
     legend_title
         Optional legend title (typically the ``group`` column name).
+    baseline
+        Optional reference value drawn as a dashed line on the value axis (e.g.
+        chance for balanced accuracy).
+    baseline_label
+        Optional annotation for the *baseline* line.
+    value_range
+        Optional ``(low, high)`` range for the value axis, e.g. to anchor it at
+        chance instead of zero.
     height
         Figure height in pixels.
 
@@ -366,35 +421,165 @@ def plot_grouped_bar(
         if col is not None and col not in data.columns:
             raise KeyError(f"Column {col!r} not found in `data`.")
 
+    horizontal = orientation == "horizontal"
     groups = list(data.groupby(group, dropna=False, sort=False))
     colors = _resolve_group_colors([key for key, _ in groups], color_map)
 
     fig = go.Figure()
     for (key, sub), trace_color in zip(groups, colors, strict=False):
+        categories = sub[x].tolist()
+        values = sub[y].tolist()
         bar_kwargs: dict[str, Any] = {
             "name": str(key),
-            "x": sub[x].tolist(),
-            "y": sub[y].tolist(),
             "marker": {"color": trace_color},
         }
+        if horizontal:
+            bar_kwargs.update(y=categories, x=values, orientation="h")
+        else:
+            bar_kwargs.update(x=categories, y=values)
         if text is not None:
             bar_kwargs["text"] = [str(t) for t in sub[text].tolist()]
             bar_kwargs["textposition"] = text_position
         fig.add_trace(go.Bar(**bar_kwargs))
 
+    # Axis titles refer to the literal visual axes; the category (`x`) column
+    # names the category axis and the value (`y`) column names the value axis.
+    cat_default, val_default = x, y
     _apply_layout(
         fig,
         title=title,
-        xaxis_title=xaxis_title if xaxis_title is not None else x,
-        yaxis_title=yaxis_title if yaxis_title is not None else y,
+        xaxis_title=(
+            xaxis_title
+            if xaxis_title is not None
+            else (val_default if horizontal else cat_default)
+        ),
+        yaxis_title=(
+            yaxis_title
+            if yaxis_title is not None
+            else (cat_default if horizontal else val_default)
+        ),
         height=height,
         barmode="group",
     )
     if x_order is not None:
-        fig.update_xaxes(categoryorder="array", categoryarray=[str(v) for v in x_order])
+        category_axis = fig.update_yaxes if horizontal else fig.update_xaxes
+        category_axis(categoryorder="array", categoryarray=[str(v) for v in x_order])
     if legend_title is not None:
         fig.update_layout(legend_title_text=legend_title)
+    _apply_value_baseline(
+        fig,
+        horizontal=horizontal,
+        baseline=baseline,
+        baseline_label=baseline_label,
+        value_range=value_range,
+    )
     return fig
+
+
+def plot_ranked_bar(
+    data: pd.DataFrame,
+    *,
+    value: str,
+    category: str,
+    color: str,
+    text: str | None = None,
+    top_n: int | None = None,
+    ascending: bool = False,
+    orientation: Literal["vertical", "horizontal"] = "horizontal",
+    color_map: Mapping[Any, str] | None = None,
+    title: str | None = None,
+    value_title: str | None = None,
+    category_title: str | None = None,
+    legend_title: str | None = None,
+    baseline: float | None = None,
+    baseline_label: str | None = None,
+    value_range: Sequence[float] | None = None,
+    height: int | None = None,
+) -> go.Figure:
+    """Ranked grouped bar: sort by *value*, keep *top_n*, color by *color*.
+
+    A thin ranking layer over :func:`plot_grouped_bar`. Rows are sorted by
+    *value* (descending by default), truncated to *top_n*, and colored by the
+    *color* column (one legend entry per value). Each row is one bar, so
+    *category* must be unique per row — it supplies the per-bar tick label.
+    Horizontal orientation (the default, better for many long labels) places the
+    highest-ranked bar at the top; vertical keeps rank order left-to-right.
+
+    Parameters
+    ----------
+    data
+        Long-format DataFrame, one row per bar.
+    value
+        Column with the numeric bar values driving the ranking.
+    category
+        Column supplying the per-bar tick label (unique per row).
+    color
+        Column defining the bar color / legend groups.
+    text
+        Optional column supplying per-bar text labels.
+    top_n
+        Keep only the first ``top_n`` rows after sorting.
+    ascending
+        Sort direction (default ``False`` — highest value first).
+    orientation
+        ``"horizontal"`` (default) or ``"vertical"``.
+    color_map
+        Optional ``{color_value: color}`` overriding palette colors.
+    title, value_title, category_title
+        Layout labels; axis titles map to the value / category axes for the
+        chosen orientation.
+    legend_title
+        Optional legend title (typically the *color* column name).
+    baseline, baseline_label, value_range
+        Forwarded to :func:`plot_grouped_bar` — a dashed reference line on the
+        value axis and an explicit value-axis range (e.g. anchored at chance).
+    height
+        Figure height in pixels.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive ranked, grouped bar chart.
+
+    See Also
+    --------
+    plot_grouped_bar : Grouped bars without the ranking / top-N layer.
+    plot_bar : Single-series ranked bar chart (no color grouping).
+    """
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError("`data` must be a pandas DataFrame.")
+    for col in (value, category, color, text):
+        if col is not None and col not in data.columns:
+            raise KeyError(f"Column {col!r} not found in `data`.")
+
+    ranked = data.sort_values(value, ascending=ascending, na_position="last")
+    if top_n is not None:
+        ranked = ranked.head(top_n)
+
+    horizontal = orientation == "horizontal"
+    order = ranked[category].tolist()
+    # Horizontal stacks the first category at the bottom, so reverse to lift the
+    # top-ranked bar to the top; vertical keeps left-to-right rank order.
+    category_order = order[::-1] if horizontal else order
+
+    return plot_grouped_bar(
+        ranked,
+        x=category,
+        y=value,
+        group=color,
+        text=text,
+        color_map=color_map,
+        x_order=category_order,
+        orientation=orientation,
+        title=title,
+        xaxis_title=value_title if horizontal else category_title,
+        yaxis_title=category_title if horizontal else value_title,
+        legend_title=legend_title,
+        baseline=baseline,
+        baseline_label=baseline_label,
+        value_range=value_range,
+        height=height,
+    )
 
 
 def plot_distribution_groups(
@@ -410,6 +595,9 @@ def plot_distribution_groups(
     color: str | Sequence[str] | None = None,
     height: int | None = None,
     sig_pairs: Sequence[tuple[int, int, str]] | None = None,
+    baseline: float | None = None,
+    baseline_label: str | None = None,
+    value_range: Sequence[float] | None = None,
 ) -> go.Figure:
     """Interactive grouped distribution plot (box or violin) with overlaid points.
 
@@ -438,6 +626,12 @@ def plot_distribution_groups(
         a horizontal significance bracket between groups at indices
         ``idx_a`` and ``idx_b`` with the given annotation (e.g., ``"*"``,
         ``"p=0.01"``).
+    baseline
+        Optional reference value drawn as a dashed horizontal line (e.g. chance).
+    baseline_label
+        Optional annotation for the *baseline* line.
+    value_range
+        Optional ``(low, high)`` range for the value (y) axis.
 
     Returns
     -------
@@ -541,6 +735,13 @@ def plot_distribution_groups(
         xaxis_title=xaxis_title,
         yaxis_title=yaxis_title,
         height=height,
+    )
+    _apply_value_baseline(
+        fig,
+        horizontal=False,
+        baseline=baseline,
+        baseline_label=baseline_label,
+        value_range=value_range,
     )
     return fig
 

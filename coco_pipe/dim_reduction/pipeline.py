@@ -633,6 +633,41 @@ def run_eval(
 # ---------------------------------------------------------------------------
 
 
+def occurrence_aligned_positions(
+    container_ids: np.ndarray, fit_ids: np.ndarray
+) -> list[int] | None:
+    """Row positions in *container_ids* matching *fit_ids* in order.
+
+    A saved fit may cover a differently ordered or smaller subset of the current
+    container's observations, and observation ids are **not unique** (many rows
+    can share an id). Alignment therefore uses occurrence-count disambiguation:
+    the k-th occurrence of an id in *fit_ids* maps to the k-th occurrence of that
+    id in *container_ids*. Returns the list of container row positions (one per
+    fit id, in fit order), or ``None`` when any fit id occurrence is absent from
+    the container.
+    """
+    container_arr = np.asarray(container_ids, dtype=object).astype(str)
+    fit_arr = np.asarray(fit_ids, dtype=object).astype(str)
+
+    key_to_pos: dict[str, int] = {}
+    counts: dict[str, int] = {}
+    for pos, obs_id in enumerate(container_arr):
+        occurrence = counts.get(obs_id, 0)
+        counts[obs_id] = occurrence + 1
+        key_to_pos.setdefault(f"{obs_id}__{occurrence}", pos)
+
+    positions: list[int] = []
+    counts = {}
+    for obs_id in fit_arr:
+        occurrence = counts.get(obs_id, 0)
+        counts[obs_id] = occurrence + 1
+        pos = key_to_pos.get(f"{obs_id}__{occurrence}")
+        if pos is None:
+            return None
+        positions.append(pos)
+    return positions
+
+
 def prepare_eval_inputs(
     container: DataContainer,
     fit_ids: np.ndarray,
@@ -685,32 +720,12 @@ def prepare_eval_inputs(
     if container.y is not None and "y" not in frame.columns:
         frame["y"] = np.asarray(container.y)
 
-    # Build occurrence-disambiguated keys for the fit ids
-    aligned_keys: list[str] = []
-    counts: dict[str, int] = {}
-    for obs_id in np.asarray(fit_ids, dtype=object).astype(str):
-        occurrence = counts.get(obs_id, 0)
-        aligned_keys.append(f"{obs_id}__{occurrence}")
-        counts[obs_id] = occurrence + 1
-
-    # Build the same keys for the container frame
-    counts = {}
-    frame_keys: list[str] = []
-    for obs_id in frame["obs_id"].astype(str):
-        occurrence = counts.get(obs_id, 0)
-        frame_keys.append(f"{obs_id}__{occurrence}")
-        counts[obs_id] = occurrence + 1
-    frame["_obs_key"] = frame_keys
-
-    aligned_frame = frame.drop_duplicates("_obs_key", keep="first").set_index(
-        "_obs_key"
-    )
-    missing = [key for key in aligned_keys if key not in aligned_frame.index]
-    if missing:
+    positions = occurrence_aligned_positions(container_ids, fit_ids)
+    if positions is None:
         raise RuntimeError(
             "Saved fit ids could not be aligned to the current container."
         )
-    aligned_frame = aligned_frame.loc[aligned_keys].reset_index(drop=True)
+    aligned_frame = frame.iloc[positions].reset_index(drop=True)
 
     for filter_spec in eval_spec["filters"]:
         column = filter_spec["column"]

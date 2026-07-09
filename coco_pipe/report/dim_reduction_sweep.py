@@ -26,6 +26,7 @@ from coco_pipe.dim_reduction import (
     SEPARATION_RF_METRIC_KEY,
     load_fit_artifact,
     load_fit_runs,
+    occurrence_aligned_positions,
 )
 from coco_pipe.viz.topo import (
     feature_names_are_channels,
@@ -40,6 +41,7 @@ from .elements import (
     CalloutElement,
     ColumnsElement,
     ContainerElement,
+    Element,
     ImageElement,
     InteractiveTableElement,
     PlotlyElement,
@@ -247,6 +249,155 @@ def add_reduction_best_run_cards(
         section.add_element(ColumnsElement(cards, cols=len(cards)))
 
 
+def _eval_topn_unit_bar(
+    frame: pd.DataFrame,
+    *,
+    metric: str,
+    top_n: int,
+    subtitle: str = "",
+) -> PlotlyElement | None:
+    """Horizontal top-*top_n* bar of the best run per unit, colored by unit.
+
+    Each bar is one analysis unit (its best-scoring ``reducer`` and
+    ``n_components`` config), ranked by *metric*. The bar color encodes the unit,
+    and the on-bar
+    text is the winning ``n_components``. Returns ``None`` when there is nothing
+    plottable.
+    """
+    from coco_pipe.viz.interactive.base import plot_ranked_bar
+
+    if frame.empty or metric not in frame.columns:
+        return None
+    rows = frame.dropna(subset=[metric]).copy()
+    if rows.empty:
+        return None
+    # Collapse each unit's sweep to its single best config, so the ranking is over
+    # distinct units rather than near-identical configs of one unit. (The sort
+    # is only to make groupby.head(1) keep the best row; plot_ranked_bar does the
+    # ranking and top-N selection.)
+    rows = rows.sort_values(metric, ascending=False)
+    group_cols = [c for c in ("family", "unit_name", "reducer") if c in rows.columns]
+    if group_cols:
+        rows = rows.groupby(group_cols, dropna=False, sort=False).head(1)
+    if rows.empty:
+        return None
+
+    def _label(row: pd.Series) -> str:
+        parts = []
+        fam = str(row.get("family", "") or "").strip()
+        unit = str(row.get("unit_name", "") or "").strip()
+        reducer = str(row.get("reducer", "") or "").strip()
+        if fam and fam != unit:
+            parts.append(fam)
+        if unit:
+            parts.append(unit)
+        if reducer:
+            parts.append(reducer)
+        return " · ".join(parts) or "run"
+
+    # Disambiguate any repeated labels so bars keep distinct category slots.
+    rows["_label"] = _unique_labels([_label(row) for _, row in rows.iterrows()])
+    rows["_unit"] = rows["unit_name"].astype(str) if "unit_name" in rows.columns else ""
+    rows["_n_label"] = (
+        [f"n={int(v)}" if pd.notna(v) else "" for v in rows["n_components"]]
+        if "n_components" in rows.columns
+        else ""
+    )
+
+    n_bars = min(len(rows), top_n)
+    title = f"Top {n_bars} units by {metric}"
+    if subtitle:
+        title += f" — {subtitle}"
+    fig = plot_ranked_bar(
+        rows,
+        value=metric,
+        category="_label",
+        color="_unit",
+        text="_n_label",
+        top_n=top_n,
+        orientation="horizontal",
+        title=title,
+        value_title=metric,
+        category_title="unit · reducer",
+        legend_title="Unit",
+        height=max(320, 26 * n_bars + 140),
+    )
+    return PlotlyElement(fig)
+
+
+def _build_condition_bar_tabs(
+    frame: pd.DataFrame,
+    *,
+    metric: str,
+    conditions: Sequence[str] | None,
+    top_n: int,
+) -> Element | None:
+    """One top-N unit bar per condition, wrapped in condition sub-tabs."""
+    if "condition" in frame.columns:
+        present = list(dict.fromkeys(frame["condition"].astype(str)))
+    else:
+        present = [""]
+    ordered = [c for c in (conditions or []) if c in present]
+    ordered += [c for c in present if c not in ordered]
+
+    cond_tabs: dict[str, Element] = {}
+    for cond in ordered:
+        cf = (
+            frame[frame["condition"].astype(str) == cond]
+            if "condition" in frame.columns
+            else frame
+        )
+        element = _eval_topn_unit_bar(cf, metric=metric, top_n=top_n, subtitle=cond)
+        if element is not None:
+            cond_tabs[cond or "condition"] = element
+    if not cond_tabs:
+        return None
+    if len(cond_tabs) == 1:
+        return next(iter(cond_tabs.values()))
+    return TabsElement(cond_tabs)
+
+
+def _build_eval_topn_bars(
+    frame: pd.DataFrame,
+    *,
+    metric: str,
+    eval_name_order: Sequence[str] | None,
+    conditions: Sequence[str] | None,
+    top_n: int,
+) -> Element | None:
+    """Top-N unit bars organized as eval-name tabs → condition sub-tabs.
+
+    The primary evaluation (first in *eval_name_order*) lands on the first tab.
+    Collapses to the bare condition tabs when only one evaluation is present.
+    """
+    if metric not in frame.columns:
+        return None
+    if "eval_name" in frame.columns:
+        present = list(dict.fromkeys(frame["eval_name"].astype(str)))
+    else:
+        present = [""]
+    ordered = [e for e in (eval_name_order or []) if e in present]
+    ordered += [e for e in present if e not in ordered]
+
+    eval_tabs: dict[str, Element] = {}
+    for ev in ordered:
+        ev_frame = (
+            frame[frame["eval_name"].astype(str) == ev]
+            if "eval_name" in frame.columns
+            else frame
+        )
+        element = _build_condition_bar_tabs(
+            ev_frame, metric=metric, conditions=conditions, top_n=top_n
+        )
+        if element is not None:
+            eval_tabs[ev or "evaluation"] = element
+    if not eval_tabs:
+        return None
+    if len(eval_tabs) == 1:
+        return next(iter(eval_tabs.values()))
+    return TabsElement(eval_tabs)
+
+
 def build_reduction_eval_results_section(
     eval_frame: Any,
     *,
@@ -261,8 +412,19 @@ def build_reduction_eval_results_section(
     ),
     title: str = "Evaluation Results",
     accordion_label: str = "Show Post-hoc Evaluation Results",
+    selection_metric: str | None = None,
+    eval_name_order: Sequence[str] | None = None,
+    conditions: Sequence[str] | None = None,
+    top_n: int = 15,
 ) -> Section | None:
-    """Build a collapsible post-hoc evaluation-results table, or None if empty."""
+    """Build the post-hoc evaluation section, or None if empty.
+
+    The section holds a collapsible results table plus, below it, top-*top_n*
+    unit bar charts ranked by *selection_metric* (or the first available
+    separation metric): one tab per evaluation (the primary evaluation first,
+    per *eval_name_order*), each with a condition sub-tab whose bars are colored
+    by unit and labeled with the winning ``n_components``.
+    """
     frame = pd.DataFrame(eval_frame)
     if frame.empty:
         return None
@@ -288,53 +450,23 @@ def build_reduction_eval_results_section(
         )
     )
     section.add_element(accordion)
-    return section
 
-
-def _condition_reducer_bar(
-    runs: pd.DataFrame,
-    *,
-    conditions: Sequence[str],
-    reducers: Sequence[str],
-    metric: str,
-    tie_breakers: Sequence[tuple[str, bool]],
-) -> PlotlyElement | None:
-    """Grouped bar of the best *metric* per (condition, reducer)."""
-    if runs.empty or len(conditions) <= 1 or metric not in runs.columns:
-        return None
-    frames = []
-    for reducer in reducers:
-        sub = runs[runs["reducer"] == reducer].copy()
-        if sub.empty:
-            continue
-        best = best_rows(sub, ["condition"], metric, tie_breakers=tie_breakers)[0]
-        best = best.set_index("condition").reindex(list(conditions)).reset_index()
-        best["reducer"] = reducer
-        best["n_label"] = (
-            best["n_components"].map(
-                lambda value: f"n={int(value)}" if pd.notna(value) else ""
-            )
-            if "n_components" in best.columns
-            else ""
-        )
-        frames.append(best)
-    if not frames:
-        return None
-    from coco_pipe.viz.interactive.base import plot_grouped_bar
-
-    fig = plot_grouped_bar(
-        pd.concat(frames, ignore_index=True),
-        x="condition",
-        y=metric,
-        group="reducer",
-        text="n_label",
-        x_order=list(conditions),
-        title=f"Best {metric} per (condition, reducer)",
-        xaxis_title="condition",
-        yaxis_title=metric,
-        legend_title="Reducer",
+    bar_metric = (
+        selection_metric
+        if selection_metric and selection_metric in frame.columns
+        else (available_metrics[0] if available_metrics else None)
     )
-    return PlotlyElement(fig)
+    if bar_metric is not None:
+        bar_tabs = _build_eval_topn_bars(
+            frame,
+            metric=bar_metric,
+            eval_name_order=eval_name_order,
+            conditions=conditions,
+            top_n=top_n,
+        )
+        if bar_tabs is not None:
+            section.add_element(bar_tabs)
+    return section
 
 
 def _reducer_radar(
@@ -379,7 +511,6 @@ def build_reduction_condition_ranking_section(
     reducers: Sequence[str],
     selection_metric: str,
     fallback_metric: str = "trustworthiness",
-    tie_breakers: Sequence[tuple[str, bool]] = DEFAULT_REDUCTION_TIE_BREAKERS,
     ranking_columns: Sequence[str] = (
         "condition",
         "family",
@@ -407,12 +538,12 @@ def build_reduction_condition_ranking_section(
     default_sort: str | None = None,
     title: str = "Condition Ranking",
 ) -> Section | None:
-    """Build the condition-ranking table + cross-condition bar + reducer radar.
+    """Build the condition-ranking table + reducer-profile radars.
 
     *condition_runs* are the successful condition-scope runs (the caller owns the
     scope/status filter). The section shows a sortable ranking table plus, when
-    there are multiple conditions/reducers, a best-per-(condition, reducer) bar
-    and a reducer-profile radar. Returns None when *condition_runs* is empty.
+    there are multiple reducers, an overall and per-condition reducer-profile
+    radar. Returns None when *condition_runs* is empty.
     """
     runs = pd.DataFrame(condition_runs)
     if runs.empty:
@@ -433,17 +564,7 @@ def build_reduction_condition_ranking_section(
             page_size=5,
         )
     )
-    metric = _selection_or_fallback(runs, selection_metric, fallback_metric)
     tabs: dict[str, Any] = {}
-    bar = _condition_reducer_bar(
-        runs,
-        conditions=conditions,
-        reducers=reducers,
-        metric=metric,
-        tie_breakers=tie_breakers,
-    )
-    if bar is not None:
-        tabs["Cross-Condition Summary"] = bar
     radar_overall = _reducer_radar(runs, reducers=reducers, radar_metrics=radar_metrics)
     if radar_overall is not None:
         tabs["Reducer Profile (Overall)"] = radar_overall
@@ -693,18 +814,15 @@ def build_meta_dict(
         frame["y"] = np.asarray(container.y)
     frame = frame.rename(columns={"sample_id": "obs_id"})
 
-    # 2. Align frame rows to match requested ids
+    # 2. Align frame rows to match requested ids. Observation ids are not unique,
+    # so use the same occurrence-disambiguated alignment as the eval path rather
+    # than a naive obs_id lookup (which explodes or silently drops on duplicates).
     if ids is not None and "obs_id" in frame.columns:
-        requested_ids = np.asarray(ids, dtype=object).astype(str)
-        is_aligned = len(requested_ids) == len(frame) and np.array_equal(
-            requested_ids, frame["obs_id"].astype(str).to_numpy()
-        )
-        if not is_aligned:
-            keyed = frame.set_index("obs_id")
-            if all(key in keyed.index for key in requested_ids):
-                frame = keyed.loc[requested_ids].reset_index()
-            elif len(frame) != len(requested_ids):
-                frame = pd.DataFrame()
+        positions = occurrence_aligned_positions(frame["obs_id"].to_numpy(), ids)
+        if positions is None:
+            frame = pd.DataFrame()
+        else:
+            frame = frame.iloc[positions].reset_index(drop=True)
 
     if frame.empty:
         return {}
@@ -1002,6 +1120,180 @@ def build_flat_condition_section(
     return section
 
 
+def _unique_labels(labels: Sequence[str]) -> list[str]:
+    """Disambiguate repeated labels (``lbl``, ``lbl (2)``, …) preserving order."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for label in labels:
+        seen[label] = seen.get(label, 0) + 1
+        out.append(label if seen[label] == 1 else f"{label} ({seen[label]})")
+    return out
+
+
+def _value_axis_range(
+    values: pd.Series, baseline: float | None
+) -> tuple[float, float] | None:
+    """Value-axis range anchored at *baseline* (e.g. chance), padded at the top."""
+    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    if numeric.empty:
+        return None
+    lo = float(numeric.min())
+    hi = float(numeric.max())
+    if baseline is not None:
+        lo = min(lo, baseline)
+    span = hi - lo
+    pad = span * 0.12 if span > 0 else 0.02
+    return (lo - 0.01, hi + pad)
+
+
+def _unit_peak_bar(
+    rows: pd.DataFrame,
+    *,
+    metric: str,
+    unit_column: str,
+    unit_label: str,
+    title: str,
+    baseline: float | None,
+) -> PlotlyElement | None:
+    """Ranked horizontal bar of *metric* across all units, colored by family.
+
+    One bar per unit (already the best config per unit), sorted, labeled with the
+    winning ``n_components``, with a chance reference line when *baseline* is set.
+    Colors by ``family`` when families vary, else by the unit itself so bars stay
+    distinguishable.
+    """
+    from coco_pipe.viz.interactive.base import plot_ranked_bar
+
+    if rows.empty or metric not in rows.columns:
+        return None
+    data = rows.dropna(subset=[metric]).copy()
+    if data.empty:
+        return None
+
+    fam_varies = "family" in data.columns and data["family"].nunique(dropna=True) > 1
+    labels = []
+    for _, row in data.iterrows():
+        unit = str(row.get(unit_column, "") or "")
+        fam = str(row.get("family", "") or "")
+        prefixed = fam_varies and fam and fam != unit
+        labels.append(f"{fam} / {unit}" if prefixed else (unit or "unit"))
+    data["_label"] = _unique_labels(labels)
+    color_col = "family" if fam_varies else unit_column
+    data["_color"] = (
+        data[color_col].astype(str) if color_col in data.columns else unit_label
+    )
+    data["_n_label"] = (
+        [f"n={int(v)}" if pd.notna(v) else "" for v in data["n_components"]]
+        if "n_components" in data.columns
+        else ""
+    )
+    legend = "family" if fam_varies else unit_label
+    fig = plot_ranked_bar(
+        data,
+        value=metric,
+        category="_label",
+        color="_color",
+        text="_n_label",
+        orientation="horizontal",
+        title=title,
+        value_title=metric,
+        category_title=unit_label,
+        legend_title=legend.capitalize(),
+        baseline=baseline,
+        baseline_label="chance" if baseline is not None else None,
+        value_range=_value_axis_range(data[metric], baseline),
+        height=max(300, 26 * len(data) + 130),
+    )
+    return PlotlyElement(fig)
+
+
+def _unit_stability_box(
+    rows: pd.DataFrame,
+    *,
+    metric: str,
+    unit_column: str,
+    unit_label: str,
+    title: str,
+    baseline: float | None,
+) -> PlotlyElement | None:
+    """Box distribution of *metric* across the sweep, one box per unit."""
+    from coco_pipe.viz.interactive.base import plot_distribution_groups
+
+    if rows.empty or metric not in rows.columns:
+        return None
+    data = rows.dropna(subset=[metric])
+    if data.empty:
+        return None
+    units = list(data[unit_column].unique())
+    groups = [data[data[unit_column] == unit][metric].to_numpy() for unit in units]
+    if not any(len(group) for group in groups):
+        return None
+    fig = plot_distribution_groups(
+        groups=groups,
+        labels=[str(unit) for unit in units],
+        kind="box",
+        title=title,
+        xaxis_title=unit_label,
+        yaxis_title=metric,
+        baseline=baseline,
+        baseline_label="chance" if baseline is not None else None,
+    )
+    return PlotlyElement(fig)
+
+
+def _unit_topomaps(
+    rows: pd.DataFrame,
+    *,
+    unit_column: str,
+    plot_metric: str,
+    title_prefix: str,
+    trace_label: str,
+) -> Element | None:
+    """Scalp topomaps of the best per-sensor value for the key metrics."""
+    if rows.empty:
+        return None
+    topomaps: list[Element] = []
+    for topo_metric in [plot_metric, "trustworthiness", "continuity"]:
+        if topo_metric not in rows.columns:
+            continue
+        topo_df = rows.dropna(subset=[topo_metric])
+        if topo_df.empty:
+            continue
+        topo_groups = {
+            topo_metric: (
+                topo_df[unit_column].astype(str).tolist(),
+                topo_df[topo_metric].astype(float).to_numpy(),
+            )
+        }
+        topo_plot = plot_topomap_selector(
+            topo_groups, title=f"{title_prefix} best {topo_metric}", unit=topo_metric
+        )
+        if topo_plot is not None:
+            topomaps.append(PlotlyElement(topo_plot))
+            continue
+        topo_label, (topo_names, topo_values) = next(iter(topo_groups.items()))
+        try:
+            topo_fig = plot_topomap_from_channel_values(
+                channel_names=topo_names,
+                values=topo_values,
+                title=f"{title_prefix} best {topo_metric} - {topo_label}",
+                unit=topo_metric,
+            )
+            if topo_fig is not None:
+                topomaps.append(ImageElement(topo_fig, width="100%"))
+        except Exception as exc:
+            topomaps.append(
+                CalloutElement(
+                    f"Topomap rendering failed for '{topo_metric}' "
+                    f"({trace_label}): {exc}",
+                    kind="warning",
+                )
+            )
+    if not topomaps:
+        return None
+    return ColumnsElement(topomaps, cols=len(topomaps))
+
+
 def build_unit_summary(
     section: Section,
     unit_runs: pd.DataFrame,
@@ -1010,9 +1302,12 @@ def build_unit_summary(
     unit_label: str,
     title_prefix: str,
 ) -> None:
-    """Append unit-level ranking tables, bar charts, stability boxes + topomaps."""
-    from coco_pipe.viz.interactive.base import plot_bar, plot_distribution_groups
+    """Append unit-level ranking tables, bar charts, stability boxes + topomaps.
 
+    The peak/stability/topomap visuals are tabbed by ``eval_name`` (the
+    scientific contrast) with every unit compared side by side inside each tab —
+    rather than one tab per unit, which collapses to single-bar charts.
+    """
     if unit_runs.empty:
         return
 
@@ -1097,125 +1392,63 @@ def build_unit_summary(
     )
     section.add_element(acc)
 
-    best_by_unit = best_units.copy()
     plot_metric = sort_columns[0] if sort_columns else "trustworthiness"
-    grouped_best = (
-        list(best_by_unit.groupby(group_columns, dropna=False))
-        if group_columns
-        else [((), best_by_unit)]
-    )
-    grouped_sweep = (
-        list(sweep_df.groupby(group_columns, dropna=False))
-        if group_columns
-        else [((), sweep_df)]
-    )
+    baseline = None
 
-    perf_tabs = {}
-    stab_tabs = {}
-    topo_tabs = {}
+    if "eval_name" in best_units.columns and best_units["eval_name"].notna().any():
+        eval_values: list[Any] = list(best_units["eval_name"].dropna().unique())
+    else:
+        eval_values = [None]
 
-    for group_key, group_df in grouped_best:
-        plot_df = group_df.dropna(subset=[plot_metric]).copy()
-        if plot_df.empty:
-            continue
-        if not isinstance(group_key, tuple):
-            group_key = (group_key,)
-        label_parts = [
-            str(value) for value in group_key if pd.notna(value) and str(value) != ""
-        ]
-        trace_label = " / ".join(label_parts) if label_parts else "All"
+    perf_tabs: dict[str, Element] = {}
+    stab_tabs: dict[str, Element] = {}
+    topo_tabs: dict[str, Element] = {}
 
-        scores_series = plot_df.set_index(unit_column)[plot_metric]
-        n_comp_series = plot_df.set_index(unit_column)["n_components"]
+    for eval_name in eval_values:
+        tab_label = str(eval_name) if eval_name is not None else "All"
+        peak_rows = (
+            best_units
+            if eval_name is None
+            else best_units[best_units["eval_name"] == eval_name]
+        )
+        sweep_rows = (
+            sweep_df
+            if eval_name is None or "eval_name" not in sweep_df.columns
+            else sweep_df[sweep_df["eval_name"] == eval_name]
+        )
 
-        sep_fig = plot_bar(
-            scores=scores_series,
+        perf_elem = _unit_peak_bar(
+            peak_rows,
+            metric=plot_metric,
+            unit_column=unit_column,
+            unit_label=unit_label,
             title=f"{title_prefix} best {plot_metric} by {unit_label}",
-            xaxis_title=unit_label,
-            yaxis_title=plot_metric,
+            baseline=baseline,
         )
+        if perf_elem is not None:
+            perf_tabs[tab_label] = perf_elem
 
-        n_comp_fig = plot_bar(
-            scores=n_comp_series,
-            title=f"{title_prefix} optimal n_components",
-            xaxis_title=unit_label,
-            yaxis_title="n_components",
-            color="orange",
+        stab_elem = _unit_stability_box(
+            sweep_rows,
+            metric=plot_metric,
+            unit_column=unit_column,
+            unit_label=unit_label,
+            title=f"{title_prefix} stability by {unit_label}",
+            baseline=baseline,
         )
-        perf_tabs[trace_label] = ColumnsElement(
-            [PlotlyElement(sep_fig), PlotlyElement(n_comp_fig)], cols=2
-        )
+        if stab_elem is not None:
+            stab_tabs[tab_label] = stab_elem
 
         if unit_label == "sensor":
-            topomaps = []
-            for topo_metric in [plot_metric, "trustworthiness", "continuity"]:
-                if topo_metric not in group_df.columns:
-                    continue
-                topo_df = group_df.dropna(subset=[topo_metric]).copy()
-                if topo_df.empty:
-                    continue
-
-                topo_groups = {
-                    topo_metric: (
-                        topo_df[unit_column].astype(str).tolist(),
-                        topo_df[topo_metric].astype(float).to_numpy(),
-                    )
-                }
-                topo_plot = plot_topomap_selector(
-                    topo_groups,
-                    title=f"{title_prefix} best {topo_metric}",
-                    unit=topo_metric,
-                )
-                if topo_plot is not None:
-                    topomaps.append(PlotlyElement(topo_plot))
-                else:
-                    topo_label, (topo_names, topo_values) = next(
-                        iter(topo_groups.items())
-                    )
-                    try:
-                        topo_fig = plot_topomap_from_channel_values(
-                            channel_names=topo_names,
-                            values=topo_values,
-                            title=f"{title_prefix} best {topo_metric} - {topo_label}",
-                            unit=topo_metric,
-                        )
-                        if topo_fig is not None:
-                            topomaps.append(ImageElement(topo_fig, width="100%"))
-                    except Exception as exc:
-                        topomaps.append(
-                            CalloutElement(
-                                f"Topomap rendering failed for '{topo_metric}' "
-                                f"({trace_label}): {exc}",
-                                kind="warning",
-                            )
-                        )
-            if topomaps:
-                topo_tabs[trace_label] = ColumnsElement(topomaps, cols=len(topomaps))
-
-    for group_key, group_df in grouped_sweep:
-        plot_df = group_df.dropna(subset=[plot_metric]).copy()
-        if plot_df.empty:
-            continue
-
-        if not isinstance(group_key, tuple):
-            group_key = (group_key,)
-        label_parts = [
-            str(value) for value in group_key if pd.notna(value) and str(value) != ""
-        ]
-        trace_label = " / ".join(label_parts) if label_parts else "All"
-
-        units = plot_df[unit_column].unique()
-        groups = [plot_df[plot_df[unit_column] == u][plot_metric].values for u in units]
-
-        box_fig = plot_distribution_groups(
-            groups=groups,
-            labels=units,
-            kind="box",
-            title=f"{title_prefix} stability by {unit_label}",
-            xaxis_title=unit_label,
-            yaxis_title=plot_metric,
-        )
-        stab_tabs[trace_label] = PlotlyElement(box_fig)
+            topo_elem = _unit_topomaps(
+                peak_rows,
+                unit_column=unit_column,
+                plot_metric=plot_metric,
+                title_prefix=title_prefix,
+                trace_label=tab_label,
+            )
+            if topo_elem is not None:
+                topo_tabs[tab_label] = topo_elem
 
     viz_tabs = {}
     if perf_tabs:
@@ -2107,7 +2340,17 @@ def build_dataset_report(
             qc_section.title = f"Data Quality (QC): {scope} / {condition}"
             report.add_section(qc_section)
 
-    eval_sec = build_reduction_eval_results_section(eval_frame)
+    eval_conditions = list(ctx.conditions)
+    if ctx.run_pooled and ctx.pooled_condition:
+        eval_conditions.append(ctx.pooled_condition)
+    eval_sec = build_reduction_eval_results_section(
+        eval_frame,
+        selection_metric=ctx.selection_metric,
+        eval_name_order=[
+            str(spec["name"]) for spec in ctx.eval_specs if spec.get("name")
+        ],
+        conditions=eval_conditions,
+    )
     if eval_sec is not None:
         report.add_section(eval_sec)
 

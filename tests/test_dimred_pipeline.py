@@ -10,6 +10,7 @@ from coco_pipe.dim_reduction.pipeline import (
     build_auto_pooled_eval_spec,
     build_eval_request,
     build_fit_request,
+    occurrence_aligned_positions,
     prepare_eval_inputs,
     run_eval,
     run_fit,
@@ -178,6 +179,22 @@ def test_build_auto_pooled_eval_spec():
     spec = build_auto_pooled_eval_spec(["cond1", "cond2"], True)
     assert spec is not None
     assert spec["name"] == "condition_separation"
+
+
+def test_occurrence_aligned_positions_duplicate_ids():
+    # Ids repeat; the k-th occurrence in fit_ids maps to the k-th in the container.
+    container_ids = np.array(["a", "a", "b", "c", "c"])
+    fit_ids = np.array(["c", "a", "a", "c"])  # reordered subset with duplicates
+    positions = occurrence_aligned_positions(container_ids, fit_ids)
+    assert positions == [3, 0, 1, 4]
+    assert list(container_ids[positions]) == list(fit_ids)
+
+
+def test_occurrence_aligned_positions_unalignable_returns_none():
+    container_ids = np.array(["a", "b"])
+    assert occurrence_aligned_positions(container_ids, np.array(["z"])) is None
+    # Third "a" has no third occurrence in the container.
+    assert occurrence_aligned_positions(container_ids, np.array(["a", "a"])) is None
 
 
 def testprepare_eval_inputs(dummy_container):
