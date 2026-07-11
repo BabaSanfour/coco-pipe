@@ -240,7 +240,11 @@ def normalize_inclusive_endpoint(
 
 @dataclass
 class FoundationEmbeddingResult:
-    """Window- and recording-level embeddings plus extraction provenance."""
+    """Window- and recording-level embeddings plus extraction provenance.
+
+    ``token_embeddings`` holds the pre-pool token tensor ``(window, token, feature)``
+    and is populated only when the extractor is built with ``store_tokens=True``
+    """
 
     window_embeddings: np.ndarray
     recording_embedding: np.ndarray
@@ -248,6 +252,7 @@ class FoundationEmbeddingResult:
     window_stop: np.ndarray
     window_index: np.ndarray
     metadata: dict[str, Any]
+    token_embeddings: np.ndarray | None = None
 
 
 class FoundationEmbeddingExtractor:
@@ -264,6 +269,8 @@ class FoundationEmbeddingExtractor:
         normalize_embeddings: bool = True,
         resample: bool = True,
         cache_embeddings: bool = False,
+        store_tokens: bool = False,
+        normalize_tokens: bool = False,
         batch_size: int | None = None,
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
@@ -272,6 +279,8 @@ class FoundationEmbeddingExtractor:
             raise ValueError("recording_pooling must be mean, median, or max.")
         if batch_size is not None and batch_size <= 0:
             raise ValueError("batch_size must be a positive integer or None.")
+        if store_tokens and cache_embeddings:
+            raise ValueError("store_tokens is incompatible with cache_embeddings.")
         self.model_key = model_key
         self.backend = backend
         self.device = device
@@ -280,6 +289,8 @@ class FoundationEmbeddingExtractor:
         self.normalize_embeddings = normalize_embeddings
         self.resample = resample
         self.cache_embeddings = cache_embeddings
+        self.store_tokens = store_tokens
+        self.normalize_tokens = normalize_tokens
         self.batch_size = batch_size
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
@@ -311,23 +322,43 @@ class FoundationEmbeddingExtractor:
         ]
         return np.concatenate(parts, axis=0)
 
-    def _embed_windows(self, model: Any, model_input: np.ndarray) -> np.ndarray:
-        """Run the backbone forward pass and pool/normalize to 2-D rows."""
-        embeddings = self._transform_batched(model, model_input)
-        if embeddings.ndim > 2:
-            if self.pooling == "flatten":
-                embeddings = embeddings.reshape(len(embeddings), -1)
-            else:
-                embeddings = embeddings.mean(axis=tuple(range(1, embeddings.ndim - 1)))
-        if self.normalize_embeddings and embeddings.ndim == 2:
-            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            embeddings = np.divide(
-                embeddings,
-                norms,
-                out=np.zeros_like(embeddings),
-                where=norms > 0,
-            )
-        return embeddings
+    @staticmethod
+    def _l2_normalize(x: np.ndarray) -> np.ndarray:
+        """L2-normalize along the last axis, mapping zero-norm rows to zero."""
+        norms = np.linalg.norm(x, axis=-1, keepdims=True)
+        return np.divide(x, norms, out=np.zeros_like(x), where=norms > 0)
+
+    def _embed_windows(
+        self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Run the backbone forward pass and pool/normalize to 2-D rows.
+
+        The pre-pool token tensor ``(window, token, feature)`` is the canonical
+        intermediate: any intermediate backbone axes are flattened into a single
+        token axis (a reshape *view*, so free when tokens are not requested), and
+        pooling is a reduction over it -- ``mean`` averages the token axis,
+        ``flatten`` collapses it into the feature axis. A backbone that already
+        returns 2-D rows yields a single token per window.
+
+        With ``return_tokens=True`` also returns that token tensor, L2-normalized
+        per token only when ``normalize_tokens`` is set (off by default; the raw
+        second-order statistics are what SPD/Riemannian methods consume).
+        """
+        raw = self._transform_batched(model, model_input)
+        if raw.ndim > 2:
+            tokens = raw.reshape(len(raw), -1, raw.shape[-1])
+        else:
+            tokens = raw[:, None, :]
+        if self.pooling == "flatten":
+            embeddings = tokens.reshape(len(tokens), -1)
+        else:
+            embeddings = tokens.mean(axis=1)
+        if self.normalize_embeddings:
+            embeddings = self._l2_normalize(embeddings)
+        if not return_tokens:
+            return embeddings
+        tokens_out = self._l2_normalize(tokens) if self.normalize_tokens else tokens
+        return embeddings, np.asarray(tokens_out, dtype=np.float32)
 
     def _backbone_fingerprint(self, prepared: Any) -> str:
         """Stable identity of the deterministic window->embedding mapping."""
@@ -416,8 +447,13 @@ class FoundationEmbeddingExtractor:
                 "as extraction does not filter automatically.",
                 stacklevel=2,
             )
+        tokens = None
         if self.cache_embeddings:
             embeddings = self._embed_windows_cached(model, model_input, prepared)
+        elif self.store_tokens:
+            embeddings, tokens = self._embed_windows(
+                model, model_input, return_tokens=True
+            )
         else:
             embeddings = self._embed_windows(model, model_input)
         if embeddings.ndim != 2 or len(embeddings) != len(X):
@@ -502,6 +538,8 @@ class FoundationEmbeddingExtractor:
                 self.backend_kwargs.get("revision") or spec.checkpoint_revision
             ),
         }
+        if tokens is not None:
+            payload["token_shape"] = list(tokens.shape)
         return FoundationEmbeddingResult(
             window_embeddings=embeddings,
             recording_embedding=np.asarray(recording),
@@ -509,4 +547,5 @@ class FoundationEmbeddingExtractor:
             window_stop=stops,
             window_index=np.arange(len(X), dtype=int),
             metadata=payload,
+            token_embeddings=tokens,
         )

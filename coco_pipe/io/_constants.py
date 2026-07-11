@@ -65,6 +65,13 @@ REQUIRED_ARRAYS = {
     "window_index",
 }
 
+TOKEN_REQUIRED_ARRAYS = {
+    "token_embeddings",
+    "window_start",
+    "window_stop",
+    "window_index",
+}
+
 ANALYSIS_MODES = (
     "flat",
     "sensor",

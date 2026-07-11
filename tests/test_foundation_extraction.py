@@ -326,6 +326,114 @@ def test_embedding_extractor_3d_pooling_and_normalization():
     np.testing.assert_allclose(np.linalg.norm(res_flat.window_embeddings, axis=1), 1.0)
 
 
+def test_embedding_extractor_store_tokens_returns_prepool_tensor():
+    raw = np.arange(4 * 10 * 2, dtype=float).reshape(4, 10, 2)
+
+    class Fake3DModel:
+        def bind_signal_metadata(self, metadata):
+            return self
+
+        def transform(self, X):
+            return raw
+
+        def get_embedding_info(self):
+            return get_foundation_model_spec("cbramod")
+
+    extractor = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=Fake3DModel(),
+        normalize_embeddings=True,
+        pooling="mean",
+        resample=False,
+        store_tokens=True,
+    )
+    res = extractor.extract(
+        np.zeros((4, 19, 200)),
+        signal_metadata=SignalMetadata(
+            sfreq=200.0, ch_names=[f"ch{i}" for i in range(19)]
+        ),
+    )
+    # Tokens are the unnormalized pre-pool tensor; window embeddings are the
+    # normalized mean over the token axis.
+    assert res.token_embeddings.shape == (4, 10, 2)
+    np.testing.assert_allclose(res.token_embeddings, raw)
+    np.testing.assert_allclose(np.linalg.norm(res.window_embeddings, axis=1), 1.0)
+    assert res.metadata["token_shape"] == [4, 10, 2]
+
+
+def test_store_tokens_normalize_tokens_option():
+    raw = np.arange(4 * 10 * 2, dtype=float).reshape(4, 10, 2) + 1.0
+
+    class Fake3DModel:
+        def bind_signal_metadata(self, metadata):
+            return self
+
+        def transform(self, X):
+            return raw
+
+        def get_embedding_info(self):
+            return get_foundation_model_spec("cbramod")
+
+    extractor = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=Fake3DModel(),
+        normalize_embeddings=True,
+        pooling="mean",
+        resample=False,
+        store_tokens=True,
+        normalize_tokens=True,
+    )
+    res = extractor.extract(
+        np.zeros((4, 19, 200)),
+        signal_metadata=SignalMetadata(
+            sfreq=200.0, ch_names=[f"ch{i}" for i in range(19)]
+        ),
+    )
+    # Each token is L2-normalized over the feature axis when normalize_tokens=True.
+    norms = np.linalg.norm(res.token_embeddings, axis=-1)
+    np.testing.assert_allclose(norms, 1.0)
+
+
+def test_flatten_equals_flattened_token_tensor():
+    # The token tensor is the canonical intermediate: flatten pooling must equal
+    # the (unnormalized) token tensor reshaped to 2-D.
+    raw = np.arange(3 * 6 * 4, dtype=float).reshape(3, 6, 4)
+
+    class Fake3DModel:
+        def bind_signal_metadata(self, metadata):
+            return self
+
+        def transform(self, X):
+            return raw
+
+        def get_embedding_info(self):
+            return get_foundation_model_spec("cbramod")
+
+    ex = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=Fake3DModel(),
+        normalize_embeddings=False,
+        pooling="flatten",
+        resample=False,
+        store_tokens=True,
+    )
+    flat, tokens = ex._embed_windows(
+        Fake3DModel(), np.zeros((3, 3, 10)), return_tokens=True
+    )
+    np.testing.assert_allclose(flat, tokens.reshape(3, -1))
+    # ...and mean pooling equals the token-axis mean.
+    ex.pooling = "mean"
+    mean_only = ex._embed_windows(Fake3DModel(), np.zeros((3, 3, 10)))
+    np.testing.assert_allclose(mean_only, tokens.mean(axis=1))
+
+
+def test_store_tokens_incompatible_with_cache():
+    with pytest.raises(ValueError, match="store_tokens is incompatible"):
+        FoundationEmbeddingExtractor(
+            "cbramod", store_tokens=True, cache_embeddings=True
+        )
+
+
 def test_batch_size_chunks_forward_without_changing_output():
     class CountingModel:
         def __init__(self):

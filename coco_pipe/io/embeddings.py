@@ -13,7 +13,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ._constants import EMBEDDING_COMBINED_TABLE_LABELS, REQUIRED_ARRAYS
+from ._constants import (
+    EMBEDDING_COMBINED_TABLE_LABELS,
+    REQUIRED_ARRAYS,
+    TOKEN_REQUIRED_ARRAYS,
+)
 from .structures import DataContainer
 
 
@@ -49,18 +53,36 @@ def validate_embedding_derivative(path: str | Path) -> dict[str, Any]:
     if not sidecar.exists():
         raise FileNotFoundError(f"Missing embedding sidecar: {sidecar}")
     with np.load(path, allow_pickle=False) as payload:
-        missing = REQUIRED_ARRAYS.difference(payload.files)
-        if missing:
-            raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
-        windows = np.asarray(payload["window_embeddings"])
-        recording = np.asarray(payload["recording_embedding"])
-        if windows.ndim != 2:
-            raise ValueError("window_embeddings must be 2-D.")
-        if recording.ndim != 1 or recording.shape[0] != windows.shape[1]:
-            raise ValueError("recording_embedding must match the embedding dimension.")
-        for key in ("window_start", "window_stop", "window_index"):
-            if len(payload[key]) != len(windows):
-                raise ValueError(f"{key} length does not match window_embeddings.")
+        if (
+            "token_embeddings" in payload.files
+            and "window_embeddings" not in payload.files
+        ):
+            missing = TOKEN_REQUIRED_ARRAYS.difference(payload.files)
+            if missing:
+                raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
+            tokens = np.asarray(payload["token_embeddings"])
+            if tokens.ndim != 3:
+                raise ValueError(
+                    "token_embeddings must be 3-D (window, token, feature)."
+                )
+            for key in ("window_start", "window_stop", "window_index"):
+                if len(payload[key]) != len(tokens):
+                    raise ValueError(f"{key} length does not match token_embeddings.")
+        else:
+            missing = REQUIRED_ARRAYS.difference(payload.files)
+            if missing:
+                raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
+            windows = np.asarray(payload["window_embeddings"])
+            recording = np.asarray(payload["recording_embedding"])
+            if windows.ndim != 2:
+                raise ValueError("window_embeddings must be 2-D.")
+            if recording.ndim != 1 or recording.shape[0] != windows.shape[1]:
+                raise ValueError(
+                    "recording_embedding must match the embedding dimension."
+                )
+            for key in ("window_start", "window_stop", "window_index"):
+                if len(payload[key]) != len(windows):
+                    raise ValueError(f"{key} length does not match window_embeddings.")
     metadata = json.loads(sidecar.read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         raise ValueError(f"Expected an object in {sidecar}.")
@@ -83,26 +105,48 @@ def save_embedding_derivative(
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_npz = path.with_name(f".{path.name}.tmp.npz")
     tmp_json = sidecar.with_name(f".{sidecar.name}.tmp")
-    payload_metadata = {
-        **dict(getattr(result, "metadata", {}) or {}),
-        **dict(metadata or {}),
-        "created_at": datetime.now(UTC).isoformat(),
-        "arrays": {
+
+    tokens = getattr(result, "token_embeddings", None)
+    if tokens is not None:
+        tokens = np.asarray(tokens)
+        arrays: dict[str, list[str]] = {
+            "token_embeddings": ["window", "token", "embedding_feature"],
+            "window_start": ["window"],
+            "window_stop": ["window"],
+            "window_index": ["window"],
+        }
+        saved = {
+            "token_embeddings": tokens,
+            "window_start": np.asarray(result.window_start),
+            "window_stop": np.asarray(result.window_stop),
+            "window_index": np.asarray(result.window_index),
+        }
+        extra_meta = {"representation": "token", "token_shape": list(tokens.shape)}
+    else:
+        arrays = {
             "window_embeddings": ["window", "embedding_feature"],
             "recording_embedding": ["embedding_feature"],
             "window_start": ["window"],
             "window_stop": ["window"],
             "window_index": ["window"],
-        },
+        }
+        saved = {
+            "window_embeddings": np.asarray(result.window_embeddings),
+            "recording_embedding": np.asarray(result.recording_embedding),
+            "window_start": np.asarray(result.window_start),
+            "window_stop": np.asarray(result.window_stop),
+            "window_index": np.asarray(result.window_index),
+        }
+        extra_meta = {}
+
+    payload_metadata = {
+        **dict(getattr(result, "metadata", {}) or {}),
+        **dict(metadata or {}),
+        **extra_meta,
+        "created_at": datetime.now(UTC).isoformat(),
+        "arrays": arrays,
     }
-    np.savez_compressed(
-        tmp_npz,
-        window_embeddings=np.asarray(result.window_embeddings),
-        recording_embedding=np.asarray(result.recording_embedding),
-        window_start=np.asarray(result.window_start),
-        window_stop=np.asarray(result.window_stop),
-        window_index=np.asarray(result.window_index),
-    )
+    np.savez_compressed(tmp_npz, **saved)
     tmp_json.write_text(
         json.dumps(_json_value(payload_metadata), indent=2, sort_keys=True),
         encoding="utf-8",
