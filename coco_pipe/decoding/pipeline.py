@@ -141,6 +141,7 @@ def run_decoding_unit(
     metrics = list(unit.experiment_config.metrics or ())
     # Resume check runs outside the try: a hash mismatch must abort the sweep.
     if not unit.overwrite and completed_for_config(output_dir, unit.run_config):
+        LOGGER.info("Skipping completed decoding unit: %s", output_dir.name)
         return load_completed_result_records(
             output_dir, context=unit.context, metrics=metrics
         )
