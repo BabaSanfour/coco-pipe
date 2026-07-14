@@ -855,6 +855,7 @@ def build_fit_request(
     extra_payload: dict[str, Any] | None = None,
     artifact_path: Path | None = None,
     artifact_path_factory: Callable[[dict[str, Any], Path], Path] | None = None,
+    container_signature: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_fit`.
 
@@ -867,7 +868,8 @@ def build_fit_request(
     ids = np.asarray(container.ids, dtype=object).astype(str)
     reducer_name = str(reducer)
     unit_key = str(unit_spec["unit_key"])
-    container_signature = fingerprint_container(container)
+    if container_signature is None:
+        container_signature = fingerprint_container(container)
     fit_identity = {
         "scope": scope,
         "condition": condition,
