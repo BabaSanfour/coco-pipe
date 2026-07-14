@@ -83,6 +83,17 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+def _normalize_ids(ids: Sequence[Any]) -> list[str]:
+    """Safely cast a sequence of IDs (including tuples/arrays) to a list of strings."""
+
+    def _to_str(v: Any) -> str:
+        if isinstance(v, (list, tuple, np.ndarray)):
+            return "_".join(str(x) for x in v)
+        return str(v)
+
+    return [_to_str(x) for x in ids]
+
+
 @cache
 def supports_nested_components(method: str) -> bool:
     """Whether *method* can synthesise its whole sweep from one max-n fit.
@@ -194,7 +205,7 @@ def run_fit(
             raise ValueError("run_fit expects a 2D matrix.")
         if container.ids is None:
             raise ValueError("Dim-reduction fits expect container.ids to be present.")
-        ids = np.asarray(container.ids, dtype=object).astype(str)
+        ids = _normalize_ids(container.ids)
 
         reducer = DimReduction(
             method=fit_payload["reducer"], n_components=fit_payload["n_components"]
@@ -329,7 +340,7 @@ def run_fit_group(
             raise ValueError("run_fit_group expects a 2D matrix.")
         if container.ids is None:
             raise ValueError("Dim-reduction fits expect container.ids to be present.")
-        ids = np.asarray(container.ids, dtype=object).astype(str)
+        ids = _normalize_ids(container.ids)
         max_n = max(int(r["fit_payload"]["n_components"]) for r in pending)
         reducer = DimReduction(method=method, n_components=max_n)
         full_embedding = np.asarray(reducer.fit_transform(container).X)
@@ -553,7 +564,7 @@ def run_eval(
 
         selected_index, selected_ids, labels, groups = prepare_eval_inputs(
             container=container,
-            fit_ids=np.asarray(fit_artifact["ids"], dtype=object).astype(str),
+            fit_ids=_normalize_ids(fit_artifact["ids"]),
             eval_spec=eval_spec,
         )
         eval_id = _eval_id(str(fit_payload["fit_id"]), eval_spec)
@@ -646,8 +657,8 @@ def occurrence_aligned_positions(
     fit id, in fit order), or ``None`` when any fit id occurrence is absent from
     the container.
     """
-    container_arr = np.asarray(container_ids, dtype=object).astype(str)
-    fit_arr = np.asarray(fit_ids, dtype=object).astype(str)
+    container_arr = _normalize_ids(container_ids)
+    fit_arr = _normalize_ids(fit_ids)
 
     key_to_pos: dict[str, int] = {}
     counts: dict[str, int] = {}
@@ -710,7 +721,7 @@ def prepare_eval_inputs(
     if container.ids is None:
         raise ValueError("Dim-reduction fit/eval expects container.ids to be present.")
 
-    container_ids = np.asarray(container.ids, dtype=object).astype(str)
+    container_ids = _normalize_ids(container.ids)
     frame = pd.DataFrame({"obs_id": container_ids})
     n_obs = len(container_ids)
     for key, values in container.coords.items():
@@ -759,7 +770,7 @@ def prepare_eval_inputs(
     selected_frame = aligned_frame.loc[valid_mask].copy()
     return (
         selected_frame.index,
-        selected_frame["obs_id"].astype(str).to_numpy(),
+        _normalize_ids(selected_frame["obs_id"]),
         labels.loc[valid_mask].astype(str).to_numpy(),
         groups.loc[valid_mask].astype(str).to_numpy(),
     )
@@ -865,7 +876,7 @@ def build_fit_request(
     """
     if container.ids is None:
         raise ValueError("Dim-reduction fits expect container.ids to be present.")
-    ids = np.asarray(container.ids, dtype=object).astype(str)
+    ids = _normalize_ids(container.ids)
     reducer_name = str(reducer)
     unit_key = str(unit_spec["unit_key"])
     if container_signature is None:
