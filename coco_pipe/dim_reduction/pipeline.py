@@ -894,9 +894,9 @@ def build_fit_request(
         "input_signature": input_signature,
         "reducer": reducer_name,
         "n_components": int(n_components),
-        "sample_ids_sha256": hashlib.sha256(
-            "\\0".join(ids.tolist()).encode("utf-8")
-        ).hexdigest()[:16],
+        "sample_ids_sha256": hashlib.sha256("\0".join(ids).encode("utf-8")).hexdigest()[
+            :16
+        ],
         "n_samples": len(ids),
     }
     fit_id = stable_hash(fit_identity, length=16)
