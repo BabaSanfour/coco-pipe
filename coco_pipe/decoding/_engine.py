@@ -37,6 +37,22 @@ from .scalers import SubjectStandardScaler
 logger = logging.getLogger(__name__)
 
 
+def _wrapped_pipeline(estimator: Any) -> Pipeline | None:
+    """Find the preprocessing pipeline inside search/calibration wrappers."""
+    seen: set[int] = set()
+    stack = [estimator]
+    while stack:
+        candidate = stack.pop()
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        if isinstance(candidate, Pipeline):
+            return candidate
+        for attribute in ("best_estimator_", "estimator", "base_estimator"):
+            stack.append(getattr(candidate, attribute, None))
+    return None
+
+
 def _release_foundation_memory(estimator: Any) -> None:
     """Release a fitted foundation/neural estimator's torch modules after a fold.
 
@@ -229,10 +245,16 @@ def fit_and_score_fold(
     sw_train = sample_weight[train_idx] if sample_weight is not None else None
     groups_train = groups[train_idx] if groups is not None else None
     test_groups = groups[test_idx] if groups is not None else None
+    routing_pipeline = _wrapped_pipeline(estimator)
     _needs_group_routing = (
         test_groups is not None
-        and hasattr(estimator, "named_steps")
-        and isinstance(estimator.named_steps.get("scaler"), SubjectStandardScaler)
+        and routing_pipeline is not None
+        and (
+            isinstance(
+                routing_pipeline.named_steps.get("scaler"), SubjectStandardScaler
+            )
+            or "erasure" in routing_pipeline.named_steps
+        )
     )
     captured_warnings = []
     fit_time = np.nan
@@ -259,6 +281,7 @@ def fit_and_score_fold(
             )
     fit_time = time.perf_counter() - fit_start
     captured_warnings.extend(warning_records_to_dict("fit", warning_records))
+    prediction_estimator = getattr(estimator, "best_estimator_", estimator)
 
     # 2. Predict (Standard or Temporal)
     predict_start = time.perf_counter()
@@ -266,9 +289,9 @@ def fit_and_score_fold(
         warnings.simplefilter("always")
         if _needs_group_routing:
             with config_context(enable_metadata_routing=True):
-                y_pred = estimator.predict(X_test, groups=test_groups)
+                y_pred = prediction_estimator.predict(X_test, groups=test_groups)
         else:
-            y_pred = estimator.predict(X_test)
+            y_pred = prediction_estimator.predict(X_test)
     predict_time = time.perf_counter() - predict_start
     captured_warnings.extend(warning_records_to_dict("predict", warning_records))
 
@@ -287,11 +310,11 @@ def fit_and_score_fold(
             warnings.simplefilter("always")
             if _needs_group_routing:
                 with config_context(enable_metadata_routing=True):
-                    fold_data["y_proba"] = estimator.predict_proba(
+                    fold_data["y_proba"] = prediction_estimator.predict_proba(
                         X_test, groups=test_groups
                     )
             else:
-                fold_data["y_proba"] = estimator.predict_proba(X_test)
+                fold_data["y_proba"] = prediction_estimator.predict_proba(X_test)
         captured_warnings.extend(
             warning_records_to_dict("predict_proba", warning_records)
         )
@@ -301,11 +324,11 @@ def fit_and_score_fold(
             warnings.simplefilter("always")
             if _needs_group_routing:
                 with config_context(enable_metadata_routing=True):
-                    fold_data["y_score"] = estimator.decision_function(
+                    fold_data["y_score"] = prediction_estimator.decision_function(
                         X_test, groups=test_groups
                     )
             else:
-                fold_data["y_score"] = estimator.decision_function(X_test)
+                fold_data["y_score"] = prediction_estimator.decision_function(X_test)
         captured_warnings.extend(
             warning_records_to_dict("decision_function", warning_records)
         )
@@ -474,6 +497,10 @@ def fit_estimator(
             scaler_step = pipeline.named_steps["scaler"]
             if "groups" in inspect.signature(scaler_step.fit).parameters:
                 fit_params["scaler__groups"] = groups_train
+        if isinstance(pipeline, Pipeline) and "erasure" in pipeline.named_steps:
+            erasure_step = pipeline.named_steps["erasure"]
+            if "groups" in inspect.signature(erasure_step.fit).parameters:
+                fit_params["erasure__groups"] = groups_train
         if isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
             classifier_step = pipeline.named_steps["clf"]
             if "groups" in inspect.signature(classifier_step.fit).parameters:

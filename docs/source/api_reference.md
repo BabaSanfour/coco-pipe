@@ -84,6 +84,20 @@ The most commonly used classes and functions, grouped by module.
    coco_pipe.io.load_data
 ```
 
+### Transforms and Diagnostics
+
+```{eval-rst}
+.. autosummary::
+   :toctree: generated/
+   :nosignatures:
+
+   coco_pipe.transforms.LeaceEraser
+   coco_pipe.transforms.EuclideanAlign
+   coco_pipe.transforms.RiemannAlign
+   coco_pipe.transforms.make_subject_transform
+   coco_pipe.diagnostics.variance_decomposition_report
+```
+
 ---
 
 ## Full Module Index

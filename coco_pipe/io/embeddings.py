@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from ._constants import (
+    ARTIFACT_SUFFIX,
     EMBEDDING_COMBINED_TABLE_LABELS,
     REQUIRED_ARRAYS,
     TOKEN_REQUIRED_ARRAYS,
@@ -99,6 +100,14 @@ def save_embedding_derivative(
     path = Path(path)
     if path.suffix != ".npz":
         raise ValueError("Embedding derivative path must end in .npz.")
+    tokens = getattr(result, "token_embeddings", None)
+    kind = "token" if tokens is not None else "embedding"
+    expected_suffix = ARTIFACT_SUFFIX[kind]
+    if not path.name.endswith(expected_suffix):
+        raise ValueError(
+            f"A {kind} artifact must be saved to a '{expected_suffix}' path, "
+            f"got {path.name!r}."
+        )
     sidecar = embedding_sidecar_path(path)
     if not overwrite and (path.exists() or sidecar.exists()):
         raise FileExistsError(f"Embedding derivative already exists: {path}")
@@ -106,7 +115,6 @@ def save_embedding_derivative(
     tmp_npz = path.with_name(f".{path.name}.tmp.npz")
     tmp_json = sidecar.with_name(f".{sidecar.name}.tmp")
 
-    tokens = getattr(result, "token_embeddings", None)
     if tokens is not None:
         tokens = np.asarray(tokens)
         arrays: dict[str, list[str]] = {
@@ -157,28 +165,47 @@ def save_embedding_derivative(
     return path, sidecar
 
 
+def _manifest_artifacts(root: Path) -> list[Path]:
+    """Existing artifact paths recorded in ``run_manifest.json`` (any kind)."""
+    manifest = root / "run_manifest.json"
+    if not manifest.exists():
+        return []
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return []
+    paths: list[Path] = []
+    for record in payload.get("records", []):
+        if record.get("status") != "success" or not record.get("artifact_path"):
+            continue
+        path = Path(record["artifact_path"])
+        if not path.is_absolute():
+            path = root / path
+        if path.exists():
+            paths.append(path)
+    return paths
+
+
 def discover_embedding_derivatives(
     root: str | Path,
     model_key: str | None = None,
+    *,
+    kind: str = "embedding",
 ) -> list[Path]:
-    """Discover valid embedding NPZ artifacts under a derivative root."""
+    """Discover valid ``"embedding"`` or ``"token"`` NPZ artifacts under a root.
+
+    Artifact kind is identified by filename suffix (see :data:`ARTIFACT_SUFFIX`),
+    which ``save_embedding_derivative`` enforces. The run manifest (if present)
+    may index either kind; results are filtered to the requested ``kind``, and a
+    recursive glob is used as a fallback when the manifest names none of it.
+    """
+    if kind not in ARTIFACT_SUFFIX:
+        raise ValueError(f"kind must be one of {sorted(ARTIFACT_SUFFIX)}.")
     root = Path(root)
-    manifest = root / "run_manifest.json"
-    paths: list[Path] = []
-    if manifest.exists():
-        try:
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-            for record in payload.get("records", []):
-                if record.get("status") != "success" or not record.get("artifact_path"):
-                    continue
-                path = Path(record["artifact_path"])
-                if not path.is_absolute():
-                    path = root / path
-                if path.exists():
-                    paths.append(path)
-        except (OSError, json.JSONDecodeError, TypeError):
-            paths = []
-    paths = sorted(root.rglob("*_embedding.npz")) if not paths else sorted(set(paths))
+    suffix = ARTIFACT_SUFFIX[kind]
+    paths = sorted({p for p in _manifest_artifacts(root) if p.name.endswith(suffix)})
+    if not paths:
+        paths = sorted(root.rglob(f"*{suffix}"))
     if model_key is None:
         return paths
     selected = []
@@ -194,9 +221,22 @@ def discover_embedding_derivatives(
     return selected
 
 
-def _observation_id(metadata: Mapping[str, Any], path: Path, suffix: str = "") -> str:
-    base = metadata.get("recording_id") or path.name.removesuffix("_embedding.npz")
-    return f"{base}{suffix}"
+def embedding_observation_id(
+    metadata: Mapping[str, Any],
+    path: str | Path,
+    window_position: int | None = None,
+) -> str:
+    """Return the canonical recording/window ID for pooled or token artifacts."""
+    path = Path(path)
+    base = metadata.get("recording_id")
+    if not base:
+        base = path.name
+        for suffix in ("_embedding.npz", "_tokens.npz", ".npz"):
+            if base.endswith(suffix):
+                base = base.removesuffix(suffix)
+                break
+    epoch = "" if window_position is None else f"_epoch-{window_position:04d}"
+    return f"{base}{epoch}"
 
 
 def load_embedding_derivatives(
@@ -205,51 +245,73 @@ def load_embedding_derivatives(
     aggregate_by: str | None = None,
     model_key: str | None = None,
 ) -> DataContainer:
-    """Load embedding artifacts into a 2-D DataContainer.
+    """Load embedding artifacts into a DataContainer.
 
-    ``representation`` is ``"epoch"`` (one row per epoch, read from the on-disk
-    ``window_embeddings`` array) or ``"recording"`` (the pooled
-    ``recording_embedding``). A coarser ``"subject"`` level is produced by the
-    merge step, not here (it pools across recordings).
+    ``representation`` selects both the on-disk array and the output rank:
+
+    * ``"recording"`` — the pooled ``recording_embedding`` (2-D ``obs x feature``)
+    * ``"epoch"`` — per-epoch ``window_embeddings`` (2-D ``obs x feature``)
+    * ``"token"`` — per-epoch ``token_embeddings`` from the separate
+      ``*_tokens.npz`` artifacts (3-D ``obs x token x feature``)
+
+    A coarser ``"subject"`` level is produced by the merge step, not here (it
+    pools across recordings). Kinds are discovered by filename suffix (see
+    :data:`ARTIFACT_SUFFIX`); token and embedding artifacts are separate files
+    that join only by shared observation ID.
     """
-    if representation not in {"epoch", "recording"}:
-        raise ValueError("representation must be 'epoch' or 'recording'.")
+    if representation not in {"epoch", "recording", "token"}:
+        raise ValueError("representation must be 'epoch', 'recording', or 'token'.")
+    is_recording = representation == "recording"
+    is_token = representation == "token"
+
     if isinstance(paths, (str, Path)):
         candidate = Path(paths)
-        resolved = (
-            discover_embedding_derivatives(candidate, model_key=model_key)
-            if candidate.is_dir()
-            else [candidate]
-        )
+        if candidate.is_dir():
+            resolved = discover_embedding_derivatives(
+                candidate,
+                model_key=model_key,
+                kind="token" if is_token else "embedding",
+            )
+        else:
+            resolved = [candidate]
     else:
         resolved = [Path(path) for path in paths]
     if not resolved:
         raise FileNotFoundError("No embedding derivatives were found.")
 
-    is_recording = representation == "recording"
     rows: list[np.ndarray] = []
     ids: list[str] = []
     metadata_rows: list[dict[str, Any]] = []
-    embedding_dim: int | None = None
+    obs_shape: tuple[int, ...] | None = None
     for path in resolved:
         metadata = validate_embedding_derivative(path)
         with np.load(path, allow_pickle=False) as payload:
-            values = (
-                np.asarray(payload["recording_embedding"])[None, :]
+            array_key = (
+                "token_embeddings"
+                if is_token
+                else "recording_embedding"
                 if is_recording
-                else np.asarray(payload["window_embeddings"])
+                else "window_embeddings"
             )
-            if embedding_dim is None:
-                embedding_dim = values.shape[1]
-            elif values.shape[1] != embedding_dim:
+            if array_key not in payload.files:
                 raise ValueError(
-                    f"Embedding dimensions differ: expected {embedding_dim}, "
-                    f"got {values.shape[1]} in {path}."
+                    f"{path} has no '{array_key}' array for representation "
+                    f"'{representation}'; wrong artifact kind for this path."
+                )
+            values = np.asarray(payload[array_key])
+            if is_recording:
+                values = values[None, :]
+            if obs_shape is None:
+                obs_shape = values.shape[1:]
+            elif values.shape[1:] != obs_shape:
+                raise ValueError(
+                    f"Embedding shapes differ: expected {obs_shape}, "
+                    f"got {values.shape[1:]} in {path}."
                 )
             for idx, row in enumerate(values):
                 rows.append(row)
-                suffix = "" if is_recording else f"_epoch-{idx:04d}"
-                ids.append(_observation_id(metadata, path, suffix))
+                position = None if is_recording else idx
+                ids.append(embedding_observation_id(metadata, path, position))
                 obs_meta = dict(metadata)
                 obs_meta["artifact_path"] = str(path)
                 obs_meta["representation"] = representation
@@ -263,7 +325,7 @@ def load_embedding_derivatives(
                     )
                 metadata_rows.append(obs_meta)
 
-    X = np.vstack(rows)
+    X = np.stack(rows) if is_token else np.vstack(rows)
     model_keys = {
         str(row.get("model_key", "")).strip().lower()
         for row in metadata_rows
@@ -281,7 +343,7 @@ def load_embedding_derivatives(
         )
     coords: dict[str, Any] = {
         "feature": np.asarray(
-            [f"embedding_{idx:04d}" for idx in range(X.shape[1])], dtype=object
+            [f"embedding_{idx:04d}" for idx in range(X.shape[-1])], dtype=object
         )
     }
     metadata_frame = pd.DataFrame(metadata_rows)
@@ -289,9 +351,10 @@ def load_embedding_derivatives(
         values = metadata_frame[column]
         if values.map(lambda value: not isinstance(value, (list, dict))).all():
             coords[column] = values.to_numpy(dtype=object)
+    dims = ("obs", "token", "feature") if is_token else ("obs", "feature")
     container = DataContainer(
         X=X,
-        dims=("obs", "feature"),
+        dims=dims,
         coords=coords,
         ids=np.asarray(ids, dtype=object),
         meta={

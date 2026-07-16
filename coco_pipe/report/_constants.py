@@ -122,6 +122,8 @@ DEFAULT_MODE_RESULT_CONTEXT_COLUMNS = (
     "family",
     "subfamily",
     "selection_mode",
+    "transform",
+    "reduction_mode",
 )
 """Default context columns used to collect decoding sweep artifacts."""
 
@@ -130,6 +132,8 @@ DEFAULT_BEST_RESULT_GROUP_COLUMNS = (
     "target",
     "analysis_mode",
     "selection_mode",
+    "transform",
+    "reduction_mode",
 )
 """Default grouping for selecting top decoding-sweep diagnostic artifacts."""
 

@@ -41,6 +41,7 @@ dependencies = [
   "matplotlib<3.13",
   "seaborn",
   "scipy>=1.11.0",
+  "pyriemann>=0.7",
   "pyyaml",
   "pydantic",
   "hydra-core",
@@ -149,6 +150,7 @@ foundation = [
 
 decoding = [
   "skorch",
+  "statsmodels",
 ]
 
 quant = [
@@ -204,6 +206,7 @@ dim-red = [
   "gudhi",
   "pydmd",
   "meegkit",
+  "statsmodels",
 ]
 
 full = [

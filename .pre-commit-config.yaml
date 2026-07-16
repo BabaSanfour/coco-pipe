@@ -40,7 +40,7 @@ repos:
     hooks:
       - id: codespell
         args:
-          - --ignore-words-list=crate,fo,ba,fpr,shepard,strat,nd,te
+          - --ignore-words-list=crate,fo,ba,fpr,shepard,strat,nd,te,leace
         exclude: |
           (?x)^(
             docs/source/auto_examples/.*|

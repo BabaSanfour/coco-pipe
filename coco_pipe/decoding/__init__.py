@@ -6,13 +6,16 @@ Core module for scientific decoding and machine learning experiments on
 electrophysiological and behavioral data.
 """
 
+from ._metrics import get_scorer
 from ._specs import SignalMetadata
+from ._splitters import get_cv_splitter
 from .configs import (
     ChanceAssessmentConfig,
     CheckpointConfig,
     ClassicalModelConfig,
     CVConfig,
     DeviceConfig,
+    ErasureConfig,
     ExperimentConfig,
     FeatureSelectionConfig,
     FoundationEmbeddingModelConfig,
@@ -51,6 +54,7 @@ from .pipeline import (
 from .registry import (
     EstimatorCapabilities,
     get_capabilities,
+    get_estimator_cls,
     get_foundation_model_spec,
     list_capabilities,
     list_foundation_models,
@@ -74,6 +78,7 @@ __all__ = [
     "ClassicalModelConfig",
     "DecodingUnit",
     "DeviceConfig",
+    "ErasureConfig",
     "EstimatorCapabilities",
     # Execution
     "Experiment",
@@ -105,7 +110,10 @@ __all__ = [
     "execute_decoding_sweep",
     "execute_decoding_sweep_streaming",
     "get_capabilities",
+    "get_cv_splitter",
+    "get_estimator_cls",
     "get_foundation_model_spec",
+    "get_scorer",
     "grouped_chance_assessment",
     "list_capabilities",
     "list_foundation_models",

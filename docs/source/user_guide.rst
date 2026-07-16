@@ -51,6 +51,20 @@ programmatic interface, see the :doc:`api_reference`.
       Kinematics and time-resolved group separation over native 3D
       ``(trajectory, time, dim)`` embedding tensors.
 
+   .. grid-item-card:: 🔎 Representation Diagnostics
+      :link: diagnostics/variance
+      :link-type: doc
+
+      Design-aware subject and label variance partitions, permutation nulls,
+      omega squared, and subject-identity probes.
+
+   .. grid-item-card:: 🧭 Subject Alignment
+      :link: transforms/index
+      :link-type: doc
+
+      LEACE, Euclidean/CORAL, and Riemannian transforms with explicit fit-scope
+      and leakage guidance.
+
    .. grid-item-card:: 📊 Visualization
       :link: viz/index
       :link-type: doc
@@ -72,5 +86,7 @@ programmatic interface, see the :doc:`api_reference`.
    descriptors/index
    decoding/index
    dim_reduction/index
+   diagnostics/variance
+   transforms/index
    viz/index
    report/index

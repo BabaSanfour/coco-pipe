@@ -189,6 +189,24 @@ class Experiment:
             for k in spec.input_kinds
         )
 
+        if self.config.erasure.enabled and allow_prep:
+            from coco_pipe.transforms.subject_alignment import make_subject_transform
+
+            steps.append(
+                (
+                    "erasure",
+                    make_subject_transform(
+                        self.config.erasure.method,
+                        **self.config.erasure.params,
+                    ),
+                )
+            )
+        elif self.config.erasure.enabled and not allow_prep:
+            raise ValueError(
+                "Fold-local erasure is only valid for classical 2-D inputs. "
+                f"Model '{model_name}' uses {spec.input_kinds} data."
+            )
+
         if self.config.use_scaler and allow_prep:
             if self.config.use_scaler == "subject":
                 from .scalers import SubjectStandardScaler

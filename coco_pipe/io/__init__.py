@@ -25,6 +25,7 @@ from .config import (
 from .embeddings import (
     combined_embedding_table_path,
     discover_embedding_derivatives,
+    embedding_observation_id,
     embedding_sidecar_path,
     load_combined_embedding_table,
     load_embedding_derivatives,
@@ -89,6 +90,7 @@ __all__ = [
     "discover_embedding_derivatives",
     "drop_epoch_outliers",
     "drop_subject_outliers",
+    "embedding_observation_id",
     "embedding_sidecar_path",
     "fingerprint_container",
     "group_labels",

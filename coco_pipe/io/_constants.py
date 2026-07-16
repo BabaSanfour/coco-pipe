@@ -72,6 +72,10 @@ TOKEN_REQUIRED_ARRAYS = {
     "window_index",
 }
 
+ARTIFACT_SUFFIX = {"embedding": "_embedding.npz", "token": "_tokens.npz"}
+"""Filename suffix per embedding-derivative kind. Enforced at save time so the
+suffix is the authoritative marker of an artifact's kind for discovery/loading."""
+
 ANALYSIS_MODES = (
     "flat",
     "sensor",

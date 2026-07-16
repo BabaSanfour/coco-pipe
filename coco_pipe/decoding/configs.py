@@ -910,6 +910,16 @@ class ReducerConfig(BaseModel):
         return self
 
 
+class ErasureConfig(BaseModel):
+    """Fold-local subject-nuisance removal for classical decoding."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["leace", "ea_coral", "ea_mean"] = "leace"
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class CalibrationConfig(BaseModel):
     """Probability calibration settings for classification estimators."""
 
@@ -1056,6 +1066,7 @@ class ExperimentConfig(BaseModel):
     feature_selection: FeatureSelectionConfig = Field(
         default_factory=FeatureSelectionConfig
     )
+    erasure: ErasureConfig = Field(default_factory=ErasureConfig)
     reducer: ReducerConfig = Field(default_factory=ReducerConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     statistical_assessment: StatisticalAssessmentConfig = Field(

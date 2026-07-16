@@ -12,6 +12,7 @@ from coco_pipe.io.embeddings import (
     _json_value,
     combined_embedding_table_path,
     discover_embedding_derivatives,
+    embedding_observation_id,
     load_combined_embedding_table,
     load_embedding_derivatives,
     save_embedding_derivative,
@@ -58,6 +59,83 @@ def test_embedding_derivative_round_trip(tmp_path):
     epochs = load_embedding_derivatives(tmp_path, representation="epoch")
     assert epochs.X.shape == (3, 4)
     assert epochs.coords["window_index"].tolist() == [0, 1, 2]
+
+
+def test_token_derivative_round_trip(tmp_path):
+    result = FoundationEmbeddingResult(
+        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
+        recording_embedding=np.arange(4, dtype=float),
+        window_start=np.array([0, 100, 200]),
+        window_stop=np.array([100, 200, 300]),
+        window_index=np.arange(3),
+        metadata={
+            "model_key": "cbramod",
+            "recording_id": "sub-01_ses-01_run-01",
+            "subject": "01",
+        },
+        token_embeddings=np.arange(60, dtype=float).reshape(3, 5, 4),
+    )
+    token_path = tmp_path / "sub-01_desc-cbramod_tokens.npz"
+    save_embedding_derivative(result, token_path)
+
+    tokens = load_embedding_derivatives(
+        tmp_path, representation="token", model_key="cbramod"
+    )
+    assert tokens.X.shape == (3, 5, 4)
+    assert tokens.dims == ("obs", "token", "feature")
+    assert tokens.ids.tolist() == [
+        "sub-01_ses-01_run-01_epoch-0000",
+        "sub-01_ses-01_run-01_epoch-0001",
+        "sub-01_ses-01_run-01_epoch-0002",
+    ]
+    np.testing.assert_allclose(tokens.X[1], result.token_embeddings[1])
+
+    # A token payload must be saved to a *_tokens.npz path.
+    with pytest.raises(ValueError, match="token artifact must be saved"):
+        save_embedding_derivative(
+            result, tmp_path / "sub-01_desc-cbramod_embedding.npz"
+        )
+
+
+def test_manifest_discovery_partitions_by_kind(tmp_path):
+    """A manifest listing both kinds resolves each to the right artifacts."""
+
+    def _make(model_key, subject, *, tokens):
+        result = FoundationEmbeddingResult(
+            window_embeddings=np.ones((2, 4)),
+            recording_embedding=np.ones(4),
+            window_start=np.array([0, 100]),
+            window_stop=np.array([100, 200]),
+            window_index=np.array([0, 1]),
+            metadata={"model_key": model_key, "recording_id": f"sub-{subject}"},
+            token_embeddings=np.ones((2, 5, 4)) if tokens else None,
+        )
+        suffix = "tokens" if tokens else "embedding"
+        path = tmp_path / f"sub-{subject}_desc-{model_key}_{suffix}.npz"
+        save_embedding_derivative(result, path)
+        return path
+
+    emb = _make("cbramod", "01", tokens=False)
+    tok = _make("cbramod", "01", tokens=True)
+    write_embedding_manifest(
+        tmp_path,
+        [
+            {"status": "success", "artifact_path": emb.name},
+            {"status": "success", "artifact_path": tok.name},
+        ],
+    )
+
+    assert discover_embedding_derivatives(tmp_path, kind="embedding") == [emb]
+    assert discover_embedding_derivatives(tmp_path, kind="token") == [tok]
+
+
+def test_pooled_and_token_fallback_observation_ids_match(tmp_path):
+    metadata = {"model_key": "demo"}
+    pooled = tmp_path / "sub-01_ses-01_run-01_embedding.npz"
+    tokens = tmp_path / "sub-01_ses-01_run-01_tokens.npz"
+    assert embedding_observation_id(metadata, pooled, 3) == (
+        embedding_observation_id(metadata, tokens, 3)
+    )
 
 
 def test_loader_requires_one_model_space(tmp_path):
@@ -191,7 +269,11 @@ def test_save_embedding_errors(tmp_path):
     with pytest.raises(ValueError, match=r"must end in \.npz"):
         save_embedding_derivative(DummyResult(), tmp_path / "bad.txt")
 
-    path = tmp_path / "test.npz"
+    # An embedding payload must be saved to an *_embedding.npz path.
+    with pytest.raises(ValueError, match="embedding artifact must be saved"):
+        save_embedding_derivative(DummyResult(), tmp_path / "test.npz")
+
+    path = tmp_path / "test_embedding.npz"
     save_embedding_derivative(DummyResult(), path)
     with pytest.raises(FileExistsError):
         save_embedding_derivative(DummyResult(), path)
@@ -249,7 +331,7 @@ def test_load_embedding_errors(tmp_path):
     )
     sidecar2.write_text('{"model_key": "M1"}')
 
-    with pytest.raises(ValueError, match="Embedding dimensions differ"):
+    with pytest.raises(ValueError, match="Embedding shapes differ"):
         load_embedding_derivatives([path1, path2])
 
     # Same dims but different model_key
