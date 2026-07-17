@@ -513,6 +513,16 @@ class BrainDecodeBackend(BackendBase):
             ):
                 module.train()
 
+    def _eval_batch_size(self) -> int:
+        """Batch size for inference, mirroring the batch size used at fit time.
+
+        ``predict``/``transform`` otherwise run the whole fold through the
+        model in one forward pass, which OOMs on large test folds even though
+        training (via skorch) and ``predict_proba`` are already batched.
+        """
+        batch_size = getattr(self._net_, "batch_size", None)
+        return int(batch_size) if batch_size else 32
+
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Extract backbone embeddings without running the classification head.
 
@@ -528,13 +538,14 @@ class BrainDecodeBackend(BackendBase):
         """
         self._validate(X)
         X = self._construct_channels(X)
+        batch_size = self._eval_batch_size()
+        chunks = []
         with self._no_grad():
-            feats = self._forward_features(
-                self._model,
-                self._to_tensor(X),
-                self._metadata.name,
-            )
-        return self._from_tensor(feats)
+            for start in range(0, len(X), batch_size):
+                tensor = self._to_tensor(X[start : start + batch_size])
+                feats = self._forward_features(self._model, tensor, self._metadata.name)
+                chunks.append(self._from_tensor(feats))
+        return np.concatenate(chunks, axis=0)
 
     def _construct_channels(self, X: np.ndarray) -> np.ndarray:
         """Apply the faithful fixed-montage channel construction, if any.
@@ -612,12 +623,19 @@ class BrainDecodeBackend(BackendBase):
         """
         self._validate(X)
         X = self._construct_channels(X)
+        batch_size = self._eval_batch_size()
+        is_regression = getattr(self, "_task", "classification") == "regression"
+        chunks = []
         with self._no_grad():
-            out = self._model(self._to_tensor(X))
-            logits = out["logits"] if isinstance(out, dict) else out
-        if getattr(self, "_task", "classification") == "regression":
-            return self._from_tensor(logits).squeeze(-1)
-        return self._from_tensor(logits.argmax(dim=-1))
+            for start in range(0, len(X), batch_size):
+                tensor = self._to_tensor(X[start : start + batch_size])
+                out = self._model(tensor)
+                logits = out["logits"] if isinstance(out, dict) else out
+                if is_regression:
+                    chunks.append(self._from_tensor(logits).squeeze(-1))
+                else:
+                    chunks.append(self._from_tensor(logits.argmax(dim=-1)))
+        return np.concatenate(chunks, axis=0)
 
     def reset_head(self, n_outputs: int) -> BrainDecodeBackend:
         """Replace the classification head without modifying backbone weights.
