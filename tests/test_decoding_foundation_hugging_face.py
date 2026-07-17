@@ -189,6 +189,29 @@ def test_transform_attention_pooling():
     adapter._backbone.attention_pooling.assert_called()
 
 
+def test_transform_return_tokens_preserves_native_reve_output():
+    import torch
+
+    adapter = _make_fitted_adapter(pooling="attention", n_chans=2)
+    native = torch.arange(3 * 2 * 4 * 512, dtype=torch.float32).reshape(3, 2, 4, 512)
+    adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
+
+    pooled, tokens = adapter.transform(
+        np.zeros((3, 2, 400), dtype=np.float32), return_tokens=True
+    )
+
+    assert pooled.shape == (3, 512)
+    assert tokens.shape == (3, 2, 4, 512)
+    np.testing.assert_array_equal(tokens, native.numpy())
+    assert adapter._backbone.call_count == 1
+    assert adapter.get_token_output_metadata()["token_axes"] == [
+        "window",
+        "channel",
+        "time_patch",
+        "feature",
+    ]
+
+
 def test_transform_raises_before_fit():
     import torch.nn as nn
 

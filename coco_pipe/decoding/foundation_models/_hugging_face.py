@@ -314,7 +314,9 @@ class HuggingFaceBackend(BackendBase):
 
         return _REVESklearnModule
 
-    def _reve_forward(self, x_tensor, *, return_embeddings: bool):
+    def _reve_forward(
+        self, x_tensor, *, return_embeddings: bool, return_tokens: bool = False
+    ):
         """Reorganised from REVEModule.forward()."""
         n_channels = x_tensor.shape[1]
         elec = self._electrode_names or [f"e{i}" for i in range(n_channels)]
@@ -344,9 +346,13 @@ class HuggingFaceBackend(BackendBase):
                 pooled = hidden.mean(dim=1)
             else:
                 pooled = hidden.flatten(start_dim=1)
+        if return_tokens:
+            return pooled, out
         return pooled if return_embeddings else self._head(pooled)
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def transform(
+        self, X: np.ndarray, *, return_tokens: bool = False
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Extract backbone embeddings without running the classification head.
 
         Parameters
@@ -361,8 +367,24 @@ class HuggingFaceBackend(BackendBase):
         """
         self._validate(X)
         with self._no_grad():
-            out = self._reve_forward(self._to_tensor(X), return_embeddings=True)
+            out = self._reve_forward(
+                self._to_tensor(X),
+                return_embeddings=True,
+                return_tokens=return_tokens,
+            )
+        if return_tokens:
+            pooled, tokens = out
+            return self._from_tensor(pooled), self._from_tensor(tokens)
         return self._from_tensor(out)
+
+    def get_token_output_metadata(self) -> dict[str, object]:
+        """Describe REVE's unmodified channel-by-time-patch backbone output."""
+        return {
+            "token_source": "reve_backbone_output",
+            "token_axes": ["window", "channel", "time_patch", "feature"],
+            "token_observation_axes": ["channel", "time_patch"],
+            "token_feature_axis": "feature",
+        }
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Run a full forward pass and return predictions.

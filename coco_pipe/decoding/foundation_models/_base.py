@@ -184,7 +184,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         return {}
 
     @abstractmethod
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def transform(
+        self, X: np.ndarray, *, return_tokens: bool = False
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Extract embeddings from the frozen backbone.
 
         Parameters
@@ -197,7 +199,22 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         -------
         embeddings : np.ndarray of shape (n_samples, embedding_dim)
             Backbone feature vectors before the classification head.
+
+        When ``return_tokens`` is true, return ``(embeddings, tokens)``. The
+        token array is the native backbone feature tensor with only its device
+        transport changed (detached, moved to CPU, and converted to NumPy).
         """
+
+    def get_token_output_metadata(self) -> dict[str, object]:
+        """Describe the native tensor returned when token output is requested.
+
+        Backends that support native token extraction must override this method
+        and explicitly name the tensor source and every axis. No token layout is
+        inferred from array rank.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not expose a native token representation."
+        )
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:

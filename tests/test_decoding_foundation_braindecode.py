@@ -166,6 +166,33 @@ def test_transform_shape_matches_embedding_dim():
     assert out.shape == (4, meta.embedding_dim)
 
 
+def test_transform_return_tokens_preserves_native_cbramod_output():
+    import torch
+
+    adapter, model, n_ch = _make_fitted_adapter()
+    native = torch.arange(4 * 3 * 2 * 200, dtype=torch.float32).reshape(4, 3, 2, 200)
+    model.return_value = {"features": native, "logits": torch.zeros(4, 2)}
+
+    pooled, tokens = adapter.transform(
+        np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
+    )
+
+    assert pooled.shape == (4, 200)
+    np.testing.assert_array_equal(tokens, native.numpy())
+    np.testing.assert_allclose(pooled, native.numpy().mean(axis=(1, 2)))
+
+
+@pytest.mark.parametrize("model_key", ["biot", "bendr"])
+def test_transform_rejects_fake_tokens_for_pooled_only_models(model_key):
+    adapter, _, n_ch = _make_fitted_adapter(
+        model_key, sfreq=get_estimator_spec(model_key).pretrained_sfreq
+    )
+    with pytest.raises(NotImplementedError, match="native token extraction"):
+        adapter.transform(
+            np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
+        )
+
+
 def test_transform_raises_before_fit():
     meta = get_estimator_spec("cbramod")
     adapter = BrainDecodeBackend(

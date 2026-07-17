@@ -242,8 +242,9 @@ def normalize_inclusive_endpoint(
 class FoundationEmbeddingResult:
     """Window- and recording-level embeddings plus extraction provenance.
 
-    ``token_embeddings`` holds the pre-pool token tensor ``(window, token, feature)``
-    and is populated only when the extractor is built with ``store_tokens=True``
+    ``token_embeddings`` holds the native backbone feature tensor, without
+    reshaping or normalization, and is populated only when the extractor is
+    built with ``store_tokens=True``.
     """
 
     window_embeddings: np.ndarray
@@ -270,7 +271,6 @@ class FoundationEmbeddingExtractor:
         resample: bool = True,
         cache_embeddings: bool = False,
         store_tokens: bool = False,
-        normalize_tokens: bool = False,
         batch_size: int | None = None,
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
@@ -290,7 +290,6 @@ class FoundationEmbeddingExtractor:
         self.resample = resample
         self.cache_embeddings = cache_embeddings
         self.store_tokens = store_tokens
-        self.normalize_tokens = normalize_tokens
         self.batch_size = batch_size
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
@@ -300,7 +299,13 @@ class FoundationEmbeddingExtractor:
         """Drop all memoized window embeddings."""
         self._embedding_cache.clear()
 
-    def _transform_batched(self, model: Any, model_input: np.ndarray) -> np.ndarray:
+    def _transform_batched(
+        self,
+        model: Any,
+        model_input: np.ndarray,
+        *,
+        return_tokens: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Forward windows through the backbone, mini-batched along axis 0.
 
         Transformer backbones (e.g. LaBraM) build an attention map per window, so
@@ -311,16 +316,27 @@ class FoundationEmbeddingExtractor:
         """
         batch_size = self.batch_size
         n_windows = len(model_input)
-        if not batch_size or n_windows <= batch_size:
-            return np.asarray(model.transform(model_input), dtype=np.float32)
-        parts = [
-            np.asarray(
-                model.transform(model_input[start : start + batch_size]),
-                dtype=np.float32,
-            )
-            for start in range(0, n_windows, batch_size)
+        batches = (
+            [model_input]
+            if not batch_size or n_windows <= batch_size
+            else [
+                model_input[start : start + batch_size]
+                for start in range(0, n_windows, batch_size)
+            ]
+        )
+        outputs = [
+            model.transform(batch, return_tokens=True)
+            if return_tokens
+            else model.transform(batch)
+            for batch in batches
         ]
-        return np.concatenate(parts, axis=0)
+        if return_tokens:
+            embedding_parts, token_parts = zip(*outputs, strict=True)
+            return (
+                np.concatenate([np.asarray(part) for part in embedding_parts], axis=0),
+                np.concatenate([np.asarray(part) for part in token_parts], axis=0),
+            )
+        return np.concatenate([np.asarray(part) for part in outputs], axis=0)
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
@@ -331,34 +347,19 @@ class FoundationEmbeddingExtractor:
     def _embed_windows(
         self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Run the backbone forward pass and pool/normalize to 2-D rows.
-
-        The pre-pool token tensor ``(window, token, feature)`` is the canonical
-        intermediate: any intermediate backbone axes are flattened into a single
-        token axis (a reshape *view*, so free when tokens are not requested), and
-        pooling is a reduction over it -- ``mean`` averages the token axis,
-        ``flatten`` collapses it into the feature axis. A backbone that already
-        returns 2-D rows yields a single token per window.
-
-        With ``return_tokens=True`` also returns that token tensor, L2-normalized
-        per token only when ``normalize_tokens`` is set (off by default; the raw
-        second-order statistics are what SPD/Riemannian methods consume).
-        """
-        raw = self._transform_batched(model, model_input)
-        if raw.ndim > 2:
-            tokens = raw.reshape(len(raw), -1, raw.shape[-1])
+        """Extract backend-pooled rows and optional unmodified native tokens."""
+        transformed = self._transform_batched(
+            model, model_input, return_tokens=return_tokens
+        )
+        if return_tokens:
+            embeddings, tokens = transformed
         else:
-            tokens = raw[:, None, :]
-        if self.pooling == "flatten":
-            embeddings = tokens.reshape(len(tokens), -1)
-        else:
-            embeddings = tokens.mean(axis=1)
+            embeddings = transformed
         if self.normalize_embeddings:
             embeddings = self._l2_normalize(embeddings)
         if not return_tokens:
             return embeddings
-        tokens_out = self._l2_normalize(tokens) if self.normalize_tokens else tokens
-        return embeddings, np.asarray(tokens_out, dtype=np.float32)
+        return embeddings, tokens
 
     def _backbone_fingerprint(self, prepared: Any) -> str:
         """Stable identity of the deterministic window->embedding mapping."""
@@ -539,7 +540,22 @@ class FoundationEmbeddingExtractor:
             ),
         }
         if tokens is not None:
-            payload["token_shape"] = list(tokens.shape)
+            token_metadata = model.get_token_output_metadata()
+            token_axes = token_metadata.get("token_axes")
+            if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
+                raise ValueError(
+                    "Backend token metadata must name every native tensor axis: "
+                    f"axes={token_axes!r}, shape={tokens.shape}."
+                )
+            payload.update(token_metadata)
+            payload.update(
+                {
+                    "token_layout": "native",
+                    "token_layout_version": 1,
+                    "token_shape": list(tokens.shape),
+                    "token_dtype": str(tokens.dtype),
+                }
+            )
         return FoundationEmbeddingResult(
             window_embeddings=embeddings,
             recording_embedding=np.asarray(recording),

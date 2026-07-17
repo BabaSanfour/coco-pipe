@@ -67,6 +67,7 @@ class BrainDecodeBackend(BackendBase):
         device: str,
         train_mode: str,
         task: str,
+        pooling: str = "mean",
     ) -> None:
         self._metadata = metadata
         self._model = model
@@ -75,6 +76,7 @@ class BrainDecodeBackend(BackendBase):
         self._device = device
         self._train_mode = train_mode
         self._task = task
+        self._pooling = pooling
         self.signal_metadata_: SignalMetadata | None = None
 
     @classmethod
@@ -173,7 +175,11 @@ class BrainDecodeBackend(BackendBase):
         class_name, module_path = _BD_MODEL_MAP[model_key]
         models_module = importlib.import_module(module_path)
         electrode_names = kw.pop("electrode_names", None)
-        kw.pop("pooling", None)
+        pooling = kw.pop("pooling", "mean")
+        if pooling not in {"mean", "flatten"}:
+            raise ValueError(
+                "BrainDecode foundation models support pooling='mean' or 'flatten'."
+            )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
         n_times = int(
             metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
@@ -356,6 +362,7 @@ class BrainDecodeBackend(BackendBase):
             device=device,
             train_mode=train_mode,
             task=task,
+            pooling=pooling,
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
@@ -523,7 +530,9 @@ class BrainDecodeBackend(BackendBase):
         batch_size = getattr(self._net_, "batch_size", None)
         return int(batch_size) if batch_size else 32
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def transform(
+        self, X: np.ndarray, *, return_tokens: bool = False
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """Extract backbone embeddings without running the classification head.
 
         Parameters
@@ -539,13 +548,72 @@ class BrainDecodeBackend(BackendBase):
         self._validate(X)
         X = self._construct_channels(X)
         batch_size = self._eval_batch_size()
-        chunks = []
+        embedding_chunks = []
+        token_chunks = []
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
                 feats = self._forward_features(self._model, tensor, self._metadata.name)
-                chunks.append(self._from_tensor(feats))
-        return np.concatenate(chunks, axis=0)
+                if feats.ndim < 3:
+                    if return_tokens:
+                        raise NotImplementedError(
+                            f"{self._metadata.display_name} exposes only a pooled "
+                            "feature tensor; native token extraction is unavailable."
+                        )
+                    pooled = feats
+                elif self._pooling == "flatten":
+                    pooled = feats.flatten(start_dim=1)
+                else:
+                    pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
+                embedding_chunks.append(self._from_tensor(pooled))
+                if return_tokens:
+                    token_chunks.append(self._from_tensor(feats))
+        embeddings = np.concatenate(embedding_chunks, axis=0)
+        if return_tokens:
+            return embeddings, np.concatenate(token_chunks, axis=0)
+        return embeddings
+
+    def get_token_output_metadata(self) -> dict[str, object]:
+        """Describe the upstream feature tensor without changing its layout."""
+        layouts = {
+            "cbramod": {
+                "token_source": "return_features.features",
+                "token_axes": ["window", "channel", "time_patch", "feature"],
+                "token_observation_axes": ["channel", "time_patch"],
+                "token_feature_axis": "feature",
+            },
+            "labram": {
+                "token_source": "return_features.features",
+                "token_axes": ["window", "patch_token", "feature"],
+                "token_observation_axes": ["patch_token"],
+                "token_feature_axis": "feature",
+            },
+            "luna": {
+                "token_source": "norm_forward_output",
+                "token_axes": ["window", "time_patch", "feature"],
+                "token_observation_axes": ["time_patch"],
+                "token_feature_axis": "feature",
+            },
+            "signaljepa": {
+                "token_source": "return_features.features",
+                "token_axes": ["window", "context_token", "feature"],
+                "token_observation_axes": ["context_token"],
+                "token_feature_axis": "feature",
+            },
+            "eegpt": {
+                "token_source": "return_features.features",
+                "token_axes": ["window", "time_patch", "summary_feature"],
+                "token_observation_axes": ["time_patch"],
+                "token_feature_axis": "summary_feature",
+            },
+        }
+        metadata = layouts.get(self._metadata.name)
+        if metadata is None:
+            raise NotImplementedError(
+                f"{self._metadata.display_name} does not expose a documented "
+                "native token representation."
+            )
+        return metadata
 
     def _construct_channels(self, X: np.ndarray) -> np.ndarray:
         """Apply the faithful fixed-montage channel construction, if any.
