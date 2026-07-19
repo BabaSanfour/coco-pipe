@@ -2033,6 +2033,7 @@ def make_head_to_head_report(
     display_columns: Sequence[str] = HEAD_TO_HEAD_DISPLAY_COLUMNS,
     config: Mapping[str, Any] | None = None,
     asset_urls: dict[str, str] | str | None = "inline",
+    extra_sections: Sequence[Section] = (),
     output_path: str | Path | None = None,
 ) -> Report:
     """Build the head-to-head comparison report from a tagged comparison frame.
@@ -2079,6 +2080,9 @@ def make_head_to_head_report(
             )
         )
     report.add_section(section)
+
+    for extra_section in extra_sections:
+        report.add_section(extra_section)
 
     compatibility = (
         signature_compatibility(frame, tuple(group_columns))

@@ -1687,12 +1687,16 @@ def test_aggregate_groups_string_selector():
 
 def test_observation_frame_and_flatten_noop():
     container = DataContainer(
-        X=np.random.rand(3, 2),
+        X=np.random.rand(3, 3),
         dims=("obs", "feature"),
-        coords={"feature": ["f0", "f1"], "subject": np.array(["a", "b", "c"])},
+        coords={
+            "feature": ["f0", "f1", "f2"],
+            "subject": np.array(["a", "b", "c"]),
+        },
         ids=np.array(["o0", "o1", "o2"]),
     )
     frame = container.observation_frame()
+    assert "feature" not in frame
     assert list(frame["subject"]) == ["a", "b", "c"]
     assert list(frame["sample_id"]) == ["o0", "o1", "o2"]
 

@@ -110,6 +110,87 @@ CV_SIGNATURE_COLUMNS = (
 )
 """Scientific-design fields that must match before two rows are paired."""
 
+SUBJECT_ALIGNMENT_METRIC_LABELS = {
+    "total_sample_variance": "Total sample variance",
+    "variance_participation_ratio": "Variance participation ratio (effective rank)",
+    "variance_participation_ratio_fraction": "Participation-ratio rank fraction",
+    "subject_probe_excess_above_chance": "Subject probe excess above chance",
+    "between_subject_excess_over_null": "Subject variance excess over null",
+    "marginal_label_excess_over_null": "Label variance excess over null",
+    "permutation_p_between_subject_eta2": "Subject variance permutation p",
+    "permutation_p_marginal_label_eta2": "Label variance permutation p",
+    "partial_omega2_subject_within_label": "Subject-within-label partial omega²",
+    "partial_omega2_subject": "Unique subject partial omega²",
+    "partial_omega2_label": "Unique label partial omega²",
+}
+"""Display labels for quantitative subject-alignment diagnostic metrics."""
+
+SUBJECT_ALIGNMENT_IDENTITY_METRICS = frozenset(
+    {
+        "subject_probe_excess_above_chance",
+        "between_subject_excess_over_null",
+    }
+)
+"""Metrics measuring residual subject-identifiable structure."""
+
+SUBJECT_ALIGNMENT_LABEL_METRICS = frozenset({"marginal_label_excess_over_null"})
+"""Metrics measuring retained label-relevant structure."""
+
+SUBJECT_ALIGNMENT_AUDIT_METRICS = (
+    SUBJECT_ALIGNMENT_IDENTITY_METRICS
+    | SUBJECT_ALIGNMENT_LABEL_METRICS
+    | frozenset(
+        {
+            "total_sample_variance",
+            "variance_participation_ratio",
+            "variance_participation_ratio_fraction",
+            "permutation_p_between_subject_eta2",
+            "permutation_p_marginal_label_eta2",
+            "partial_omega2_subject_within_label",
+            "partial_omega2_subject",
+            "partial_omega2_label",
+        }
+    )
+)
+"""Metrics included in the quantitative alignment audit table."""
+
+SUBJECT_ALIGNMENT_PAIRING_COLUMNS = (
+    "cohort_name",
+    "population",
+    "selection_fingerprint",
+    "diagnostic_pair",
+    "scope",
+    "eval_name",
+    "target_col",
+    "design",
+)
+"""Scientific-design fields that must match before computing raw deltas."""
+
+SUBJECT_ALIGNMENT_REQUIRED_COLUMNS = frozenset(
+    {
+        "transform",
+        "cohort_name",
+        "population",
+        "selection_fingerprint",
+        "scope",
+        "eval_name",
+        "target_col",
+        "metric",
+        "value",
+    }
+)
+"""Required schema for population-specific subject-alignment report input."""
+
+SUBJECT_ALIGNMENT_ASSESSMENT_COLUMNS = (
+    "population",
+    "scope",
+    "eval_name",
+    "target_col",
+    "diagnostic_pair",
+    "design",
+)
+"""Context fields identifying a displayed alignment assessment."""
+
 MAX_INLINE_DIAGNOSTIC_RESULTS = 5
 """Maximum top-ranked artifacts to load inline for diagnostic tabs."""
 
@@ -274,6 +355,13 @@ __all__ = [
     "MODULE_DIR",
     "PRIMARY_TIE_BREAKERS",
     "SECTION_ALIASES",
+    "SUBJECT_ALIGNMENT_ASSESSMENT_COLUMNS",
+    "SUBJECT_ALIGNMENT_AUDIT_METRICS",
+    "SUBJECT_ALIGNMENT_IDENTITY_METRICS",
+    "SUBJECT_ALIGNMENT_LABEL_METRICS",
+    "SUBJECT_ALIGNMENT_METRIC_LABELS",
+    "SUBJECT_ALIGNMENT_PAIRING_COLUMNS",
+    "SUBJECT_ALIGNMENT_REQUIRED_COLUMNS",
     "TEMPLATE_DIR",
     "VALID_REDUCTION_SECTIONS",
     "VENDORED_URLS",

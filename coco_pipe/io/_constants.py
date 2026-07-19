@@ -76,6 +76,17 @@ ARTIFACT_SUFFIX = {"embedding": "_embedding.npz", "token": "_tokens.npz"}
 """Filename suffix per embedding-derivative kind. Enforced at save time so the
 suffix is the authoritative marker of an artifact's kind for discovery/loading."""
 
+POOLED_ONLY_EMBEDDING_METADATA_KEYS = frozenset(
+    {
+        "within_window_pooling",
+        "recording_pooling",
+        "normalize_embeddings",
+        "embedding_shape",
+        "embedding_dtype",
+    }
+)
+"""Metadata that must not leak into pooling-independent native token artifacts."""
+
 ANALYSIS_MODES = (
     "flat",
     "sensor",

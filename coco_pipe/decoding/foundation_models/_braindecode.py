@@ -550,16 +550,40 @@ class BrainDecodeBackend(BackendBase):
         batch_size = self._eval_batch_size()
         embedding_chunks = []
         token_chunks = []
+        token_module = None
+        if return_tokens:
+            if self._metadata.name == "biot":
+                token_module = self._model.encoder.transformer
+            elif self._metadata.name == "bendr":
+                token_module = self._model.contextualizer
+
+        captured_tokens = []
+
+        def _capture_tokens(_module, _inputs, output):
+            captured_tokens.append(output)
+
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
-                feats = self._forward_features(self._model, tensor, self._metadata.name)
-                if feats.ndim < 3:
+                if token_module is None:
+                    feats = self._forward_features(
+                        self._model, tensor, self._metadata.name
+                    )
                     if return_tokens:
-                        raise NotImplementedError(
-                            f"{self._metadata.display_name} exposes only a pooled "
-                            "feature tensor; native token extraction is unavailable."
+                        tokens = feats
+                else:
+                    captured_tokens.clear()
+                    with token_module.register_forward_hook(_capture_tokens):
+                        feats = self._forward_features(
+                            self._model, tensor, self._metadata.name
                         )
+                    if not captured_tokens:
+                        raise RuntimeError(
+                            f"{self._metadata.display_name} native token tensor "
+                            "was not captured."
+                        )
+                    tokens = captured_tokens[0]
+                if feats.ndim < 3:
                     pooled = feats
                 elif self._pooling == "flatten":
                     pooled = feats.flatten(start_dim=1)
@@ -567,7 +591,12 @@ class BrainDecodeBackend(BackendBase):
                     pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
                 embedding_chunks.append(self._from_tensor(pooled))
                 if return_tokens:
-                    token_chunks.append(self._from_tensor(feats))
+                    if tokens.ndim < 3:
+                        raise NotImplementedError(
+                            f"{self._metadata.display_name} exposes only a pooled "
+                            "feature tensor; native token extraction is unavailable."
+                        )
+                    token_chunks.append(self._from_tensor(tokens))
         embeddings = np.concatenate(embedding_chunks, axis=0)
         if return_tokens:
             return embeddings, np.concatenate(token_chunks, axis=0)
@@ -580,6 +609,12 @@ class BrainDecodeBackend(BackendBase):
                 "token_source": "return_features.features",
                 "token_axes": ["window", "channel", "time_patch", "feature"],
                 "token_observation_axes": ["channel", "time_patch"],
+                "token_feature_axis": "feature",
+            },
+            "biot": {
+                "token_source": "encoder.transformer_output",
+                "token_axes": ["window", "channel_time_patch", "feature"],
+                "token_observation_axes": ["channel_time_patch"],
                 "token_feature_axis": "feature",
             },
             "labram": {
@@ -605,6 +640,12 @@ class BrainDecodeBackend(BackendBase):
                 "token_axes": ["window", "time_patch", "summary_feature"],
                 "token_observation_axes": ["time_patch"],
                 "token_feature_axis": "summary_feature",
+            },
+            "bendr": {
+                "token_source": "contextualizer_output",
+                "token_axes": ["window", "feature", "context_token"],
+                "token_observation_axes": ["context_token"],
+                "token_feature_axis": "feature",
             },
         }
         metadata = layouts.get(self._metadata.name)

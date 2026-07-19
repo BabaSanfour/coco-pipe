@@ -173,11 +173,16 @@ class DataContainer:
         """Return observation-aligned coordinates and stable sample IDs."""
         if "obs" not in self.dims:
             raise ValueError("DataContainer has no 'obs' dimension.")
-        n_obs = self.X.shape[self.dims.index("obs")]
+        obs_dim_idx = self.dims.index("obs")
+        n_obs = self.X.shape[obs_dim_idx]
         columns: dict[str, Any] = {}
         for key, values in self.coords.items():
             array = np.asarray(values)
-            if array.ndim == 1 and len(array) == n_obs:
+            if (
+                array.ndim == 1
+                and len(array) == n_obs
+                and self._coord_axis(key, array, obs_dim_idx) == obs_dim_idx
+            ):
                 columns[str(key)] = array
         if self.ids is not None:
             columns["sample_id"] = np.asarray(self.ids).astype(str)

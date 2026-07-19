@@ -8,6 +8,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -16,6 +17,7 @@ import pandas as pd
 from ._constants import (
     ARTIFACT_SUFFIX,
     EMBEDDING_COMBINED_TABLE_LABELS,
+    POOLED_ONLY_EMBEDDING_METADATA_KEYS,
     REQUIRED_ARRAYS,
     TOKEN_REQUIRED_ARRAYS,
 )
@@ -53,6 +55,7 @@ def validate_embedding_derivative(path: str | Path) -> dict[str, Any]:
     sidecar = embedding_sidecar_path(path)
     if not sidecar.exists():
         raise FileNotFoundError(f"Missing embedding sidecar: {sidecar}")
+    metadata: dict[str, Any] | None = None
     with np.load(path, allow_pickle=False) as payload:
         if (
             "token_embeddings" in payload.files
@@ -61,11 +64,45 @@ def validate_embedding_derivative(path: str | Path) -> dict[str, Any]:
             missing = TOKEN_REQUIRED_ARRAYS.difference(payload.files)
             if missing:
                 raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+            if not isinstance(metadata, dict):
+                raise ValueError(f"Expected an object in {sidecar}.")
             tokens = np.asarray(payload["token_embeddings"])
-            if tokens.ndim != 3:
+            if tokens.ndim < 3:
                 raise ValueError(
-                    "token_embeddings must be 3-D (window, token, feature)."
+                    "token_embeddings must contain a window axis and at least "
+                    "two native feature axes."
                 )
+            token_axes = metadata.get("token_axes")
+            if metadata.get("token_layout") == "native":
+                if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
+                    raise ValueError(
+                        "Native token metadata must name every saved tensor axis."
+                    )
+                if token_axes[0] != "window" or len(set(token_axes)) != len(token_axes):
+                    raise ValueError(
+                        "Native token axes must be unique and start with 'window'."
+                    )
+                observation_axes = metadata.get("token_observation_axes")
+                feature_axis = metadata.get("token_feature_axis")
+                source = metadata.get("token_source")
+                if not isinstance(source, str) or not source:
+                    raise ValueError(
+                        "Native token metadata must identify token_source."
+                    )
+                if not isinstance(observation_axes, list) or not observation_axes:
+                    raise ValueError(
+                        "Native token metadata must identify token_observation_axes."
+                    )
+                if not isinstance(feature_axis, str) or not feature_axis:
+                    raise ValueError(
+                        "Native token metadata must identify token_feature_axis."
+                    )
+                if set(token_axes) != {"window", *observation_axes, feature_axis}:
+                    raise ValueError(
+                        "Native token metadata must assign every non-window axis "
+                        "to token_observation_axes or token_feature_axis."
+                    )
             for key in ("window_start", "window_stop", "window_index"):
                 if len(payload[key]) != len(tokens):
                     raise ValueError(f"{key} length does not match token_embeddings.")
@@ -84,9 +121,10 @@ def validate_embedding_derivative(path: str | Path) -> dict[str, Any]:
             for key in ("window_start", "window_stop", "window_index"):
                 if len(payload[key]) != len(windows):
                     raise ValueError(f"{key} length does not match window_embeddings.")
-    metadata = json.loads(sidecar.read_text(encoding="utf-8"))
-    if not isinstance(metadata, dict):
-        raise ValueError(f"Expected an object in {sidecar}.")
+    if metadata is None:
+        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Expected an object in {sidecar}.")
     return metadata
 
 
@@ -117,8 +155,32 @@ def save_embedding_derivative(
 
     if tokens is not None:
         tokens = np.asarray(tokens)
+        result_metadata = dict(getattr(result, "metadata", {}) or {})
+        override_metadata = dict(metadata or {})
+        token_axes = override_metadata.get(
+            "token_axes", result_metadata.get("token_axes")
+        )
+        if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
+            raise ValueError(
+                "Saving native tokens requires one explicit token_axes label per axis."
+            )
+        token_contract = {**result_metadata, **override_metadata}
+        observation_axes = token_contract.get("token_observation_axes")
+        feature_axis = token_contract.get("token_feature_axis")
+        source = token_contract.get("token_source")
+        if not isinstance(source, str) or not source:
+            raise ValueError("Saving native tokens requires token_source.")
+        if not isinstance(observation_axes, list) or not observation_axes:
+            raise ValueError("Saving native tokens requires token_observation_axes.")
+        if not isinstance(feature_axis, str) or not feature_axis:
+            raise ValueError("Saving native tokens requires token_feature_axis.")
+        if set(token_axes) != {"window", *observation_axes, feature_axis}:
+            raise ValueError(
+                "Every non-window token axis must be assigned as an observation "
+                "axis or the feature axis."
+            )
         arrays: dict[str, list[str]] = {
-            "token_embeddings": ["window", "token", "embedding_feature"],
+            "token_embeddings": token_axes,
             "window_start": ["window"],
             "window_stop": ["window"],
             "window_index": ["window"],
@@ -129,7 +191,13 @@ def save_embedding_derivative(
             "window_stop": np.asarray(result.window_stop),
             "window_index": np.asarray(result.window_index),
         }
-        extra_meta = {"representation": "token", "token_shape": list(tokens.shape)}
+        extra_meta = {
+            "representation": "token",
+            "token_layout": "native",
+            "token_layout_version": 1,
+            "token_shape": list(tokens.shape),
+            "token_dtype": str(tokens.dtype),
+        }
     else:
         arrays = {
             "window_embeddings": ["window", "embedding_feature"],
@@ -165,6 +233,95 @@ def save_embedding_derivative(
     return path, sidecar
 
 
+def save_embedding_outputs(
+    result: Any,
+    embedding_path: str | Path,
+    *,
+    token_path: str | Path | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    pooled_metadata: Mapping[str, Any] | None = None,
+    overwrite: bool = False,
+) -> tuple[Path, Path | None]:
+    """Write independent pooled and optional token derivatives from *result*.
+
+    ``embedding_path`` and ``token_path`` are independent derivative locations.
+    When ``result.token_embeddings`` is present, ``token_path`` is required.
+    ``metadata`` applies to both outputs, while ``pooled_metadata`` applies only
+    to the pooled derivative. This keeps pooling-specific representation identity
+    out of pooling-independent native-token metadata. Complete outputs are left
+    untouched unless ``overwrite`` is true; a partial NPZ/sidecar pair is repaired.
+    """
+    embedding_path = Path(embedding_path)
+    embedding_suffix = ARTIFACT_SUFFIX["embedding"]
+    if not embedding_path.name.endswith(embedding_suffix):
+        raise ValueError(
+            f"Embedding output path must end in '{embedding_suffix}', "
+            f"got {embedding_path.name!r}."
+        )
+
+    def _complete(path: Path) -> bool:
+        return path.exists() and embedding_sidecar_path(path).exists()
+
+    def _repair_overwrite(path: Path) -> bool:
+        return overwrite or path.exists() or embedding_sidecar_path(path).exists()
+
+    token_embeddings = getattr(result, "token_embeddings", None)
+    if token_embeddings is not None and token_path is None:
+        raise ValueError("token_path is required when token embeddings are present.")
+    resolved_token_path = Path(token_path) if token_path is not None else None
+    if (
+        token_embeddings is not None
+        and resolved_token_path is not None
+        and (overwrite or not _complete(resolved_token_path))
+    ):
+        token_result = SimpleNamespace(
+            window_start=result.window_start,
+            window_stop=result.window_stop,
+            window_index=result.window_index,
+            metadata={
+                key: value
+                for key, value in dict(getattr(result, "metadata", {}) or {}).items()
+                if key not in POOLED_ONLY_EMBEDDING_METADATA_KEYS
+            },
+            token_embeddings=token_embeddings,
+        )
+        save_embedding_derivative(
+            token_result,
+            resolved_token_path,
+            metadata={
+                **{
+                    key: value
+                    for key, value in dict(metadata or {}).items()
+                    if key not in POOLED_ONLY_EMBEDDING_METADATA_KEYS
+                },
+                "artifact_kind": "window_tokens",
+            },
+            overwrite=_repair_overwrite(resolved_token_path),
+        )
+
+    pooled_result = SimpleNamespace(
+        window_embeddings=result.window_embeddings,
+        recording_embedding=result.recording_embedding,
+        window_start=result.window_start,
+        window_stop=result.window_stop,
+        window_index=result.window_index,
+        metadata=getattr(result, "metadata", None),
+        token_embeddings=None,
+    )
+    if overwrite or not _complete(embedding_path):
+        save_embedding_derivative(
+            pooled_result,
+            embedding_path,
+            metadata={
+                **dict(metadata or {}),
+                **dict(pooled_metadata or {}),
+                "artifact_kind": "pooled_embedding",
+            },
+            overwrite=_repair_overwrite(embedding_path),
+        )
+    return embedding_path, resolved_token_path if token_embeddings is not None else None
+
+
 def _manifest_artifacts(root: Path) -> list[Path]:
     """Existing artifact paths recorded in ``run_manifest.json`` (any kind)."""
     manifest = root / "run_manifest.json"
@@ -196,8 +353,8 @@ def discover_embedding_derivatives(
 
     Artifact kind is identified by filename suffix (see :data:`ARTIFACT_SUFFIX`),
     which ``save_embedding_derivative`` enforces. The run manifest (if present)
-    may index either kind; results are filtered to the requested ``kind``, and a
-    recursive glob is used as a fallback when the manifest names none of it.
+    may index either kind. When a requested model is not in that manifest, a
+    recursive scan also finds independently materialized model variants.
     """
     if kind not in ARTIFACT_SUFFIX:
         raise ValueError(f"kind must be one of {sorted(ARTIFACT_SUFFIX)}.")
@@ -208,17 +365,24 @@ def discover_embedding_derivatives(
         paths = sorted(root.rglob(f"*{suffix}"))
     if model_key is None:
         return paths
-    selected = []
-    for path in paths:
-        try:
-            metadata = json.loads(
-                embedding_sidecar_path(path).read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError):
-            continue
-        if str(metadata.get("model_key", "")).lower() == model_key.lower():
-            selected.append(path)
-    return selected
+
+    def select_model(candidates: Iterable[Path]) -> list[Path]:
+        selected = []
+        for path in candidates:
+            try:
+                metadata = json.loads(
+                    embedding_sidecar_path(path).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(metadata.get("model_key", "")).lower() == model_key.lower():
+                selected.append(path)
+        return selected
+
+    selected = select_model(paths)
+    if selected:
+        return selected
+    return select_model(sorted(root.rglob(f"*{suffix}")))
 
 
 def embedding_observation_id(
@@ -235,6 +399,9 @@ def embedding_observation_id(
             if base.endswith(suffix):
                 base = base.removesuffix(suffix)
                 break
+    condition = str(metadata.get("condition", "")).strip()
+    if condition:
+        base = f"{base}_condition-{condition}"
     epoch = "" if window_position is None else f"_epoch-{window_position:04d}"
     return f"{base}{epoch}"
 
@@ -251,8 +418,8 @@ def load_embedding_derivatives(
 
     * ``"recording"`` — the pooled ``recording_embedding`` (2-D ``obs x feature``)
     * ``"epoch"`` — per-epoch ``window_embeddings`` (2-D ``obs x feature``)
-    * ``"token"`` — per-epoch ``token_embeddings`` from the separate
-      ``*_tokens.npz`` artifacts (3-D ``obs x token x feature``)
+    * ``"token"`` — native per-epoch feature tensors from separate
+      ``*_tokens.npz`` artifacts (arbitrary rank, beginning with ``obs``)
 
     A coarser ``"subject"`` level is produced by the merge step, not here (it
     pools across recordings). Kinds are discovered by filename suffix (see
@@ -282,9 +449,13 @@ def load_embedding_derivatives(
     rows: list[np.ndarray] = []
     ids: list[str] = []
     metadata_rows: list[dict[str, Any]] = []
+    artifact_metadata: dict[str, dict[str, Any]] = {}
     obs_shape: tuple[int, ...] | None = None
+    loaded_token_axes: tuple[str, ...] | None = None
+    token_feature_axis: str | None = None
     for path in resolved:
         metadata = validate_embedding_derivative(path)
+        artifact_metadata[str(path)] = metadata
         with np.load(path, allow_pickle=False) as payload:
             array_key = (
                 "token_embeddings"
@@ -299,6 +470,22 @@ def load_embedding_derivatives(
                     f"'{representation}'; wrong artifact kind for this path."
                 )
             values = np.asarray(payload[array_key])
+            if is_token:
+                axes = metadata.get("token_axes")
+                if not isinstance(axes, list) or len(axes) != values.ndim:
+                    raise ValueError(
+                        "Token derivative has no explicit native axis contract: "
+                        f"{path}."
+                    )
+                current_axes = ("obs", *axes[1:])
+                if loaded_token_axes is None:
+                    loaded_token_axes = current_axes
+                    token_feature_axis = str(metadata.get("token_feature_axis", ""))
+                elif current_axes != loaded_token_axes:
+                    raise ValueError(
+                        f"Token axes differ: expected {loaded_token_axes}, got "
+                        f"{current_axes} in {path}."
+                    )
             if is_recording:
                 values = values[None, :]
             if obs_shape is None:
@@ -341,9 +528,18 @@ def load_embedding_derivatives(
             "Embedding derivatives from multiple foundation models cannot be "
             "combined as observations. Pass model_key to load one model at a time."
         )
+    feature_dim = token_feature_axis if is_token else "feature"
+    if not feature_dim or (
+        is_token
+        and loaded_token_axes is not None
+        and feature_dim not in loaded_token_axes
+    ):
+        raise ValueError("Token metadata must identify token_feature_axis explicitly.")
+    feature_axis = loaded_token_axes.index(feature_dim) if is_token else 1
     coords: dict[str, Any] = {
-        "feature": np.asarray(
-            [f"embedding_{idx:04d}" for idx in range(X.shape[-1])], dtype=object
+        feature_dim: np.asarray(
+            [f"embedding_{idx:04d}" for idx in range(X.shape[feature_axis])],
+            dtype=object,
         )
     }
     metadata_frame = pd.DataFrame(metadata_rows)
@@ -351,7 +547,9 @@ def load_embedding_derivatives(
         values = metadata_frame[column]
         if values.map(lambda value: not isinstance(value, (list, dict))).all():
             coords[column] = values.to_numpy(dtype=object)
-    dims = ("obs", "token", "feature") if is_token else ("obs", "feature")
+    dims = loaded_token_axes if is_token else ("obs", "feature")
+    if dims is None:
+        raise RuntimeError("Token axes were not initialized.")
     container = DataContainer(
         X=X,
         dims=dims,
@@ -362,6 +560,7 @@ def load_embedding_derivatives(
             "representation": representation,
             "model_key": next(iter(model_keys), None),
             "artifacts": [str(path) for path in resolved],
+            "artifact_metadata": artifact_metadata,
         },
     )
     if aggregate_by is not None:

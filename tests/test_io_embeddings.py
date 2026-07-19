@@ -16,10 +16,23 @@ from coco_pipe.io.embeddings import (
     load_combined_embedding_table,
     load_embedding_derivatives,
     save_embedding_derivative,
+    save_embedding_outputs,
     validate_embedding_derivative,
     write_embedding_dataset_description,
     write_embedding_manifest,
 )
+
+
+def _native_token_metadata(**metadata):
+    return {
+        **metadata,
+        "token_layout": "native",
+        "token_layout_version": 1,
+        "token_source": "test_native_output",
+        "token_axes": ["window", "token", "feature"],
+        "token_observation_axes": ["token"],
+        "token_feature_axis": "feature",
+    }
 
 
 def test_embedding_derivative_round_trip(tmp_path):
@@ -35,6 +48,7 @@ def test_embedding_derivative_round_trip(tmp_path):
             "subject": "01",
             "session": "01",
             "patient_group_id": "p01",
+            "preprocessing_provenance": {"reference": "average"},
         },
     )
     path = (
@@ -59,6 +73,10 @@ def test_embedding_derivative_round_trip(tmp_path):
     epochs = load_embedding_derivatives(tmp_path, representation="epoch")
     assert epochs.X.shape == (3, 4)
     assert epochs.coords["window_index"].tolist() == [0, 1, 2]
+    assert epochs.meta["artifact_metadata"][str(path)] == metadata
+    assert epochs.meta["artifact_metadata"][str(path)]["preprocessing_provenance"] == {
+        "reference": "average"
+    }
 
 
 def test_token_derivative_round_trip(tmp_path):
@@ -68,11 +86,11 @@ def test_token_derivative_round_trip(tmp_path):
         window_start=np.array([0, 100, 200]),
         window_stop=np.array([100, 200, 300]),
         window_index=np.arange(3),
-        metadata={
-            "model_key": "cbramod",
-            "recording_id": "sub-01_ses-01_run-01",
-            "subject": "01",
-        },
+        metadata=_native_token_metadata(
+            model_key="cbramod",
+            recording_id="sub-01_ses-01_run-01",
+            subject="01",
+        ),
         token_embeddings=np.arange(60, dtype=float).reshape(3, 5, 4),
     )
     token_path = tmp_path / "sub-01_desc-cbramod_tokens.npz"
@@ -97,6 +115,114 @@ def test_token_derivative_round_trip(tmp_path):
         )
 
 
+def test_native_four_dimensional_token_derivative_preserves_layout_and_dtype(tmp_path):
+    native = np.arange(2 * 3 * 4 * 5, dtype=np.float16).reshape(2, 3, 4, 5)
+    result = FoundationEmbeddingResult(
+        window_embeddings=np.ones((2, 5)),
+        recording_embedding=np.ones(5),
+        window_start=np.array([0, 100]),
+        window_stop=np.array([100, 200]),
+        window_index=np.arange(2),
+        metadata={
+            "model_key": "reve",
+            "recording_id": "sub-01",
+            "token_layout": "native",
+            "token_layout_version": 1,
+            "token_source": "reve_backbone_output",
+            "token_axes": ["window", "channel", "time_patch", "feature"],
+            "token_observation_axes": ["channel", "time_patch"],
+            "token_feature_axis": "feature",
+        },
+        token_embeddings=native,
+    )
+    path = tmp_path / "sub-01_desc-reveNative_tokens.npz"
+
+    save_embedding_derivative(result, path)
+    loaded = load_embedding_derivatives(path, representation="token", model_key="reve")
+
+    assert loaded.dims == ("obs", "channel", "time_patch", "feature")
+    assert loaded.X.dtype == native.dtype
+    np.testing.assert_array_equal(loaded.X, native)
+
+
+def test_embedding_observation_id_includes_condition():
+    assert (
+        embedding_observation_id(
+            {"recording_id": "sub-01_run-01", "condition": "EO"},
+            "unrelated_embedding.npz",
+            2,
+        )
+        == "sub-01_run-01_condition-EO_epoch-0002"
+    )
+
+
+def test_save_embedding_outputs_writes_independent_pooled_and_token_artifacts(tmp_path):
+    result = FoundationEmbeddingResult(
+        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
+        recording_embedding=np.arange(4, dtype=float),
+        window_start=np.array([0, 100, 200]),
+        window_stop=np.array([100, 200, 300]),
+        window_index=np.arange(3),
+        metadata=_native_token_metadata(
+            model_key="cbramod",
+            recording_id="sub-01",
+            within_window_pooling="mean",
+            recording_pooling="mean",
+            normalize_embeddings=True,
+        ),
+        token_embeddings=np.arange(60, dtype=float).reshape(3, 5, 4),
+    )
+    embedding_path = tmp_path / "sub-01_desc-cbramod_embedding.npz"
+    requested_token_path = tmp_path / "independent_desc-cbramod_tokens.npz"
+
+    pooled_path, token_path = save_embedding_outputs(
+        result,
+        embedding_path,
+        token_path=requested_token_path,
+        pooled_metadata={
+            "model_key": "cbramod_pool-attention",
+            "source_model_key": "cbramod",
+        },
+    )
+
+    assert pooled_path == embedding_path
+    assert token_path == requested_token_path
+    token_metadata = validate_embedding_derivative(token_path)
+    pooled_metadata = validate_embedding_derivative(pooled_path)
+    assert pooled_metadata["model_key"] == "cbramod_pool-attention"
+    assert pooled_metadata["source_model_key"] == "cbramod"
+    assert token_metadata["model_key"] == "cbramod"
+    assert "source_model_key" not in token_metadata
+    assert "within_window_pooling" not in token_metadata
+    assert "recording_pooling" not in token_metadata
+    assert "normalize_embeddings" not in token_metadata
+    with np.load(pooled_path, allow_pickle=False) as payload:
+        assert "token_embeddings" not in payload.files
+    np.testing.assert_allclose(
+        load_embedding_derivatives(tmp_path, representation="epoch").X,
+        result.window_embeddings,
+    )
+    np.testing.assert_allclose(
+        load_embedding_derivatives(tmp_path, representation="token").X,
+        result.token_embeddings,
+    )
+
+    # Complete outputs resume, while a partial pair is safely repaired.
+    assert save_embedding_outputs(result, embedding_path, token_path=token_path) == (
+        pooled_path,
+        token_path,
+    )
+    token_path.with_suffix(".json").unlink()
+    assert save_embedding_outputs(result, embedding_path, token_path=token_path) == (
+        pooled_path,
+        token_path,
+    )
+    validate_embedding_derivative(token_path)
+
+    with pytest.raises(ValueError, match="token_path is required"):
+        save_embedding_outputs(result, tmp_path / "missing-token-path_embedding.npz")
+
+
 def test_manifest_discovery_partitions_by_kind(tmp_path):
     """A manifest listing both kinds resolves each to the right artifacts."""
 
@@ -107,7 +233,13 @@ def test_manifest_discovery_partitions_by_kind(tmp_path):
             window_start=np.array([0, 100]),
             window_stop=np.array([100, 200]),
             window_index=np.array([0, 1]),
-            metadata={"model_key": model_key, "recording_id": f"sub-{subject}"},
+            metadata=(
+                _native_token_metadata(
+                    model_key=model_key, recording_id=f"sub-{subject}"
+                )
+                if tokens
+                else {"model_key": model_key, "recording_id": f"sub-{subject}"}
+            ),
             token_embeddings=np.ones((2, 5, 4)) if tokens else None,
         )
         suffix = "tokens" if tokens else "embedding"
@@ -296,6 +428,25 @@ def test_write_manifest_and_discover(tmp_path):
     # Filter by model key with missing sidecar should ignore it
     paths = discover_embedding_derivatives(tmp_path, model_key="foo")
     assert len(paths) == 0
+
+
+def test_discover_finds_model_variant_missing_from_manifest(tmp_path):
+    raw = tmp_path / "sub-1_embedding.npz"
+    aligned = tmp_path / "sub-1_proc-alignleace_embedding.npz"
+    raw.touch()
+    aligned.touch()
+    raw.with_suffix(".json").write_text(json.dumps({"model_key": "demo"}))
+    aligned.with_suffix(".json").write_text(
+        json.dumps({"model_key": "demo__align-leace"})
+    )
+    write_embedding_manifest(
+        tmp_path,
+        [{"status": "success", "artifact_path": str(raw)}],
+    )
+
+    assert discover_embedding_derivatives(tmp_path, model_key="demo__align-leace") == [
+        aligned
+    ]
 
 
 def test_load_embedding_errors(tmp_path):

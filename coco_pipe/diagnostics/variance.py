@@ -72,6 +72,42 @@ def _scale_features(
     return scaled, int(constant.sum())
 
 
+def _compute_total_sample_variance_and_participation_ratio(
+    x: np.ndarray,
+) -> dict[str, float]:
+    """Return total sample variance and the covariance participation ratio.
+
+    The covariance eigenvalues are obtained from the singular values of the
+    centered feature matrix without materializing the covariance matrix.
+    The participation ratio is
+    ``sum(eigenvalues) ** 2 / sum(eigenvalues ** 2)`` and its fraction uses
+    ``min(n_observations - 1, n_features)`` as the maximum possible rank.
+    A numerically zero variance spectrum has participation ratio zero.
+    """
+    centered_features = x - x.mean(axis=0)
+    sample_degrees_of_freedom = len(x) - 1
+    singular_values = np.linalg.svd(centered_features, compute_uv=False)
+    sample_covariance_eigenvalues = (
+        np.square(singular_values) / sample_degrees_of_freedom
+    )
+    total_sample_variance = float(sample_covariance_eigenvalues.sum())
+    sum_squared_eigenvalues = float(np.square(sample_covariance_eigenvalues).sum())
+    numerically_zero_variance = sum_squared_eigenvalues <= np.finfo(float).eps
+    participation_ratio = (
+        0.0
+        if numerically_zero_variance
+        else total_sample_variance**2 / sum_squared_eigenvalues
+    )
+    maximum_possible_rank = max(min(len(x) - 1, x.shape[1]), 1)
+    return {
+        "total_sample_variance": total_sample_variance,
+        "variance_participation_ratio": participation_ratio,
+        "variance_participation_ratio_fraction": (
+            participation_ratio / maximum_possible_rank
+        ),
+    }
+
+
 def _pooled_fraction(effect: np.ndarray, total: np.ndarray) -> float:
     denominator = float(np.asarray(total).sum())
     if denominator <= np.finfo(float).eps:
@@ -303,19 +339,19 @@ def null_control(
     subject,
     label,
     *,
-    n_null_seeds: int = 200,
+    n_null_permutations: int = 200,
     rng: np.random.Generator | None = None,
 ) -> dict[str, Any]:
     """Estimate hierarchy-preserving permutation nulls for marginal effects."""
-    if n_null_seeds < 1:
-        raise ValueError("n_null_seeds must be at least 1.")
+    if n_null_permutations < 1:
+        raise ValueError("n_null_permutations must be at least 1.")
     x, groups, y = _arrays(features, subject, label)
     rng = rng or np.random.default_rng(0)
     real = _crossed_ss(x, groups, y)
     subject_codes, subject_labels, pure_labels = _subject_labels(groups, y)
-    label_null = np.empty(n_null_seeds)
-    subject_null = np.empty(n_null_seeds)
-    for index in range(n_null_seeds):
+    label_null = np.empty(n_null_permutations)
+    subject_null = np.empty(n_null_permutations)
+    for index in range(n_null_permutations):
         if pure_labels:
             permuted_subject_labels = rng.permutation(subject_labels)
             permuted_y = permuted_subject_labels[subject_codes]
@@ -351,16 +387,16 @@ def null_control(
         "excess_subject": float(real["subject_frac"] / max(subject_null.mean(), 1e-18)),
         "p_label": float(
             (1 + np.count_nonzero(label_null >= real["label_frac"]))
-            / (n_null_seeds + 1)
+            / (n_null_permutations + 1)
         ),
         "p_subject": float(
             (1 + np.count_nonzero(subject_null >= real["subject_frac"]))
-            / (n_null_seeds + 1)
+            / (n_null_permutations + 1)
         ),
         "df_label_pred": (n_labels - 1) / max(n - 1, 1),
         "df_subject_pred": (n_subjects - 1) / max(n - 1, 1),
         "method": "hierarchy_preserving_permutation",
-        "n_null_seeds": n_null_seeds,
+        "n_null_permutations": n_null_permutations,
         "n": n,
         "n_subjects": n_subjects,
         "n_labels": n_labels,
@@ -496,7 +532,7 @@ def variance_decomposition_report(
     label=None,
     *,
     feature_scaling: Literal["none", "zscore"] = "zscore",
-    n_null_seeds: int = 200,
+    n_null_permutations: int = 200,
     rng: np.random.Generator | None = None,
     probe_blocks=None,
     probe_cap: int = 100,
@@ -519,7 +555,7 @@ def variance_decomposition_report(
     feature_scaling : {"none", "zscore"}, default="zscore"
         Z-scoring makes the pooled SS partition invariant to feature units.
         Constant features are retained as zeros and counted in the output.
-    n_null_seeds : int, default=200
+    n_null_permutations : int, default=200
         Number of hierarchy-preserving permutations used for marginal nulls.
     rng : numpy.random.Generator, optional
         Permutation generator. A deterministic generator is used by default.
@@ -556,11 +592,12 @@ def variance_decomposition_report(
         x,
         groups,
         y,
-        n_null_seeds=n_null_seeds,
+        n_null_permutations=n_null_permutations,
         rng=rng,
     )
     real = control["real"]
     values = {
+        **_compute_total_sample_variance_and_participation_ratio(x_raw),
         "marginal_label_eta2": real["label_frac"],
         "between_subject_eta2": real["subject_frac"],
         "null_marginal_label_eta2": control["null_label_frac"]["mean"],
@@ -642,8 +679,11 @@ def variance_decomposition_report(
         "n_labels": len(pd.unique(y)),
         "design": design,
         "feature_scaling": feature_scaling,
+        "representation_variance_normalization": "sample_covariance_ddof_1",
+        "representation_rank_metric": "participation_ratio",
+        "representation_maximum_rank": "min(n_observations - 1, n_features)",
         "null_method": control["method"],
-        "n_null_permutations": n_null_seeds,
+        "n_null_permutations": n_null_permutations,
         "probe_split_unit": "observation" if probe_blocks is None else "block",
     }
     rows = [

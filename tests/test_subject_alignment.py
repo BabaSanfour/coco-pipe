@@ -137,13 +137,16 @@ def test_variance_diagnostics_match_null_and_nested_partition():
 
     rng = np.random.default_rng(10)
     iid = rng.standard_normal(x.shape)
-    control = null_control(iid, groups, labels, n_null_seeds=100, rng=rng)
+    control = null_control(iid, groups, labels, n_null_permutations=100, rng=rng)
     expected = (len(np.unique(groups)) - 1) / (len(groups) - 1)
     assert control["null_subject_frac"]["mean"] == pytest.approx(expected, abs=0.01)
     assert control["method"] == "hierarchy_preserving_permutation"
-    report = variance_decomposition_report(x, groups, labels, n_null_seeds=2)
+    report = variance_decomposition_report(x, groups, labels, n_null_permutations=2)
     assert isinstance(report, pd.DataFrame)
     assert set(report["metric"]) >= {
+        "total_sample_variance",
+        "variance_participation_ratio",
+        "variance_participation_ratio_fraction",
         "subject_within_label_fraction",
         "label_fraction",
         "between_subject_excess_over_null",
@@ -163,7 +166,7 @@ def test_variance_report_accepts_data_container_coordinates():
         container,
         subject="study_id",
         label="diagnosis",
-        n_null_seeds=2,
+        n_null_permutations=2,
     )
     assert isinstance(report, pd.DataFrame)
     assert "subject_within_label_fraction" in set(report["metric"])
@@ -181,7 +184,7 @@ def test_variance_report_uses_container_y_as_default_label():
     report = variance_decomposition_report(
         container,
         subject="study_id",
-        n_null_seeds=2,
+        n_null_permutations=2,
     )
 
     assert "label_fraction" in set(report["metric"])
@@ -196,9 +199,11 @@ def test_variance_report_does_not_guess_coordinate_roles():
     )
 
     with pytest.raises(ValueError, match="subject must be supplied"):
-        variance_decomposition_report(container, label="label", n_null_seeds=2)
+        variance_decomposition_report(container, label="label", n_null_permutations=2)
     with pytest.raises(ValueError, match="label must be supplied"):
-        variance_decomposition_report(container, subject="subject", n_null_seeds=2)
+        variance_decomposition_report(
+            container, subject="subject", n_null_permutations=2
+        )
 
 
 def test_variance_report_moves_container_observations_to_rows():
@@ -213,7 +218,7 @@ def test_variance_report_moves_container_observations_to_rows():
         container,
         subject="study_id",
         label="diagnosis",
-        n_null_seeds=2,
+        n_null_permutations=2,
     )
 
     assert "subject_within_label_fraction" in set(report["metric"])
@@ -229,7 +234,7 @@ def test_nested_report_partition_is_additive_despite_marginal_overlap():
     labels = np.repeat([0, 0, 1, 1], 2)
 
     report = variance_decomposition_report(
-        x, groups, labels, feature_scaling="none", n_null_seeds=10
+        x, groups, labels, feature_scaling="none", n_null_permutations=10
     )
 
     partition = sum(
@@ -261,7 +266,7 @@ def test_crossed_report_uses_adjusted_additive_partition():
         + rng.normal(scale=0.2, size=(len(groups), d))
     )
 
-    report = variance_decomposition_report(x, groups, labels, n_null_seeds=10)
+    report = variance_decomposition_report(x, groups, labels, n_null_permutations=10)
 
     assert set(report["design"]) == {"crossed_adjusted_fixed_effects"}
     partition = sum(
@@ -281,8 +286,10 @@ def test_crossed_report_uses_adjusted_additive_partition():
 def test_zscore_report_is_invariant_to_feature_units():
     x, groups, labels = _subject_data(n_subjects=6, per=10)
     rescaled = x * np.geomspace(0.01, 100.0, x.shape[1])
-    first = variance_decomposition_report(x, groups, labels, n_null_seeds=2)
-    second = variance_decomposition_report(rescaled, groups, labels, n_null_seeds=2)
+    first = variance_decomposition_report(x, groups, labels, n_null_permutations=2)
+    second = variance_decomposition_report(
+        rescaled, groups, labels, n_null_permutations=2
+    )
 
     for name in (
         "label_fraction",
@@ -298,13 +305,13 @@ def test_report_tracks_constant_features_and_rejects_nonfinite_values():
     x, groups, labels = _subject_data(n_subjects=4, per=10)
     with_constant = np.column_stack((x, np.ones(len(x))))
     report = variance_decomposition_report(
-        with_constant, groups, labels, n_null_seeds=2
+        with_constant, groups, labels, n_null_permutations=2
     )
     assert set(report["n_constant_features"]) == {1}
 
     x[0, 0] = np.nan
     with pytest.raises(ValueError, match="finite"):
-        variance_decomposition_report(x, groups, labels, n_null_seeds=2)
+        variance_decomposition_report(x, groups, labels, n_null_permutations=2)
 
 
 def test_subject_probe_can_hold_out_complete_blocks(monkeypatch):

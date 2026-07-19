@@ -127,6 +127,26 @@ _LAZY_EXPORTS = {
         "coco_pipe.report.decoding_sweep",
         "build_capability_matrix_section",
     ),
+    "build_subject_alignment_diagnostics_section": (
+        "coco_pipe.report.variance",
+        "build_subject_alignment_diagnostics_section",
+    ),
+    "build_alignment_coverage_section": (
+        "coco_pipe.report.variance",
+        "build_alignment_coverage_section",
+    ),
+    "build_alignment_tradeoff_section": (
+        "coco_pipe.report.variance",
+        "build_alignment_tradeoff_section",
+    ),
+    "select_subject_alignment_diagnostics": (
+        "coco_pipe.report.variance",
+        "select_subject_alignment_diagnostics",
+    ),
+    "validate_subject_alignment_diagnostics": (
+        "coco_pipe.report.variance",
+        "validate_subject_alignment_diagnostics",
+    ),
     "build_foundation_comparison_sections": (
         "coco_pipe.report.decoding_sweep",
         "build_foundation_comparison_sections",
@@ -307,6 +327,10 @@ _LAZY_EXPORTS = {
     "MODULE_DIR": ("coco_pipe.report._constants", "MODULE_DIR"),
     "PRIMARY_TIE_BREAKERS": ("coco_pipe.report._constants", "PRIMARY_TIE_BREAKERS"),
     "SECTION_ALIASES": ("coco_pipe.report._constants", "SECTION_ALIASES"),
+    "SUBJECT_ALIGNMENT_REQUIRED_COLUMNS": (
+        "coco_pipe.report._constants",
+        "SUBJECT_ALIGNMENT_REQUIRED_COLUMNS",
+    ),
     "TEMPLATE_DIR": ("coco_pipe.report._constants", "TEMPLATE_DIR"),
     "VALID_REDUCTION_SECTIONS": (
         "coco_pipe.report._constants",

@@ -182,15 +182,133 @@ def test_transform_return_tokens_preserves_native_cbramod_output():
     np.testing.assert_allclose(pooled, native.numpy().mean(axis=(1, 2)))
 
 
-@pytest.mark.parametrize("model_key", ["biot", "bendr"])
-def test_transform_rejects_fake_tokens_for_pooled_only_models(model_key):
-    adapter, _, n_ch = _make_fitted_adapter(
-        model_key, sfreq=get_estimator_spec(model_key).pretrained_sfreq
+@pytest.mark.parametrize(
+    ("model_key", "token_shape", "expected_metadata"),
+    [
+        (
+            "biot",
+            (4, 6, 256),
+            {
+                "token_source": "encoder.transformer_output",
+                "token_axes": ["window", "channel_time_patch", "feature"],
+                "token_observation_axes": ["channel_time_patch"],
+                "token_feature_axis": "feature",
+            },
+        ),
+        (
+            "bendr",
+            (4, 512, 6),
+            {
+                "token_source": "contextualizer_output",
+                "token_axes": ["window", "feature", "context_token"],
+                "token_observation_axes": ["context_token"],
+                "token_feature_axis": "feature",
+            },
+        ),
+    ],
+)
+def test_transform_captures_native_tokens_before_biot_and_bendr_pooling(
+    model_key, token_shape, expected_metadata
+):
+    import torch
+
+    class _FixedTokens(torch.nn.Module):
+        def __init__(self, values):
+            super().__init__()
+            self.register_buffer("values", values)
+
+        def forward(self, _x):
+            return self.values
+
+    class _TokenModel(torch.nn.Module):
+        def __init__(self, values):
+            super().__init__()
+            if model_key == "biot":
+                self.encoder = torch.nn.Module()
+                self.encoder.transformer = _FixedTokens(values)
+            else:
+                self.contextualizer = _FixedTokens(values)
+
+        def forward(self, x, return_features=False):
+            if model_key == "biot":
+                native = self.encoder.transformer(x)
+                features = native.mean(dim=1)
+            else:
+                native = self.contextualizer(x)
+                features = native[:, :, 0]
+            return {"features": features, "logits": torch.zeros(len(x), 2)}
+
+    native = torch.arange(np.prod(token_shape), dtype=torch.float32).reshape(
+        token_shape
     )
-    with pytest.raises(NotImplementedError, match="native token extraction"):
-        adapter.transform(
-            np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
-        )
+    model = _TokenModel(native)
+    metadata = get_estimator_spec(model_key)
+    n_ch = metadata.pretrained_n_chans or 19
+    adapter = BrainDecodeBackend(
+        metadata=metadata,
+        model=model,
+        feat_dim=metadata.embedding_dim,
+        n_outputs=2,
+        device="cpu",
+        train_mode="frozen",
+        task="classification",
+    )
+    adapter.signal_metadata_ = SignalMetadata(
+        sfreq=metadata.pretrained_sfreq,
+        ch_names=[f"ch{i}" for i in range(n_ch)],
+    )
+
+    pooled, tokens = adapter.transform(
+        np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
+    )
+
+    expected_pooled = native.mean(dim=1) if model_key == "biot" else native[:, :, 0]
+    np.testing.assert_array_equal(tokens, native.numpy())
+    np.testing.assert_array_equal(pooled, expected_pooled.numpy())
+    assert adapter.get_token_output_metadata() == expected_metadata
+    token_module = (
+        model.encoder.transformer if model_key == "biot" else model.contextualizer
+    )
+    assert not token_module._forward_hooks
+
+
+def test_biot_token_hook_is_removed_when_forward_fails():
+    import torch
+
+    class _Transformer(torch.nn.Module):
+        def forward(self, x):
+            return x.transpose(1, 2)
+
+    class _BrokenBIOT(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = torch.nn.Module()
+            self.encoder.transformer = _Transformer()
+
+        def forward(self, x, return_features=False):
+            self.encoder.transformer(x)
+            raise RuntimeError("forward failed")
+
+    metadata = get_estimator_spec("biot")
+    model = _BrokenBIOT()
+    adapter = BrainDecodeBackend(
+        metadata=metadata,
+        model=model,
+        feat_dim=metadata.embedding_dim,
+        n_outputs=2,
+        device="cpu",
+        train_mode="frozen",
+        task="classification",
+    )
+    adapter.signal_metadata_ = SignalMetadata(
+        sfreq=metadata.pretrained_sfreq,
+        ch_names=[f"ch{i}" for i in range(19)],
+    )
+
+    with pytest.raises(RuntimeError, match="forward failed"):
+        adapter.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
+
+    assert not model.encoder.transformer._forward_hooks
 
 
 def test_transform_raises_before_fit():
