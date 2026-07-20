@@ -1250,31 +1250,51 @@ def _unit_topomaps(
     plot_metric: str,
     title_prefix: str,
     trace_label: str,
+    map_group_columns: Sequence[str] = (),
 ) -> Element | None:
-    """Scalp topomaps of the best per-sensor value for the key metrics."""
+    """Scalp topomaps of the best per-sensor value for the key metrics.
+
+    ``map_group_columns`` identifies scientific units that must be rendered as
+    separate maps (for example descriptor family or evaluation target). This
+    keeps repeated sensor names from different units out of the same montage.
+    """
     if rows.empty:
         return None
     topomaps: list[Element] = []
-    for topo_metric in [plot_metric, "trustworthiness", "continuity"]:
+    for topo_metric in dict.fromkeys([plot_metric, "trustworthiness", "continuity"]):
         if topo_metric not in rows.columns:
             continue
         topo_df = rows.dropna(subset=[topo_metric])
         if topo_df.empty:
             continue
-        topo_groups = {
-            topo_metric: (
-                topo_df[unit_column].astype(str).tolist(),
-                topo_df[topo_metric].astype(float).to_numpy(),
-            )
-        }
-        topo_plot = plot_topomap_selector(
-            topo_groups, title=f"{title_prefix} best {topo_metric}", unit=topo_metric
+        available_group_columns = [
+            column
+            for column in map_group_columns
+            if column in topo_df.columns and topo_df[column].notna().any()
+        ]
+        grouped_rows = (
+            topo_df.groupby(available_group_columns, dropna=False, sort=False)
+            if available_group_columns
+            else [((), topo_df)]
         )
-        if topo_plot is not None:
-            topomaps.append(PlotlyElement(topo_plot))
-            continue
-        topo_label, (topo_names, topo_values) = next(iter(topo_groups.items()))
+        topo_groups = {}
+        for group_key, group_df in grouped_rows:
+            group_values = group_key if isinstance(group_key, tuple) else (group_key,)
+            group_label = " / ".join(str(value) for value in group_values)
+            topo_groups[group_label or topo_metric] = (
+                group_df[unit_column].astype(str).tolist(),
+                group_df[topo_metric].astype(float).to_numpy(),
+            )
         try:
+            topo_plot = plot_topomap_selector(
+                topo_groups,
+                title=f"{title_prefix} best {topo_metric}",
+                unit=topo_metric,
+            )
+            if topo_plot is not None:
+                topomaps.append(PlotlyElement(topo_plot))
+                continue
+            topo_label, (topo_names, topo_values) = next(iter(topo_groups.items()))
             topo_fig = plot_topomap_from_channel_values(
                 channel_names=topo_names,
                 values=topo_values,
@@ -1442,12 +1462,18 @@ def build_unit_summary(
             stab_tabs[tab_label] = stab_elem
 
         if unit_label == "sensor":
+            topo_group_columns = [
+                column
+                for column in group_columns
+                if column != "eval_name" and column in peak_rows.columns
+            ]
             topo_elem = _unit_topomaps(
                 peak_rows,
                 unit_column=unit_column,
                 plot_metric=plot_metric,
                 title_prefix=title_prefix,
                 trace_label=tab_label,
+                map_group_columns=topo_group_columns,
             )
             if topo_elem is not None:
                 topo_tabs[tab_label] = topo_elem
@@ -1925,7 +1951,7 @@ def build_pooled_section(
                 )
                 if plots_elem:
                     fam_container.add_element(plots_elem)
-            if fam_container.elements:
+            if fam_container.children:
                 family_tabs[str(family)] = fam_container
 
         if family_tabs:
@@ -1995,13 +2021,32 @@ def build_pooled_section(
         return section
 
     unit_label = ctx.unit_label("analysis unit")
-    build_unit_summary(
-        section,
-        merged,
-        ctx,
-        unit_label=unit_label,
-        title_prefix="Pooled",
-    )
+    if ctx.analysis_mode in {"sensor_within_family", "sensor_within_subfamily"}:
+        group_columns = ["family"]
+        if (
+            ctx.analysis_mode == "sensor_within_subfamily"
+            and "subfamily" in merged.columns
+        ):
+            group_columns.append("subfamily")
+        for group_key, family_runs in merged.groupby(group_columns, dropna=False):
+            group_values = group_key if isinstance(group_key, tuple) else (group_key,)
+            group_label = " / ".join(str(value) for value in group_values)
+            section.add_markdown(f"### {group_label}")
+            build_unit_summary(
+                section,
+                family_runs,
+                ctx,
+                unit_label="sensor",
+                title_prefix=f"Pooled - {group_label}",
+            )
+    else:
+        build_unit_summary(
+            section,
+            merged,
+            ctx,
+            unit_label=unit_label,
+            title_prefix="Pooled",
+        )
 
     top_n = 2 if ctx.analysis_mode == "sensor" else 1
     reducer_tabs = {}

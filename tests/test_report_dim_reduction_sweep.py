@@ -13,6 +13,7 @@ from coco_pipe.report.dim_reduction_sweep import (
     build_best_fit_plots,
     build_dataset_report,
     build_meta_dict,
+    build_pooled_section,
     build_reduction_condition_ranking_section,
     build_reduction_eval_results_section,
     build_reduction_rollup_report,
@@ -438,6 +439,83 @@ def test_build_unit_summary_tabs_by_eval_not_unit():
     assert "n=10" in rendered
 
 
+def test_build_unit_summary_topomap_failure_becomes_warning(tmp_path, monkeypatch):
+    rows = pd.DataFrame(
+        [
+            {"unit_name": sensor, "trustworthiness": score}
+            for sensor, score in zip(_CHANNELS, (0.8, 0.7, 0.6, 0.5), strict=True)
+        ]
+    )
+    ctx = _ctx(
+        tmp_path,
+        analysis_mode="sensor",
+        unit_labels={"sensor": "sensor"},
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.plot_topomap_selector",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("no layout")),
+    )
+    section = Section("Sensors")
+
+    build_unit_summary(
+        section,
+        rows,
+        ctx,
+        unit_label="sensor",
+        title_prefix="Pooled",
+    )
+
+    rendered = section.render()
+    assert "Topomap rendering failed" in rendered
+    assert "no layout" in rendered
+
+
+def test_build_unit_summary_groups_topomaps_by_family(tmp_path, monkeypatch):
+    rows = pd.DataFrame(
+        [
+            {
+                "family": family,
+                "unit_name": sensor,
+                "trustworthiness": score,
+            }
+            for family in ("band", "complexity")
+            for sensor, score in (("Fz", 0.8), ("Cz", 0.7), ("Pz", 0.6))
+        ]
+    )
+    ctx = _ctx(
+        tmp_path,
+        analysis_mode="sensor_within_family",
+        unit_labels={"sensor_within_family": "sensor"},
+    )
+    seen_value_maps = []
+
+    def _capture_topomap(value_maps, **_kwargs):
+        seen_value_maps.append(value_maps)
+
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.plot_topomap_selector",
+        _capture_topomap,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.plot_topomap_from_channel_values",
+        lambda **_kwargs: None,
+    )
+    section = Section("Sensors")
+
+    build_unit_summary(
+        section,
+        rows,
+        ctx,
+        unit_label="sensor",
+        title_prefix="Pooled",
+    )
+
+    assert len(seen_value_maps) == 1
+    assert set(seen_value_maps[0]) == {"band", "complexity"}
+    for channel_names, _values in seen_value_maps[0].values():
+        assert channel_names == ["Fz", "Cz", "Pz"]
+
+
 def test_build_reduction_condition_ranking_section_empty():
     assert (
         build_reduction_condition_ranking_section(
@@ -709,3 +787,125 @@ def test_build_dataset_report_flat_end_to_end(tmp_path):
     assert "Fit Failures" in titles  # failure section rendered
     assert seen == ["Overview"]  # overview_extras hook invoked with the section
     assert "Test Report" in report.render()  # renders to HTML without error
+
+
+def test_build_pooled_section_family_uses_container_children(tmp_path, monkeypatch):
+    ctx = _ctx(
+        tmp_path,
+        analysis_mode="family",
+        reducers=["pca"],
+        unit_labels={"family": "family"},
+    )
+    pooled_runs = pd.DataFrame(
+        [
+            {
+                "fit_id": "pooled-band-pca-2",
+                "scope": "pooled",
+                "condition": "pooled",
+                "analysis_mode": "family",
+                "family": "band",
+                "unit_name": "band",
+                "reducer": "pca",
+                "n_components": 2,
+                "status": "success",
+                "artifact_path": "unused",
+                "trustworthiness": 0.8,
+            }
+        ]
+    )
+    artifact = {
+        "embedding": np.zeros((6, 2)),
+        "ids": _container("EO").ids,
+        "diagnostics": {},
+    }
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.load_fit_artifact",
+        lambda _path: artifact,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.build_unit_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.build_best_fit_plots",
+        lambda *_args, **_kwargs: None,
+    )
+
+    section = build_pooled_section(
+        pooled_runs,
+        pd.DataFrame(),
+        ctx,
+        pooled_container=_container("EO"),
+    )
+
+    assert section is not None
+    assert "band" in section.render()
+
+
+def test_build_pooled_sensor_within_family_splits_topomaps_by_family(
+    tmp_path, monkeypatch
+):
+    ctx = _ctx(
+        tmp_path,
+        analysis_mode="sensor_within_family",
+        reducers=["pca"],
+        unit_labels={"sensor_within_family": "sensor"},
+    )
+    pooled_runs = pd.DataFrame(
+        [
+            {
+                "fit_id": f"{family}-{sensor}",
+                "scope": "pooled",
+                "condition": "pooled",
+                "analysis_mode": "sensor_within_family",
+                "family": family,
+                "unit_name": sensor,
+                "reducer": "pca",
+                "n_components": 2,
+                "status": "success",
+                "artifact_path": "unused",
+                "trustworthiness": score,
+            }
+            for family in ("band", "complexity")
+            for sensor, score in (("Fz", 0.8), ("Cz", 0.7), ("Pz", 0.6))
+        ]
+    )
+    artifact = {
+        "embedding": np.zeros((6, 2)),
+        "ids": _container("EO").ids,
+        "diagnostics": {},
+    }
+    seen_channel_names = []
+
+    def _capture_topomap(value_maps, **_kwargs):
+        for channel_names, _values in value_maps.values():
+            seen_channel_names.append(list(channel_names))
+
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.load_fit_artifact",
+        lambda _path: artifact,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.build_best_fit_plots",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.plot_topomap_selector",
+        _capture_topomap,
+    )
+    monkeypatch.setattr(
+        "coco_pipe.report.dim_reduction_sweep.plot_topomap_from_channel_values",
+        lambda **_kwargs: None,
+    )
+
+    section = build_pooled_section(
+        pooled_runs,
+        pd.DataFrame(),
+        ctx,
+        pooled_container=_container("EO"),
+    )
+
+    assert section is not None
+    assert "band" in section.render() and "complexity" in section.render()
+    assert len(seen_channel_names) >= 2
+    assert all(len(names) == len(set(names)) for names in seen_channel_names)

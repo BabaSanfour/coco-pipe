@@ -5,6 +5,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import pytest
 
 from coco_pipe.viz.topo import (
     feature_names_are_channels,
@@ -84,6 +85,25 @@ def test_plot_topomap_from_channel_values_none_on_empty():
 
 def test_plot_topomap_from_channel_values_none_on_length_mismatch():
     assert plot_topomap_from_channel_values(_CHANNELS, [1.0, 2.0], "t") is None
+
+
+def test_plot_topomap_from_channel_values_rejects_duplicate_names():
+    with pytest.raises(ValueError, match=r"must be unique.*Fz"):
+        plot_topomap_from_channel_values(
+            ["Fz", "Cz", "Pz", "Fz"],
+            [1.0, 2.0, 3.0, 4.0],
+            "t",
+        )
+
+
+def test_plot_topomap_from_channel_values_aligns_values_after_montage_filter():
+    fig = plot_topomap_from_channel_values(
+        ["Fz", "NotAChannel", "Cz", "Pz"],
+        [1.0, 99.0, 2.0, 3.0],
+        "t",
+    )
+    assert isinstance(fig, plt.Figure)
+    plt.close(fig)
 
 
 def test_plot_topomap_from_channel_values_none_when_fewer_than_three_resolve():

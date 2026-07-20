@@ -13,6 +13,7 @@ import base64
 import functools
 import io
 import logging
+from collections import Counter
 from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
@@ -90,13 +91,24 @@ def plot_topomap_from_channel_values(
         return None
 
     names = [str(channel) for channel in channel_names]
+    duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
+    if duplicates:
+        raise ValueError(
+            "Topomap channel names must be unique; "
+            f"duplicates: {duplicates}. Group values by scientific unit "
+            "before plotting."
+        )
+
     info = info_from_montage(names, montage=montage)
-    if len(info.ch_names) < 3:
+    kept_names = list(info.ch_names)
+    if len(kept_names) < 3:
         return None
+    value_by_name = dict(zip(names, arr, strict=True))
+    kept_values = np.asarray([value_by_name[name] for name in kept_names], dtype=float)
 
     fig, ax = plot_topomap(
-        values=arr,
-        index=names,
+        values=kept_values,
+        index=kept_names,
         info=info,
         cmap=cmap,
         symmetric=False,
