@@ -757,17 +757,31 @@ def _run_permutation_loop(
         # degenerate inner folds). Score the permuted fit only.
         if perm_config.statistical_assessment is not None:
             perm_config.statistical_assessment.enabled = False
-        p_res = Experiment(perm_config).run(
-            X,
-            y_perm,
-            groups=groups,
-            feature_names=feature_names,
-            sample_ids=sample_ids,
-            sample_metadata=sample_metadata,
-            observation_level=observation_level,
-            inferential_unit=inferential_unit,
-            time_axis=time_axis,
-        )
+        try:
+            p_res = Experiment(perm_config).run(
+                X,
+                y_perm,
+                groups=groups,
+                feature_names=feature_names,
+                sample_ids=sample_ids,
+                sample_metadata=sample_metadata,
+                observation_level=observation_level,
+                inferential_unit=inferential_unit,
+                time_axis=time_axis,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # With small grouped data a permuted label assignment can produce
+            # a single-class CV fold, making fold-level metrics undefined.
+            # This is expected under permutation; record NaN for this draw
+            # and let np.nanpercentile / np.nanmean handle it downstream.
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "Permutation %d skipped (drew degenerate fold): %s",
+                p_idx,
+                exc,
+            )
+            return [np.nan] * len(score_keys)
         p_preds = p_res.get_predictions()
         p_preds = p_preds[p_preds["Model"] == model]
         p_agg = aggregate_predictions_for_inference(
