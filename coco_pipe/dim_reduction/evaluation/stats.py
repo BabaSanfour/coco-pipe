@@ -22,7 +22,6 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
-from statsmodels.stats.multitest import multipletests
 
 __all__ = [
     "grouped_condition_stats",
@@ -106,6 +105,15 @@ def paired_condition_stats(
                 "p_fdr",
             ]
         )
+
+    try:
+        from statsmodels.stats.multitest import multipletests
+    except ImportError as exc:
+        raise ImportError(
+            "'statsmodels' is required for FDR correction in paired_condition_stats. "
+            "Install it with: pip install statsmodels  "
+            "(or: pip install 'coco-pipe[dim-red]')"
+        ) from exc
 
     out = pd.DataFrame(rows)
     _, p_fdr, _, _ = multipletests(out["p_uncorrected"].fillna(1.0), method="fdr_bh")
@@ -203,6 +211,15 @@ def grouped_condition_stats(
                 "p_fdr",
             ]
         )
+
+    try:
+        from statsmodels.stats.multitest import multipletests
+    except ImportError as exc:
+        raise ImportError(
+            "'statsmodels' is required for FDR correction in grouped_condition_stats. "
+            "Install it with: pip install statsmodels  "
+            "(or: pip install 'coco-pipe[dim-red]')"
+        ) from exc
 
     out = pd.DataFrame(rows)
     _, p_fdr, _, _ = multipletests(out["p_uncorrected"].fillna(1.0), method="fdr_bh")
