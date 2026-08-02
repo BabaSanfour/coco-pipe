@@ -347,42 +347,6 @@ class BrainDecodeBackend(BackendBase):
         model = model.to(device)
 
         if model_key == "signaljepa":
-            # SignalJEPA uses nn.Transformer internally: encoder has 8
-            # TransformerEncoderLayer blocks, each containing nn.MultiheadAttention
-            # (d_model=64, nhead=8 → d_k=8 per head).
-            #
-            # ROOT CAUSE: attention logit = (x@W_Q_i)·(x@W_K_j)/sqrt(8).
-            # After LoRA training, W_Q/W_K norms can grow so that logits exceed
-            # ~89, causing exp() overflow → NaN in softmax → NaN propagates
-            # through LayerNorm (LayerNorm(NaN) = NaN) → entire residual stream
-            # becomes NaN → all subsequent layers output NaN → NaN predictions.
-            # The _NaNGradientFilter prevents weight corruption during training
-            # but does NOT stop NaN appearing in forward passes once weights have
-            # drifted (including at inference time).
-            #
-            # PREVIOUS HOOK PROBLEM: the old _qk_maxnorm_hook registered on
-            # nn.MultiheadAttention pre-hook received args=(query, key, value)
-            # where query/key are the full d_model=64 residual-stream vectors,
-            # NOT the per-head Q/K projections. A LayerNorm output has norm
-            # exactly sqrt(64)=8.0, so clipping to max-norm=5.0 shrank every
-            # single forward pass by factor 5/8=0.625 — degrading valid inputs
-            # while not reliably preventing overflow (weight norms were unconstrained).
-            #
-            # FIX — two defense-in-depth hooks on TransformerEncoderLayer:
-            #
-            # 1. PRE-HOOK: clamp the residual-stream input to norm ≤ 30.
-            #    Normal LayerNorm output has norm = sqrt(64) ≈ 8.  Threshold 30
-            #    is 3.75× normal so it never clips healthy activations but stops
-            #    actual explosions before they reach attention or FFN.
-            #
-            # 2. POST-HOOK: replace any surviving NaN/Inf in the output with 0.
-            #    This is the final safety net — if something slips through
-            #    (e.g., an un-normed path or a bad data sample), the NaN dies
-            #    at the layer boundary instead of infecting all downstream layers.
-            #
-            # Both hooks fire at every forward call (training and inference) and
-            # are no-ops for healthy activations, so they don't change model
-            # behaviour on clean inputs.
             import torch as _torch
             import torch.nn as _nn
 
