@@ -93,6 +93,10 @@ def iter_analysis_units(
     container:
         Full data container for one analysis scope/condition.
     analysis_mode:
+        Descriptor inputs may use either the canonical flat
+        ``("obs", "feature")`` layout, where sensor and descriptor identity
+        come from ``feature_schema()``, or the legacy rectangular
+        ``("obs", "sensor", "feature")`` layout.
         The unit granularity. ``"flat"`` and ``"sensor"`` work for both input
         modes; the remaining modes require descriptor inputs:
 
@@ -162,6 +166,173 @@ def iter_analysis_units(
     if analysis_mode == "flat":
         _add_unit("global", "all", "all", None, container)
         return units
+
+    if input_mode == "descriptors" and container.dims == ("obs", "feature"):
+        schema = container.feature_schema()
+        if schema is None or len(schema) != container.X.shape[1]:
+            raise ValueError(
+                "Flat descriptor analysis requires feature metadata aligned "
+                "with the feature axis."
+            )
+
+        def _schema_values(column: str) -> np.ndarray:
+            if column not in schema:
+                raise ValueError(
+                    f"analysis_mode={analysis_mode!r} requires {column!r} "
+                    "in the descriptor feature schema."
+                )
+            return schema[column].fillna("unknown").astype(str).to_numpy()
+
+        families = _schema_values("family")
+        wanted_families = list(dict.fromkeys(descriptor_families or families.tolist()))
+        family_mask = np.isin(families, [str(value) for value in wanted_families])
+
+        def _add_masked_unit(
+            unit_type: str,
+            unit_name: str,
+            unit_key: str,
+            family: str | None,
+            mask: np.ndarray,
+            *,
+            subfamily: str | None = None,
+        ) -> None:
+            indices = np.flatnonzero(mask).tolist()
+            if indices:
+                _add_unit(
+                    unit_type,
+                    unit_name,
+                    unit_key,
+                    family,
+                    container.isel(feature=indices),
+                    u_subfamily=subfamily,
+                )
+
+        if analysis_mode == "sensor":
+            channels = _schema_values("channel")
+            for sensor in dict.fromkeys(channels[family_mask].tolist()):
+                _add_masked_unit(
+                    "sensor",
+                    sensor,
+                    sensor,
+                    None,
+                    family_mask & (channels == sensor),
+                )
+            if not units:
+                raise RuntimeError(
+                    "No descriptor features matched the requested families."
+                )
+            return units
+
+        if analysis_mode == "family":
+            for family in wanted_families:
+                _add_masked_unit(
+                    "family",
+                    str(family),
+                    str(family),
+                    str(family),
+                    families == str(family),
+                )
+            return units
+
+        if analysis_mode in {"subfamily", "sensor_within_subfamily"}:
+            subfamilies = _schema_values("subfamily")
+            channels = (
+                _schema_values("channel")
+                if analysis_mode == "sensor_within_subfamily"
+                else None
+            )
+            for subfamily in dict.fromkeys(subfamilies[family_mask].tolist()):
+                subfamily_mask = family_mask & (subfamilies == subfamily)
+                family = str(families[np.flatnonzero(subfamily_mask)[0]])
+                if channels is None:
+                    _add_masked_unit(
+                        "subfamily",
+                        subfamily,
+                        subfamily,
+                        family,
+                        subfamily_mask,
+                        subfamily=subfamily,
+                    )
+                else:
+                    for sensor in dict.fromkeys(channels[subfamily_mask].tolist()):
+                        _add_masked_unit(
+                            "sensor",
+                            sensor,
+                            f"{subfamily}_{sensor}",
+                            family,
+                            subfamily_mask & (channels == sensor),
+                            subfamily=subfamily,
+                        )
+            return units
+
+        if analysis_mode in {"descriptor", "descriptor_sensor"}:
+            descriptors = _schema_values("descriptor")
+            channels = (
+                _schema_values("channel")
+                if analysis_mode == "descriptor_sensor"
+                else None
+            )
+            for descriptor in dict.fromkeys(descriptors[family_mask].tolist()):
+                descriptor_mask = family_mask & (descriptors == descriptor)
+                family = str(families[np.flatnonzero(descriptor_mask)[0]])
+                if channels is None:
+                    _add_masked_unit(
+                        "descriptor",
+                        descriptor,
+                        descriptor,
+                        family,
+                        descriptor_mask,
+                    )
+                else:
+                    for sensor in dict.fromkeys(channels[descriptor_mask].tolist()):
+                        _add_masked_unit(
+                            "descriptor",
+                            descriptor,
+                            f"{descriptor}_{sensor}",
+                            family,
+                            descriptor_mask & (channels == sensor),
+                        )
+            return units
+
+        if analysis_mode in {"feature", "feature_within_family"}:
+            measures = _schema_values("measure")
+            if analysis_mode == "feature":
+                for measure in dict.fromkeys(measures[family_mask].tolist()):
+                    _add_masked_unit(
+                        "feature",
+                        measure,
+                        measure,
+                        None,
+                        family_mask & (measures == measure),
+                    )
+            else:
+                for family in wanted_families:
+                    current_family = families == str(family)
+                    for measure in dict.fromkeys(measures[current_family].tolist()):
+                        _add_masked_unit(
+                            "feature",
+                            measure,
+                            f"{family}_{measure}",
+                            str(family),
+                            current_family & (measures == measure),
+                        )
+            return units
+
+        if analysis_mode == "sensor_within_family":
+            channels = _schema_values("channel")
+            for family in wanted_families:
+                current_family = families == str(family)
+                for sensor in dict.fromkeys(channels[current_family].tolist()):
+                    _add_masked_unit(
+                        "sensor",
+                        sensor,
+                        f"{family}_{sensor}",
+                        str(family),
+                        current_family & (channels == sensor),
+                    )
+            return units
+
+        raise ValueError(f"Unknown analysis_mode '{analysis_mode}'.")
 
     if analysis_mode == "sensor":
         if input_mode == "raw":

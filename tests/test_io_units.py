@@ -4,6 +4,27 @@ import pytest
 from coco_pipe.io import DataContainer, iter_analysis_units, split_unit_sensor
 
 
+def _sparse_flat_descriptor_container():
+    """Two sensors with deliberately non-rectangular descriptor coverage."""
+    return DataContainer(
+        X=np.arange(5 * 3, dtype=float).reshape(5, 3),
+        dims=("obs", "feature"),
+        coords={
+            "feature": [
+                "band_mean_alpha_ch-Fz",
+                "band_iqr_alpha_ch-Fz",
+                "complexity_mean_entropy_ch-Cz",
+            ],
+            "feature_family": ["band", "band", "complexity"],
+            "feature_measure": ["mean_alpha", "iqr_alpha", "mean_entropy"],
+            "feature_channel": ["Fz", "Fz", "Cz"],
+            "feature_scope": ["sensor", "sensor", "sensor"],
+            "feature_subfamily": ["abs", "abs", "entropy"],
+            "feature_descriptor": ["alpha", "alpha", "entropy"],
+        },
+    )
+
+
 def _descriptor_container():
     return DataContainer(
         X=np.arange(5 * 2 * 3).reshape(5, 2, 3),
@@ -26,6 +47,56 @@ def _modes_container():
             "feature": ["f1", "f2", "f3"],
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_keys"),
+    [
+        ("sensor", {"Fz", "Cz"}),
+        ("family", {"band", "complexity"}),
+        ("subfamily", {"abs", "entropy"}),
+        ("sensor_within_family", {"band_Fz", "complexity_Cz"}),
+        ("sensor_within_subfamily", {"abs_Fz", "entropy_Cz"}),
+        ("feature", {"mean_alpha", "iqr_alpha", "mean_entropy"}),
+        (
+            "feature_within_family",
+            {"band_mean_alpha", "band_iqr_alpha", "complexity_mean_entropy"},
+        ),
+        ("descriptor", {"alpha", "entropy"}),
+        ("descriptor_sensor", {"alpha_Fz", "entropy_Cz"}),
+    ],
+)
+def test_flat_descriptor_units_use_only_existing_atomic_columns(mode, expected_keys):
+    units = iter_analysis_units(
+        _sparse_flat_descriptor_container(), mode, "descriptors"
+    )
+
+    assert {unit["unit_key"] for unit in units} == expected_keys
+    assert all(unit["container"].dims == ("obs", "feature") for unit in units)
+    assert all(np.isfinite(unit["container"].X).all() for unit in units)
+
+
+def test_flat_descriptor_units_respect_family_filter():
+    units = iter_analysis_units(
+        _sparse_flat_descriptor_container(),
+        "sensor",
+        "descriptors",
+        descriptor_families=["band"],
+    )
+
+    assert [unit["unit_key"] for unit in units] == ["Fz"]
+    assert units[0]["container"].X.shape == (5, 2)
+
+
+def test_flat_descriptor_sensor_does_not_create_cartesian_units():
+    units = iter_analysis_units(
+        _sparse_flat_descriptor_container(), "descriptor_sensor", "descriptors"
+    )
+
+    keys = {unit["unit_key"] for unit in units}
+    assert keys == {"alpha_Fz", "entropy_Cz"}
+    assert "alpha_Cz" not in keys
+    assert "entropy_Fz" not in keys
 
 
 def test_feature_units_span_all_sensors():

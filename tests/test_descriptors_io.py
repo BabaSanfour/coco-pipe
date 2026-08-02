@@ -11,6 +11,7 @@ from coco_pipe.descriptors import (
     save_descriptor_table,
 )
 from coco_pipe.descriptors.qc import select_viable_feature_columns
+from coco_pipe.io import iter_analysis_units
 
 
 @pytest.fixture
@@ -201,6 +202,58 @@ def test_select_viable_feature_columns_and_loader_prune(tmp_path):
     assert container.X.shape == (3, 1)
     assert container.meta["n_dropped_nan_inf"] == 0
     assert len(container.meta["dropped_feature_columns"]) == 2
+
+
+def test_flat_loader_units_do_not_recreate_pruned_sensor_feature_pairs(tmp_path):
+    columns = [
+        "param_mean_alpha_peak_freq_ch-Fz",
+        "param_mean_alpha_peak_freq_ch-Cz",
+        "complexity_mean_sample_entropy_ch-Fz",
+        "complexity_mean_sample_entropy_ch-Cz",
+    ]
+    table_path = tmp_path / "features.csv"
+    columns_path = tmp_path / "columns.json"
+    pd.DataFrame(
+        {
+            "obs_id": [f"o{index}" for index in range(5)],
+            columns[0]: [np.nan] * 5,
+            columns[1]: [8.0, 8.5, 9.0, 9.5, 10.0],
+            columns[2]: [0.1, 0.2, 0.3, 0.4, 0.5],
+            columns[3]: [0.2, 0.3, 0.4, 0.5, 0.6],
+        }
+    ).to_csv(table_path, index=False)
+    columns_path.write_text(json.dumps(columns), encoding="utf-8")
+
+    container = load_descriptor_table(
+        table_path,
+        columns_path,
+        analysis_mode="flat",
+        drop_degenerate_columns=True,
+        max_row_drop_rate=0.0,
+    )
+
+    assert container.dims == ("obs", "feature")
+    assert columns[0] not in container.coords["feature"]
+    assert np.isfinite(container.X).all()
+
+    for mode in (
+        "flat",
+        "sensor",
+        "subfamily",
+        "sensor_within_subfamily",
+        "descriptor",
+        "descriptor_sensor",
+    ):
+        units = iter_analysis_units(container, mode, "descriptors")
+        assert units
+        assert all(np.isfinite(unit["container"].X).all() for unit in units)
+
+    descriptor_sensor_keys = {
+        unit["unit_key"]
+        for unit in iter_analysis_units(container, "descriptor_sensor", "descriptors")
+    }
+    assert "alpha_peak_freq_Cz" in descriptor_sensor_keys
+    assert "alpha_peak_freq_Fz" not in descriptor_sensor_keys
 
 
 def test_select_viable_feature_columns_missingness_boundary():
