@@ -99,46 +99,6 @@ def test_load_descriptor_table_detects_csv_delimiter(tmp_path):
     assert "Unnamed: 4" not in container.coords
 
 
-def test_load_descriptor_table_sensor_mode(descriptor_files):
-    table_path, columns_path, _ = descriptor_files
-
-    container = load_descriptor_table(
-        table_path,
-        columns_path,
-        condition="baseline",
-        analysis_mode="sensor",
-    )
-
-    assert container.dims == ("obs", "sensor", "feature")
-    assert container.X.shape == (2, 2, 2)
-    assert container.coords["sensor"].tolist() == ["Fz", "Cz"]
-    assert container.coords["feature"].tolist() == [
-        "abs_alpha",
-        "sample_entropy",
-    ]
-    assert container.coords["feature_family"].tolist() == [
-        "band",
-        "complexity",
-    ]
-    np.testing.assert_allclose(container.X[0], [[1.0, 0.1], [1.1, 0.4]])
-
-    # measure rides on the feature axis; scope rides on the sensor axis.
-    assert container.coords["feature_measure"].tolist() == [
-        "abs_alpha",
-        "sample_entropy",
-    ]
-    assert container.coords["sensor_scope"].tolist() == ["sensor", "sensor"]
-
-    # feature_schema() exposes measure even on the un-flattened 3-D container.
-    schema = container.feature_schema()
-    assert schema["column"].tolist() == ["abs_alpha", "sample_entropy"]
-    assert schema["measure"].tolist() == ["abs_alpha", "sample_entropy"]
-    assert schema["family"].tolist() == ["band", "complexity"]
-    # scope/channel are sensor-axis attributes here, not feature-axis ones.
-    assert "scope" not in schema.columns
-    assert "channel" not in schema.columns
-
-
 def test_load_descriptor_table_family_filter(descriptor_files):
     table_path, columns_path, _ = descriptor_files
 
@@ -227,7 +187,6 @@ def test_flat_loader_units_do_not_recreate_pruned_sensor_feature_pairs(tmp_path)
     container = load_descriptor_table(
         table_path,
         columns_path,
-        analysis_mode="flat",
         drop_degenerate_columns=True,
         max_row_drop_rate=0.0,
     )

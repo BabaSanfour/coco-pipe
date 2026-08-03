@@ -3,8 +3,8 @@
 This is the descriptor-specific table IO layer. It builds on the generic
 :func:`coco_pipe.io._serialization.read_table` primitive but owns the
 descriptor concerns: the ``_feature_columns.json`` sidecar contract, loading a
-descriptor table into a :class:`~coco_pipe.io.structures.DataContainer` (flat or
-sensor x feature), and the cross-shard **merge** stage.
+descriptor table into a flat :class:`~coco_pipe.io.structures.DataContainer`,
+and the cross-shard **merge** stage.
 
 Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
@@ -220,7 +220,6 @@ def load_descriptor_table(
     target_col: str | None = None,
     subjects: Sequence[str] | None = None,
     subject_col: str = "subject",
-    analysis_mode: str = "flat",
     descriptor_families: Sequence[str] | None = None,
     descriptor_max_abs_value: float | None = None,
     drop_degenerate_columns: bool = False,
@@ -410,93 +409,33 @@ def load_descriptor_table(
 
     from .naming import descriptor_identity, descriptor_subfamily
 
-    if analysis_mode == "flat":
-        by_column = {item["column"]: item for item in parsed}
-        ordered = [by_column[column] for column in feature_cols]
-        coords["feature"] = np.asarray(feature_cols, dtype=object)
-        coords["feature_family"] = np.asarray(
-            [item["family"] for item in ordered], dtype=object
-        )
-        coords["feature_scope"] = np.asarray(
-            [item["scope"] for item in ordered], dtype=object
-        )
-        coords["feature_channel"] = np.asarray(
-            [item["sensor"] for item in ordered], dtype=object
-        )
-        coords["feature_measure"] = np.asarray(
-            [item["feature"] for item in ordered], dtype=object
-        )
-        coords["feature_subfamily"] = np.asarray(
-            [descriptor_subfamily(item["family"], item["feature"]) for item in ordered],
-            dtype=object,
-        )
-        coords["feature_descriptor"] = np.asarray(
-            [descriptor_identity(item["feature"]) for item in ordered], dtype=object
-        )
-        return DataContainer(
-            X=feature_df.to_numpy(dtype=float),
-            dims=("obs", "feature"),
-            coords=coords,
-            y=y,
-            ids=ids,
-            meta=meta_base,
-        )
-
-    sensors = list(dict.fromkeys(item["sensor"] for item in parsed))
-    features = list(dict.fromkeys(item["feature"] for item in parsed))
-    sensor_index = {sensor: index for index, sensor in enumerate(sensors)}
-    feature_index = {feature: index for index, feature in enumerate(features)}
-    feature_family = {item["feature"]: item["family"] for item in parsed}
-    feature_subfamily = {
-        item["feature"]: descriptor_subfamily(item["family"], item["feature"])
-        for item in parsed
-    }
-    feature_descriptor = {
-        item["feature"]: descriptor_identity(item["feature"]) for item in parsed
-    }
-    sensor_scope = {item["sensor"]: item["scope"] for item in parsed}
-
-    X = np.full(
-        (len(feature_df), len(sensors), len(features)),
-        np.nan,
-        dtype=float,
-    )
-    for item in parsed:
-        X[
-            :,
-            sensor_index[item["sensor"]],
-            feature_index[item["feature"]],
-        ] = feature_df[item["column"]].to_numpy(dtype=float)
-
-    coords["sensor"] = np.asarray(sensors, dtype=object)
-    coords["sensor_scope"] = np.asarray(
-        [sensor_scope[sensor] for sensor in sensors],
-        dtype=object,
-    )
-    coords["feature"] = np.asarray(features, dtype=object)
-    coords["feature_measure"] = np.asarray(features, dtype=object)
+    by_column = {item["column"]: item for item in parsed}
+    ordered = [by_column[column] for column in feature_cols]
+    coords["feature"] = np.asarray(feature_cols, dtype=object)
     coords["feature_family"] = np.asarray(
-        [feature_family[feature] for feature in features],
-        dtype=object,
+        [item["family"] for item in ordered], dtype=object
+    )
+    coords["feature_scope"] = np.asarray(
+        [item["scope"] for item in ordered], dtype=object
+    )
+    coords["feature_channel"] = np.asarray(
+        [item["sensor"] for item in ordered], dtype=object
+    )
+    coords["feature_measure"] = np.asarray(
+        [item["feature"] for item in ordered], dtype=object
     )
     coords["feature_subfamily"] = np.asarray(
-        [feature_subfamily[feature] for feature in features],
+        [descriptor_subfamily(item["family"], item["feature"]) for item in ordered],
         dtype=object,
     )
     coords["feature_descriptor"] = np.asarray(
-        [feature_descriptor[feature] for feature in features],
-        dtype=object,
+        [descriptor_identity(item["feature"]) for item in ordered], dtype=object
     )
     return DataContainer(
-        X=X,
-        dims=("obs", "sensor", "feature"),
+        X=feature_df.to_numpy(dtype=float),
+        dims=("obs", "feature"),
         coords=coords,
         y=y,
         ids=ids,
-        meta={
-            **meta_base,
-            "descriptor_families": list(
-                dict.fromkeys(coords["feature_family"].tolist())
-            ),
-        },
+        meta=meta_base,
     )
