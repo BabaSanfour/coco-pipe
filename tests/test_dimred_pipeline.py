@@ -323,6 +323,84 @@ def test_build_fit_request_identity_tracks_container_and_unit(
     assert baseline != fit_id(dummy_container, "alpha_Fz", "log_abs")
 
 
+def test_build_fit_request_tracks_and_applies_reducer_params(
+    tmp_path, dummy_container, monkeypatch
+):
+    captured = {}
+
+    class DummyReduction:
+        def __init__(self, method, n_components, params=None):
+            captured.update(method=method, n_components=n_components, params=params)
+
+        def fit_transform(self, container):
+            return container.with_features(
+                np.zeros((len(container.X), 2)),
+                names=["component_1", "component_2"],
+                new_dim_name="component",
+            )
+
+        def score(self, embedding, X=None):
+            return {"metrics": {}}
+
+        def get_metrics(self):
+            return {}
+
+        def get_summary(self):
+            return {"diagnostics": {}}
+
+        def get_components(self):
+            raise RuntimeError("not available")
+
+        reducer = object()
+
+    monkeypatch.setattr("coco_pipe.dim_reduction.pipeline.DimReduction", DummyReduction)
+    request = build_fit_request(
+        container=dummy_container,
+        scope="condition",
+        condition="EO",
+        unit_spec={
+            "unit_type": "all",
+            "unit_name": "all",
+            "unit_key": "all",
+            "container": dummy_container,
+        },
+        reducer="UMAP",
+        reducer_params={"n_jobs": 1},
+        n_components=2,
+        input_signature={
+            "input_mode": "descriptors",
+            "representation": "epoch",
+            "analysis_mode": "flat",
+        },
+        output_root=tmp_path,
+    )
+
+    assert request["fit_payload"]["reducer_params"] == {"n_jobs": 1}
+    run_fit(**request)
+    assert captured["params"] == {"n_jobs": 1}
+
+    default_request = build_fit_request(
+        container=dummy_container,
+        scope="condition",
+        condition="EO",
+        unit_spec={
+            "unit_type": "all",
+            "unit_name": "all",
+            "unit_key": "all",
+            "container": dummy_container,
+        },
+        reducer="UMAP",
+        n_components=2,
+        input_signature={
+            "input_mode": "descriptors",
+            "representation": "epoch",
+            "analysis_mode": "flat",
+        },
+        output_root=tmp_path,
+    )
+    assert default_request["fit_payload"]["fit_id"] == request["fit_payload"]["fit_id"]
+
+
 def test_build_eval_request(tmp_path, dummy_container):
     unit_spec = {
         "unit_type": "all",

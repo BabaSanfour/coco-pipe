@@ -208,7 +208,9 @@ def run_fit(
         ids = _normalize_ids(container.ids)
 
         reducer = DimReduction(
-            method=fit_payload["reducer"], n_components=fit_payload["n_components"]
+            method=fit_payload["reducer"],
+            n_components=fit_payload["n_components"],
+            params=dict(fit_payload.get("reducer_params") or {}),
         )
         embedding_container = reducer.fit_transform(container)
         embedding = np.asarray(embedding_container.X)
@@ -342,7 +344,11 @@ def run_fit_group(
             raise ValueError("Dim-reduction fits expect container.ids to be present.")
         ids = _normalize_ids(container.ids)
         max_n = max(int(r["fit_payload"]["n_components"]) for r in pending)
-        reducer = DimReduction(method=method, n_components=max_n)
+        reducer = DimReduction(
+            method=method,
+            n_components=max_n,
+            params=dict(requests[0]["fit_payload"].get("reducer_params") or {}),
+        )
         full_embedding = np.asarray(reducer.fit_transform(container).X)
         try:
             full_components = np.asarray(reducer.get_components())
@@ -867,12 +873,15 @@ def build_fit_request(
     artifact_path: Path | None = None,
     artifact_path_factory: Callable[[dict[str, Any], Path], Path] | None = None,
     container_signature: dict[str, Any] | None = None,
+    reducer_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_fit`.
 
     The caller owns project-specific input provenance via *input_signature* and
     optional *extra_payload*. coco-pipe owns the deterministic fit id, standard
-    fit payload fields, and default flat artifact path.
+    fit payload fields, and default flat artifact path. ``reducer_params`` are
+    execution controls passed to the reducer but intentionally excluded from the
+    fit identity so worker/thread tuning can resume existing scientific outputs.
     """
     if container.ids is None:
         raise ValueError("Dim-reduction fits expect container.ids to be present.")
@@ -881,6 +890,7 @@ def build_fit_request(
     unit_key = str(unit_spec["unit_key"])
     if container_signature is None:
         container_signature = fingerprint_container(container)
+    resolved_reducer_params = dict(reducer_params or {})
     fit_identity = {
         "scope": scope,
         "condition": condition,
@@ -923,6 +933,7 @@ def build_fit_request(
         "embedding_representation": input_signature.get("embedding_representation"),
         "embedding_aggregate_by": input_signature.get("embedding_aggregate_by"),
         "reducer": reducer_name,
+        "reducer_params": resolved_reducer_params,
         "n_components": int(n_components),
         "status": "success",
         "timestamp": datetime.now(UTC).isoformat(),
