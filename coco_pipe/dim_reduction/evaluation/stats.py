@@ -24,6 +24,8 @@ import pandas as pd
 from scipy.stats import ttest_rel
 from statsmodels.stats.multitest import multipletests
 
+from .geometry import trajectory_separation
+
 __all__ = [
     "grouped_condition_stats",
     "paired_condition_stats",
@@ -218,8 +220,9 @@ def permutation_null_separation_auc(
     rng: np.random.Generator | None = None,
     method: str = "centroid",
     window: tuple[float, float] | None = None,
+    within_subject: bool = False,
 ) -> tuple[float, np.ndarray]:
-    """Label-shuffle null on between-group centroid separation AUC.
+    """Label-shuffle null on between-group separation AUC.
 
     Parameters
     ----------
@@ -230,8 +233,14 @@ def permutation_null_separation_auc(
     n_perm : int, default=200
     rng : np.random.Generator, optional
     method : str, default="centroid"
+        Separation method passed to :func:`trajectory_separation`. Any method
+        that function supports may be used, e.g. ``"mahalanobis"``.
     window : tuple of float, optional
         Time window (tmin, tmax) to restrict the AUC calculation.
+    within_subject : bool, default=False
+        When True, permute labels within each subject so subject-level trial
+        counts and condition composition are preserved. Requires
+        ``result.subjects``. The default shuffles labels globally.
 
     Returns
     -------
@@ -244,6 +253,16 @@ def permutation_null_separation_auc(
 
     group_a_arr = np.asarray(group_a).astype(int)
     group_b_arr = np.asarray(group_b).astype(int)
+    conditions = np.asarray(result.conditions)
+
+    subjects = None
+    if within_subject:
+        subjects = np.asarray(result.subjects)
+        if subjects.shape[0] != conditions.shape[0]:
+            raise ValueError(
+                "`result.subjects` must contain one value per trial to permute "
+                "within subject."
+            )
 
     if window is None:
         mask = np.ones_like(result.times, dtype=bool)
@@ -255,15 +274,23 @@ def permutation_null_separation_auc(
         mb = np.isin(labels_array, group_b_arr)
         if not ma.any() or not mb.any():
             return float("nan")
-        ca = result.trajectories[ma].mean(axis=0)
-        cb = result.trajectories[mb].mean(axis=0)
-        d = np.linalg.norm(ca - cb, axis=-1)
-        return float(np.trapezoid(d[mask], result.times[mask]))
+        selected = ma | mb
+        binary = np.where(ma[selected], 0, 1)
+        d = trajectory_separation(result.trajectories[selected], binary, method=method)[
+            (0, 1)
+        ]
+        return float(np.trapezoid(np.asarray(d)[mask], result.times[mask]))
 
-    observed = _auc(result.conditions)
+    observed = _auc(conditions)
     null = np.full(n_perm, np.nan, dtype=float)
     for i in range(n_perm):
-        shuffled = rng.permutation(result.conditions)
+        if subjects is None:
+            shuffled = rng.permutation(conditions)
+        else:
+            shuffled = conditions.copy()
+            for subject in np.unique(subjects):
+                subject_mask = subjects == subject
+                shuffled[subject_mask] = rng.permutation(conditions[subject_mask])
         null[i] = _auc(shuffled)
     null = null[np.isfinite(null)]
     return observed, null
