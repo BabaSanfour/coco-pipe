@@ -184,6 +184,7 @@ def fit_and_score_fold(
     feature_selection_config: Any,
     calibration_config: Any,
     spec: Any,
+    temporal_alignment_config: Any = None,
     tuning_config: Any = None,
     feature_names: list[str] | None = None,
     search_enabled: bool = False,
@@ -202,7 +203,7 @@ def fit_and_score_fold(
     estimator : BaseEstimator
         The un-fitted estimator instance (or pipeline) for this fold.
     X : np.ndarray
-        The full feature matrix of shape (n_samples, n_features).
+        The full 2-D feature matrix or 3-D temporal array.
     y : np.ndarray
         The full target vector of shape (n_samples,).
     groups : np.ndarray, optional
@@ -223,6 +224,9 @@ def fit_and_score_fold(
         Configuration for probability calibration (from CVConfig).
     spec : EstimatorSpec
         Hardened registry specification for the model.
+    temporal_alignment_config : Any, optional
+        Fold-level temporal alignment settings. When enabled, the training
+        template is fit on ``train_idx`` before the estimator is fitted.
     tuning_config : Any, optional
         Hyperparameter tuning settings.
     feature_names : list of str, optional
@@ -245,6 +249,26 @@ def fit_and_score_fold(
     sw_train = sample_weight[train_idx] if sample_weight is not None else None
     groups_train = groups[train_idx] if groups is not None else None
     test_groups = groups[test_idx] if groups is not None else None
+    alignment_time = 0.0
+    if getattr(temporal_alignment_config, "enabled", False):
+        if groups_train is None or test_groups is None:
+            raise ValueError("Temporal alignment requires participant groups.")
+        if getattr(temporal_alignment_config, "method", None) != "procrustes":
+            raise ValueError(
+                "Unknown temporal alignment method: "
+                f"{getattr(temporal_alignment_config, 'method', None)!r}."
+            )
+        from coco_pipe.transforms import TemporalProcrustesAlignment
+
+        alignment_start = time.perf_counter()
+        aligner = TemporalProcrustesAlignment(
+            n_components=temporal_alignment_config.n_components,
+            adaptation=temporal_alignment_config.adaptation,
+            random_state=temporal_alignment_config.random_state,
+        )
+        X_train = aligner.fit_transform(X_train, groups=groups_train)
+        X_test = aligner.transform(X_test, groups=test_groups)
+        alignment_time = time.perf_counter() - alignment_start
     routing_pipeline = _wrapped_pipeline(estimator)
     _needs_group_routing = (
         test_groups is not None
@@ -412,7 +436,8 @@ def fit_and_score_fold(
             "fit_time": fit_time,
             "predict_time": predict_time,
             "score_time": score_time,
-            "total_time": fit_time + predict_time + score_time,
+            "alignment_time": alignment_time,
+            "total_time": alignment_time + fit_time + predict_time + score_time,
             "warnings": captured_warnings,
         },
     }

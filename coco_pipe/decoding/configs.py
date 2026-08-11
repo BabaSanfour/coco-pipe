@@ -920,6 +920,18 @@ class ErasureConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemporalAlignmentConfig(BaseModel):
+    """Fold-level alignment for 3-D participant trajectories."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["procrustes"] = "procrustes"
+    n_components: int = Field(30, ge=1)
+    adaptation: Literal["transductive"] = "transductive"
+    random_state: int | None = 42
+
+
 class CalibrationConfig(BaseModel):
     """Probability calibration settings for classification estimators."""
 
@@ -1067,6 +1079,9 @@ class ExperimentConfig(BaseModel):
         default_factory=FeatureSelectionConfig
     )
     erasure: ErasureConfig = Field(default_factory=ErasureConfig)
+    temporal_alignment: TemporalAlignmentConfig = Field(
+        default_factory=TemporalAlignmentConfig
+    )
     reducer: ReducerConfig = Field(default_factory=ReducerConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     statistical_assessment: StatisticalAssessmentConfig = Field(

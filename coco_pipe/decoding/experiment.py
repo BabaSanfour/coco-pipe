@@ -289,6 +289,7 @@ class Experiment:
         self._inject_seed(self.config.tuning, seed + 2)
         self._inject_seed(self.config.calibration, seed + 3)
         self._inject_seed(self.config.reducer, seed + 4)
+        self._inject_seed(self.config.temporal_alignment, seed + 4)
 
         # 2. Model seeds
         model_names = sorted(self.config.models.keys())
@@ -668,6 +669,21 @@ class Experiment:
         # 5. Input Rank Capability Guard
         rank = "3d_temporal" if X.ndim == 3 else "2d"
 
+        if self.config.temporal_alignment.enabled:
+            if X.ndim != 3:
+                raise ValueError(
+                    "Temporal alignment requires a 3-D "
+                    "(observation, feature, time) input."
+                )
+            if groups is None:
+                raise ValueError("Temporal alignment requires participant groups.")
+            if self.config.temporal_alignment.n_components > X.shape[1]:
+                raise ValueError(
+                    "temporal_alignment.n_components exceeds the input feature "
+                    "count: "
+                    f"{self.config.temporal_alignment.n_components} > {X.shape[1]}."
+                )
+
         # 6. Group Validation: Early check before entering model loop
         if groups is None:
             from ._constants import GROUP_CV_STRATEGIES
@@ -828,6 +844,7 @@ class Experiment:
                 feature_selection_config=self.config.feature_selection,
                 calibration_config=self.config.calibration,
                 spec=spec,
+                temporal_alignment_config=self.config.temporal_alignment,
                 tuning_config=self.config.tuning,
                 feature_names=self._feature_names,
                 search_enabled=(

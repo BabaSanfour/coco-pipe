@@ -9,6 +9,7 @@ from .subject_alignment import (
     make_subject_transform,
     tokens_to_covariances,
 )
+from .temporal_alignment import TemporalProcrustesAlignment
 
 __all__ = [
     "TOKEN_TRANSFORMS",
@@ -16,6 +17,7 @@ __all__ = [
     "EuclideanAlign",
     "LeaceEraser",
     "RiemannAlign",
+    "TemporalProcrustesAlignment",
     "make_subject_transform",
     "tokens_to_covariances",
 ]
