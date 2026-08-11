@@ -419,15 +419,21 @@ def _get_unit_blocks(df: pd.DataFrame, unit: str, suffix: str = "") -> list[np.n
 def _resolve_unit_values(df: pd.DataFrame, unit: str, suffix: str = "") -> np.ndarray:
     """Extract the column identifying individual units with fallback logic."""
     valid_units = {"sample", "epoch", "group", "subject", "session", "site"}
-    if unit not in valid_units:
-        raise ValueError(f"unit must be one of {valid_units}, got '{unit}'.")
-
     if unit in {"sample", "epoch"}:
         col = "SampleID"
     elif unit == "group":
         col = f"Group{suffix}"
-    else:
+    elif unit in valid_units:
         col = f"{unit.capitalize()}{suffix}"
+    else:
+        # Custom inference units are stored in result metadata as their source
+        # column name (for example ``group_id``). Model comparisons suffix
+        # columns from each prediction frame during the paired merge.
+        col = f"{unit}{suffix}"
+
+    if col not in df:
+        normalized = {str(column).casefold(): column for column in df.columns}
+        col = normalized.get(str(col).casefold(), col)
 
     if col not in df or df[col].isna().all():
         raise ValueError(f"unit='{unit}' requires a non-empty '{col}' column.")

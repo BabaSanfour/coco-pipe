@@ -1520,15 +1520,24 @@ def _assess_paired_comparison_internal(
     """Internal core for paired comparison on a single coordinate."""
     from ._diagnostics import paired_unit_indices, score_frame
 
-    frame_a = merged.copy()
-    for col in merged.columns:
-        if col.endswith("_A"):
-            frame_a[col[:-2]] = merged[col]
+    def _prediction_frame(suffix: str) -> pd.DataFrame:
+        suffixed_cols = [col for col in merged.columns if col.endswith(suffix)]
+        base_cols = [col.removesuffix(suffix) for col in suffixed_cols]
+        return pd.concat(
+            [
+                merged.drop(columns=base_cols, errors="ignore"),
+                merged[suffixed_cols].rename(
+                    columns=dict(zip(suffixed_cols, base_cols, strict=True))
+                ),
+            ],
+            axis=1,
+        ).copy()
 
-    frame_b = merged.copy()
-    for col in merged.columns:
-        if col.endswith("_B"):
-            frame_b[col[:-2]] = merged[col]
+    # Assemble the model-specific columns in one operation. Repeated column
+    # assignment fragments wide probability frames and makes every subsequent
+    # permutation copy unnecessarily expensive.
+    frame_a = _prediction_frame("_A")
+    frame_b = _prediction_frame("_B")
 
     score_a = score_frame(frame_a, metric)
     score_b = score_frame(frame_b, metric)

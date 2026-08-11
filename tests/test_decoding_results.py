@@ -913,6 +913,30 @@ def test_compare_models_all_pairs():
     assert not comp.empty
 
 
+def test_compare_models_supports_custom_inferential_unit_column():
+    raw = {
+        model: {
+            "predictions": [
+                {
+                    "sample_index": [0, 1],
+                    "sample_id": ["s0", "s1"],
+                    "y_true": [0, 1],
+                    "y_pred": predictions,
+                    "sample_metadata": {"group_id": ["g0", "g1"]},
+                }
+            ]
+        }
+        for model, predictions in {"m1": [0, 1], "m2": [1, 1]}.items()
+    }
+    res = ExperimentResult(raw, meta={"inferential_unit": "group_id"})
+
+    comp = res.compare_models(metric="accuracy", n_permutations=5, random_state=0)
+
+    assert not comp.empty
+    assert comp.loc[0, "Unit"] == "group_id"
+    assert comp.loc[0, "NUnits"] == 2
+
+
 def test_get_feature_scores_with_pvalues():
     raw = {
         "m": {

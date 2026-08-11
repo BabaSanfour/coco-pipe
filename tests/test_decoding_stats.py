@@ -1,3 +1,4 @@
+import warnings
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -229,6 +230,38 @@ def test_assess_post_hoc_permutation_with_groups():
     )
     assert "Observed" in df.columns
     assert df["Observed"].iloc[0] == 0.5
+
+
+def test_paired_comparison_does_not_fragment_wide_prediction_frames():
+    n_probability_columns = 150
+    data = {
+        "SampleID": [0, 1],
+        "y_true": [0, 1],
+        "Fold": [0, 0],
+        "y_pred_A": [0, 1],
+        "y_pred_B": [1, 1],
+    }
+    for class_idx in range(n_probability_columns):
+        data[f"y_proba_{class_idx}_A"] = [0.5, 0.5]
+        data[f"y_proba_{class_idx}_B"] = [0.5, 0.5]
+    merged = pd.DataFrame(data)
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        result = assess_paired_comparison(
+            merged,
+            metric="accuracy",
+            unit="sample",
+            n_permutations=2,
+            random_state=0,
+        )
+
+    assert not any(
+        issubclass(item.category, pd.errors.PerformanceWarning)
+        for item in caught_warnings
+    )
+    assert result.loc[0, "ScoreA"] == 1.0
+    assert result.loc[0, "ScoreB"] == 0.5
 
 
 def test_run_paired_permutation_assessment_full():
