@@ -264,6 +264,7 @@ def fit_and_score_fold(
         aligner = TemporalProcrustesAlignment(
             n_components=temporal_alignment_config.n_components,
             adaptation=temporal_alignment_config.adaptation,
+            rotate=getattr(temporal_alignment_config, "rotate", True),
             random_state=temporal_alignment_config.random_state,
         )
         X_train = aligner.fit_transform(X_train, groups=groups_train)

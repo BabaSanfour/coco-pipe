@@ -928,7 +928,22 @@ class TemporalAlignmentConfig(BaseModel):
     enabled: bool = False
     method: Literal["procrustes"] = "procrustes"
     n_components: int = Field(30, ge=1)
-    adaptation: Literal["transductive"] = "transductive"
+    adaptation: Literal["transductive", "calibration"] = Field(
+        "transductive",
+        description=(
+            "How an unseen participant's mapping is estimated. 'transductive' "
+            "uses their whole (unlabeled) transform batch; 'calibration' "
+            "cross-fits two halves so no trial informs its own mapping."
+        ),
+    )
+    rotate: bool = Field(
+        True,
+        description=(
+            "Apply the Procrustes rotation onto the shared template. False keeps "
+            "the per-participant PCA but skips the rotation — the control that "
+            "isolates the rotation's contribution."
+        ),
+    )
     random_state: int | None = 42
 
 
@@ -987,6 +1002,22 @@ class StatisticalAssessmentConfig(BaseModel):
     random_state: int | None = 42
     metrics: list[str] | None = Field(
         None, description="Subset of experiment metrics to run assessment for."
+    )
+    n_jobs: int = Field(
+        1,
+        description=(
+            "Parallel workers for the permutation loops (chance and paired). "
+            "Each permutation is independent and re-scores already-cached "
+            "predictions, so this parallelizes cheaply."
+        ),
+    )
+    n_bootstraps: int = Field(
+        1000,
+        ge=1,
+        description=(
+            "Resamples used for the paired comparison's confidence interval. "
+            "Independent of `chance.n_permutations`, which sets the p-value."
+        ),
     )
 
     chance: ChanceAssessmentConfig = Field(default_factory=ChanceAssessmentConfig)

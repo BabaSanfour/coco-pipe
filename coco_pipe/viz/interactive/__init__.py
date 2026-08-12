@@ -14,6 +14,7 @@ from . import base, decoding, dim_reduction
 from .base import (
     plot_bar,
     plot_distribution_groups,
+    plot_group_scatter_with_mean,
     plot_grouped_bar,
     plot_heatmap,
     plot_ranked_bar,
@@ -85,6 +86,7 @@ __all__ = [
     "plot_feature_stability",
     "plot_fit_diagnostics",
     "plot_fold_score_dispersion",
+    "plot_group_scatter_with_mean",
     "plot_group_summary",
     "plot_grouped_bar",
     "plot_heatmap",

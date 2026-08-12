@@ -22,6 +22,7 @@ from ._utils import _apply_layout
 __all__ = [
     "plot_bar",
     "plot_distribution_groups",
+    "plot_group_scatter_with_mean",
     "plot_grouped_bar",
     "plot_heatmap",
     "plot_ranked_bar",
@@ -729,6 +730,159 @@ def plot_distribution_groups(
                 font={"size": 12},
             )
 
+    _apply_layout(
+        fig,
+        title=title,
+        xaxis_title=xaxis_title,
+        yaxis_title=yaxis_title,
+        height=height,
+    )
+    _apply_value_baseline(
+        fig,
+        horizontal=False,
+        baseline=baseline,
+        baseline_label=baseline_label,
+        value_range=value_range,
+    )
+    return fig
+
+
+def plot_group_scatter_with_mean(
+    groups: Sequence[Sequence[float] | np.ndarray | pd.Series],
+    labels: Sequence[Any],
+    error: Literal["sem", "sd"] = "sem",
+    point_jitter: float = 0.12,
+    point_labels: Sequence[Sequence[Any]] | None = None,
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    color: str | Sequence[str] | None = None,
+    height: int | None = None,
+    baseline: float | None = None,
+    baseline_label: str | None = None,
+    value_range: Sequence[float] | None = None,
+) -> go.Figure:
+    """Per-group scatter of individual observations plus a mean +/- error-bar marker.
+
+    Unlike :func:`plot_distribution_groups` (box/violin summaries), this draws
+    each observation (e.g. one point per subject) as a jittered marker and
+    overlays a single larger marker at the group mean with an error bar —
+    the "one dot per subject, plus average with error bars" comparison used to
+    show a representation-to-representation enhancement.
+
+    Parameters
+    ----------
+    groups
+        Sequence of data arrays, one per group. Non-finite values are dropped.
+    labels
+        Group labels aligned with ``groups``, shown as x-axis tick labels.
+    error
+        Error-bar type for the mean marker: ``"sem"`` (default) or ``"sd"``.
+    point_jitter
+        Half-width of the horizontal jitter applied to individual points, in
+        x-axis units (groups are one unit apart).
+    point_labels
+        Optional per-point hover labels (e.g. subject ids), aligned with
+        ``groups``.
+    title, xaxis_title, yaxis_title
+        Layout labels.
+    color
+        Single color or per-group color list. Defaults to the colorblind palette.
+    height
+        Figure height in pixels.
+    baseline
+        Optional reference value drawn as a dashed horizontal line (e.g. chance).
+    baseline_label
+        Optional annotation for the *baseline* line.
+    value_range
+        Optional ``(low, high)`` range for the value (y) axis.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive scatter-plus-mean figure.
+
+    See Also
+    --------
+    plot_distribution_groups : Box/violin group comparison with overlaid points.
+    plot_bar : Bar chart with optional error bars from pre-aggregated values.
+    """
+    if len(groups) != len(labels):
+        raise ValueError(
+            f"`groups` length {len(groups)} != `labels` length {len(labels)}."
+        )
+    if error not in {"sem", "sd"}:
+        raise ValueError("`error` must be 'sem' or 'sd'.")
+    if point_labels is not None and len(point_labels) != len(groups):
+        raise ValueError(
+            f"`point_labels` length {len(point_labels)} != `groups` length {len(groups)}."
+        )
+
+    if color is None:
+        color_list = [
+            _COLORBLIND_COLORS[i % len(_COLORBLIND_COLORS)] for i in range(len(groups))
+        ]
+    elif isinstance(color, str):
+        color_list = [color] * len(groups)
+    else:
+        color_list = list(color)
+        if len(color_list) < len(groups):
+            color_list = (color_list * len(groups))[: len(groups)]
+
+    rng = np.random.default_rng(0)
+    fig = go.Figure()
+    for idx, (data, label) in enumerate(zip(groups, labels, strict=False)):
+        arr = np.asarray(list(data), dtype=float)
+        finite = np.isfinite(arr)
+        arr = arr[finite]
+        trace_color = color_list[idx]
+        if len(arr) == 0:
+            continue
+
+        hover_text = None
+        if point_labels is not None:
+            point_arr = np.asarray(list(point_labels[idx]), dtype=object)[finite]
+            hover_text = [str(value) for value in point_arr]
+
+        jitter = rng.uniform(-point_jitter, point_jitter, size=len(arr)) if len(arr) > 1 else [0.0]
+        fig.add_trace(
+            go.Scatter(
+                x=(idx + np.asarray(jitter)).tolist(),
+                y=arr.tolist(),
+                mode="markers",
+                marker={"color": trace_color, "opacity": 0.55, "size": 7},
+                name=str(label),
+                text=hover_text,
+                hoverinfo="y+text" if hover_text is not None else "y",
+                showlegend=False,
+            )
+        )
+
+        mean = float(np.mean(arr))
+        spread = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+        err = spread / np.sqrt(len(arr)) if error == "sem" and len(arr) > 1 else spread
+        fig.add_trace(
+            go.Scatter(
+                x=[idx],
+                y=[mean],
+                mode="markers",
+                marker={
+                    "color": trace_color,
+                    "size": 13,
+                    "symbol": "diamond",
+                    "line": {"color": "black", "width": 1},
+                },
+                error_y={"type": "data", "array": [err], "visible": True, "thickness": 2},
+                name=f"{label} mean",
+                showlegend=False,
+            )
+        )
+
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=list(range(len(labels))),
+        ticktext=[str(label) for label in labels],
+    )
     _apply_layout(
         fig,
         title=title,

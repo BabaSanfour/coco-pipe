@@ -94,6 +94,23 @@ def correct_sweep_pvalues(
 TEMPORAL_COLUMNS = ["Time", "TrainTime", "TestTime"]
 
 
+def _coordinate_groups(frame: pd.DataFrame, columns: list[str]) -> dict[tuple, np.ndarray]:
+    """Split `frame` by coordinate columns once, as tuple-keyed row positions.
+
+    Two details are handled here rather than at each call site: `groupby` on a
+    one-element list yields scalar keys today and tuple keys in a future pandas,
+    and the returned positions must be positional (`.iloc`) rather than index
+    labels, because a bootstrap resample repeats index labels.
+    """
+    if not columns:
+        return {(): np.arange(len(frame))}
+    by = columns[0] if len(columns) == 1 else columns
+    return {
+        key if isinstance(key, tuple) else (key,): positions
+        for key, positions in frame.groupby(by, sort=False).indices.items()
+    }
+
+
 def aggregate_predictions_for_inference(
     predictions: pd.DataFrame,
     metric: str,
@@ -926,10 +943,29 @@ def run_paired_permutation_assessment(
     temporal_cols = [c for c in TEMPORAL_COLUMNS if c in preds_a]
     merge_cols.extend(temporal_cols)
 
-    unit_col = (
-        config.unit_of_inference if config.unit_of_inference != "sample" else "SampleID"
-    )
-    if unit_col in preds_a and unit_col not in merge_cols:
+    # `unit_of_inference` names a *concept* (sample/group/custom), not a literal
+    # predictions column, so it must be resolved before use. "group_mean" and
+    # "group_majority" both mean "swap by CV group" here — the aggregation mode
+    # they also encode elsewhere is irrelevant to this permutation, which swaps
+    # whole units rather than aggregating rows.
+    if config.unit_of_inference == "sample" or config.unit_of_inference is None:
+        unit_col = "SampleID"
+    elif config.unit_of_inference == "custom":
+        if not config.custom_unit_column:
+            raise ValueError(
+                "unit_of_inference='custom' requires custom_unit_column to be set."
+            )
+        unit_col = config.custom_unit_column
+    elif config.unit_of_inference in {"group_mean", "group_majority"}:
+        unit_col = "Group"
+    else:
+        unit_col = config.unit_of_inference
+    if unit_col not in preds_a.columns:
+        raise ValueError(
+            f"unit_of_inference resolved to column {unit_col!r}, which is not "
+            f"present in the predictions ({sorted(preds_a.columns)})."
+        )
+    if unit_col not in merge_cols:
         merge_cols.append(unit_col)
 
     merged = pd.merge(preds_a, preds_b, on=merge_cols, suffixes=("_A", "_B"))
@@ -954,12 +990,16 @@ def run_paired_permutation_assessment(
     obs_scores_dummy = _score_by_coordinates(preds_a, metric)
     score_keys = list(obs_scores_dummy.keys())
 
+    # Split once into per-coordinate (e.g. per-timepoint) row groups via a
+    # single native groupby, instead of re-scanning the whole merged frame
+    # with a boolean mask for every (permutation, coordinate) pair below —
+    # that loop is O(n_permutations * n_coordinates^2 * n_rows) otherwise,
+    # dominated by repeated full-frame comparisons.
+    group_indices = _coordinate_groups(merged, temporal_cols)
+
     observed_diff_array = np.zeros(len(score_keys))
     for idx, key in enumerate(score_keys):
-        m = np.ones(len(merged), dtype=bool)
-        for i, c in enumerate(temporal_cols):
-            m &= merged[c] == key[i]
-        observed_diff_array[idx] = get_diff(merged[m])
+        observed_diff_array[idx] = get_diff(merged.iloc[group_indices[key]])
 
     boot_results = _bootstrap_scores_paired(
         merged,
@@ -967,7 +1007,7 @@ def run_paired_permutation_assessment(
         score_keys=score_keys,
         temporal_cols=temporal_cols,
         unit_col=unit_col,
-        n_bootstraps=1000,
+        n_bootstraps=getattr(config, "n_bootstraps", 1000),
         random_state=config.random_state,
     )
 
@@ -996,12 +1036,12 @@ def run_paired_permutation_assessment(
                 perm_merged.loc[mask, c_a] = merged.loc[mask, c_b]
                 perm_merged.loc[mask, c_b] = a_vals
 
+        # Swapping only rewrites the "_A"/"_B" columns in place on a copy of
+        # `merged`, so row membership per coordinate is unchanged and the
+        # groupby done once above still applies.
         p_diffs = np.empty(len(score_keys))
         for idx, key in enumerate(score_keys):
-            m = np.ones(len(perm_merged), dtype=bool)
-            for j, c in enumerate(temporal_cols):
-                m &= perm_merged[c] == key[j]
-            p_diffs[idx] = get_diff(perm_merged[m])
+            p_diffs[idx] = get_diff(perm_merged.iloc[group_indices[key]])
         return p_diffs
 
     seeds = perm_rng.integers(0, 2**32, size=n_perm)
@@ -1171,12 +1211,14 @@ def _bootstrap_scores_paired(
         return s_a - s_b
 
     def score_func(df: pd.DataFrame) -> np.ndarray:
+        # One groupby per resample instead of a full-frame boolean scan per
+        # coordinate: the latter is O(n_coordinates^2 * n_rows) per bootstrap
+        # and dominates the whole assessment at typical temporal resolutions.
+        groups = _coordinate_groups(df, temporal_cols)
         res = np.empty(len(score_keys))
         for idx, key in enumerate(score_keys):
-            m = np.ones(len(df), dtype=bool)
-            for j, c in enumerate(temporal_cols):
-                m &= df[c] == key[j]
-            res[idx] = get_diff(df[m])
+            positions = groups.get(key)
+            res[idx] = np.nan if positions is None else get_diff(df.iloc[positions])
         return res
 
     return _bootstrap_engine(

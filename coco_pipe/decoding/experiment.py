@@ -188,6 +188,12 @@ class Experiment:
             k in {"tabular_2d", "embedding_2d", "tabular", "embeddings"}
             for k in spec.input_kinds
         )
+        # Temporal (sliding/generalizing) models already got erasure/reducer/feature
+        # selection applied one level down: `full_est` above recursively built the
+        # base estimator's own Pipeline via this same method (see the `"temporal"`
+        # branch of `_instantiate_model`), where `allow_prep` was True. So a
+        # `not allow_prep` here just means "already handled inside the wrapped base
+        # estimator, not applicable to the outer wrapper" — not "unsupported".
 
         if self.config.erasure.enabled and allow_prep:
             from coco_pipe.transforms.subject_alignment import make_subject_transform
@@ -201,7 +207,7 @@ class Experiment:
                     ),
                 )
             )
-        elif self.config.erasure.enabled and not allow_prep:
+        elif self.config.erasure.enabled and not allow_prep and spec.family != "temporal":
             raise ValueError(
                 "Fold-local erasure is only valid for classical 2-D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
@@ -230,7 +236,7 @@ class Experiment:
                         ),
                     )
                 )
-        elif self.config.reducer.enabled and not allow_prep:
+        elif self.config.reducer.enabled and not allow_prep and spec.family != "temporal":
             raise ValueError(
                 f"Fold-local reduction is only valid for classical 2D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
@@ -240,7 +246,11 @@ class Experiment:
             fs_step = self._create_fs_step(full_est)
             if fs_step:
                 steps.append(fs_step)
-        elif self.config.feature_selection.enabled and not allow_prep:
+        elif (
+            self.config.feature_selection.enabled
+            and not allow_prep
+            and spec.family != "temporal"
+        ):
             raise ValueError(
                 f"Feature selection is only valid for classical 2D tabular "
                 f"inputs. Model '{model_name}' uses {spec.input_kinds} data."
