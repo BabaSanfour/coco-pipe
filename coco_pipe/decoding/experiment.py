@@ -207,7 +207,9 @@ class Experiment:
                     ),
                 )
             )
-        elif self.config.erasure.enabled and not allow_prep and spec.family != "temporal":
+        elif (
+            self.config.erasure.enabled and not allow_prep and spec.family != "temporal"
+        ):
             raise ValueError(
                 "Fold-local erasure is only valid for classical 2-D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
@@ -236,7 +238,9 @@ class Experiment:
                         ),
                     )
                 )
-        elif self.config.reducer.enabled and not allow_prep and spec.family != "temporal":
+        elif (
+            self.config.reducer.enabled and not allow_prep and spec.family != "temporal"
+        ):
             raise ValueError(
                 f"Fold-local reduction is only valid for classical 2D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."

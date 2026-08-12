@@ -94,7 +94,9 @@ def correct_sweep_pvalues(
 TEMPORAL_COLUMNS = ["Time", "TrainTime", "TestTime"]
 
 
-def _coordinate_groups(frame: pd.DataFrame, columns: list[str]) -> dict[tuple, np.ndarray]:
+def _coordinate_groups(
+    frame: pd.DataFrame, columns: list[str]
+) -> dict[tuple, np.ndarray]:
     """Split `frame` by coordinate columns once, as tuple-keyed row positions.
 
     Two details are handled here rather than at each call site: `groupby` on a

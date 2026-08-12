@@ -844,7 +844,11 @@ def plot_group_scatter_with_mean(
             point_arr = np.asarray(list(point_labels[idx]), dtype=object)[finite]
             hover_text = [str(value) for value in point_arr]
 
-        jitter = rng.uniform(-point_jitter, point_jitter, size=len(arr)) if len(arr) > 1 else [0.0]
+        jitter = (
+            rng.uniform(-point_jitter, point_jitter, size=len(arr))
+            if len(arr) > 1
+            else [0.0]
+        )
         fig.add_trace(
             go.Scatter(
                 x=(idx + np.asarray(jitter)).tolist(),
@@ -872,7 +876,12 @@ def plot_group_scatter_with_mean(
                     "symbol": "diamond",
                     "line": {"color": "black", "width": 1},
                 },
-                error_y={"type": "data", "array": [err], "visible": True, "thickness": 2},
+                error_y={
+                    "type": "data",
+                    "array": [err],
+                    "visible": True,
+                    "thickness": 2,
+                },
                 name=f"{label} mean",
                 showlegend=False,
             )

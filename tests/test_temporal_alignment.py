@@ -56,7 +56,9 @@ def test_temporal_alignment_requires_3d_grouped_data():
 def test_rotate_false_keeps_the_subject_pca_but_skips_the_procrustes_step():
     X, groups = _rotated_trajectories()
     train = groups != "c"
-    unrotated = TemporalProcrustesAlignment(n_components=4, rotate=False, random_state=42)
+    unrotated = TemporalProcrustesAlignment(
+        n_components=4, rotate=False, random_state=42
+    )
     rotated = TemporalProcrustesAlignment(n_components=4, random_state=42)
 
     unrotated.fit(X[train], groups=groups[train])
