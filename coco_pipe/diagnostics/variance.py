@@ -723,3 +723,12 @@ def variance_decomposition_report(
         ),
     ]
     return report
+
+
+# Kept here as public peers of the dense APIs while their implementation lives
+# separately to keep the sufficient-statistics machinery isolated.
+from .streaming_variance import (  # noqa: E402, F401
+    DEFAULT_PARTICIPATION_RATIO_MAX_GRAM_BYTES,
+    streamed_subject_probe,
+    streamed_variance_decomposition_report,
+)
