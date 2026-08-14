@@ -47,6 +47,7 @@ def posthoc_metrics_from_result(json_path, analysis_level: str = "epoch_level"):
     json_path = Path(json_path)
     data = json.loads(json_path.read_text())
     summary = {}
+    from sklearn.metrics import balanced_accuracy_score
     for model, node in data.get("results", {}).items():
         per_level = {"epoch_level": [], "subject_level": []}
         for fold in node.get("predictions", []):
@@ -54,23 +55,36 @@ def posthoc_metrics_from_result(json_path, analysis_level: str = "epoch_level"):
             yp = np.asarray(fold["y_pred"])
             proba = np.asarray(fold["y_proba"])
             p1 = proba[:, 1] if proba.ndim == 2 else proba
-            per_level["epoch_level"].append(score_predictions(yt, yp, p1))
+            em = score_predictions(yt, yp, p1)
+            # honest (calibrated) operating point: threshold chosen on the train
+            # fold by the engine (Youden's J), applied here to the test fold.
+            thr_e = fold.get("cal_threshold_epoch")
+            if thr_e is not None and len(np.unique(yt)) > 1:
+                em["balanced_accuracy_calibrated"] = float(
+                    balanced_accuracy_score(yt, (p1 >= thr_e).astype(int)))
+            per_level["epoch_level"].append(em)
             grp = fold.get("group")
             if grp is not None:
                 grp = np.asarray(grp)
                 if grp.size == yt.size and len(np.unique(grp)) < yt.size:
                     sy, spred, sp = aggregate_subject(yt, p1, grp)
-                    per_level["subject_level"].append(score_predictions(sy, spred, sp))
+                    sm = score_predictions(sy, spred, sp)
+                    thr_s = fold.get("cal_threshold_subject")
+                    if thr_s is not None and len(np.unique(sy)) > 1:
+                        sm["balanced_accuracy_calibrated"] = float(
+                            balanced_accuracy_score(sy, (sp >= thr_s).astype(int)))
+                    per_level["subject_level"].append(sm)
         out = {}
         for lvl, folds in per_level.items():
             if not folds:
                 continue
+            keys = {k for f in folds for k in f}
             out[lvl] = {
                 k: {
-                    "mean": float(np.nanmean([f[k] for f in folds])),
-                    "std": float(np.nanstd([f[k] for f in folds])),
+                    "mean": float(np.nanmean([f[k] for f in folds if k in f])),
+                    "std": float(np.nanstd([f[k] for f in folds if k in f])),
                 }
-                for k in folds[0]
+                for k in keys
             }
         summary[model] = out
     sidecar = json_path.with_name(json_path.stem + "_posthoc_metrics.json")

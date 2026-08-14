@@ -272,7 +272,7 @@ class FoundationModelSpec(EstimatorSpec):
     expects_microvolts: bool = True
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
-    supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
+    supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora", "partial")
     fallback_backends: tuple[str, ...] = ()
     paper_url: str | None = None
     model_notes: str = ""
@@ -655,7 +655,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         checkpoint_revision="fa9a2163a4b7c0a42c8e28b56077ef9c368944dc",
         requires_auth=True,
         preferred_backend="hugging_face",
-        supported_train_modes=("frozen", "full", "lora", "qlora"),
+        supported_train_modes=("frozen", "full", "lora", "qlora", "partial"),
         dependency_extra="transformers",
         model_notes="Requires ch_names in SignalMetadata for positional encoding.",
     ),
@@ -719,7 +719,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         checkpoint_filename="LUNA_base.safetensors",
         preferred_backend="braindecode",
         dependency_extra="braindecode",
-        supported_train_modes=("frozen", "full", "lora"),
+        supported_train_modes=("frozen", "full", "lora", "partial"),
         paper_url="https://openreview.net/forum?id=uazfjnFL0G",
         model_notes=(
             "Verified base variant: embed_dim=64, num_queries=4, depth=8; "

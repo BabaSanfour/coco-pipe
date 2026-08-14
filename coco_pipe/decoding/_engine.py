@@ -352,10 +352,25 @@ def fit_and_score_fold(
         try:
             _y_proba_tr = estimator.predict_proba(X_train)
             if _y_proba_tr.ndim == 2 and _y_proba_tr.shape[1] == 2:
-                _fpr, _tpr, _thresh = _roc_curve(y_train, _y_proba_tr[:, 1])
+                _p1_tr = _y_proba_tr[:, 1]
+                _fpr, _tpr, _thresh = _roc_curve(y_train, _p1_tr)
                 _best = _thresh[np.argmax(_tpr - _fpr)]
                 _y_opt = (fold_data["y_proba"][:, 1] >= _best).astype(int)
                 scores["balanced_accuracy_optimal"] = float(_bac(y_test, _y_opt))
+                # Persist the honest (train-derived) Youden threshold so post-hoc
+                # re-scoring can report a calibrated (non-oracle) operating point.
+                # Epoch-level here; also derive a subject-level threshold from the
+                # epoch-train predictions so post-hoc can calibrate that level too.
+                fold_data["cal_threshold_epoch"] = float(_best)
+                if groups_train is not None:
+                    _yt_tr = np.asarray(y_train)
+                    _u = np.unique(groups_train)
+                    _sy = np.array([int(np.bincount(_yt_tr[groups_train == _g].astype(int)).argmax())
+                                    for _g in _u])
+                    _sp = np.array([float(_p1_tr[groups_train == _g].mean()) for _g in _u])
+                    if len(np.unique(_sy)) > 1:
+                        _f2, _t2, _th2 = _roc_curve(_sy, _sp)
+                        fold_data["cal_threshold_subject"] = float(_th2[np.argmax(_t2 - _f2)])
         except Exception:
             scores["balanced_accuracy_optimal"] = float("nan")
 

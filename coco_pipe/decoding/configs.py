@@ -613,7 +613,7 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     model_key: str = "dummy"
     backend: str = "auto"
     n_outputs: int | None = None
-    train_mode: Literal["frozen", "full", "lora", "qlora"] = "frozen"
+    train_mode: Literal["frozen", "full", "lora", "qlora", "partial"] = "frozen"
     pooling: Literal["mean", "flatten", "attention"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
@@ -704,7 +704,7 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     backend: str = "auto"
     n_outputs: int | None = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
-    train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
+    train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora", "partial"] = "full"
     # Read-out pooling forwarded to the backbone (e.g. REVE's pretrained
     # single-query attention read-out). "attention" only applies to models
     # that expose it; others fall back to their default.

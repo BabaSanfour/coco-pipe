@@ -67,6 +67,26 @@ def _log_lora_injection(model, target_modules, model_key: str) -> None:
         names = [n for n, _ in model.named_modules() if n][:30]
         _logger.warning("[LoRA:%s] Available module names (first 30): %s", model_key, names)
 
+
+def _unfreeze_last_k_blocks(model, k: int):
+    """Unfreeze the last K blocks of the model's largest transformer ModuleList
+    (used by train_mode="partial"). Returns (n_params_unfrozen, location_str)."""
+    import torch.nn as nn
+    best = None
+    for name, mod in model.named_modules():
+        if isinstance(mod, nn.ModuleList) and len(mod) >= 2:
+            if best is None or len(mod) > len(best[1]):
+                best = (name, mod)
+    if best is None or k <= 0:
+        return 0, None
+    name, blocks = best
+    n = 0
+    for blk in list(blocks)[-k:]:
+        for p in blk.parameters():
+            p.requires_grad = True
+            n += p.numel()
+    return n, f"{name}[-{k}:] ({len(blocks)} total)"
+
 _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "cbramod": ("CBraMod", "braindecode.models"),
     "biot": ("BIOT", "braindecode.models"),
@@ -223,6 +243,7 @@ class BrainDecodeBackend(BackendBase):
         revision = kw.pop("revision", metadata.checkpoint_revision)
         filename = kw.pop("filename", metadata.checkpoint_filename)
         interpolate_channels = bool(kw.pop("interpolate_channels", False))
+        unfreeze_last_k = int(kw.pop("unfreeze_last_k", 2))
         uses_interpolation = interpolate_channels and model_key in _INTERPOLATED_CLASS
         if (
             interpolate_channels
@@ -371,7 +392,9 @@ class BrainDecodeBackend(BackendBase):
                     _m.register_forward_pre_hook(_residual_clamp_pre_hook)
                     _m.register_forward_hook(_nanfix_post_hook)
 
-        if train_mode == "frozen":
+        if train_mode in ("frozen", "partial"):
+            # partial: freeze everything now; the last-K transformer blocks are
+            # re-enabled after reset_head (below), alongside the head.
             for param in model.parameters():
                 param.requires_grad = False
             model.eval()
@@ -411,13 +434,37 @@ class BrainDecodeBackend(BackendBase):
             except NotImplementedError:
                 if model_key not in {"luna"}:
                     raise
-        if train_mode == "frozen" and n_outputs is not None:
-            for head_name in ("final_layer", "classifier", "head"):
-                head = getattr(model, head_name, None)
-                if head is not None:
-                    for parameter in head.parameters():
-                        parameter.requires_grad = True
+        # Ensure the classification head is trainable in BOTH frozen and lora
+        # modes. In frozen mode it is the only trainable part. In lora mode it
+        # must be unfrozen explicitly: get_peft_model() freezes the whole base
+        # model, and models without a working reset_head() (e.g. LUNA) never get
+        # a fresh head — leaving the output projection frozen at random init,
+        # which forces chance-level predictions no matter how well LoRA adapts
+        # the backbone. Search the PEFT wrapper's base model too.
+        if train_mode in ("frozen", "lora", "partial") and n_outputs is not None:
+            _base = getattr(model, "base_model", None)
+            _containers = [model, _base, getattr(_base, "model", None)]
+            for _container in _containers:
+                if _container is None:
+                    continue
+                _hit = False
+                for head_name in ("final_layer", "classifier", "head"):
+                    head = getattr(_container, head_name, None)
+                    if head is not None:
+                        for parameter in head.parameters():
+                            parameter.requires_grad = True
+                        _hit = True
+                        break
+                if _hit:
                     break
+
+        # partial: additionally unfreeze the last-K transformer blocks (a
+        # LoRA-free alternative that adapts the top of the stack while keeping
+        # the rest frozen; the head was just re-enabled above).
+        if train_mode == "partial":
+            n_unf, where = _unfreeze_last_k_blocks(model, unfreeze_last_k)
+            _logger.info("[partial:%s] unfroze last %d block(s): %s params @ %s",
+                         model_key, unfreeze_last_k, f"{n_unf:,}", where)
 
         backend = cls(
             metadata=metadata,
@@ -569,7 +616,10 @@ class BrainDecodeBackend(BackendBase):
 
             def train(self, mode: bool = True):
                 super().train(mode)
-                if mode and self._backend._train_mode == "frozen":
+                # frozen & partial: keep the frozen backbone in eval; modules with
+                # trainable params (head, and for partial the unfrozen last-K
+                # blocks) are switched back to train inside _set_backbone_eval.
+                if mode and self._backend._train_mode in ("frozen", "partial"):
                     self._backend._set_backbone_eval()
                 return self
 
