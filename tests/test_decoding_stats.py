@@ -747,3 +747,56 @@ def test_statistical_assessment_permutation():
         )
         assert res is not None
         assert "nulls" in res
+
+
+def test_permutation_loop_degenerate_fold_yields_nan():
+    """Regression test for issue #21.
+
+    When a permuted label assignment produces a degenerate CV fold,
+    _run_permutation_loop must return NaN for that draw instead of
+    propagating the ValueError and aborting the whole experiment.
+    """
+    from unittest.mock import patch
+
+    from coco_pipe.decoding.stats import _run_permutation_loop
+
+    experiment_config = ExperimentConfig(
+        task="classification",
+        models={"lr": LogisticRegressionConfig()},
+        cv=CVConfig(n_splits=2),
+        n_jobs=1,
+    )
+    config = StatisticalAssessmentConfig(
+        chance=ChanceAssessmentConfig(n_permutations=3, method="permutation")
+    )
+    X = np.zeros((4, 2))
+    y = np.array([1, 0, 1, 0])
+    groups = np.array([0, 0, 1, 1])
+    sample_ids = np.array([0, 1, 2, 3])
+
+    with patch("coco_pipe.decoding.Experiment") as mock_exp_cls:
+        # Every permutation run raises — simulates all-same-class folds.
+        mock_exp_cls.return_value.run.side_effect = ValueError(
+            "Degenerate Test Fold: Only one class found (1)."
+        )
+        result = _run_permutation_loop(
+            model="lr",
+            metric="accuracy",
+            score_keys=[()],
+            experiment_config=experiment_config,
+            X=X,
+            y=y,
+            groups=groups,
+            sample_ids=sample_ids,
+            sample_metadata=None,
+            feature_names=None,
+            time_axis=None,
+            observation_level="sample",
+            inferential_unit="sample",
+            config=config,
+            unit="sample",
+        )
+
+    # All permutations were degenerate → all NaN, but no exception raised.
+    assert result.shape == (3, 1)
+    assert np.all(np.isnan(result)), "Expected all-NaN null distribution for degenerate folds"

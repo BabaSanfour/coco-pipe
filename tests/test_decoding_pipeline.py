@@ -110,3 +110,53 @@ def test_units_run_through_task_batch(tmp_path):
     results = run_task_batch(units, run_decoding_unit, max_workers=2)
     assert len(results) == 3
     assert all(records and records[0]["status"] == "success" for records in results)
+
+
+def test_unit_records_surfaces_model_failure(tmp_path):
+    """Regression test for issue #21.
+
+    When a model's result carries an 'error' key it is absent from
+    ExperimentResult.summary().  _unit_records must still return one
+    record per model (status='failed') so callers never receive an
+    empty list or hit KeyError: 'Model' when indexing into records.
+    """
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+
+    from coco_pipe.decoding.pipeline import _unit_records
+
+    # Build a mock ExperimentResult where 'bad_model' failed.
+    result = MagicMock()
+    result.raw = {
+        "good_model": {
+            "metrics": {"accuracy": {"mean": 0.9, "std": 0.05, "folds": [0.9]}}
+        },
+        "bad_model": {"error": "Degenerate Test Fold: Only one class found (1)."},
+    }
+    # summary() returns only the good model (bad_model is skipped via 'error' check).
+    result.summary.return_value = pd.DataFrame(
+        [{"accuracy_mean": 0.9, "accuracy_std": 0.05}],
+        index=pd.Index(["good_model"], name="Model"),
+    )
+    result.get_statistical_assessment.return_value = pd.DataFrame()
+
+    records = _unit_records(
+        result,
+        context={"scope": "test"},
+        output_dir=Path(tmp_path),
+        include_p_values=False,
+        metrics=["accuracy"],
+    )
+
+    # Must have exactly one record per model.
+    assert len(records) == 2, f"Expected 2 records, got {len(records)}"
+
+    by_model = {r["model"]: r for r in records}
+    assert "good_model" in by_model
+    assert "bad_model" in by_model
+
+    assert by_model["good_model"]["status"] == "success"
+    assert by_model["bad_model"]["status"] == "failed"
+    assert "Degenerate" in by_model["bad_model"]["reason"]
