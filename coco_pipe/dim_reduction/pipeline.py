@@ -728,14 +728,15 @@ def prepare_eval_inputs(
         raise ValueError("Dim-reduction fit/eval expects container.ids to be present.")
 
     container_ids = _normalize_ids(container.ids)
-    frame = pd.DataFrame({"obs_id": container_ids})
     n_obs = len(container_ids)
+    columns: dict[str, np.ndarray] = {"obs_id": container_ids}
     for key, values in container.coords.items():
         arr = np.asarray(values)
         if arr.ndim == 1 and len(arr) == n_obs and key != "feature":
-            frame[key] = arr
-    if container.y is not None and "y" not in frame.columns:
-        frame["y"] = np.asarray(container.y)
+            columns[key] = arr
+    if container.y is not None and "y" not in columns:
+        columns["y"] = np.asarray(container.y)
+    frame = pd.DataFrame(columns)
 
     positions = occurrence_aligned_positions(container_ids, fit_ids)
     if positions is None:

@@ -1,4 +1,7 @@
+import warnings
+
 import numpy as np
+import pandas as pd
 import pytest
 
 from coco_pipe.dim_reduction.artifacts import (
@@ -222,6 +225,41 @@ def testprepare_eval_inputs(dummy_container):
 
     with pytest.raises(RuntimeError, match="could not be aligned"):
         prepare_eval_inputs(dummy_container, np.array(["missing_id"]), eval_spec)
+
+
+def test_prepare_eval_inputs_does_not_fragment_wide_containers():
+    n_samples = 50
+    n_coord_columns = 150
+    ids = np.arange(n_samples).astype(str)
+    coords = {
+        "target": ["A" if i % 2 == 0 else "B" for i in range(n_samples)],
+        "group": [f"G{i // 10}" for i in range(n_samples)],
+    }
+    for col_idx in range(n_coord_columns):
+        coords[f"meta_{col_idx}"] = np.arange(n_samples)
+    container = DataContainer(
+        X=np.random.rand(n_samples, 5),
+        coords=coords,
+        ids=ids,
+        meta={},
+        dims=("observation", "feature"),
+    )
+    eval_spec = {
+        "name": "test",
+        "target_col": "target",
+        "group_col": "group",
+        "filters": [],
+        "label_map": {},
+    }
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        prepare_eval_inputs(container, ids, eval_spec)
+
+    assert not any(
+        issubclass(item.category, pd.errors.PerformanceWarning)
+        for item in caught_warnings
+    )
 
 
 def test_valid_component_sweep(dummy_container):
