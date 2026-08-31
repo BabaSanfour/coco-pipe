@@ -13,8 +13,10 @@ from coco_pipe.decoding import (
     DecodingUnit,
     ExperimentConfig,
     StatisticalAssessmentConfig,
+    TuningConfig,
     run_decoding_unit,
 )
+from coco_pipe.decoding.pipeline import allocate_inner_jobs
 from coco_pipe.utils import run_task_batch
 
 
@@ -110,3 +112,47 @@ def test_units_run_through_task_batch(tmp_path):
     results = run_task_batch(units, run_decoding_unit, max_workers=2)
     assert len(results) == 3
     assert all(records and records[0]["status"] == "success" for records in results)
+
+
+def test_allocate_inner_jobs_splits_budget_across_fold_and_tuning_levels():
+    cfg = _experiment_config().model_copy(
+        update={
+            "cv": CVConfig(
+                strategy="stratified_group_kfold",
+                n_splits=5,
+                shuffle=True,
+                random_state=42,
+                group_key="group_id",
+            ),
+            "tuning": TuningConfig(enabled=True, scoring="accuracy"),
+        }
+    )
+
+    reallocated = allocate_inner_jobs(cfg, 32)
+
+    # Handing 32 to both the 5-fold outer loop and each fold's grid search
+    # would oversubscribe by 5x; the two levels must instead multiply to at
+    # most the original budget.
+    assert reallocated.n_jobs == 5
+    assert reallocated.tuning.n_jobs == 6
+    assert reallocated.n_jobs * reallocated.tuning.n_jobs <= 32
+
+
+def test_allocate_inner_jobs_with_more_splits_than_jobs():
+    cfg = _experiment_config().model_copy(
+        update={
+            "cv": CVConfig(
+                strategy="stratified_group_kfold",
+                n_splits=10,
+                shuffle=True,
+                random_state=42,
+                group_key="group_id",
+            ),
+            "tuning": TuningConfig(enabled=True, scoring="accuracy"),
+        }
+    )
+
+    reallocated = allocate_inner_jobs(cfg, 4)
+
+    assert reallocated.n_jobs == 4
+    assert reallocated.tuning.n_jobs == 1

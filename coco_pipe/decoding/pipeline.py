@@ -188,14 +188,24 @@ def allocate_inner_jobs(cfg: ExperimentConfig, n_jobs: int) -> ExperimentConfig:
     """Return a copy of the experiment config with a new inner ``n_jobs``.
 
     Hands the whole job budget to a lone unit's folds/permutations when only one
-    outer worker is active.
+    outer worker is active. The budget is split across the two nesting levels
+    that actually run concurrently — the outer CV-fold loop (:class:`joblib.Parallel`
+    over ``cfg.cv.n_splits`` folds) and, inside each fold, the per-fold
+    hyperparameter search (``GridSearchCV``/``RandomizedSearchCV``). Handing
+    ``n_jobs`` to *both* levels independently (as opposed to splitting it)
+    oversubscribes the machine by a factor of ``n_splits``: each of the
+    ``n_splits`` fold workers would spawn its own ``n_jobs``-worker search pool,
+    for up to ``n_splits * n_jobs`` processes contending over ``n_jobs`` cores.
     """
+    n_splits = max(1, int(cfg.cv.n_splits))
+    fold_workers = max(1, min(n_jobs, n_splits))
+    tuning_workers = max(1, n_jobs // fold_workers)
     tuning = (
-        cfg.tuning.model_copy(update={"n_jobs": n_jobs})
+        cfg.tuning.model_copy(update={"n_jobs": tuning_workers})
         if cfg.tuning.enabled
         else cfg.tuning
     )
-    return cfg.model_copy(update={"n_jobs": n_jobs, "tuning": tuning})
+    return cfg.model_copy(update={"n_jobs": fold_workers, "tuning": tuning})
 
 
 def allocate_outer_inner(total_jobs: int, n_units: int) -> tuple[int, int]:
