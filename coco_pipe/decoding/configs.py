@@ -944,6 +944,65 @@ class TemporalAlignmentConfig(BaseModel):
             "isolates the rotation's contribution."
         ),
     )
+    use_shared_basis: bool = Field(
+        False,
+        description=(
+            "Project every participant through the pooled training template "
+            "directly, ignoring per-participant identity and `rotate` entirely. "
+            "The continuous analogue of a single spatial filter shared by "
+            "everyone (as opposed to ReducerConfig's PCA, which is fold-local "
+            "but refit independently at every sliding-window latency)."
+        ),
+    )
+    augment: tuple[Literal["envelope", "velocity", "scalar", "trajectory"], ...] = (
+        Field(
+            (),
+            description=(
+                "Extra channels concatenated onto the raw scores. Per-component "
+                "(n_components channels each): 'envelope' (Hilbert amplitude), "
+                "'velocity' (index-based first derivative), 'scalar' (peak "
+                "amplitude, peak latency, mean power, and signed AUC, broadcast as "
+                "constant channels across time). 'trajectory' instead reduces the "
+                "joint path through the full embedded space via coco_pipe's own "
+                "trajectory-geometry metrics (speed, acceleration, jerk, "
+                "curvature, path length, displacement, distance-from-center, "
+                "turning angle, tortuosity, AUC-speed) - a fixed ~10 channels "
+                "regardless of n_components."
+            ),
+        )
+    )
+    augment_only: bool = Field(
+        False,
+        description=(
+            "Drop the raw per-component scores entirely, keeping only what "
+            "augment requests (e.g. just the ~10 'trajectory' channels, "
+            "independent of n_components). Requires a non-empty augment."
+        ),
+    )
+    trajectory_metrics: (
+        tuple[
+            Literal[
+                "speed",
+                "acceleration",
+                "jerk",
+                "curvature",
+                "path_length",
+                "displacement",
+                "distance_from_center",
+                "turning_angle",
+                "tortuosity",
+                "auc_speed",
+            ],
+            ...,
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "Restrict the 'trajectory' augment to a chosen subset of its ~10 "
+            "metrics by name. None (default) computes and returns all of them."
+        ),
+    )
     random_state: int | None = 42
 
 

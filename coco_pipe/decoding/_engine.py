@@ -265,6 +265,14 @@ def fit_and_score_fold(
             n_components=temporal_alignment_config.n_components,
             adaptation=temporal_alignment_config.adaptation,
             rotate=getattr(temporal_alignment_config, "rotate", True),
+            use_shared_basis=getattr(
+                temporal_alignment_config, "use_shared_basis", False
+            ),
+            augment=getattr(temporal_alignment_config, "augment", ()),
+            augment_only=getattr(temporal_alignment_config, "augment_only", False),
+            trajectory_metrics=getattr(
+                temporal_alignment_config, "trajectory_metrics", None
+            ),
             random_state=temporal_alignment_config.random_state,
         )
         X_train = aligner.fit_transform(X_train, groups=groups_train)
@@ -808,6 +816,48 @@ def extract_metadata(
                 fs_step, "scores_"
             ):
                 meta["feature_scores"] = fs_step.scores_
+
+        elif clf_step is not None and hasattr(clf_step, "estimators_"):
+            # Temporal (sliding/generalizing) wrapper: feature selection was
+            # pushed one level down into each per-timepoint base-classifier
+            # clone (see Experiment._prepare_estimator's "temporal" branch),
+            # so there is no single top-level "fs" step - there are up to
+            # n_times of them, one per `clf_step.estimators_[t]`. Aggregate
+            # into a per-feature selection frequency across every timepoint
+            # this fold fit, reusing the "selected_features" key so
+            # ExperimentResult.get_feature_stability()'s existing cross-fold
+            # averaging picks it up unchanged - the result is then a
+            # frequency across both folds and timepoints.
+            per_timepoint_masks = [
+                sub.named_steps["fs"].get_support()
+                for sub in clf_step.estimators_
+                if hasattr(sub, "named_steps") and "fs" in sub.named_steps
+            ]
+            if per_timepoint_masks:
+                per_timepoint_stack = np.vstack(per_timepoint_masks)
+                frequency = np.mean(per_timepoint_stack, axis=0)
+                n_feat = len(frequency)
+                actual_names = (
+                    feature_names
+                    if (feature_names and len(feature_names) == n_feat)
+                    else [f"feature_{i}" for i in range(n_feat)]
+                )
+                meta.update(
+                    {
+                        "feature_selection_method": feature_selection_config.method,
+                        "selected_features": frequency,
+                        # Raw (n_times, n_features) boolean mask, one row per
+                        # per-timepoint base-classifier clone in this fold -
+                        # preserved (not just the time-averaged "frequency"
+                        # above) so callers can recover exactly which
+                        # features were selected at one specific timepoint
+                        # (e.g. a peak-accuracy latency), not just the
+                        # across-time selection rate. See
+                        # ExperimentResult.get_selected_features_per_timepoint.
+                        "selected_features_per_timepoint": per_timepoint_stack,
+                        "feature_names": actual_names,
+                    }
+                )
 
         if clf_step is not None:
             estimator = clf_step

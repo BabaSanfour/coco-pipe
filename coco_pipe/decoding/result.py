@@ -2010,6 +2010,78 @@ class ExperimentResult:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
+    def get_selected_features_per_timepoint(
+        self, model: str | None = None
+    ) -> pd.DataFrame:
+        """
+        Get fold- and timepoint-level selected feature masks in long format.
+
+        Sliding/generalizing decoders push feature selection down into a
+        per-timepoint base-classifier clone, so a single fold fits up to
+        n_times independent selectors. get_feature_stability() and
+        get_selected_features() only expose the time-averaged selection
+        rate per fold (see extract_metadata, temporal branch). This
+        method exposes the raw per-fold-per-timepoint boolean mask instead,
+        for callers that need to know exactly which features were selected
+        at one specific timepoint (e.g. a peak-accuracy latency).
+
+        Parameters
+        ----------
+        model : str, optional
+            The model name to filter by. Default is None (all models).
+
+        Returns
+        -------
+        pd.DataFrame
+            Long-format DataFrame with Model, Fold, TimeIndex, Time,
+            Feature, FeatureName, and Selected columns. Empty if no model
+            in this result used a temporal (sliding/generalizing) selector,
+            or if time_axis is unavailable.
+
+        See Also
+        --------
+        ExperimentResult.get_selected_features : Fold-level, time-averaged.
+        ExperimentResult.get_feature_stability : Cross-fold, cross-time rate.
+        """
+        frames = []
+        time_axis = self.time_axis
+        for m_name, res in self.raw.items():
+            if model is not None and m_name != model:
+                continue
+            if "error" in res:
+                continue
+            for f_idx, meta in enumerate(res.get("metadata", [])):
+                stack = meta.get("selected_features_per_timepoint")
+                if stack is None:
+                    continue
+                n_times, n_feat = stack.shape
+                f_names = meta.get("feature_names")
+                if f_names is None or len(f_names) != n_feat:
+                    f_names = [f"feature_{idx}" for idx in range(n_feat)]
+                times = (
+                    list(time_axis)
+                    if time_axis is not None and len(time_axis) == n_times
+                    else list(range(n_times))
+                )
+                for t_idx in range(n_times):
+                    frames.append(
+                        pd.DataFrame(
+                            {
+                                "Model": m_name,
+                                "Fold": f_idx,
+                                "TimeIndex": t_idx,
+                                "Time": times[t_idx],
+                                "Feature": np.arange(n_feat),
+                                "FeatureName": f_names,
+                                "Selected": stack[t_idx].astype(bool),
+                            }
+                        )
+                    )
+
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
     def get_feature_scores(self, model: str | None = None) -> pd.DataFrame:
         """
         Get fold-level feature-selection scores.

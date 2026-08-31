@@ -725,10 +725,20 @@ class Experiment:
                 raise ValueError(f"Model '{name}' doesn't support rank '{rank}'.")
         if self.config.feature_selection.enabled:
             sel = get_selector_capabilities(self.config.feature_selection.method)
-            if rank not in sel.input_ranks:
-                raise ValueError(
-                    f"FS method '{sel.method}' doesn't support rank '{rank}'."
-                )
+            for name, spec in self._model_specs.items():
+                # Temporal (sliding/generalizing) models apply feature selection
+                # one level down, inside the per-timepoint base-classifier
+                # pipeline built by `_prepare_estimator`'s "temporal" branch -
+                # exactly like `reducer`/`erasure` already do. What the selector
+                # actually sees there is always a 2-D per-timepoint slice, never
+                # the raw 3-D temporal array, so that is what its capability
+                # must be checked against, not the raw input rank.
+                effective_rank = "2d" if spec.family == "temporal" else rank
+                if effective_rank not in sel.input_ranks:
+                    raise ValueError(
+                        f"FS method '{sel.method}' doesn't support rank "
+                        f"'{effective_rank}' (required by model '{name}')."
+                    )
         if self.config.task == "classification" and type_of_target(y) == "continuous":
             raise ValueError("Task is 'classification' but target is 'continuous'.")
 
