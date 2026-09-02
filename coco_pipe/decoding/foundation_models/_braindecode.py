@@ -530,6 +530,20 @@ class BrainDecodeBackend(BackendBase):
         batch_size = getattr(self._net_, "batch_size", None)
         return int(batch_size) if batch_size else 32
 
+    def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
+        """Fit on the model's native montage, as ``transform``/``predict`` do."""
+        self._validate(X)
+        X = self._construct_channels(X)
+        return self._fit_with_skorch(X, y, **fit_params)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Class probabilities on the model's native montage."""
+        self._validate(X)
+        X = self._construct_channels(X)
+        if self._net_ is None:
+            raise RuntimeError("Model must be fitted before predict_proba().")
+        return np.asarray(self._net_.predict_proba(X))
+
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
