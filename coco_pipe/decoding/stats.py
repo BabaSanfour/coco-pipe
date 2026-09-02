@@ -1564,12 +1564,15 @@ def _assess_paired_comparison_internal(
     """Internal core for paired comparison on a single coordinate."""
     from ._diagnostics import paired_unit_indices, score_frame
 
+    paired_cols = [col for col in merged.columns if col.endswith(("_A", "_B"))]
+
     def _prediction_frame(suffix: str) -> pd.DataFrame:
         suffixed_cols = [col for col in merged.columns if col.endswith(suffix)]
         base_cols = [col.removesuffix(suffix) for col in suffixed_cols]
+        drop_cols = list(dict.fromkeys(base_cols + paired_cols))
         return pd.concat(
             [
-                merged.drop(columns=base_cols, errors="ignore"),
+                merged.drop(columns=drop_cols, errors="ignore"),
                 merged[suffixed_cols].rename(
                     columns=dict(zip(suffixed_cols, base_cols, strict=True))
                 ),
