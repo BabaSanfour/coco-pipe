@@ -311,6 +311,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             )
             from skorch.dataset import Dataset
             from skorch.helper import predefined_split
+            from torch.utils.data import Subset
 
             groups_arr = np.asarray(groups)
             y_arr = np.asarray(y)
@@ -337,9 +338,10 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
             self._training_groups_ = np.unique(groups_arr[train_idx])
             self._validation_groups_ = np.unique(groups_arr[valid_idx])
-            valid_ds = Dataset(X[valid_idx], np.asarray(y)[valid_idx])
-            X = X[train_idx]
-            y = np.asarray(y)[train_idx]
+            full_ds = Dataset(X, y_arr)
+            valid_ds = Subset(full_ds, valid_idx.tolist())
+            X = Subset(full_ds, train_idx.tolist())
+            y = y_arr[train_idx]
             net_kwargs["train_split"] = predefined_split(valid_ds)
 
         callbacks = []
