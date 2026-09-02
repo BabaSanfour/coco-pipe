@@ -380,6 +380,16 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """Return the skorch training history (empty if not trained)."""
         return list(self._net_.history) if self._net_ is not None else []
 
+    def _eval_batch_size(self) -> int:
+        """Batch size for inference, mirroring the batch size used at fit time.
+
+        ``predict``/``transform`` otherwise run the whole fold through the
+        model in one forward pass, which OOMs on large test folds even though
+        training (via skorch) and ``predict_proba`` are already batched.
+        """
+        batch_size = getattr(self._net_, "batch_size", None)
+        return int(batch_size) if batch_size else 32
+
     def _to_tensor(self, X: np.ndarray):
         import torch
 

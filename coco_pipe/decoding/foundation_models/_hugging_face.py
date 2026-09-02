@@ -366,16 +366,26 @@ class HuggingFaceBackend(BackendBase):
             Pooled backbone representations.
         """
         self._validate(X)
+        batch_size = self._eval_batch_size()
+        pooled_chunks: list[np.ndarray] = []
+        token_chunks: list[np.ndarray] = []
         with self._no_grad():
-            out = self._reve_forward(
-                self._to_tensor(X),
-                return_embeddings=True,
-                return_tokens=return_tokens,
-            )
+            for start in range(0, len(X), batch_size):
+                out = self._reve_forward(
+                    self._to_tensor(X[start : start + batch_size]),
+                    return_embeddings=True,
+                    return_tokens=return_tokens,
+                )
+                if return_tokens:
+                    pooled, tokens = out
+                    pooled_chunks.append(self._from_tensor(pooled))
+                    token_chunks.append(self._from_tensor(tokens))
+                else:
+                    pooled_chunks.append(self._from_tensor(out))
+        pooled = np.concatenate(pooled_chunks, axis=0)
         if return_tokens:
-            pooled, tokens = out
-            return self._from_tensor(pooled), self._from_tensor(tokens)
-        return self._from_tensor(out)
+            return pooled, np.concatenate(token_chunks, axis=0)
+        return pooled
 
     def get_token_output_metadata(self) -> dict[str, object]:
         """Describe REVE's unmodified channel-by-time-patch backbone output."""
@@ -401,11 +411,20 @@ class HuggingFaceBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        batch_size = self._eval_batch_size()
+        is_regression = self._task == "regression"
+        chunks = []
         with self._no_grad():
-            logits = self._reve_forward(self._to_tensor(X), return_embeddings=False)
-        if self._task == "regression":
-            return self._from_tensor(logits).squeeze(-1)
-        return self._from_tensor(logits.argmax(dim=-1))
+            for start in range(0, len(X), batch_size):
+                logits = self._reve_forward(
+                    self._to_tensor(X[start : start + batch_size]),
+                    return_embeddings=False,
+                )
+                if is_regression:
+                    chunks.append(self._from_tensor(logits).squeeze(-1))
+                else:
+                    chunks.append(self._from_tensor(logits.argmax(dim=-1)))
+        return np.concatenate(chunks, axis=0)
 
     def checkpoint_components(self) -> dict:
         """REVE keeps backbone, position bank, and head as separate modules."""

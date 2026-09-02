@@ -520,16 +520,6 @@ class BrainDecodeBackend(BackendBase):
             ):
                 module.train()
 
-    def _eval_batch_size(self) -> int:
-        """Batch size for inference, mirroring the batch size used at fit time.
-
-        ``predict``/``transform`` otherwise run the whole fold through the
-        model in one forward pass, which OOMs on large test folds even though
-        training (via skorch) and ``predict_proba`` are already batched.
-        """
-        batch_size = getattr(self._net_, "batch_size", None)
-        return int(batch_size) if batch_size else 32
-
     def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
         """Fit on the model's native montage, as ``transform``/``predict`` do."""
         self._validate(X)
