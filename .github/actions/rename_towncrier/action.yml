@@ -1,0 +1,62 @@
+name: Rename Towncrier fragment
+description: Rename Towncrier changelog fragments to use the pull request number.
+
+inputs:
+  pr-number:
+    description: Pull request number.
+    required: true
+
+  directory:
+    description: Directory containing Towncrier fragments.
+    required: false
+    default: changelog.d
+
+  types:
+    description: Allowed Towncrier fragment suffixes.
+    required: false
+    default: feature,bugfix,doc,misc
+
+runs:
+  using: composite
+
+  steps:
+    - name: Rename Towncrier fragments
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        PR_NUMBER="${{ inputs.pr-number }}"
+        DIRECTORY="${{ inputs.directory }}"
+        TYPES="${{ inputs.types }}"
+
+        if [[ ! -d "$DIRECTORY" ]]; then
+          echo "No Towncrier directory found: $DIRECTORY"
+          exit 0
+        fi
+
+        IFS=',' read -ra TYPE_ARRAY <<< "$TYPES"
+
+        for TYPE in "${TYPE_ARRAY[@]}"; do
+          TYPE="$(echo "$TYPE" | xargs)"
+
+          shopt -s nullglob
+          for FILE in "$DIRECTORY"/*."$TYPE"; do
+            BASENAME="$(basename "$FILE")"
+
+            if [[ "$BASENAME" =~ ^[0-9]+\."$TYPE"$ ]]; then
+              echo "Already correctly named: $FILE"
+              continue
+            fi
+
+            TARGET="$DIRECTORY/$PR_NUMBER.$TYPE"
+
+            if [[ -e "$TARGET" ]]; then
+              echo "Target already exists: $TARGET"
+              echo "Keeping existing file and leaving $FILE unchanged."
+              continue
+            fi
+
+            echo "Renaming $FILE -> $TARGET"
+            mv "$FILE" "$TARGET"
+          done
+        done

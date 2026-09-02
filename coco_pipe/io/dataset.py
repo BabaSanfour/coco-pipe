@@ -10,21 +10,20 @@ import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from ._serialization import default_id_extractor, smart_reader
 from .structures import DataContainer
 from .utils import (
     _get_bids_path,
-    default_id_extractor,
     detect_runs,
     detect_sessions,
     detect_subjects,
     load_participants_tsv,
     read_bids_entry,
-    smart_reader,
     split_column,
 )
 
@@ -80,23 +79,23 @@ class TabularDataset(BaseDataset):
 
     >>> # Load and reshape wide data (e.g. time series in columns)
     >>> # Columns: T0_F1, T0_F2, T1_F1... -> dims=('time', 'freq')
-    >>> ds = TabularDataset("wide.csv", columns_to_dims=['time', 'freq'], col_sep='_')
+    >>> ds = TabularDataset("wide.csv", columns_to_dims=["time", "freq"], col_sep="_")
     """
 
     def __init__(
         self,
-        path: Union[str, Path],
-        target_col: Optional[str] = None,
-        index_col: Optional[Union[str, int]] = None,
+        path: str | Path,
+        target_col: str | None = None,
+        index_col: str | int | None = None,
         sep: str = "\t",
-        header: Optional[Union[int, List[int]]] = 0,
-        sheet_name: Optional[Union[str, int]] = 0,
-        columns_to_dims: Optional[List[str]] = None,
+        header: int | list[int] | None = 0,
+        sheet_name: str | int | None = 0,
+        columns_to_dims: list[str] | None = None,
         col_sep: str = "_",
-        meta_columns: Optional[List[str]] = None,
+        meta_columns: list[str] | None = None,
         clean: bool = False,
-        clean_kwargs: Optional[Dict[str, Any]] = None,
-        select_kwargs: Optional[Dict[str, Any]] = None,
+        clean_kwargs: dict[str, Any] | None = None,
+        select_kwargs: dict[str, Any] | None = None,
     ):
         self.path = Path(path)
         self.target_col = target_col
@@ -237,9 +236,9 @@ class TabularDataset(BaseDataset):
                 )
 
             # Reshape: (N_obs, Dim1, Dim2, ...)
-            new_shape = (n_obs,) + tuple(dim_sizes)
+            new_shape = (n_obs, *tuple(dim_sizes))
             X_final = X_sorted.values.reshape(new_shape)
-            dims = tuple(["obs"] + self.columns_to_dims)
+            dims = ("obs", *self.columns_to_dims)
 
         else:
             # Default 2D
@@ -261,9 +260,9 @@ class TabularDataset(BaseDataset):
         sep: str = "_",
         reverse: bool = False,
         verbose: bool = False,
-        min_abs_value: Optional[float] = None,
+        min_abs_value: float | None = None,
         min_abs_fraction: float = 0.0,
-    ) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
+    ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
         """
         Remove invalid feature columns containing NaN, ±Inf, and optionally very
         small values.
@@ -339,7 +338,7 @@ class TabularDataset(BaseDataset):
 
 
 class EmbeddingDataset(BaseDataset):
-    """
+    r"""
     Generic Dataset for loading embedding files (Pickle, NPY, JSON, H5).
 
     This class decouples file discovery (via patterns and IDs) from content reading.
@@ -350,8 +349,8 @@ class EmbeddingDataset(BaseDataset):
     ----------
     path : str or Path
         Root directory containing the embedding files.
-    pattern : str, default='*.pkl'
-        Glob pattern to match files (e.g., "*.npy", "sub-*_emb.pkl").
+    pattern : str, default=r'\*.pkl'
+        Glob pattern to match files (e.g., ``*.npy``, ``sub-*_emb.pkl``).
     dims : tuple of str, default=('obs', 'feature')
         Dimension labels for the data arrays (excluding the observation dimension if
         implicit). Typically ('feature',) or ('layer', 'feature').
@@ -376,22 +375,22 @@ class EmbeddingDataset(BaseDataset):
     Examples
     --------
     >>> # Load loose numpy files
-    >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=('feature',))
+    >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=("feature",))
     >>> container = ds.load()
     """
 
     def __init__(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         pattern: str = "*.pkl",
-        dims: Tuple[str, ...] = ("obs", "feature"),
-        coords: Optional[Dict[str, Union[List, np.ndarray]]] = None,
-        reader: Optional[Any] = None,
-        id_fn: Optional[Any] = None,
-        task: Optional[str] = None,
-        run: Optional[str] = None,
-        processing: Optional[str] = None,
-        subjects: Optional[Union[int, List[int]]] = None,
+        dims: tuple[str, ...] = ("obs", "feature"),
+        coords: dict[str, list | np.ndarray] | None = None,
+        reader: Any | None = None,
+        id_fn: Any | None = None,
+        task: str | None = None,
+        run: str | None = None,
+        processing: str | None = None,
+        subjects: int | list[int] | None = None,
     ):
         self.path = Path(path)
         self.subjects = subjects
@@ -417,7 +416,7 @@ class EmbeddingDataset(BaseDataset):
 
     def load(self) -> DataContainer:
         # Find files
-        files = sorted(list(self.path.rglob(self.pattern)))
+        files = sorted(self.path.rglob(self.pattern))
 
         if not files:
             raise FileNotFoundError(
@@ -429,7 +428,7 @@ class EmbeddingDataset(BaseDataset):
             if isinstance(self.subjects, int):
                 files = files[: self.subjects]
             else:
-                target_ids = set(str(s) for s in self.subjects)
+                target_ids = {str(s) for s in self.subjects}
                 files = [f for f in files if self.id_fn(f) in target_ids]
 
         data_list = []
@@ -492,7 +491,7 @@ class EmbeddingDataset(BaseDataset):
             raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
 
         # Obs Dim + User Dims
-        final_dims = ("obs",) + self.dims
+        final_dims = ("obs", *self.dims)
 
         # Build coordinates
         coords = {}
@@ -553,23 +552,25 @@ class BIDSDataset(BaseDataset):
 
     def __init__(
         self,
-        root: Union[str, Path],
-        task: Optional[str] = None,
-        session: Optional[Union[str, List[str]]] = None,
+        root: str | Path,
+        task: str | None = None,
+        session: str | list[str] | None = None,
         datatype: str = "eeg",
-        suffix: Optional[str] = None,
+        suffix: str | None = None,
         mode: str = "epochs",
-        target_col: Optional[str] = None,
-        window_length: Optional[float] = None,
-        stride: Optional[float] = None,
-        subjects: Optional[Union[str, List[str]]] = None,
-        runs: Optional[Union[str, List[str]]] = None,
-        event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
-        subject_metadata_df: Optional[pd.DataFrame] = None,
-        subject_key: Optional[str] = None,
+        target_col: str | None = None,
+        window_length: float | None = None,
+        stride: float | None = None,
+        subjects: str | list[str] | None = None,
+        runs: str | list[str] | None = None,
+        event_id: dict[str, int] | str | list[str] | None = None,
+        subject_metadata_df: pd.DataFrame | None = None,
+        subject_key: str | None = None,
         tmin: float = -0.2,
         tmax: float = 0.5,
-        baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
+        baseline: tuple[float | None, float | None] | None = None,
+        drop_short_epochs: bool = True,
+        units: str | None = None,
     ):
         self.root = Path(root)
         self.task = task
@@ -588,6 +589,8 @@ class BIDSDataset(BaseDataset):
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
+        self.drop_short_epochs = drop_short_epochs
+        self.units = units
 
     def load(self) -> DataContainer:
         """
@@ -629,10 +632,14 @@ class BIDSDataset(BaseDataset):
 
         data_list = []
         ids_list = []
+        # Per-trial BIDS path components — exposed as obs-aligned coords so
+        # downstream callers can group by subject/session/run without
+        # parsing the composite ``ids`` strings.
+        subject_per_trial: list[str] = []
+        session_per_trial: list[str] = []
+        run_per_trial: list[str] = []
         meta_columns = (
-            {k: [] for k in next(iter(meta_lookup.values())).keys()}
-            if meta_lookup
-            else {}
+            {k: [] for k in next(iter(meta_lookup.values()))} if meta_lookup else {}
         )
         labels_list = []
 
@@ -727,6 +734,7 @@ class BIDSDataset(BaseDataset):
                                 tmin=self.tmin,
                                 tmax=self.tmax,
                                 baseline=self.baseline,
+                                units=self.units,
                             )
                         )
 
@@ -775,6 +783,11 @@ class BIDSDataset(BaseDataset):
                         new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
                         ids_list.extend(new_ids)
 
+                        # BIDS path components, one entry per epoch
+                        subject_per_trial.extend([str(sub)] * n_epochs)
+                        session_per_trial.extend([str(ses) if ses else ""] * n_epochs)
+                        run_per_trial.extend([str(run) if run else ""] * n_epochs)
+
                         # Repeatedly append subject metadata for each epoch
                         for k, v in sub_meta.items():
                             meta_columns.setdefault(k, []).extend([v] * n_epochs)
@@ -785,6 +798,73 @@ class BIDSDataset(BaseDataset):
 
         if not data_list:
             raise RuntimeError(f"No valid data found in {self.root}")
+
+        # --- HANDLE VARIABLE EPOCH LENGTHS ---
+        # Some recordings have edge epochs shorter than the requested window
+        # (event placed too close to end-of-file).  Build a per-epoch boolean
+        # mask so we can filter the flat id/coord lists consistently.
+        t_lengths = [d.shape[2] for d in data_list]
+        t_expected = max(t_lengths)
+        if min(t_lengths) < t_expected:
+            import warnings as _warnings
+
+            short_set = {i for i, t in enumerate(t_lengths) if t < t_expected}
+            n_short = sum(data_list[i].shape[0] for i in short_set)
+
+            # Build epoch-level keep mask aligned with ids_list / *_per_trial lists
+            epoch_keep = []
+            for i, d in enumerate(data_list):
+                epoch_keep.extend([i not in short_set] * d.shape[0])
+            epoch_keep = np.asarray(epoch_keep, dtype=bool)
+
+            if self.drop_short_epochs:
+                _warnings.warn(
+                    f"Dropping {n_short} epoch(s) from {len(short_set)} batch(es) "
+                    f"with fewer than {t_expected} time samples "
+                    f"(pass drop_short_epochs=False to crop to shortest instead).",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                data_list = [
+                    data_list[i] for i in range(len(data_list)) if i not in short_set
+                ]
+                labels_list = (
+                    [
+                        labels_list[i]
+                        for i in range(len(labels_list))
+                        if i not in short_set
+                    ]
+                    if labels_list
+                    else labels_list
+                )
+                ids_list = [v for v, k in zip(ids_list, epoch_keep, strict=False) if k]
+                subject_per_trial = [
+                    v for v, k in zip(subject_per_trial, epoch_keep, strict=False) if k
+                ]
+                session_per_trial = [
+                    v for v, k in zip(session_per_trial, epoch_keep, strict=False) if k
+                ]
+                run_per_trial = [
+                    v for v, k in zip(run_per_trial, epoch_keep, strict=False) if k
+                ]
+                for col in meta_columns:
+                    meta_columns[col] = [
+                        v
+                        for v, k in zip(meta_columns[col], epoch_keep, strict=False)
+                        if k
+                    ]
+            else:
+                t_min = min(t_lengths)
+                _warnings.warn(
+                    f"Variable epoch lengths detected ({t_min}-{t_expected} samples). "
+                    f"Cropping all epochs to {t_min} samples "
+                    f"(pass drop_short_epochs=True to drop short epochs instead).",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                data_list = [d[:, :, :t_min] for d in data_list]
+                if times is not None:
+                    times = times[:t_min]
 
         # --- CONCATENATE ---
         try:
@@ -802,6 +882,16 @@ class BIDSDataset(BaseDataset):
             coords["time"] = times
         if ids_list:
             coords["obs"] = np.array(ids_list)
+
+        # BIDS path coords (subject / session / run) — populated from
+        # the loop above so downstream code can ``container.coords['subject']``
+        # directly rather than parsing ``container.ids``.
+        if subject_per_trial:
+            coords["subject"] = np.array(subject_per_trial)
+        if session_per_trial and any(s for s in session_per_trial):
+            coords["session"] = np.array(session_per_trial)
+        if run_per_trial and any(r for r in run_per_trial):
+            coords["run"] = np.array(run_per_trial)
 
         # Add metadata coords
         for k, v in meta_columns.items():
@@ -829,5 +919,5 @@ class BIDSDataset(BaseDataset):
             ids=np.array(ids_list),
             dims=dims,
             coords=coords,
-            meta={"sfreq": sfreq, "source": str(self.root)},
+            meta={"sfreq": sfreq, "source": str(self.root), "units": self.units},
         )

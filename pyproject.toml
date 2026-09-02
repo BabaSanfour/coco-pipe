@@ -1,189 +1,355 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "coco-pipe"
 version = "0.0.1"
-description = "A pipeline for EEG bio-data analysis with ML and Deep Learning components"
+description = "A modular framework for scalable biosignal analysis with Machine Learning and Deep Learning"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
 authors = [
   { name = "Hamza Abdelhedi", email = "hamza.abdelhedii@gmail.com" },
 ]
-requires-python = ">=3.10"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+keywords = [
+  "EEG",
+  "machine learning",
+  "deep learning",
+  "neuroscience",
+  "bio-data",
 ]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 dependencies = [
-    "numpy>=2.0.0",
-    "pandas",
-    "scikit-learn",
-    "matplotlib",
-    "seaborn",
-    "scipy",
-    "pyyaml",
-    "pydantic",
-    "hydra-core",
-    "requests",
-    "openpyxl",
-    "joblib",
-    "plotly",
+  "numpy>=2.0.0",
+  "pandas",
+  "scikit-learn>=1.6",
+  # Upper-capped until seaborn ships PR #3820: matplotlib 3.13 removes the
+  # deprecated `vert=` that seaborn<=0.13.2 still passes to bxp, which would
+  # break seaborn boxplots. Lift this once a fixed seaborn release exists.
+  "matplotlib<3.13",
+  "seaborn",
+  "scipy>=1.11.0",
+  "pyriemann>=0.7",
+  "pyyaml",
+  "pydantic",
+  "hydra-core",
+  "requests",
+  "openpyxl",
+  "joblib",
+  "plotly",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov",
-    "ruff",
-    "black",
-    "isort",
-    "sphinx>=4.0.0",
-    "insegel",
-    "furo",
-    "sphinx_gallery",
-    "sphinx-copybutton",
-    "sphinxcontrib-mermaid",
-    "sphinx-autoapi",
-    "myst-parser",
-]
 test = [
-    "pytest>=7.0",
-    "pytest-cov",
+  "pytest>=8.0",
+  "pytest-cov",
+  "beautifulsoup4",
 ]
+
 docs = [
-    "sphinx>=4.0.0",
-    "insegel",
-    "furo",
-    "sphinx_gallery",
-    "sphinx-copybutton",
-    "sphinxcontrib-mermaid",
-    "sphinx-autoapi",
-    "myst-parser",
+  "sphinx>=7.0",
+  "insegel",
+  "pydata-sphinx-theme",
+  "sphinx-design",
+  "sphinx-gallery",
+  "sphinx-copybutton",
+  "sphinxcontrib-mermaid",
+  "sphinx-autoapi",
+  "myst-parser",
+  "towncrier",
 ]
+
+dev = [
+  "pre-commit",
+  "ruff",
+  "pytest>=8.0",
+  "pytest-cov",
+  "beautifulsoup4",
+  "towncrier",
+  "build",
+  "twine",
+]
+
+release = [
+  "build",
+  "twine",
+  "towncrier",
+]
+
 dask = [
-    "dask[array]",
-    "dask-ml",
+  "dask[array]",
+  "dask-ml",
 ]
+
 neighbor = [
-    "umap-learn[plot]",
-    "trimap",
-    "phate",
-    "pacmap",
-    "faiss-cpu",
+  "umap-learn[plot]",
+  "trimap",
+  "phate",
+  "pacmap",
+  "faiss-cpu",
 ]
+
 parametric-umap = [
-    "umap-learn[plot]",
-    "tensorflow",
-    "keras",
+  "umap-learn[plot]",
+  "tensorflow",
+  "keras",
 ]
+
 ivis = [
-    "annoy>=1.17.3",
-    "tensorflow",
-    "keras",
-    "ivis @ git+https://github.com/beringresearch/ivis.git",
+  "annoy>=1.17.3",
+  "tensorflow",
+  "keras",
+  "ivis @ git+https://github.com/beringresearch/ivis.git",
 ]
+
 topology = [
-    "torch",
-    "skorch",
-    "gudhi",
+  "torch",
+  "skorch",
+  "gudhi",
 ]
+
+torch = [
+  "torch",
+]
+
+braindecode = [
+  "braindecode>=1.5.0,<1.6",
+]
+
+hf = [
+  "transformers",
+  "huggingface-hub",
+]
+
+peft = [
+  "peft",
+  "accelerate",
+]
+
+foundation = [
+  "torch",
+  "skorch",
+  "braindecode>=1.4.0,<1.6",
+  "transformers",
+  "huggingface-hub",
+  "peft",
+  "accelerate",
+]
+
+decoding = [
+  "skorch",
+  "statsmodels",
+]
+
+quant = [
+  "bitsandbytes",
+]
+
+moabb = [
+  "moabb",
+  "mne",
+]
+
+torcheeg = [
+  "torcheeg",
+]
+
+dev-gpu = [
+  "pytest>=8.0",
+  "torch",
+  "accelerate",
+]
+
 spatiotemporal = [
-    "pydmd",
-    "meegkit",
+  "pydmd",
+  "meegkit",
 ]
+
 eeg = [
-    "mne>=1.9.0",
-    "mne-bids>=0.10.0",
-    "meegkit",
+  "mne>=1.9.0",
+  "mne-bids>=0.10.0",
+  "meegkit",
 ]
+
 descriptors = [
-    "specparam",
-    "antropy",
-    "neurokit2",
+  "specparam",
+  "antropy",
+  "neurokit2",
 ]
+
 dim-red = [
-    "dask[array]",
-    "dask-ml",
-    "umap-learn[plot]",
-    "trimap",
-    "phate",
-    "pacmap",
-    "faiss-cpu",
-    "tensorflow",
-    "keras",
-    "annoy>=1.17.3",
-    "ivis @ git+https://github.com/beringresearch/ivis.git",
-    "torch",
-    "skorch",
-    "gudhi",
-    "pydmd",
-    "meegkit",
+  "dask[array]",
+  "dask-ml",
+  "umap-learn[plot]",
+  "trimap",
+  "phate",
+  "pacmap",
+  "faiss-cpu",
+  "tensorflow",
+  "keras",
+  "annoy>=1.17.3",
+  "ivis @ git+https://github.com/beringresearch/ivis.git",
+  "torch",
+  "skorch",
+  "gudhi",
+  "pydmd",
+  "meegkit",
+  "statsmodels",
 ]
+
 full = [
-    "dask[array]",
-    "dask-ml",
-    "umap-learn[plot]",
-    "trimap",
-    "phate",
-    "pacmap",
-    "faiss-cpu",
-    "tensorflow",
-    "keras",
-    "annoy>=1.17.3",
-    "ivis @ git+https://github.com/beringresearch/ivis.git",
-    "torch",
-    "skorch",
-    "gudhi",
-    "pydmd",
-    "meegkit",
-    "mne>=1.9.0",
-    "mne-bids>=0.10.0",
-    "specparam",
-    "antropy",
-    "neurokit2",
+  "dask[array]",
+  "dask-ml",
+  "umap-learn[plot]",
+  "trimap",
+  "phate",
+  "pacmap",
+  "faiss-cpu",
+  "tensorflow",
+  "keras",
+  "annoy>=1.17.3",
+  "ivis @ git+https://github.com/beringresearch/ivis.git",
+  "torch",
+  "skorch",
+  "gudhi",
+  "pydmd",
+  "meegkit",
+  "mne>=1.9.0",
+  "mne-bids>=0.10.0",
+  "specparam",
+  "antropy",
+  "neurokit2",
+  "braindecode>=1.4.0,<1.6",
+  "transformers",
+  "huggingface-hub",
+  "peft",
+  "accelerate",
+]
+
+all = [
+  "coco-pipe[test,docs,foundation,dask,neighbor,parametric-umap,ivis,topology,moabb,torcheeg,spatiotemporal,eeg,descriptors,dim-red]",
 ]
 
 [project.urls]
 Homepage = "https://github.com/BabaSanfour/coco-pipe"
-Documentation = "https://cocopipe.readthedocs.io/"
+Documentation = "https://babasanfour.github.io/coco-pipe/"
 Repository = "https://github.com/BabaSanfour/coco-pipe.git"
-
-[project.scripts]
-run-coco-pipe = "scripts.run_ml:main"
+Issues = "https://github.com/BabaSanfour/coco-pipe/issues"
+Changelog = "https://github.com/BabaSanfour/coco-pipe/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["coco_pipe*", "scripts*"]
+include = ["coco_pipe*"]
 
 [tool.setuptools.package-data]
 "coco_pipe.report.templates" = ["*.html"]
 
 [tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra -q --ignore-glob=tests/test_ml_*.py"
-testpaths = [
-    "tests",
+minversion = "8.0"
+addopts = "-ra -q -m 'not real_checkpoints'"
+testpaths = ["tests"]
+markers = [
+  "real_checkpoints: heavy tests that download real foundation checkpoints from HuggingFace. Requires HF_TOKEN, accepted gated-model licenses, network access, and COCO_PIPE_RUN_REAL_FOUNDATION=1.",
+]
+# Treat warnings as errors so a *new* warning in coco-pipe's own code fails CI,
+# then explicitly ignore the known, irreducible ones. Two groups:
+#   (2) coco-pipe's own *intentional* informative warnings, which tests trigger
+#       on purpose (asserted with `pytest.warns` where it adds a contract;
+#       ignored here where the trigger is incidental/parametrized), and
+#   (1) third-party deprecations/notices we do not control.
+filterwarnings = [
+  "error",
+  # (2) coco-pipe intentional informative warnings -------------------------
+  "ignore:.*is not group-aware.*:UserWarning",
+  "ignore:.*uses channel names for positional encoding.*:UserWarning",
+  "ignore:.*Variable epoch lengths detected.*:RuntimeWarning",
+  "ignore:.*references three external CDN scripts.*:UserWarning",
+  # (1) third-party noise --------------------------------------------------
+  "ignore:.*groups parameter is ignored.*:UserWarning",
+  "ignore:.*enable_nested_tensor.*:UserWarning",
+  "ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning",
+  "ignore:.*pyriemann.utils.* is deprecated.*:DeprecationWarning",
+  "ignore:.*default value of .init. will change.*:FutureWarning",
+  "ignore:.*number of connected components.*:UserWarning",
+  "ignore:.*Graph is not fully connected.*:UserWarning",
+  "ignore:.*Changing the sparsity structure.*",
+  "ignore:.*DaskPCA on numpy raised.*:UserWarning",
+  "ignore:.*Precision loss occurred in moment calculation.*:RuntimeWarning",
+  "ignore:.*invalid value encountered in divide.*:RuntimeWarning",
+  "ignore:.*vert.*Use orientation.*",
 ]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
+extend-exclude = [
+  "coco_pipe/decoding/fm_hub/cbramod_src",
+  "analysis/analysis_paper_eegbci_109.py",
+  "docs/source/auto_examples",
+  "docs/build",
+  "__pyrefly__virtual*"
+]
 
 [tool.ruff.lint]
 select = [
-    # Pyflakes
-    "F",
-    # Pycodestyle
-    "E",
-    "W",
-    # isort
-    "I",
+  "E",
+  "F",
+  "W",
+  "I",
+  "UP",
+  "B",
+  "SIM",
+  "C4",
+  "PIE",
+  "RET",
+  "RUF",
 ]
-ignore = []
+ignore = [
+  "RET504",
+]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+docstring-code-format = true
+
+[tool.towncrier]
+package = "coco_pipe"
+filename = "CHANGELOG.md"
+directory = "changelog.d"
+title_format = "## coco-pipe {version} ({project_date})"
+issue_format = "[#{issue}](https://github.com/BabaSanfour/coco-pipe/issues/{issue})"
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Features"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "Bug fixes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "doc"
+name = "Documentation"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "Miscellaneous"
+showcontent = true

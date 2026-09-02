@@ -1,18 +1,54 @@
+minimum_pre_commit_version: "3.7.0"
+
+ci:
+  autoupdate_schedule: monthly
+  skip: [nbstripout]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^docs/source/auto_examples/
       - id: end-of-file-fixer
+        exclude: ^docs/source/auto_examples/
       - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: [--fix=lf]
       - id: check-added-large-files
+        args: [--maxkb=5000]
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: check-illegal-windows-names
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.4.4
+    rev: v0.15.18
     hooks:
-      # Run the linter.
-      - id: ruff
-        args: [ --fix ]
-      # Run the formatter.
+      - id: ruff-check
+        types_or: [python, pyi]
+        args: [--fix]
       - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        args:
+          - --ignore-words-list=crate,fo,ba,fpr,shepard,strat,nd,te,leace
+        exclude: |
+          (?x)^(
+            docs/source/auto_examples/.*|
+            docs/build/.*|
+            .*\.ipynb
+          )$
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout

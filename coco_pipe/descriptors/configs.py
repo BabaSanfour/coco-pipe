@@ -27,13 +27,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
-    "DescriptorInputConfig",
     "BandDescriptorConfig",
-    "ParametricDescriptorConfig",
     "ComplexityDescriptorConfig",
-    "DescriptorFamiliesConfig",
-    "DescriptorRuntimeConfig",
     "DescriptorConfig",
+    "DescriptorFamiliesConfig",
+    "DescriptorInputConfig",
+    "DescriptorRuntimeConfig",
+    "ParametricDescriptorConfig",
 ]
 
 
@@ -188,7 +188,7 @@ class BandDescriptorConfig(_StrictConfigModel):
         return [tuple(pair) for pair in value]
 
     @model_validator(mode="after")
-    def _validate_model(self) -> "BandDescriptorConfig":
+    def _validate_model(self) -> BandDescriptorConfig:
         if self.fmin >= self.fmax:
             raise ValueError("Band descriptor config requires fmin < fmax.")
         for name, (low, high) in self.bands.items():
@@ -259,7 +259,7 @@ class ParametricDescriptorConfig(_StrictConfigModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_model(self) -> "ParametricDescriptorConfig":
+    def _validate_model(self) -> ParametricDescriptorConfig:
         if self.freq_range[0] >= self.freq_range[1]:
             raise ValueError("Parametric freq_range requires low < high.")
         if self.peak_width_limits[0] >= self.peak_width_limits[1]:

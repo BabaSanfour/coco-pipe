@@ -22,7 +22,7 @@ shepard_diagram_data
 
 References
 ----------
-.. [1] Lee, J. A., & Verleysen, M. (2009). Quality assessment of
+[1] Lee, J. A., & Verleysen, M. (2009). Quality assessment of
        dimensionality reduction: Rank-based criteria. Neurocomputing.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
@@ -30,19 +30,17 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import numpy as np
 from scipy.spatial.distance import pdist
 from sklearn.neighbors import NearestNeighbors
 
 __all__ = [
     "compute_coranking_matrix",
-    "trustworthiness",
+    "compute_mrre",
     "continuity",
     "lcmc",
-    "compute_mrre",
     "shepard_diagram_data",
+    "trustworthiness",
 ]
 
 
@@ -124,7 +122,7 @@ def compute_coranking_matrix(X: np.ndarray, X_emb: np.ndarray) -> np.ndarray:
     ----------
     X : np.ndarray of shape (n_samples, n_features)
         Original high-dimensional data.
-    X_emb : np.ndarray of shape (n_samples, n_components)
+    X_emb : np.ndarray of shape (n_samples, n_dims)
         Low-dimensional embedding of the same samples.
 
     Returns
@@ -325,7 +323,7 @@ def lcmc(Q: np.ndarray, k: int) -> float:
     return (overlap / (n * k_int)) - (k_int / (n - 1))
 
 
-def compute_mrre(Q: np.ndarray, k: int) -> Tuple[float, float]:
+def compute_mrre(Q: np.ndarray, k: int) -> tuple[float, float]:
     """
     Compute mean relative rank errors (MRRE).
 
@@ -390,8 +388,8 @@ def shepard_diagram_data(
     X: np.ndarray,
     X_embedded: np.ndarray,
     sample_size: int = 1000,
-    random_state: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    random_state: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute sampled pairwise distances for a Shepard diagram.
 
@@ -399,7 +397,7 @@ def shepard_diagram_data(
     ----------
     X : np.ndarray of shape (n_samples, n_features)
         Original high-dimensional data.
-    X_embedded : np.ndarray of shape (n_samples, n_components)
+    X_embedded : np.ndarray of shape (n_samples, n_dims)
         Low-dimensional embedding of the same samples.
     sample_size : int, default=1000
         Number of samples to keep before computing pairwise distances. If

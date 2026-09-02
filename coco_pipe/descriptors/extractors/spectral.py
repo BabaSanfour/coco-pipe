@@ -38,6 +38,7 @@ from typing import Any
 
 import numpy as np
 
+from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import BandDescriptorConfig
 from ._parametric_fit import _ParametricFitBatch
 from ._psd import compute_psd
@@ -311,8 +312,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                 for band_name, values in band_power_dict.items():
                     feature, names = self._finalize_descriptor(
                         values,
-                        family_prefix="band",
-                        metric_name="_".join(metric_prefix + ["abs", band_name]),
+                        family_prefix=KNOWN_FAMILY_TOKENS[0],
+                        metric_name="_".join([*metric_prefix, "abs", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -323,8 +324,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     log_values = np.log10(np.clip(values, eps, None))
                     feature, names = self._finalize_descriptor(
                         log_values,
-                        family_prefix="band",
-                        metric_name="_".join(metric_prefix + ["log", "abs", band_name]),
+                        family_prefix=KNOWN_FAMILY_TOKENS[0],
+                        metric_name="_".join([*metric_prefix, "log", "abs", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -365,8 +366,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                             )
                     feature, names = self._finalize_descriptor(
                         relative,
-                        family_prefix="band",
-                        metric_name="_".join(metric_prefix + ["rel", band_name]),
+                        family_prefix=KNOWN_FAMILY_TOKENS[0],
+                        metric_name="_".join([*metric_prefix, "rel", band_name]),
                         channel_names=channel_names,
                     )
                     chunk_features.append(feature)
@@ -415,9 +416,9 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                             )
                     feature, names = self._finalize_descriptor(
                         ratio,
-                        family_prefix="band",
+                        family_prefix=KNOWN_FAMILY_TOKENS[0],
                         metric_name="_".join(
-                            metric_prefix + ["ratio", numerator, denominator]
+                            [*metric_prefix, "ratio", numerator, denominator]
                         ),
                         channel_names=channel_names,
                     )

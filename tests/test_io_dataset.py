@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import sys
 import types
@@ -8,30 +9,29 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-import coco_pipe.io.dataset as dataset_mod
+from coco_pipe.io import dataset as dataset_mod
 from coco_pipe.io.config import BIDSConfig, DatasetConfig, TabularConfig
+from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
 
 
 def test_dataset_config_discriminator_and_defaults(tmp_path):
     tab_cfg = DatasetConfig(
-        **{
-            "dataset": {
-                "mode": "tabular",
-                "path": tmp_path / "table.csv",
-                "select_kwargs": {"keep": ["f1"]},
-            }
+        dataset={
+            "mode": "tabular",
+            "path": tmp_path / "table.csv",
+            "select_kwargs": {"keep": ["f1"]},
         }
     )
     assert isinstance(tab_cfg.dataset, TabularConfig)
     assert tab_cfg.dataset.sep == "\t"
     assert tab_cfg.dataset.select_kwargs == {"keep": ["f1"]}
 
-    bids_cfg = DatasetConfig(**{"dataset": {"mode": "bids", "path": tmp_path}})
+    bids_cfg = DatasetConfig(dataset={"mode": "bids", "path": tmp_path})
     assert isinstance(bids_cfg.dataset, BIDSConfig)
     assert bids_cfg.dataset.loading_mode == "epochs"
 
     with pytest.raises(ValidationError):
-        DatasetConfig(**{"dataset": {"path": tmp_path}})
+        DatasetConfig(dataset={"path": tmp_path})
 
 
 def test_tabular_dataset_columns_to_dims(monkeypatch, tmp_path):
@@ -149,6 +149,7 @@ def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
     assert container.meta["sfreq"] == 100.0
     assert container.meta["sfreq"] == 100.0
     assert container.coords["age"].tolist() == [30, 30]
+    assert container.coords["subject"].tolist() == ["01", "01"]
 
 
 def test_tabular_dataset_cleaning(tmp_path):
@@ -227,7 +228,7 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
         sys.modules,
         "mne_bids",
         types.SimpleNamespace(
-            BIDSPath=lambda **k: types.SimpleNamespace(match=lambda: [], **k),
+            BIDSPath=lambda **k: types.SimpleNamespace(match=list, **k),
             read_raw_bids=lambda *a: None,
         ),
     )
@@ -236,7 +237,7 @@ def test_bids_dataset_mismatches(monkeypatch, tmp_path):
     monkeypatch.setattr(
         dataset,
         "_get_bids_path",
-        lambda: lambda **k: types.SimpleNamespace(match=lambda: [], **k),
+        lambda: lambda **k: types.SimpleNamespace(match=list, **k),
     )
 
     # One subject, two sessions
@@ -277,9 +278,6 @@ def test_dataset_factory_errors(tmp_path):
     with pytest.raises(FileNotFoundError, match="No files matched"):
         ds = dataset_mod.EmbeddingDataset(tmp_path, pattern="*.nonexistent")
         ds.load()
-
-
-# --- TabularDataset Tests ---
 
 
 def test_tabular_excel_support(monkeypatch, tmp_path):
@@ -369,9 +367,6 @@ def test_tabular_cleaning_advanced(tmp_path):
     assert "C1" in report["dropped_features"]
 
 
-# --- EmbeddingDataset Tests ---
-
-
 def test_embedding_legacy_pattern():
     """Test BIDS-like pattern construction."""
     ds = dataset_mod.EmbeddingDataset("dummy", task="rest", run="01", processing="norm")
@@ -444,16 +439,10 @@ def test_embedding_shape_mismatch(tmp_path, caplog):
         tmp_path, dims=("f",), pattern="really_bad.npy", reader=np.load
     )
 
-    with caplog.at_level("WARNING"):
-        try:
-            ds.load()
-        except RuntimeError:
-            pass
+    with caplog.at_level("WARNING"), contextlib.suppress(RuntimeError):
+        ds.load()
 
     assert "Shape mismatch" in caplog.text
-
-
-# --- BIDSDataset Tests ---
 
 
 def test_bids_concatenation_failure(monkeypatch, tmp_path):
@@ -467,14 +456,13 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
         sub = bids_path.subject
         if sub == "01":
             return np.zeros((1, 5, 10)), [0], ["c"], 100, None
-        else:
-            return (
-                np.zeros((1, 6, 10)),
-                [0],
-                ["c"],
-                100,
-                None,
-            )  # Different channels count
+        return (
+            np.zeros((1, 6, 10)),
+            [0],
+            ["c"],
+            100,
+            None,
+        )  # Different channels count
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -499,7 +487,7 @@ def test_bids_concatenation_failure(monkeypatch, tmp_path):
         ds.load()
 
 
-def test_bids_time_warning(monkeypatch, tmp_path, caplog):
+def test_bids_time_warning(monkeypatch, tmp_path):
     """Test warning for time length mismatch."""
     monkeypatch.setattr(dataset_mod, "detect_subjects", lambda r: ["01", "02"])
     monkeypatch.setattr(dataset_mod, "detect_sessions", lambda r, s: [None])
@@ -510,9 +498,8 @@ def test_bids_time_warning(monkeypatch, tmp_path, caplog):
         sub = bids_path.subject
         if sub == "01":
             return np.zeros((1, 1, 10)), np.arange(10), ["c"], 100, None
-        else:
-            # Different time length
-            return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
+        # Different time length
+        return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
 
     monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
 
@@ -527,7 +514,118 @@ def test_bids_time_warning(monkeypatch, tmp_path, caplog):
 
     ds = dataset_mod.BIDSDataset(tmp_path)
 
-    with pytest.raises(ValueError):
+    with pytest.warns(RuntimeWarning, match="Dropping 1 epoch"):
         ds.load()
 
-    assert "Time length mismatch" in caplog.text
+
+def test_tabular_dataset_extra(tmp_path):
+    p = tmp_path / "missing.csv"
+    ds = TabularDataset(p)
+    with pytest.raises(FileNotFoundError):
+        ds.load()
+
+    p = tmp_path / "empty.csv"
+    pd.DataFrame().to_csv(p, index=False)
+    ds = TabularDataset(p)
+    ds.clean(pd.DataFrame(), mode="any")  # shape[1] == 0
+
+    p2 = tmp_path / "data.csv"
+    df = pd.DataFrame({"A": [1, np.nan, 3], "B": ["x", None, "z"]})
+    df.to_csv(p2, index=False)
+    ds = TabularDataset(p2)
+    # min_abs_fraction
+    ds.clean(df, min_abs_value=2, min_abs_fraction=0.5)
+
+    with pytest.raises(ValueError):
+        ds.clean(df, mode="invalid")
+
+
+def test_embedding_dataset_extra(tmp_path):
+    import pickle
+
+    # 456-460: arr.ndim == len(self.dims) for dict content
+    p1 = tmp_path / "1.pkl"
+    with open(p1, "wb") as f:
+        pickle.dump({"seg1": [1, 2]}, f)  # dim=1
+
+    ds = EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",))
+    res = ds.load()
+    assert res.X.shape == (1, 2)
+
+    # 481-483: Exception in loop
+    p2 = tmp_path / "2.pkl"
+    p2.write_bytes(b"bad data")
+    # Will skip and log
+    ds.load()
+
+    # 490-492: Concatenate fail
+    with open(p1, "wb") as f:
+        pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
+    with pytest.raises(ValueError, match="Concatenation failed"):
+        ds.load()
+
+
+def test_bids_dataset_extra(tmp_path):
+    # Mocking subjects/sessions/runs parsing
+    sub_dir = tmp_path / "sub-01" / "ses-A" / "eeg"
+    sub_dir.mkdir(parents=True)
+    fpath = sub_dir / "sub-01_ses-A_task-rest_run-1_epo.fif"
+    fpath.touch()
+
+    # Also need participants.tsv
+    (tmp_path / "participants.tsv").write_text("participant_id\ttarget\nsub-01\t1")
+
+    # subject_metadata_df
+    meta_df = pd.DataFrame({"sub": ["01"], "extra": [5]})
+
+    from coco_pipe.io import dataset as dmod
+
+    orig_read = dmod.read_bids_entry
+
+    def fake_read(*args, **kwargs):
+        return np.zeros((2, 2, 10)), np.zeros(10), ["C1", "C2"], 100, np.array([1, 1])
+
+    dmod.read_bids_entry = fake_read
+
+    ds = BIDSDataset(
+        tmp_path,
+        task="rest",
+        subjects="01",  # str
+        session="A",  # str
+        runs="1",  # str
+        suffix="epo",  # triggers pre_epoched logic
+        subject_metadata_df=meta_df,
+        subject_key="sub",
+        target_col="target",
+    )
+
+    res = ds.load()
+    assert res.X.shape == (2, 2, 10)
+    assert res.y is not None
+    assert "run" in res.coords
+
+    # Bad metadata
+    with pytest.raises(ValueError):
+        BIDSDataset(tmp_path, subject_metadata_df=meta_df).load()  # no subject_key
+    with pytest.raises(ValueError):
+        BIDSDataset(tmp_path, subject_metadata_df=meta_df, subject_key="missing").load()
+
+    # Drop short epochs vs pad
+    def fake_read_short(*args, **kwargs):
+        # We will cycle shapes to simulate short epochs
+        nonlocal call_idx
+        call_idx += 1
+        if call_idx == 1:
+            return np.zeros((1, 2, 10)), np.zeros(10), ["C1", "C2"], 100, None
+        return np.zeros((1, 2, 5)), np.zeros(5), ["C1", "C2"], 100, None
+
+    call_idx = 0
+    dmod.read_bids_entry = fake_read_short
+    ds2 = BIDSDataset(tmp_path, subjects=["01", "02"], drop_short_epochs=False)
+    # create second sub dir to get 2 calls
+    (tmp_path / "sub-02" / "eeg").mkdir(parents=True)
+
+    res2 = ds2.load()
+    assert res2.X.shape[2] == 5  # cropped to min
+
+    dmod.read_bids_entry = orig_read

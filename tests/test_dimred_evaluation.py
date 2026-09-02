@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from sklearn.datasets import make_blobs
 
+from coco_pipe.dim_reduction._constants import DEFAULT_MAX_CORANKING_SAMPLES
 from coco_pipe.dim_reduction.analysis import perturbation_importance
 from coco_pipe.dim_reduction.core import DimReduction
 from coco_pipe.dim_reduction.evaluation import (
@@ -31,7 +32,15 @@ from coco_pipe.dim_reduction.evaluation import (
 )
 from coco_pipe.dim_reduction.evaluation.core import (
     SEPARATION_LOGREG_BALANCED_ACCURACY,
+    SEPARATION_RF_BALANCED_ACCURACY,
     evaluate_embedding,
+)
+from coco_pipe.dim_reduction.evaluation.geometry import (
+    trajectory_auc_speed,
+    trajectory_cohesion,
+    trajectory_distance_from_center,
+    trajectory_intra_spread,
+    trajectory_jerk,
 )
 from coco_pipe.viz.dim_reduction import plot_metrics
 
@@ -141,6 +150,40 @@ def test_evaluate_embedding_supervised_metric_records():
     assert records.iloc[0]["metric"] == SEPARATION_LOGREG_BALANCED_ACCURACY
     assert records.iloc[0]["scope"] == "global"
     assert records.iloc[0]["scope_value"] == "global"
+
+
+def test_evaluate_embedding_supervised_rf_and_logreg_metric_records():
+    rng = np.random.RandomState(123)
+    group_labels = np.array([0] * 12 + [1] * 12)
+    group_features = rng.normal(
+        loc=group_labels[:, None] * 3.0, scale=0.35, size=(24, 5)
+    )
+    X_emb = np.repeat(group_features[:, :2], 2, axis=0)
+    X_emb = X_emb + rng.normal(scale=0.05, size=X_emb.shape)
+    y = np.repeat(group_labels, 2)
+    groups = np.repeat(np.arange(24), 2)
+
+    payload = evaluate_embedding(
+        X_emb,
+        metrics=[
+            SEPARATION_RF_BALANCED_ACCURACY,
+            SEPARATION_LOGREG_BALANCED_ACCURACY,
+        ],
+        labels=y,
+        groups=groups,
+    )
+
+    assert set(payload["metrics"]) == {
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    }
+    assert 0.0 <= payload["metrics"][SEPARATION_RF_BALANCED_ACCURACY] <= 1.0
+    assert 0.0 <= payload["metrics"][SEPARATION_LOGREG_BALANCED_ACCURACY] <= 1.0
+    records = pd.DataFrame.from_records(payload["records"])
+    assert records["metric"].tolist() == [
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    ]
 
 
 def test_evaluate_embedding_supervised_metric_requires_labels_and_groups():
@@ -619,7 +662,7 @@ def test_trajectory_geometry_guardrails():
 
 
 def test_feature_importance():
-    X, y = make_blobs(n_samples=100, centers=2, n_features=2, random_state=42)
+    X, _y = make_blobs(n_samples=100, centers=2, n_features=2, random_state=42)
     X[:, 1] = np.random.randn(100)
 
     model = DimReduction("PCA", n_components=1)
@@ -789,7 +832,7 @@ def test_shepard_diagram_data():
     assert len(d_emb) == 45
 
     # 2. Subsample (N > sample_size)
-    d_orig_sub, d_emb_sub = shepard_diagram_data(X, X_emb, sample_size=5)
+    d_orig_sub, _d_emb_sub = shepard_diagram_data(X, X_emb, sample_size=5)
     assert len(d_orig_sub) == 10  # 5*4/2
 
 
@@ -802,7 +845,7 @@ def test_reproducibility_shepard_sampling():
     size = 10
     d1_orig, d1_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
     d2_orig, d2_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=42)
-    d3_orig, d3_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=43)
+    d3_orig, _d3_emb = shepard_diagram_data(X, X_emb, sample_size=size, random_state=43)
 
     assert np.allclose(d1_orig, d2_orig)
     assert np.allclose(d1_emb, d2_emb)
@@ -917,7 +960,6 @@ def test_method_selector_single_method():
 
 def test_evaluation_plot(data):
     """Test plotting of selector metric records through plot_metrics."""
-    X, y = data
     import matplotlib.pyplot as plt
 
     selector = MethodSelector([])
@@ -926,33 +968,33 @@ def test_evaluation_plot(data):
             "method": "PCA",
             "metric": "trustworthiness",
             "value": 0.9,
-            "scope": "k",
-            "scope_value": 1,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "PCA",
             "metric": "trustworthiness",
             "value": 0.8,
-            "scope": "k",
-            "scope_value": 2,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "UMAP",
             "metric": "trustworthiness",
             "value": 0.95,
-            "scope": "k",
-            "scope_value": 1,
+            "scope": "global",
+            "scope_value": "global",
         },
         {
             "method": "UMAP",
             "metric": "trustworthiness",
             "value": 0.85,
-            "scope": "k",
-            "scope_value": 2,
+            "scope": "global",
+            "scope_value": "global",
         },
     ]
 
-    fig = plot_metrics(selector, metric="trustworthiness")
+    fig, _ax = plot_metrics(selector, metric="trustworthiness")
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
 
@@ -967,6 +1009,91 @@ def test_dimreduction_score_respects_metric_selection():
     assert set(payload["metrics"]) == {"trustworthiness"}
     assert "coranking_matrix_" in payload["diagnostics"]
     assert "shepard_distances_" not in payload["diagnostics"]
+
+
+def _coranking_metrics():
+    """The dense co-ranking metrics that the row cap protects."""
+    return ["trustworthiness", "continuity", "lcmc", "mrre_total"]
+
+
+def test_coranking_subsample_caps_matrix_size():
+    # Above the cap, the co-ranking matrix is (m-1, m-1) in the SUBSAMPLE size m,
+    # not (n-1, n-1) -- this is the epoch-granularity OOM guard.
+    rng = np.random.default_rng(0)
+    n, cap = 400, 50
+    X = rng.standard_normal((n, 6))
+    X_emb = X[:, :2] + 0.01 * rng.standard_normal((n, 2))
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=_coranking_metrics(), max_eval_samples=cap
+    )
+    Q = payload["diagnostics"]["coranking_matrix_"]
+    assert Q.shape == (cap - 1, cap - 1)
+    # Metrics stay valid estimates in their expected ranges.
+    assert 0.0 <= payload["metrics"]["trustworthiness"] <= 1.0
+    assert 0.0 <= payload["metrics"]["continuity"] <= 1.0
+    assert np.isfinite(payload["metrics"]["mrre_total"])
+
+
+def test_coranking_no_subsample_below_cap():
+    # At or below the cap, the full matrix is used (no behavioral change).
+    rng = np.random.default_rng(1)
+    n = 40
+    X = rng.standard_normal((n, 5))
+    X_emb = X[:, :2]
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=["trustworthiness"], max_eval_samples=100
+    )
+    assert payload["diagnostics"]["coranking_matrix_"].shape == (n - 1, n - 1)
+
+
+def test_coranking_subsample_disabled_with_none():
+    # max_eval_samples=None restores exact full-N behaviour.
+    rng = np.random.default_rng(2)
+    n = 120
+    X = rng.standard_normal((n, 5))
+    X_emb = X[:, :2]
+
+    payload = evaluate_embedding(
+        X_emb, X=X, metrics=["trustworthiness"], max_eval_samples=None
+    )
+    assert payload["diagnostics"]["coranking_matrix_"].shape == (n - 1, n - 1)
+
+
+def test_coranking_subsample_is_deterministic_in_random_state():
+    # A fixed random_state makes the subsample -- and therefore the metric --
+    # reproducible.
+    rng = np.random.default_rng(3)
+    n, cap = 300, 60
+    X = rng.standard_normal((n, 6))
+    X_emb = X[:, :2] + 0.05 * rng.standard_normal((n, 2))
+
+    kwargs = {
+        "metrics": ["trustworthiness"],
+        "max_eval_samples": cap,
+        "random_state": 7,
+    }
+    first = evaluate_embedding(X_emb, X=X, **kwargs)["metrics"]["trustworthiness"]
+    second = evaluate_embedding(X_emb, X=X, **kwargs)["metrics"]["trustworthiness"]
+    assert first == second
+
+
+def test_score_applies_default_coranking_cap():
+    # The fit path (DimReduction.score) inherits the default cap, so a large
+    # embedding still produces a bounded co-ranking matrix without opting in.
+    rng = np.random.default_rng(4)
+    n = DEFAULT_MAX_CORANKING_SAMPLES + 500
+    X = rng.standard_normal((n, 5))
+    reducer = DimReduction("PCA", n_components=2)
+    embedding = reducer.fit_transform(X)
+
+    payload = reducer.score(embedding, X=X, metrics=["trustworthiness"])
+    Q = payload["diagnostics"]["coranking_matrix_"]
+    assert Q.shape == (
+        DEFAULT_MAX_CORANKING_SAMPLES - 1,
+        DEFAULT_MAX_CORANKING_SAMPLES - 1,
+    )
 
 
 def test_method_selector_best_method_uses_primary_metric():
@@ -1202,7 +1329,7 @@ def test_evaluate_embedding_trajectory_separation_edge_cases():
     """Test edge cases in _evaluate_trajectory_metrics separation logic."""
     # 1. Empty values_arr for AUC
     # We mock trajectory_separation to return an empty array for a pair
-    import coco_pipe.dim_reduction.evaluation.core as core_mod
+    from coco_pipe.dim_reduction.evaluation import core as core_mod
     from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
 
     original_sep = core_mod.trajectory_separation
@@ -1268,7 +1395,7 @@ def test_evaluate_embedding_trajectory_ndim_guard():
     X_emb = np.random.rand(10, 2)
     from coco_pipe.dim_reduction.evaluation.core import _evaluate_trajectory_metrics
 
-    m, meta, d, r = _evaluate_trajectory_metrics("test", X_emb, None)
+    m, meta, _d, _r = _evaluate_trajectory_metrics("test", X_emb, None)
     assert m == {}
     assert meta == {}
 
@@ -1306,7 +1433,7 @@ def test_evaluate_embedding_standard_metrics_empty_selection_orchestration():
 
     from coco_pipe.dim_reduction.evaluation.core import _evaluate_standard_metrics
 
-    m, d, r = _evaluate_standard_metrics(
+    m, _d, _r = _evaluate_standard_metrics(
         "test", X, X_emb, {"trajectory_speed"}, 5, None, None
     )
     assert m == {}
@@ -1422,3 +1549,81 @@ def test_evaluate_embedding_invalid_dim():
     X_emb = np.random.rand(10, 2, 2, 2)
     with pytest.raises(ValueError, match="must be either 2D or 3D"):
         evaluate_embedding(X_emb)
+
+
+@pytest.mark.parametrize(
+    "func, expected",
+    [
+        pytest.param(
+            trajectory_distance_from_center,
+            [[2 / 3, 4 / 3, 2 / 3]],
+            id="distance_from_center",
+        ),
+        pytest.param(trajectory_cohesion, [8 / 9], id="cohesion"),
+        pytest.param(trajectory_intra_spread, [np.sqrt(8) / 9], id="intra_spread"),
+    ],
+)
+def test_trajectory_geometry_scalar_metrics(func, expected):
+    traj = np.array([[[0.0, 0.0], [2.0, 0.0], [0.0, 0.0]]])
+    np.testing.assert_allclose(func(traj), expected)
+
+
+def test_trajectory_auc_speed():
+    traj = np.array([[[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]])
+    auc = trajectory_auc_speed(traj, dt=1.0)
+    np.testing.assert_allclose(auc, [1.0])
+
+    time = np.array([0.0, 100.0, 200.0])
+    auc_time = trajectory_auc_speed(traj, time=time)
+    np.testing.assert_allclose(auc_time, [1.0])
+
+
+@pytest.mark.parametrize(
+    "call, match",
+    [
+        pytest.param(
+            lambda: trajectory_jerk(np.zeros((1, 4, 2)), dt=0),
+            "`dt` must be > 0.",
+            id="jerk_dt",
+        ),
+        pytest.param(
+            lambda: trajectory_speed(np.zeros((1, 4, 2)), time=np.zeros(3)),
+            "must be a 1D array with length",
+            id="speed_time_len",
+        ),
+        pytest.param(
+            lambda: trajectory_speed(np.zeros((1, 4, 2)), time=np.zeros((4, 1))),
+            "must be a 1D array with length",
+            id="speed_time_2d",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), time=np.zeros(3)),
+            "must be a 1D array with length",
+            id="auc_time_len",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), time=np.zeros((4, 1))),
+            "must be a 1D array with length",
+            id="auc_time_2d",
+        ),
+        pytest.param(
+            lambda: trajectory_auc_speed(np.zeros((1, 4, 2)), dt=0),
+            "`dt` must be > 0.",
+            id="auc_dt",
+        ),
+    ],
+)
+def test_geometry_error_paths(call, match):
+    with pytest.raises(ValueError, match=match):
+        call()
+
+
+def test_geometry_curvature_gradient():
+    # Circular trajectory
+    t = np.linspace(0, 2 * np.pi, 100)
+    traj = np.stack([np.cos(t), np.sin(t)], axis=1)
+    # The gradient method returns an array of the same shape as time
+    curv = trajectory_curvature(traj, method="gradient")
+    assert curv.shape == (100,)
+    # Curvature of a unit circle is ~1 (might vary slightly at edges with np.gradient)
+    assert np.allclose(curv[10:-10], 1.0, atol=0.1)

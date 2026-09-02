@@ -1,26 +1,17 @@
 """
-Configuration Schemas for Report
-================================
-
-Pydantic models for validating report configuration and metadata.
-
-Classes
--------
-ProvenanceConfig
-    Capture environment and execution metadata.
-ReportConfig
-    Main configuration for the report generation.
-
-Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
+Pydantic schemas for report configuration and provenance metadata.
 """
 
-from typing import Any, Dict, Optional
+import datetime as dt
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from coco_pipe.utils import get_environment_info
+
 
 class ProvenanceConfig(BaseModel):
-    """Configuration for execution provenance."""
+    """Runtime provenance attached to generated reports."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -28,32 +19,60 @@ class ProvenanceConfig(BaseModel):
         "Unknown", description="Source of the data (BIDS, Tabular, etc.)"
     )
     git_hash: str = Field("Unknown", description="Git commit hash of the code.")
-    timestamp_utc: str = Field(..., description="Execution timestamp.")
-    command: Optional[str] = Field(None, description="Command line arguments used.")
-    python_version: Optional[str] = Field(None, description="Python version.")
-    os_platform: Optional[str] = Field(None, description="Operating System.")
-    versions: Dict[str, str] = Field(
+    timestamp_utc: str = Field(
+        default_factory=lambda: dt.datetime.now(dt.UTC).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        ),
+        description="Execution timestamp.",
+    )
+    command: str | None = Field(None, description="Command line arguments used.")
+    python_version: str | None = Field(None, description="Python version.")
+    os_platform: str | None = Field(None, description="Operating system.")
+    coco_pipe_version: str = Field(
+        "Unknown", description="Installed CoCo Pipe package version."
+    )
+    versions: dict[str, str] = Field(
         default_factory=dict, description="Package versions."
     )
 
+    @classmethod
+    def from_env(cls, source: str = "Unknown", **kwargs: Any) -> "ProvenanceConfig":
+        """
+        Build a ProvenanceConfig by capturing the current runtime environment.
+
+        Parameters
+        ----------
+        source : str
+            Description of the data source.
+        **kwargs : Any
+            Additional metadata to override or append to the environment info.
+
+        Returns
+        -------
+        ProvenanceConfig
+            A new instance populated with runtime metrics.
+        """
+        env_info = get_environment_info()
+        data = {"source": source, **env_info, **kwargs}
+        return cls(**data)
+
 
 class ReportConfig(BaseModel):
-    """
-    Configuration for the Report object.
-    """
+    """User-facing configuration attached to a report."""
 
     model_config = ConfigDict(extra="allow")
 
-    title: str = Field("CoCo Analysis Report", description="Title of the report.")
-    author: Optional[str] = Field(None, description="Author of the report.")
-    description: Optional[str] = Field(None, description="Brief description.")
-
-    # Nested provenance info
-    provenance: Optional[ProvenanceConfig] = Field(
-        None, description="Execution metadata."
+    title: str = Field(
+        default_factory=lambda: (
+            f"CoCo Analysis Report ({dt.datetime.now(dt.UTC).strftime('%Y-%m-%d')})"
+        ),
+        description="Title of the report.",
     )
-
-    # Generic config storage for run parameters
-    run_params: Dict[str, Any] = Field(
+    author: str | None = Field(None, description="Author of the report.")
+    description: str | None = Field(None, description="Brief description.")
+    provenance: ProvenanceConfig = Field(
+        default_factory=ProvenanceConfig.from_env, description="Execution metadata."
+    )
+    run_params: dict[str, Any] = Field(
         default_factory=dict, description="Parameters used in the analysis run."
     )
