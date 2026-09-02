@@ -31,7 +31,7 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "biot": ("BIOT", "braindecode.models"),
     "labram": ("Labram", "braindecode.models"),
     "eegpt": ("EEGPT", "braindecode.models"),
-    "signaljepa": ("SignalJEPA", "braindecode.models"),
+    "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
     "codebrain": ("CodeBrain", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
