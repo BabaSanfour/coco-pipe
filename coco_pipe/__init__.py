@@ -8,23 +8,7 @@ from .descriptors import (
     DescriptorConfig,
     DescriptorPipeline,
 )
-from .dim_reduction import (
-    METHODS,
-    BaseReducer,
-    DimReduction,
-    IncrementalPCAReducer,
-    IsomapReducer,
-    LLEReducer,
-    MDSReducer,
-    PCAReducer,
-    SpectralEmbeddingReducer,
-    TSNEReducer,
-    continuity,
-    interpret_features,
-    lcmc,
-    shepard_diagram_data,
-    trustworthiness,
-)
+
 from .utils import get_environment_info, get_git_revision_hash, get_package_version
 
 if TYPE_CHECKING:
@@ -62,12 +46,20 @@ if TYPE_CHECKING:
         UMAPReducer as UMAPReducer,
     )
 
-# Core exports
+# Core exports (non-dim_reduction names only; dim_reduction names are added
+# below via __all__.extend(_LAZY_DIM_REDUCTION_EXPORTS) to avoid duplicates)
 __all__ = [
-    "METHODS",
-    "BaseReducer",
     "DescriptorConfig",
     "DescriptorPipeline",
+    "get_environment_info",
+    "get_git_revision_hash",
+    "get_package_version",
+]
+
+_LAZY_DIM_REDUCTION_EXPORTS = {
+    # sklearn-based reducers — always available once scikit-learn is installed
+    "METHODS",
+    "BaseReducer",
     "DimReduction",
     "IncrementalPCAReducer",
     "IsomapReducer",
@@ -76,17 +68,13 @@ __all__ = [
     "PCAReducer",
     "SpectralEmbeddingReducer",
     "TSNEReducer",
+    # evaluation helpers
     "continuity",
-    "get_environment_info",
-    "get_git_revision_hash",
-    "get_package_version",
     "interpret_features",
     "lcmc",
     "shepard_diagram_data",
     "trustworthiness",
-]
-
-_LAZY_DIM_REDUCTION_EXPORTS = {
+    # optional reducers that require extra dependencies
     "UMAPReducer",
     "PacmapReducer",
     "TrimapReducer",
