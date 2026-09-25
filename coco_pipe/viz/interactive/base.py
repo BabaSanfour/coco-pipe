@@ -909,6 +909,22 @@ def plot_group_scatter_with_mean(
     return fig
 
 
+def _heatmap_axis_labels(labels: Sequence[Any]) -> list[Any]:
+    """Keep explicit numeric labels (e.g. a time axis) numeric, else stringify.
+
+    Stringified floats become one categorical tick per cell, printed at full
+    precision ("-0.17551020408163268"); numeric values give a real axis with
+    Plotly's own tick spacing and formatting.
+    """
+    values = list(labels)
+    numeric = (int, float, np.integer, np.floating)
+    if values and all(
+        isinstance(v, numeric) and not isinstance(v, bool) for v in values
+    ):
+        return [float(v) for v in values]
+    return [str(v) for v in values]
+
+
 def plot_heatmap(
     matrix: pd.DataFrame | Sequence[Sequence[float]] | np.ndarray,
     x_labels: Sequence[Any] | None = None,
@@ -964,24 +980,24 @@ def plot_heatmap(
         x_lab = (
             [str(c) for c in matrix.columns]
             if x_labels is None
-            else [str(c) for c in x_labels]
+            else _heatmap_axis_labels(x_labels)
         )
         y_lab = (
             [str(c) for c in matrix.index]
             if y_labels is None
-            else [str(c) for c in y_labels]
+            else _heatmap_axis_labels(y_labels)
         )
     else:
         arr = np.asarray(matrix, dtype=float)
         if arr.ndim != 2:
             raise ValueError(f"`matrix` must be 2D; got shape {arr.shape}.")
         x_lab = (
-            [str(c) for c in x_labels]
+            _heatmap_axis_labels(x_labels)
             if x_labels is not None
             else [str(i) for i in range(arr.shape[1])]
         )
         y_lab = (
-            [str(c) for c in y_labels]
+            _heatmap_axis_labels(y_labels)
             if y_labels is not None
             else [str(i) for i in range(arr.shape[0])]
         )

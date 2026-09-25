@@ -323,8 +323,7 @@
                     if (figureData) {
                         const isDark = document.documentElement.classList.contains('dark');
                         figureData.layout = figureData.layout || {};
-                        figureData.layout.template = isDark ? 'plotly_dark' : (figureData.layout.template || 'coco');
-                        if (isDark) {
+                        figureData.layout.template = isDark ? 'plotly_dark' : (figureData.layout.template || 'coco');                        if (isDark) {
                             figureData.layout.paper_bgcolor = '#111827';
                             figureData.layout.plot_bgcolor = '#111827';
                             figureData.layout.font = Object.assign({}, figureData.layout.font || {}, { color: '#f3f4f6' });
@@ -357,6 +356,16 @@
         document.querySelectorAll('.lazy-plot').forEach(p => plotObserver.observe(p));
 
         // --- 5. Interactive Tables + CSV Export ---
+        // Display-only number formatting: non-integer floats are shown to four
+        // significant digits (0.8949999999999999 -> 0.895). CSV export reads the
+        // raw row data, so downloads keep full precision.
+        function formatCell(value) {
+            if (typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)) {
+                return String(Number(value.toPrecision(4)));
+            }
+            return value;
+        }
+
         function escapeHtml(value) {
             return String(value ?? '')
                 .replace(/&/g, '&amp;')
@@ -507,7 +516,7 @@
                     const bodyHtml = visibleRows.length > 0
                         ? visibleRows.map(row => `
                             <tr>
-                                ${columns.map(column => `<td class="px-4 py-3 whitespace-nowrap text-gray-700 dark:text-gray-300">${escapeHtml(row[column] ?? '')}</td>`).join('')}
+                                ${columns.map(column => `<td class="px-4 py-3 whitespace-nowrap text-gray-700 dark:text-gray-300">${escapeHtml(formatCell(row[column]) ?? '')}</td>`).join('')}
                             </tr>
                         `).join('')
                         : `<tr><td colspan="${columns.length}" class="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No rows match the current filters.</td></tr>`;

@@ -49,6 +49,9 @@ dependencies = [
   "openpyxl",
   "joblib",
   "plotly",
+  # Report text is markdown; without this package the report silently falls
+  # back to escaped plain text (literal ** and backticks).
+  "markdown",
 ]
 
 [project.optional-dependencies]
