@@ -100,11 +100,21 @@ def _cross_validate_score(
             [("scaler", StandardScaler()), ("clf", clone(estimator))]
         )
 
-    scores = []
+    # POOLED scoring: gather every fold's held-out predictions and score once
+    # (each sample counted equally) rather than averaging tiny per-fold scores,
+    # which is noisy/biased for small cohorts. Each prediction is still out-of-fold
+    # (the model never trained on it), so this changes only aggregation, not honesty.
+    y_true_all, y_pred_all = [], []
     for train_idx, test_idx in splitter.split(X_values, y_values, group_values):
         model = clone(base_estimator)
         model.fit(X_values[train_idx], y_values[train_idx])
-        y_pred = model.predict(X_values[test_idx])
-        scores.append(float(balanced_accuracy_score(y_values[test_idx], y_pred)))
+        y_true_all.append(y_values[test_idx])
+        y_pred_all.append(model.predict(X_values[test_idx]))
 
-    return float(np.nanmean(scores)) if scores else float("nan")
+    if not y_true_all:
+        return float("nan")
+    y_true_all = np.concatenate(y_true_all)
+    y_pred_all = np.concatenate(y_pred_all)
+    if len(np.unique(y_true_all)) < 2:
+        return float("nan")
+    return float(balanced_accuracy_score(y_true_all, y_pred_all))
