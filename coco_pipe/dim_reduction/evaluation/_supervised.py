@@ -100,10 +100,8 @@ def _cross_validate_score(
             [("scaler", StandardScaler()), ("clf", clone(estimator))]
         )
 
-    # POOLED scoring: gather every fold's held-out predictions and score once
-    # (each sample counted equally) rather than averaging tiny per-fold scores,
-    # which is noisy/biased for small cohorts. Each prediction is still out-of-fold
-    # (the model never trained on it), so this changes only aggregation, not honesty.
+    # pool the held-out predictions and score once, instead of averaging the
+    # per-fold scores (unstable on small cohorts). predictions are still out-of-fold.
     y_true_all, y_pred_all = [], []
     for train_idx, test_idx in splitter.split(X_values, y_values, group_values):
         model = clone(base_estimator)
