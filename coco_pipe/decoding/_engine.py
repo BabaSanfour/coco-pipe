@@ -37,7 +37,14 @@ from .scalers import SubjectStandardScaler
 logger = logging.getLogger(__name__)
 
 # Metrics handled via training-fold ROC curve (not in the standard registry)
-_THRESHOLD_OPTIMISED = {"balanced_accuracy_optimal"}
+_THRESHOLD_OPTIMISED = {"youden_threshold_balanced_accuracy"}
+
+
+def _youden_threshold(y_true, proba1) -> float:
+    """Probability cutoff maximizing Youden's J (TPR - FPR) on the given data."""
+    from sklearn.metrics import roc_curve
+    fpr, tpr, thr = roc_curve(y_true, proba1)
+    return float(thr[np.argmax(tpr - fpr)])
 
 
 class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
@@ -344,35 +351,26 @@ def fit_and_score_fold(
     captured_warnings.extend(warning_records_to_dict("score", warning_records))
     score_time = time.perf_counter() - score_start
 
-    # Youden's J threshold optimisation (train-fold ROC → no test leakage)
-    if "balanced_accuracy_optimal" in threshold_metrics and spec.supports_proba and "y_proba" in fold_data:
-        from sklearn.metrics import balanced_accuracy_score as _bac
-        from sklearn.metrics import roc_curve as _roc_curve
-
+    # Youden's J threshold learned on train, applied to test. Stored for post-hoc reuse.
+    if "youden_threshold_balanced_accuracy" in threshold_metrics and spec.supports_proba and "y_proba" in fold_data:
+        from sklearn.metrics import balanced_accuracy_score
         try:
-            _y_proba_tr = estimator.predict_proba(X_train)
-            if _y_proba_tr.ndim == 2 and _y_proba_tr.shape[1] == 2:
-                _p1_tr = _y_proba_tr[:, 1]
-                _fpr, _tpr, _thresh = _roc_curve(y_train, _p1_tr)
-                _best = _thresh[np.argmax(_tpr - _fpr)]
-                _y_opt = (fold_data["y_proba"][:, 1] >= _best).astype(int)
-                scores["balanced_accuracy_optimal"] = float(_bac(y_test, _y_opt))
-                # Persist the honest (train-derived) Youden threshold so post-hoc
-                # re-scoring can report a calibrated (non-oracle) operating point.
-                # Epoch-level here; also derive a subject-level threshold from the
-                # epoch-train predictions so post-hoc can calibrate that level too.
-                fold_data["cal_threshold_epoch"] = float(_best)
+            proba_tr = estimator.predict_proba(X_train)
+            if proba_tr.ndim == 2 and proba_tr.shape[1] == 2:
+                p1_tr = proba_tr[:, 1]
+                thr_e = _youden_threshold(y_train, p1_tr)
+                fold_data["cal_threshold_epoch"] = thr_e
+                y_opt = (fold_data["y_proba"][:, 1] >= thr_e).astype(int)
+                scores["youden_threshold_balanced_accuracy"] = float(balanced_accuracy_score(y_test, y_opt))
                 if groups_train is not None:
-                    _yt_tr = np.asarray(y_train)
-                    _u = np.unique(groups_train)
-                    _sy = np.array([int(np.bincount(_yt_tr[groups_train == _g].astype(int)).argmax())
-                                    for _g in _u])
-                    _sp = np.array([float(_p1_tr[groups_train == _g].mean()) for _g in _u])
-                    if len(np.unique(_sy)) > 1:
-                        _f2, _t2, _th2 = _roc_curve(_sy, _sp)
-                        fold_data["cal_threshold_subject"] = float(_th2[np.argmax(_t2 - _f2)])
+                    yt_tr = np.asarray(y_train)
+                    uniq = np.unique(groups_train)
+                    sy = np.array([int(np.bincount(yt_tr[groups_train == g].astype(int)).argmax()) for g in uniq])
+                    sp = np.array([float(p1_tr[groups_train == g].mean()) for g in uniq])
+                    if len(np.unique(sy)) > 1:
+                        fold_data["cal_threshold_subject"] = _youden_threshold(sy, sp)
         except Exception:
-            scores["balanced_accuracy_optimal"] = float("nan")
+            scores["youden_threshold_balanced_accuracy"] = float("nan")
 
     # 6. Extract Metadata
     meta = extract_metadata(

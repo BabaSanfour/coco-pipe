@@ -1,8 +1,8 @@
 """Post-hoc scoring of a saved decoding Result.
 
 Re-scores the per-fold predictions stored by ``Result.save()`` to produce BOTH
-epoch-level and subject-level metrics (incl. ``balanced_accuracy_optimal``) from a
-single CV run. This complements ``CVConfig.subject_level_metrics``, which is a
+epoch-level and subject-level metrics (incl. ``youden_threshold_balanced_accuracy``)
+from a single CV run. This complements ``CVConfig.subject_level_metrics``, which is a
 per-run switch (one level per run): here both levels come from one run's stored
 predictions. Pure re-scoring, so numbers match the CV loop (per fold, then averaged).
 """
@@ -12,8 +12,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-
-from ._metrics import _balanced_accuracy_optimal_score
 
 
 def score_predictions(y_true: np.ndarray, y_pred: np.ndarray, proba1: np.ndarray) -> dict:
@@ -27,8 +25,6 @@ def score_predictions(y_true: np.ndarray, y_pred: np.ndarray, proba1: np.ndarray
         "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
         "f1": float(f1_score(y_true, y_pred, zero_division=0)),
         "roc_auc": float(roc_auc_score(y_true, proba1)) if two_class else float("nan"),
-        "balanced_accuracy_optimal": (
-            _balanced_accuracy_optimal_score(y_true, proba1) if two_class else float("nan")),
     }
 
 
@@ -40,14 +36,21 @@ def aggregate_subject(y_true: np.ndarray, proba1: np.ndarray, groups: np.ndarray
     return sy, (sp >= 0.5).astype(int), sp
 
 
+def _add_youden(metrics: dict, y_true: np.ndarray, proba1: np.ndarray, threshold) -> None:
+    """Add balanced accuracy at a train-derived Youden threshold, when available."""
+    from sklearn.metrics import balanced_accuracy_score
+    if threshold is not None and len(np.unique(y_true)) > 1:
+        metrics["youden_threshold_balanced_accuracy"] = float(
+            balanced_accuracy_score(y_true, (proba1 >= threshold).astype(int)))
+
+
 def posthoc_metrics_from_result(json_path, analysis_level: str = "epoch_level"):
     """Write a ``<name>_posthoc_metrics.json`` sidecar next to a saved Result JSON,
-    holding epoch- and subject-level metrics (incl. balanced_accuracy_optimal),
+    holding epoch- and subject-level metrics (incl. youden_threshold_balanced_accuracy),
     computed per fold then averaged. Returns ``(summary, sidecar_path)``."""
     json_path = Path(json_path)
     data = json.loads(json_path.read_text())
     summary = {}
-    from sklearn.metrics import balanced_accuracy_score
     for model, node in data.get("results", {}).items():
         per_level = {"epoch_level": [], "subject_level": []}
         for fold in node.get("predictions", []):
@@ -55,13 +58,10 @@ def posthoc_metrics_from_result(json_path, analysis_level: str = "epoch_level"):
             yp = np.asarray(fold["y_pred"])
             proba = np.asarray(fold["y_proba"])
             p1 = proba[:, 1] if proba.ndim == 2 else proba
+            # honest operating point: Youden's J threshold chosen on the train
+            # fold by the engine, applied here to the test fold.
             em = score_predictions(yt, yp, p1)
-            # honest (calibrated) operating point: threshold chosen on the train
-            # fold by the engine (Youden's J), applied here to the test fold.
-            thr_e = fold.get("cal_threshold_epoch")
-            if thr_e is not None and len(np.unique(yt)) > 1:
-                em["balanced_accuracy_calibrated"] = float(
-                    balanced_accuracy_score(yt, (p1 >= thr_e).astype(int)))
+            _add_youden(em, yt, p1, fold.get("cal_threshold_epoch"))
             per_level["epoch_level"].append(em)
             grp = fold.get("group")
             if grp is not None:
@@ -69,10 +69,7 @@ def posthoc_metrics_from_result(json_path, analysis_level: str = "epoch_level"):
                 if grp.size == yt.size and len(np.unique(grp)) < yt.size:
                     sy, spred, sp = aggregate_subject(yt, p1, grp)
                     sm = score_predictions(sy, spred, sp)
-                    thr_s = fold.get("cal_threshold_subject")
-                    if thr_s is not None and len(np.unique(sy)) > 1:
-                        sm["balanced_accuracy_calibrated"] = float(
-                            balanced_accuracy_score(sy, (sp >= thr_s).astype(int)))
+                    _add_youden(sm, sy, sp, fold.get("cal_threshold_subject"))
                     per_level["subject_level"].append(sm)
         out = {}
         for lvl, folds in per_level.items():

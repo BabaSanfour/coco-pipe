@@ -434,13 +434,10 @@ class BrainDecodeBackend(BackendBase):
             except NotImplementedError:
                 if model_key not in {"luna"}:
                     raise
-        # Ensure the classification head is trainable in BOTH frozen and lora
-        # modes. In frozen mode it is the only trainable part. In lora mode it
-        # must be unfrozen explicitly: get_peft_model() freezes the whole base
-        # model, and models without a working reset_head() (e.g. LUNA) never get
-        # a fresh head — leaving the output projection frozen at random init,
-        # which forces chance-level predictions no matter how well LoRA adapts
-        # the backbone. Search the PEFT wrapper's base model too.
+        # Force the head trainable: get_peft_model() freezes the whole model, and
+        # some backbones (e.g. LUNA) load without a fresh head, so it stays frozen
+        # at random init -> chance predictions. It may live on the model or the
+        # PEFT-wrapped base, so search both.
         if train_mode in ("frozen", "lora", "partial") and n_outputs is not None:
             _base = getattr(model, "base_model", None)
             _containers = [model, _base, getattr(_base, "model", None)]
@@ -458,9 +455,8 @@ class BrainDecodeBackend(BackendBase):
                 if _hit:
                     break
 
-        # partial: additionally unfreeze the last-K transformer blocks (a
-        # LoRA-free alternative that adapts the top of the stack while keeping
-        # the rest frozen; the head was just re-enabled above).
+        # "partial": also unfreeze the last K blocks so the top of the backbone
+        # can adapt -- the alternative to LoRA for backbones that don't support it.
         if train_mode == "partial":
             n_unf, where = _unfreeze_last_k_blocks(model, unfreeze_last_k)
             _logger.info("[partial:%s] unfroze last %d block(s): %s params @ %s",
@@ -616,9 +612,9 @@ class BrainDecodeBackend(BackendBase):
 
             def train(self, mode: bool = True):
                 super().train(mode)
-                # frozen & partial: keep the frozen backbone in eval; modules with
-                # trainable params (head, and for partial the unfrozen last-K
-                # blocks) are switched back to train inside _set_backbone_eval.
+                # .train() would flip the whole model (incl. the frozen backbone)
+                # into train mode; keep the backbone in eval and let
+                # _set_backbone_eval switch only the trainable parts back to train.
                 if mode and self._backend._train_mode in ("frozen", "partial"):
                     self._backend._set_backbone_eval()
                 return self
