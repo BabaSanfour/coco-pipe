@@ -32,7 +32,7 @@ def test_correlate_features():
     # Check content
     comp1_res = corrs["Dimension 1"]
     # Feature 0 should be top correlated
-    top_feat = list(comp1_res.keys())[0]
+    top_feat = next(iter(comp1_res.keys()))
     assert top_feat == "F0"
     assert abs(comp1_res["F0"]) > 0.8
 

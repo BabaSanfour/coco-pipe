@@ -119,6 +119,20 @@ def test_evaluation_config():
     assert eval_conf_sep.separation_method == "within_between_ratio"
 
 
+def test_evaluation_config_to_score_kwargs():
+    """to_score_kwargs maps the config onto evaluate_embedding kwargs."""
+    cfg = EvaluationConfig(
+        metrics=["trustworthiness", "continuity"],
+        k_range=[5, 10],
+        separation_method="mahalanobis",
+    )
+    assert cfg.to_score_kwargs() == {
+        "metrics": ["trustworthiness", "continuity"],
+        "k_values": [5, 10],
+        "separation_method": "mahalanobis",
+    }
+
+
 def test_tsne_config_validation():
     # Valid
     cfg = TSNEConfig(method="TSNE", perplexity=30, max_iter=750)
@@ -175,47 +189,49 @@ def test_evaluation_config_validation():
         EvaluationConfig(metrics=["non_existent_metric"])
 
     # 4. Duplicate k_range
-    with pytest.raises(ValidationError, match="k_range.*not contain duplicate"):
+    with pytest.raises(ValidationError, match=r"k_range.*not contain duplicate"):
         EvaluationConfig(metrics=["trustworthiness"], k_range=[5, 5])
 
     # 5. Non-positive k_range
-    with pytest.raises(ValidationError, match="k_range.*positive integers"):
+    with pytest.raises(ValidationError, match=r"k_range.*positive integers"):
         EvaluationConfig(metrics=["trustworthiness"], k_range=[0, 10])
 
     # 6. Unknown selection_metric
-    with pytest.raises(ValidationError, match="selection_metric.*must be one of"):
+    with pytest.raises(ValidationError, match=r"selection_metric.*must be one of"):
         EvaluationConfig(metrics=["trustworthiness"], selection_metric="unknown")
 
     # 7. selection_metric not in metrics
-    with pytest.raises(ValidationError, match="selection_metric.*present in `metrics`"):
+    with pytest.raises(
+        ValidationError, match=r"selection_metric.*present in `metrics`"
+    ):
         EvaluationConfig(metrics=["trustworthiness"], selection_metric="continuity")
 
     # 8. Invalid selection_k
-    with pytest.raises(ValidationError, match="selection_k.*positive integer"):
+    with pytest.raises(ValidationError, match=r"selection_k.*positive integer"):
         EvaluationConfig(metrics=["trustworthiness"], selection_k=0)
 
     # 9. Duplicate tie_breakers
-    with pytest.raises(ValidationError, match="tie_breakers.*not contain duplicate"):
+    with pytest.raises(ValidationError, match=r"tie_breakers.*not contain duplicate"):
         EvaluationConfig(
             metrics=["trustworthiness", "continuity"],
             tie_breakers=["trustworthiness", "trustworthiness"],
         )
 
     # 10. Non-ranking tie_breakers
-    with pytest.raises(ValidationError, match="tie_breakers.*ranking metrics only"):
+    with pytest.raises(ValidationError, match=r"tie_breakers.*ranking metrics only"):
         EvaluationConfig(
             metrics=["trustworthiness"], tie_breakers=["trajectory_separation"]
         )
 
     # 11. tie_breaker not in metrics
-    with pytest.raises(ValidationError, match="tie_breakers.*present in `metrics`"):
+    with pytest.raises(ValidationError, match=r"tie_breakers.*present in `metrics`"):
         EvaluationConfig(
             metrics=["trustworthiness"],
             tie_breakers=["continuity"],
         )
 
     # 12. Invalid separation_method
-    with pytest.raises(ValidationError, match="separation_method.*must be one of"):
+    with pytest.raises(ValidationError, match=r"separation_method.*must be one of"):
         EvaluationConfig(metrics=["trustworthiness"], separation_method="invalid")
 
 
@@ -231,16 +247,18 @@ def test_get_reducer_class_errors():
     import sys
     from unittest.mock import patch
 
-    with patch.dict(sys.modules, {"coco_pipe.dim_reduction.reducers.topology": None}):
-        with pytest.raises(
-            ImportError, match="Could not import reducer 'TopologicalAE'"
-        ):
-            get_reducer_class("TopologicalAE")
+    with (
+        patch.dict(sys.modules, {"coco_pipe.dim_reduction.reducers.topology": None}),
+        pytest.raises(ImportError, match="Could not import reducer 'TopologicalAE'"),
+    ):
+        get_reducer_class("TopologicalAE")
 
     # Non-optional method failure (e.g., PCA)
-    with patch.dict(sys.modules, {"coco_pipe.dim_reduction.reducers.linear": None}):
-        with pytest.raises(ImportError):
-            get_reducer_class("PCA")
+    with (
+        patch.dict(sys.modules, {"coco_pipe.dim_reduction.reducers.linear": None}),
+        pytest.raises(ImportError),
+    ):
+        get_reducer_class("PCA")
 
 
 def test_evaluation_config_none_values():

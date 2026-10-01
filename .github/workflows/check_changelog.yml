@@ -1,0 +1,32 @@
+name: Changelog
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check-changelog:
+    name: Check changelog fragment
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install towncrier
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install towncrier
+
+      - name: Check changelog fragment
+        run: |
+          towncrier check --compare-with origin/main

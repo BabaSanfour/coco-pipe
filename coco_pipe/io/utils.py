@@ -1,14 +1,16 @@
-"""
-IO Utilities
-============
+"""Miscellaneous IO helpers — BIDS loading, stratified sampling, and table utilities.
 
-Helper functions for IO operations.
+This module is intentionally thin: heavy quality logic lives in
+:mod:`coco_pipe.io.quality`; data-structure definitions live in
+:mod:`coco_pipe.io.structures`.  Everything here is either a small utility
+(``read_table``, ``normalize_subject_value``) or a sampling helper
+(``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 
 import importlib
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -58,32 +60,9 @@ def _get_read_raw_bids():
     return read_raw_bids
 
 
-def row_quality_score(
-    df: "pd.DataFrame",
-    exclude_cols: Optional[List[str]] = None,
-    count_zero: bool = True,
-) -> "pd.Series":
-    """
-    Calculate a 'badness' score for each row (NaNs + Infs + Zeros).
-    Lower is better.
-    """
-    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
-    num = use_df.select_dtypes(include=[np.number])
-    if num.shape[1] == 0:
-        return np.zeros(len(df), dtype=int)
-
-    nan_cnt = num.isna().sum(axis=1)
-    arr = num.to_numpy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        inf_mask = np.isinf(arr)
-    inf_cnt = inf_mask.sum(axis=1)
-    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
-    return (nan_cnt + inf_cnt + zero_cnt).astype(int)
-
-
 def make_strata(
     df: "pd.DataFrame",
-    covariates: List[str],
+    covariates: list[str],
     n_bins: int = 5,
     binning: str = "quantile",
 ) -> "pd.Series":
@@ -113,14 +92,59 @@ def make_strata(
     )
 
 
+def row_quality_score(
+    df: pd.DataFrame,
+    exclude_cols: list[str] | None = None,
+    count_zero: bool = True,
+    normalize: bool = False,
+) -> pd.Series:
+    """Calculate per-row badness from NaN, Inf, and optionally zero counts.
+
+    Higher values indicate worse quality. With ``normalize=True``, divide by
+    the number of evaluated numeric columns so scores are in ``[0, 1]``.
+
+    Parameters
+    ----------
+    df:
+        Input rows to score.
+    exclude_cols:
+        Columns to exclude before selecting numeric values.
+    count_zero:
+        Whether zero values contribute to the badness score.
+    normalize:
+        Whether to divide counts by the number of evaluated numeric columns.
+
+    Returns
+    -------
+    pandas.Series
+        Row-aligned badness scores. Lower values indicate better quality.
+    """
+    use_df = df.drop(columns=exclude_cols, errors="ignore") if exclude_cols else df
+    num = use_df.select_dtypes(include=[np.number])
+    if num.shape[1] == 0:
+        dtype = float if normalize else int
+        return pd.Series(np.zeros(len(df), dtype=dtype), index=df.index)
+
+    nan_cnt = num.isna().sum(axis=1)
+    arr = num.to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        inf_mask = np.isinf(arr)
+    inf_cnt = inf_mask.sum(axis=1)
+    zero_cnt = num.eq(0).sum(axis=1) if count_zero else 0
+    score = (nan_cnt + inf_cnt + zero_cnt).astype(int)
+    if normalize:
+        return score.astype(float) / num.shape[1]
+    return score
+
+
 def sample_indices(
     df: "pd.DataFrame",
     target: str,
-    size_map: Dict[Any, int],
+    size_map: dict[Any, int],
     rng,
     replace: bool,
     prefer_clean: bool,
-    exclude: List[str],
+    exclude: list[str],
 ) -> "pd.Index":
     """
     Sample indices for each class based on size_map.
@@ -164,15 +188,14 @@ def sample_indices(
     return pd.Index(combined.values)
 
 
-def split_column(name: str, sep: str, reverse: bool) -> Tuple[str, str]:
+def split_column(name: str, sep: str, reverse: bool) -> tuple[str, str]:
     """Split a column into (unit, feature) using `sep` and `reverse`."""
     if sep not in name:
         return "", name
     left, right = name.split(sep, 1)
     if reverse:
         return right, left
-    else:
-        return left, right
+    return left, right
 
 
 def read_bids_entry(
@@ -180,13 +203,14 @@ def read_bids_entry(
     is_pre_epoched: bool,
     is_evoked: bool,
     mode: str,
-    window_length: Optional[float],
-    stride: Optional[float],
-    event_id: Optional[Union[Dict[str, int], str, List[str]]] = None,
+    window_length: float | None,
+    stride: float | None,
+    event_id: dict[str, int] | str | list[str] | None = None,
     tmin: float = -0.2,
     tmax: float = 0.5,
-    baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
-) -> Tuple[np.ndarray, np.ndarray, List[str], float, Optional[np.ndarray]]:
+    baseline: tuple[float | None, float | None] | None = None,
+    units: str | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str], float, np.ndarray | None]:
     mne_mod = _get_mne()
     if is_pre_epoched:
         # Load existing Epochs
@@ -225,7 +249,7 @@ def read_bids_entry(
                     f"epochs with event_id={event_id}."
                 )
             epochs = filtered_epochs
-        data = epochs.get_data(copy=False)  # (N, C, T)
+        data = epochs.get_data(copy=False, units=units)  # (N, C, T)
         return (
             data,
             epochs.times,
@@ -234,7 +258,7 @@ def read_bids_entry(
             epochs.events[:, -1],
         )
 
-    elif is_evoked:
+    if is_evoked:
         # Load Evoked
         fpath = bids_path.fpath
         if not fpath.exists():
@@ -244,7 +268,7 @@ def read_bids_entry(
 
         evokeds = mne_mod.read_evokeds(fpath, verbose=False)
         # Stack conditions (N_cond, C, T)
-        data = np.stack([e.data for e in evokeds], axis=0)
+        data = np.stack([e.get_data(units=units) for e in evokeds], axis=0)
         labels = np.arange(len(evokeds))
         return (
             data,
@@ -254,56 +278,55 @@ def read_bids_entry(
             labels,
         )
 
-    else:
-        # Load Raw (default)
-        raw = _get_read_raw_bids()(bids_path, verbose=False)
-        raw.load_data()
-        raw.pick_types(eeg=True, meg=True, eog=False)
+    # Load Raw (default)
+    raw = _get_read_raw_bids()(bids_path, verbose=False)
+    raw.load_data()
+    raw.pick_types(eeg=True, meg=True, eog=False)
 
-        if mode == "continuous":
-            data_raw = raw.get_data()  # (C, T)
-            data = data_raw[np.newaxis, :, :]  # (1, C, T)
+    if mode == "continuous":
+        data_raw = raw.get_data(units=units)  # (C, T)
+        data = data_raw[np.newaxis, :, :]  # (1, C, T)
+        times = raw.times
+        labels = None
+    elif event_id is not None:
+        # Event-Based Epoching (Annotation aware)
+        events, event_id_map = mne_mod.events_from_annotations(
+            raw, event_id=event_id, verbose=False
+        )
+        epochs = mne_mod.Epochs(
+            raw,
+            events=events,
+            event_id=event_id_map,
+            tmin=tmin,
+            tmax=tmax,
+            baseline=baseline,
+            preload=True,
+            verbose=False,
+        )
+        data = epochs.get_data(copy=False, units=units)
+        times = epochs.times
+        labels = epochs.events[:, -1]
+    else:
+        # Raw -> Fixed Length Epochs
+        if window_length is None:
+            data_raw = raw.get_data(units=units)
+            data = data_raw[np.newaxis, :, :]
             times = raw.times
             labels = None
-        elif event_id is not None:
-            # Event-Based Epoching (Annotation aware)
-            events, event_id_map = mne_mod.events_from_annotations(
-                raw, event_id=event_id, verbose=False
+        else:
+            dur_s = window_length
+            stride_s = stride if stride else dur_s
+            epochs = mne_mod.make_fixed_length_epochs(
+                raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
             )
-            epochs = mne_mod.Epochs(
-                raw,
-                events=events,
-                event_id=event_id_map,
-                tmin=tmin,
-                tmax=tmax,
-                baseline=baseline,
-                preload=True,
-                verbose=False,
-            )
-            data = epochs.get_data(copy=False)
+            data = epochs.get_data(copy=False, units=units)
             times = epochs.times
             labels = epochs.events[:, -1]
-        else:
-            # Raw -> Fixed Length Epochs
-            if window_length is None:
-                data_raw = raw.get_data()
-                data = data_raw[np.newaxis, :, :]
-                times = raw.times
-                labels = None
-            else:
-                dur_s = window_length
-                stride_s = stride if stride else dur_s
-                epochs = mne_mod.make_fixed_length_epochs(
-                    raw, duration=dur_s, overlap=dur_s - stride_s, verbose=False
-                )
-                data = epochs.get_data(copy=False)
-                times = epochs.times
-                labels = epochs.events[:, -1]
 
-        return data, times, raw.ch_names, raw.info["sfreq"], labels
+    return data, times, raw.ch_names, raw.info["sfreq"], labels
 
 
-def load_participants_tsv(root: Path) -> Dict[str, Dict[str, Any]]:
+def load_participants_tsv(root: Path) -> dict[str, dict[str, Any]]:
     """
     Reads participants.tsv and returns dict: {sub_id: {col: val, ...}}.
     """
@@ -335,11 +358,11 @@ def load_participants_tsv(root: Path) -> Dict[str, Dict[str, Any]]:
         return {}
 
 
-def detect_subjects(root: Path) -> List[str]:
+def detect_subjects(root: Path) -> list[str]:
     return [d.name.replace("sub-", "") for d in root.glob("sub-*") if d.is_dir()]
 
 
-def detect_sessions(root: Path, subject: str) -> List[str]:
+def detect_sessions(root: Path, subject: str) -> list[str]:
     sub_dir = root / f"sub-{subject}"
     if not sub_dir.exists():
         return []
@@ -351,10 +374,10 @@ def detect_sessions(root: Path, subject: str) -> List[str]:
 def detect_runs(
     root: Path,
     subject: str,
-    session: Optional[str] = None,
-    task: Optional[str] = None,
+    session: str | None = None,
+    task: str | None = None,
     datatype: str = "eeg",
-) -> List[str]:
+) -> list[str]:
     """
     Detect available runs for a given subject/session/task.
     """
@@ -371,47 +394,114 @@ def detect_runs(
     for m in matches:
         if m.run is not None:
             runs.add(m.run)
-    return sorted(list(runs))
+    return sorted(runs)
 
 
-def smart_reader(path: Path) -> Any:
-    suffix = path.suffix.lower()
-    if suffix == ".pkl":
-        import pickle
+def normalize_subject_value(value: object) -> str:
+    """Normalize a BIDS subject label to a zero-padded 4-digit string.
 
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    elif suffix == ".npy":
-        return np.load(path)
-    elif suffix == ".json":
-        import json
+    The ``sub-`` prefix is stripped when present, while non-numeric labels are
+    returned unchanged.
 
-        with open(path, "r") as f:
-            return json.load(f)
-    elif suffix in [".h5", ".hdf5"]:
-        import h5py
+    Parameters
+    ----------
+    value : object
+        Raw subject label from a metadata table or BIDS path component.
 
-        with h5py.File(path, "r") as f:
-            # Heuristic: return first dataset or specific key if standardized?
-            # For now, simplistic: assume single key or 'data' or 'embeddings'
-            keys = list(f.keys())
-            if "embeddings" in keys:
-                return f["embeddings"][:]
-            elif "data" in keys:
-                return f["data"][:]
-            elif len(keys) == 1:
-                return f[keys[0]][:]
-            else:
-                raise ValueError(
-                    f"Ambiguous HDF5 structure: {keys}. Use custom reader."
-                )
-    else:
-        raise ValueError(f"Unsupported extension {suffix}, utilize custom reader.")
+    Returns
+    -------
+    str
+        Normalized subject string.
+    """
+    text = str(value).strip().replace("sub-", "")
+    numeric = pd.to_numeric(text, errors="coerce")
+    if pd.notna(numeric):
+        return f"{int(numeric):04d}"
+    return text
 
 
-def default_id_extractor(path: Path) -> str:
-    parts = path.name.split("_")
-    for p in parts:
-        if p.startswith("sub-"):
-            return p.replace("sub-", "")
-    return path.stem
+def _require_feature_columns(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+) -> pd.DataFrame:
+    """Return requested feature columns or raise with the missing names."""
+    missing = [column for column in feature_cols if column not in df.columns]
+    if missing:
+        raise ValueError(f"Feature columns not found: {missing}.")
+    return df.loc[:, feature_cols]
+
+
+def compute_feature_missingness(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+) -> pd.DataFrame:
+    """Compute per-column missingness and non-finite rates.
+
+    NaN values contribute only to the missingness metrics. Positive and
+    negative infinity contribute only to the non-finite metrics.
+    """
+    features = _require_feature_columns(df, feature_cols)
+    n_rows = len(features)
+    records = []
+    for column in feature_cols:
+        values = features[column]
+        missing_mask = values.isna()
+        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+        nonfinite_mask = np.isinf(numeric)
+        missing_count = int(missing_mask.sum())
+        nonfinite_count = int(nonfinite_mask.sum())
+        records.append(
+            {
+                "column": column,
+                "missing_count": missing_count,
+                "missing_rate": missing_count / n_rows if n_rows else 0.0,
+                "nonfinite_count": nonfinite_count,
+                "nonfinite_rate": nonfinite_count / n_rows if n_rows else 0.0,
+            }
+        )
+    return pd.DataFrame.from_records(
+        records,
+        columns=[
+            "column",
+            "missing_count",
+            "missing_rate",
+            "nonfinite_count",
+            "nonfinite_rate",
+        ],
+    )
+
+
+def compute_constant_feature_summary(
+    df: pd.DataFrame,
+    feature_cols: list[str],
+    tol: float = 1e-12,
+) -> pd.DataFrame:
+    """Compute per-column variance and constant-feature indicators.
+
+    Standard deviations use the population definition (``ddof=0``). Entirely
+    NaN columns are identified separately and are not marked constant.
+    """
+    if tol < 0:
+        raise ValueError("tol must be non-negative.")
+    features = _require_feature_columns(df, feature_cols)
+    records = []
+    for column in feature_cols:
+        values = features[column]
+        is_all_nan = bool(values.isna().all())
+        numeric = pd.to_numeric(values, errors="coerce").replace(
+            [np.inf, -np.inf],
+            np.nan,
+        )
+        std = float(numeric.std(ddof=0)) if numeric.notna().any() else np.nan
+        records.append(
+            {
+                "column": column,
+                "std": std,
+                "is_all_nan": is_all_nan,
+                "is_constant": bool(not is_all_nan and np.isfinite(std) and std <= tol),
+            }
+        )
+    return pd.DataFrame.from_records(
+        records,
+        columns=["column", "std", "is_all_nan", "is_constant"],
+    )

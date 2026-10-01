@@ -17,7 +17,7 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
@@ -31,9 +31,9 @@ def _validate_inputs(
     delta_t: int,
     n_neighbors: int,
     sigma: float,
-    groups: Optional[np.ndarray],
-    times: Optional[np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    groups: np.ndarray | None,
+    times: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
     """Validate and normalize velocity inputs."""
     X = np.asarray(X)
     X_emb = np.asarray(X_emb)
@@ -41,9 +41,7 @@ def _validate_inputs(
     if X.ndim != 2:
         raise ValueError("`X` must be a 2D array of shape (n_samples, n_features).")
     if X_emb.ndim != 2:
-        raise ValueError(
-            "`X_emb` must be a 2D array of shape (n_samples, n_components)."
-        )
+        raise ValueError("`X_emb` must be a 2D array of shape (n_samples, n_dims).")
     if X.shape[0] != X_emb.shape[0]:
         raise ValueError("`X` and `X_emb` must have the same number of samples.")
 
@@ -87,8 +85,8 @@ def _validate_inputs(
 
 def _iter_velocity_sequences(
     n_samples: int,
-    groups: Optional[np.ndarray],
-    times: Optional[np.ndarray],
+    groups: np.ndarray | None,
+    times: np.ndarray | None,
 ) -> Iterable[np.ndarray]:
     """Yield ordered sample indices for each independent sequence."""
     if groups is None:
@@ -112,8 +110,8 @@ def compute_velocity_fields(
     delta_t: int = 1,
     n_neighbors: int = 30,
     sigma: float = 0.1,
-    groups: Optional[np.ndarray] = None,
-    times: Optional[np.ndarray] = None,
+    groups: np.ndarray | None = None,
+    times: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Compute velocity-like vectors in embedding space.
@@ -127,7 +125,7 @@ def compute_velocity_fields(
     ----------
     X : np.ndarray of shape (n_samples, n_features)
         High-dimensional data ordered by sequence position.
-    X_emb : np.ndarray of shape (n_samples, n_components)
+    X_emb : np.ndarray of shape (n_samples, n_dims)
         Low-dimensional embedding aligned with ``X`` row-wise.
     delta_t : int, default=1
         Forward lag in samples used to compute the high-dimensional transition
@@ -150,7 +148,7 @@ def compute_velocity_fields(
 
     Returns
     -------
-    np.ndarray of shape (n_samples, n_components)
+    np.ndarray of shape (n_samples, n_dims)
         Velocity vectors in embedding space.
 
     Raises

@@ -1,208 +1,172 @@
-# CoCo Pipe
+# coco-pipe
 
-![Codecov](https://img.shields.io/codecov/c/github/BabaSanfour/coco-pipe)
-[![Test Status](https://img.shields.io/github/actions/workflow/status/BabaSanfour/coco-pipe/python-tests.yml?branch=main&label=tests)](https://github.com/BabaSanfour/coco-pipe/actions?query=workflow%3Apython-tests)
-[![Documentation Status](https://readthedocs.org/projects/cocopipe/badge/?version=latest)](https://cocopipe.readthedocs.io/en/latest/?badge=latest)
-[![GitHub Repository](https://img.shields.io/badge/Source%20Code-BabaSanfour%2Fcocopipe-blue)](https://github.com/BabaSanfour/coco-pipe)
+[![CI](https://img.shields.io/github/actions/workflow/status/BabaSanfour/coco-pipe/ci.yml?branch=main\&label=CI)](https://github.com/BabaSanfour/coco-pipe/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/BabaSanfour/coco-pipe/docs.yml?branch=main\&label=docs)](https://babasanfour.github.io/coco-pipe/)
+[![Codecov](https://img.shields.io/codecov/c/github/BabaSanfour/coco-pipe)](https://codecov.io/gh/BabaSanfour/coco-pipe)
+[![PyPI - Version](https://img.shields.io/pypi/v/coco-pipe.svg)](https://pypi.org/project/coco-pipe/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-CoCo Pipe is a comprehensive Python framework designed for advanced processing and analysis of bio M/EEG data. It seamlessly integrates traditional machine learning, deep learning, and signal processing techniques into a unified pipeline architecture. Key features include:
+**A modular framework for biosignal analytics, machine learning, deep learning, and foundation-model workflows.**
 
-- **Flexible Data Processing**: Support for various data formats (tabular, M/EEG, embeddings) with automated preprocessing and feature extraction
-- **Advanced ML Capabilities**: Integrated classification and regression pipelines with automated feature selection and hyperparameter optimization
-- **Modular Design**: Easy-to-extend architecture for adding custom processing steps, models, and analysis methods
-- **Experiment Management**: Built-in tools for experiment configuration, reproducibility, and results tracking
-- **Visualization & Reporting**: Comprehensive visualization tools and automated report generation for both signal processing and ML results
-- **Scientific Workflow**: End-to-end support for neuroimaging research, from raw data processing to publication-ready results
+coco-pipe was originally developed for M/EEG research and provides reusable components for data loading, feature extraction, dimensionality reduction, decoding, visualization, and automated reporting. The framework is designed to support reproducible machine-learning and foundation-model workflows across neuroimaging and biosignal modalities, with planned support for fMRI, fNIRS, and related data types.
 
-Whether you're conducting clinical research, developing ML models for brain-computer interfaces, or exploring neural signal patterns, CoCo Pipe provides the tools and flexibility to streamline your workflow.
+---
+
+## Highlights
+
+* **Biosignal-first design** for M/EEG, tabular, and biomedical datasets.
+* **Modular architecture** for building reusable analysis pipelines.
+* **Machine-learning workflows** for classification, regression, feature selection, and hyperparameter optimization.
+* **Foundation-model workflows** for embedding extraction, linear probing, full fine-tuning, parameter-efficient fine-tuning (LoRA/PEFT), and downstream decoding.
+* **Dimensionality-reduction tools** for exploratory analysis, embedding comparison, visualization, clustering, and trajectory analysis.
+* **Automated reporting** for reproducible experiment summaries and analysis outputs.
+
+---
+
+## Built On
+
+coco-pipe integrates with many widely used scientific Python libraries, including:
+
+* MNE-Python
+* Braindecode
+* MOABB
+* scikit-learn
+* PyTorch
+* Hugging Face Transformers
+* PEFT
+* UMAP
+* PHATE
+* PaCMAP
+* Dask
+
+---
 
 ## Installation
 
-1. **Clone the Repository:**
-
-   ```bash
-   git clone https://github.com/BabaSanfour/coco-pipe.git
-   cd coco-pipe
-   ```
-
-2. **(Optional) Create and Activate a Virtual Environment:**
-
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install the Package:**
-
-   ```bash
-   pip install -e .
-   ```
-
-   *Note: This will install all runtime dependencies. for development dependencies, use `pip install -e .[dev]`.*
-
-For detailed development instructions, please see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Using the ML Module
-
-CoCo Pipe provides two main ways to use the ML module:
-
-### 1. Direct Python API Usage
-
-You can use the ML module directly in your Python scripts by importing from `coco_pipe.io` for data loading and `coco_pipe.ml` for machine learning pipelines:
-
-```python
-from coco_pipe.io import load_data
-from coco_pipe.ml import MLPipeline
-
-# Load your data into the canonical package container
-container = load_data(
-    "data/your_dataset.csv",
-    mode="tabular",
-    target_col="target_class",
-    sep=",",
-)
-
-# Select a subset explicitly from the container when needed
-container = container.select(feature=["feat1", "feat2"], y=["case", "control"])
-X = container.X
-y = container.y
-
-# Configure and run ML pipeline
-config = {
-    "task": "classification",  # or 'regression'
-    "analysis_type": "baseline",  # Options: 'baseline', 'feature_selection', 'hp_search', 'hp_search_fs'
-    "models": "all",  # or list of specific models
-    "metrics": ["accuracy", "f1-score"],
-    "cv_strategy": "stratified",
-    "n_splits": 5,
-    "n_features": 10,  # For feature selection
-    "direction": "forward",  # For feature selection
-    "search_type": "grid",  # For hyperparameter search
-    "n_iter": 100,  # For random search
-    "scoring": "accuracy",
-    "n_jobs": -1
-}
-
-pipeline = MLPipeline(X=X, y=y, config=config)
-results = pipeline.run()
-```
-
-### 2. Using the CLI Tool
-
-For batch processing or experiment management, use the CLI tool with a YAML configuration file:
-
-```yaml
-# -----------------------------------------------------------------------------
-# Toy config for MLPipeline
-# -----------------------------------------------------------------------------
-
-# Global parameters shared across analyses
-global_experiment_id: "toy_ml_config"
-data_path: "../datasets/toy_dataset.csv"
-results_dir: "../results"
-results_file: "toy_ml_config"
-
-# Default analysis parameters (can be overridden per analysis)
-defaults:
-  random_state: 42
-  n_jobs: -1
-  cv_kwargs:
-    strategy: "stratified"
-    n_splits: 5
-    shuffle: true
-    random_state: 42
-  covariates: ["age"]
-  spatial_units: ["regionX", "regionY"]
-  feature_names: ["feat1", "feat2", "feat3"]
-
-# List of analyses to run
-analyses:
-  - id: "classification_baseline"
-    task: "classification"
-    analysis_type: "baseline"
-    target_columns: ["target_class"]
-    row_filter:
-      - column: "age"
-        values: 13
-        operator: ">"
-      - column: "sex"
-        values: ["male"]
-    models:
-      - "Logistic Regression"
-      - "Random Forest"
-    metrics:
-      - "accuracy"
-      - "roc_auc"
-
-  - id: "regression_hp_search"
-    task: "regression"
-    analysis_type: "hp_search"
-    target_columns: ["target_reg"]
-    feature_names: ["feat1"]
-    spatial_units: ["regionX"]
-    models: "all"
-    metrics:
-      - "r2"
-      - "neg_mse"
-    cv_kwargs:
-      strategy: "kfold"
-      n_splits: 3
-    search_type: "grid"
-    n_iter: 20
-    scoring: "r2"
-```
-
-Run the analysis using:
+### With pip
 
 ```bash
-python scripts/run_ml.py --config configs/your_config.yml
+git clone https://github.com/BabaSanfour/coco-pipe.git
+cd coco-pipe
+pip install -e .
 ```
 
-The pipeline will:
-- Load and preprocess your data
-- Run all specified analyses
-- Save results for each model/analysis
-- Generate a combined results file
+Development installation:
+
+```bash
+pip install -e .[dev,test]
+```
+
+Full installation (all optional modules):
+
+```bash
+pip install -e .[full,test]
+```
+
+### With uv
+
+```bash
+git clone https://github.com/BabaSanfour/coco-pipe.git
+cd coco-pipe
+
+uv venv
+source .venv/bin/activate
+
+uv pip install -e .
+```
+
+Development installation:
+
+```bash
+uv pip install -e ".[dev,test]"
+```
+
+Full installation:
+
+```bash
+uv pip install -e ".[full,test]"
+```
+
+---
+
+## Modules
+
+| Module          | Role                                                         |
+| --------------- | ------------------------------------------------------------ |
+| `io`            | Dataset loading, validation, and organization.               |
+| `descriptors`   | Signal feature extraction and representation building.       |
+| `dim_reduction` | Representation learning and dimensionality reduction.        |
+| `decoding`      | Classification, regression, and model evaluation workflows.  |
+| `viz`           | Exploratory analysis and publication-quality visualizations. |
+| `report`        | Automated experiment summaries and reporting.                |
+
+---
+
+## Quick Start
+
+The decoding API centers around the `Experiment` class:
+
+```python
+from coco_pipe.decoding import Experiment, ExperimentConfig
+from coco_pipe.decoding.configs import (
+    CVConfig,
+    LogisticRegressionConfig,
+)
+
+config = ExperimentConfig(
+    task="classification",
+    models={
+        "logreg": LogisticRegressionConfig(max_iter=500)
+    },
+    metrics=["accuracy"],
+    cv=CVConfig(
+        strategy="stratified",
+        n_splits=5,
+        shuffle=True,
+        random_state=42,
+    ),
+)
+
+result = Experiment(config).run(X, y)
+
+print(result.summary())
+```
+
+More advanced workflows, including feature selection, temporal decoding, dimensionality reduction, foundation-model integration, and automated reporting, are covered in the documentation.
+
+---
 
 ## Documentation
 
-Full documentation for CoCo Pipe is available at:
-https://cocopipe.readthedocs.io/en/latest/index.html
+Documentation, tutorials, examples, and API references are available at:
+
+**https://babasanfour.github.io/coco-pipe/**
+
+---
 
 ## Contributing
 
-Contributions are welcome! If you have suggestions or find any bugs, please open issues or submit pull requests.
+Contributions are welcome, including:
 
-### TODO
+* Bug reports
+* Documentation improvements
+* Examples and tutorials
+* New analysis modules
+* Tests and infrastructure improvements
+* Performance optimizations
 
-#### IO Module
-- Implement CSV loading and M/EEG data loading functionalities.
-- Develop comprehensive unit tests.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-#### ML Module
-- Restructure to mirror the design of the dim_reduction module.
-- Consolidate scripts within the main pipeline.
-- Add regression support and enhance cross-validation methods.
-- Update and expand unit tests.
+---
 
-#### DL Module
-- Define and implement deep learning functionalities.
-- Create corresponding unit tests.
+## Citation
 
-#### Visualization Module
-- Plan and implement enhancements for visualization features.
-- Integrate new visual components and testing.
+If you use coco-pipe in academic work, please cite the associated publication(s) when available.
 
-#### Descriptors Module
-- Add a future connectivity descriptor family built on `mne-connectivity`.
-- Start that connectivity family with phase-based measures such as `PLV`, with room for later extensions like `ciPLV`, `PLI`, and `wPLI`.
-- Add a future wavelet-based descriptor batch built on `PyWavelets`.
-- Start that wavelet batch with `sure_entropy`.
-- Keep `log_energy_entropy` on the roadmap, but finalize its scientific definition before implementation.
+Citation information will be added here as the project matures.
 
-#### Dim reduction:
-- Add parallelism
+---
 
 ## License
 
-*TODO*
+coco-pipe is distributed under the terms of the MIT License.

@@ -1,0 +1,57 @@
+    <!-- Header (Sticky Top) -->
+    <header class="bg-white dark:bg-gray-900 shadow-sm sticky top-0 z-50 border-b dark:border-gray-800">
+        <div class="max-w-[1600px] mx-auto px-4 h-16 flex justify-between items-center">
+            <!-- Brand -->
+            <div class="flex items-center space-x-3">
+                <svg width="34" height="34" viewBox="0 0 100 100"
+                    class="rounded-md border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-800"
+                    aria-hidden="true">
+                    <circle cx="50" cy="50" r="36" stroke="#0072B2" stroke-width="8" fill="none"
+                        stroke-dasharray="150 80" stroke-linecap="round" />
+                    <circle cx="50" cy="50" r="20" stroke="#009E73" stroke-width="6" fill="none"
+                        stroke-dasharray="70 56" stroke-linecap="round" />
+                    <circle cx="50" cy="50" r="6" fill="#1f2937" />
+                </svg>
+                <div>
+                    <h1 class="font-bold text-lg tracking-tight leading-tight">{{ title }}</h1>
+                    <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">{{ timestamp }}</div>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="report-controls flex items-center space-x-3">
+                <button data-drawer-open
+                    class="text-sm font-medium text-gray-500 hover:text-brand-600 dark:text-gray-400 dark:hover:text-brand-400 transition flex items-center">
+                    <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Run Info
+                </button>
+                <div class="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-2"></div>
+                <button data-action="theme-toggle" aria-label="Toggle color theme"
+                    class="p-2 text-gray-500 hover:bg-gray-100 rounded-full dark:hover:bg-gray-800 transition focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    <svg id="theme-icon-moon" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 12.8A8.5 8.5 0 1111.2 3a6.5 6.5 0 009.8 9.8z"></path>
+                    </svg>
+                    <svg id="theme-icon-sun" class="hidden h-5 w-5" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.36 6.36l-1.42-1.42M7.06 7.06 5.64 5.64m12.72 0-1.42 1.42M7.06 16.94l-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z">
+                        </path>
+                    </svg>
+                </button>
+                <div class="md:hidden">
+                    <button data-action="sidebar-toggle"
+                        class="p-2" aria-label="Open navigation">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>

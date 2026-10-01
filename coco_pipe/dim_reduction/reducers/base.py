@@ -2,9 +2,9 @@
 Base interfaces for dimensionality reduction backends.
 
 This module defines the reducer contract shared by built-in reducers and
-user-defined reducers. A reducer is any object derived from `BaseReducer`
-implementing `fit` and `transform`, optionally exposing diagnostics and scalar
-quality metadata through helper methods.
+user-defined reducers. A reducer is any object derived from
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` implementing `fit` and `transform`
+, optionally exposing diagnostics and scalar quality metadata through helper methods.
 
 The surrounding dim-reduction stack uses these interfaces to provide:
 
@@ -15,26 +15,23 @@ The surrounding dim-reduction stack uses these interfaces to provide:
 
 Notes
 -----
-`BaseReducer` is the intended extension point for custom reducers. Third-party
-reducers can participate in `DimReduction` workflows without extra wrappers as
-long as they respect the method contract documented here.
+`~coco_pipe.dim_reduction.reducers.base.BaseReducer` is the intended extension point for
+custom reducers. Third-party reducers can participate in
+`~coco_pipe.dim_reduction.DimReduction` workflows without extra wrappers as long as they
+respect the method contract documented here.
 """
 
 import os
 from abc import ABC, abstractmethod
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    Optional,
-    Union,
-)
+from collections.abc import Iterable
+from typing import Any
 
-import joblib
 import numpy as np
 
+from coco_pipe.io import load_object, save_object
+
 # Type alias for array-like objects
-ArrayLike = Union[np.ndarray, list]
+ArrayLike = np.ndarray | list
 
 __all__ = ["ArrayLike", "BaseReducer"]
 
@@ -86,6 +83,9 @@ class BaseReducer(ABC):
     - `has_native_plot` : whether the reducer exposes its own plotting path
     - `is_linear` : whether the reducer is linear
     - `is_stochastic` : whether repeated runs can vary without a fixed seed
+    - `nested_components` : whether the first ``k`` components of an ``n``-component
+      fit (``k < n``) equal a standalone ``k``-component fit, so a sweep can be
+      synthesised by slicing a single max-``n`` fit (true for PCA/SVD, not ICA)
 
     Examples
     --------
@@ -125,7 +125,7 @@ class BaseReducer(ABC):
         self.n_components = n_components
         self.params = kwargs
         self.model = None
-        self.context_: Dict[str, Any] = {}
+        self.context_: dict[str, Any] = {}
 
     @property
     def name(self) -> str:
@@ -181,8 +181,8 @@ class BaseReducer(ABC):
     def _build_estimator(
         self,
         estimator_cls: Any,
-        params: Optional[dict] = None,
-        component_param: Optional[str] = "n_components",
+        params: dict | None = None,
+        component_param: str | None = "n_components",
         **fixed_kwargs: Any,
     ) -> Any:
         """
@@ -246,8 +246,8 @@ class BaseReducer(ABC):
         return resolved_model
 
     def _merge_capabilities(
-        self, base_caps: Dict[str, Any], **overrides: Any
-    ) -> Dict[str, Any]:
+        self, base_caps: dict[str, Any], **overrides: Any
+    ) -> dict[str, Any]:
         """
         Return a capability mapping updated with reducer-specific overrides.
 
@@ -271,7 +271,7 @@ class BaseReducer(ABC):
         return caps
 
     @abstractmethod
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "BaseReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "BaseReducer":
         """
         Fit the model to the data.
 
@@ -296,7 +296,6 @@ class BaseReducer(ABC):
         reducers operate on alternative layouts and should document those
         layouts through `capabilities`.
         """
-        pass
 
     @abstractmethod
     def transform(self, X: ArrayLike) -> np.ndarray:
@@ -313,7 +312,8 @@ class BaseReducer(ABC):
         -------
         X_new : np.ndarray
             Reduced representation. The exact output shape depends on the
-            reducer, but the last dimension usually matches `n_components`.
+            reducer, but the last dimension usually matches
+            `~coco_pipe.dim_reduction.reducers.base.BaseReducer.n_components`.
 
         Raises
         ------
@@ -322,9 +322,8 @@ class BaseReducer(ABC):
             before fitting or when the reducer does not support out-of-sample
             transforms.
         """
-        pass
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit the model to data and return the transformed data.
 
@@ -347,7 +346,7 @@ class BaseReducer(ABC):
         self.fit(X, y=y)
         return self.transform(X)
 
-    def save(self, filepath: Union[str, os.PathLike]) -> None:
+    def save(self, filepath: str | os.PathLike) -> None:
         """
         Persist the reducer to a file.
 
@@ -366,14 +365,10 @@ class BaseReducer(ABC):
         `joblib.dump`. Custom reducers should either remain joblib-serializable
         or override this method and `load` with a custom persistence strategy.
         """
-        filepath = str(filepath)
-        out_dir = os.path.dirname(filepath)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        joblib.dump(self, filepath)
+        save_object(self, filepath)
 
     @property
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         """
         Return reducer capability flags consumed by the manager layer.
 
@@ -407,9 +402,10 @@ class BaseReducer(ABC):
             "has_native_plot": False,
             "is_linear": False,
             "is_stochastic": False,
+            "nested_components": False,
         }
 
-    def _attribute_dict(self, obj: Any, attrs: Iterable[str]) -> Dict[str, Any]:
+    def _attribute_dict(self, obj: Any, attrs: Iterable[str]) -> dict[str, Any]:
         """
         Extract requested attributes from a target object into a dictionary.
 
@@ -440,7 +436,7 @@ class BaseReducer(ABC):
                 continue
         return out
 
-    def get_diagnostics(self) -> Dict[str, Any]:
+    def get_diagnostics(self) -> dict[str, Any]:
         """
         Return diagnostic arrays or structured artifacts.
 
@@ -466,7 +462,7 @@ class BaseReducer(ABC):
         diag.update(self._attribute_dict(self, attrs))
         return diag
 
-    def get_quality_metadata(self) -> Dict[str, Any]:
+    def get_quality_metadata(self) -> dict[str, Any]:
         """
         Return scalar metadata about the reduction process or quality.
 
@@ -510,7 +506,7 @@ class BaseReducer(ABC):
         )
 
     @classmethod
-    def load(cls, filepath: Union[str, os.PathLike]) -> "BaseReducer":
+    def load(cls, filepath: str | os.PathLike) -> "BaseReducer":
         """
         Load a reducer from a file.
 
@@ -529,4 +525,7 @@ class BaseReducer(ABC):
         This method assumes the reducer was serialized with `save` or a
         compatible `joblib.dump` call.
         """
-        return joblib.load(str(filepath))
+        reducer = load_object(filepath)
+        if not isinstance(reducer, BaseReducer):
+            raise TypeError("Loaded object is not a BaseReducer")
+        return reducer

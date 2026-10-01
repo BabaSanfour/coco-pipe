@@ -22,6 +22,9 @@ from typing import Any
 
 import numpy as np
 
+from coco_pipe.io.structures import DataContainer
+
+from ._constants import FAILURE_FAMILY_ALIASES
 from .configs import DescriptorConfig, ParametricDescriptorConfig
 from .extractors._parametric_fit import fit_parametric_batch
 from .extractors._psd import compute_psd
@@ -639,7 +642,7 @@ class DescriptorPipeline:
         ids: Sequence[Any] | np.ndarray | None = None,
         sfreq: float | None = None,
         channel_names: Sequence[str] | np.ndarray | None = None,
-    ) -> dict[str, Any]:
+    ) -> DataContainer:
         """Extract descriptors from explicit NumPy inputs.
 
         Parameters
@@ -656,8 +659,12 @@ class DescriptorPipeline:
 
         Returns
         -------
-        dict[str, Any]
-            Dictionary with keys ``X``, ``descriptor_names``, and ``failures``.
+        DataContainer
+            Flat ``("obs", "feature")`` container: ``X`` is the descriptor
+            matrix, ``coords["feature"]`` the column names, and
+            ``coords["feature_family"]`` the per-column family token (carried
+            from the extractors, not parsed). ``ids`` are the observation ids and
+            ``meta`` holds ``failures`` and ``sfreq``.
 
         Raises
         ------
@@ -669,7 +676,7 @@ class DescriptorPipeline:
         Notes
         -----
         When ``runtime.on_error="warn"``, extraction still completes and stores
-        failures in ``result["failures"]`` before emitting one aggregate
+        the failures in ``meta["failures"]`` before emitting one aggregate
         warning at the pipeline level.
 
         The returned row order always matches the input observation order.
@@ -770,63 +777,73 @@ class DescriptorPipeline:
             precision=self.config.precision,
         )
 
+        # ``feature_family`` is carried straight from each block's family token
+        # (normalised to the canonical column form), never inferred from the
+        # generated column strings. It aligns with ``descriptor_names`` because
+        # ``_merge_descriptor_blocks`` concatenates columns in ``blocks`` order.
+        feature_family = [
+            FAILURE_FAMILY_ALIASES.get(block.family, block.family)
+            for block in blocks
+            for _ in block.descriptor_names
+        ]
+
         if self.config.runtime.on_error == "warn" and failures:
             warnings.warn(
                 f"Collected {len(failures)} descriptor failures during extract().",
                 stacklevel=2,
             )
 
-        return {
-            "X": X_desc,
-            "descriptor_names": descriptor_names,
-            "failures": failures,
-        }
+        return DataContainer(
+            X=X_desc,
+            dims=("obs", "feature"),
+            ids=inputs["ids"],
+            coords={
+                "feature": np.asarray(descriptor_names, dtype=object),
+                "feature_family": np.asarray(feature_family, dtype=object),
+            },
+            meta={"failures": failures, "sfreq": inputs["sfreq"]},
+        )
 
     def pool_channels(
         self,
-        result: Mapping[str, Any],
+        container: DataContainer,
         channel_groups: Mapping[str, Sequence[str]],
-    ) -> dict[str, Any]:
+    ) -> DataContainer:
         """Pool sensor-level descriptor columns into grouped channel outputs.
 
         Parameters
         ----------
-        result : mapping
-            Standard descriptor result produced by :meth:`extract`.
+        container : DataContainer
+            Flat descriptor container produced by :meth:`extract`.
         channel_groups : mapping of str to sequence of str
             Channel groups used to replace sensor-level descriptor columns with
             grouped ``"chgrp-..."`` outputs.
 
         Returns
         -------
-        dict[str, Any]
-            Descriptor result with grouped channel features and unchanged
-            failures.
+        DataContainer
+            New container with grouped channel features. ``ids`` and ``meta``
+            (including ``failures``) are preserved; ``coords["feature"]`` and
+            ``coords["feature_family"]`` reflect the pooled columns.
 
         Raises
         ------
         ValueError
-            If the provided result is malformed or if any requested group
-            cannot be formed from the sensor-level descriptor columns.
+            If the container is malformed or if any requested group cannot be
+            formed from the sensor-level descriptor columns.
         """
-        if (
-            "X" not in result
-            or "descriptor_names" not in result
-            or "failures" not in result
-        ):
-            raise ValueError(
-                "pool_channels() expects a result mapping with keys "
-                "'X', 'descriptor_names', and 'failures'."
-            )
-
-        X_desc = np.asarray(result["X"], dtype=float)
-        descriptor_names = [str(name) for name in result["descriptor_names"]]
+        X_desc = np.asarray(container.X, dtype=float)
+        descriptor_names = [str(name) for name in container.coords.get("feature", [])]
+        input_family = [
+            str(name) for name in container.coords.get("feature_family", [])
+        ]
         if X_desc.ndim != 2:
-            raise ValueError("pool_channels() expects result['X'] to be 2D.")
+            raise ValueError(
+                "pool_channels() expects a 2D ('obs', 'feature') container."
+            )
         if X_desc.shape[1] != len(descriptor_names):
             raise ValueError(
-                "pool_channels() requires result['descriptor_names'] to align with "
-                "result['X'] columns."
+                "pool_channels() requires coords['feature'] to align with X columns."
             )
         if not channel_groups:
             raise ValueError("channel_groups must define at least one group.")
@@ -875,13 +892,22 @@ class DescriptorPipeline:
                 assigned[member] = group_name
             normalized_groups[group_name] = members
 
+        # Per-column family is carried, not re-parsed: a pooled column keeps the
+        # family of its source sensor columns.
+        family_at = (
+            (lambda idx: input_family[idx])
+            if len(input_family) == len(descriptor_names)
+            else (lambda idx: "")
+        )
         output_columns: list[np.ndarray] = []
         pooled_names: list[str] = []
+        pooled_family: list[str] = []
         seen_bases: set[str] = set()
         for col_idx, descriptor_name in enumerate(descriptor_names):
             if "_ch-" not in descriptor_name:
                 output_columns.append(X_desc[:, col_idx][:, None])
                 pooled_names.append(descriptor_name)
+                pooled_family.append(family_at(col_idx))
                 continue
 
             base_name, _ = descriptor_name.rsplit("_ch-", 1)
@@ -904,6 +930,7 @@ class DescriptorPipeline:
                     grouped = np.nanmean(X_desc[:, member_indices], axis=1)
                 output_columns.append(grouped[:, None])
                 pooled_names.append(f"{base_name}_chgrp-{group_name}")
+                pooled_family.append(family_at(member_indices[0]))
 
         X_pooled = _cast_precision(
             np.concatenate(output_columns, axis=1)
@@ -911,8 +938,15 @@ class DescriptorPipeline:
             else np.empty((X_desc.shape[0], 0), dtype=float),
             self.config.precision,
         )
-        return {
-            "X": X_pooled,
-            "descriptor_names": pooled_names,
-            "failures": list(result["failures"]),
+        coords: dict[str, np.ndarray] = {
+            "feature": np.asarray(pooled_names, dtype=object)
         }
+        if len(input_family) == len(descriptor_names):
+            coords["feature_family"] = np.asarray(pooled_family, dtype=object)
+        return DataContainer(
+            X=X_pooled,
+            dims=("obs", "feature"),
+            ids=container.ids,
+            coords=coords,
+            meta=dict(container.meta),
+        )

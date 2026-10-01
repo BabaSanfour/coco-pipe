@@ -1,12 +1,137 @@
-from .configs import ExperimentConfig
-from .core import Experiment
-from .registry import get_estimator_cls, register_estimator
-from .utils import cross_validate_score
+"""
+Decoding Module
+===============
+
+Core module for scientific decoding and machine learning experiments on
+electrophysiological and behavioral data.
+"""
+
+from ._metrics import get_scorer
+from ._specs import SignalMetadata
+from ._splitters import get_cv_splitter
+from .configs import (
+    ChanceAssessmentConfig,
+    CheckpointConfig,
+    ClassicalModelConfig,
+    CVConfig,
+    DeviceConfig,
+    ErasureConfig,
+    ExperimentConfig,
+    FeatureSelectionConfig,
+    FoundationEmbeddingModelConfig,
+    FrozenBackboneDecoderConfig,
+    LoRAConfig,
+    NeuralFineTuneConfig,
+    QuantizationConfig,
+    ReducerConfig,
+    StatisticalAssessmentConfig,
+    TemporalAlignmentConfig,
+    TemporalDecoderConfig,
+    TrainerConfig,
+    TuningConfig,
+    grouped_chance_assessment,
+)
+from .experiment import Experiment
+from .persistence import (
+    completed_for_config,
+    config_hash,
+    load_completed_result_records,
+    redact_sensitive,
+    resolve_primary_metric_name,
+    stamp_primary_metric,
+    write_run_status,
+)
+from .pipeline import (
+    DecodingUnit,
+    allocate_inner_jobs,
+    allocate_outer_inner,
+    build_leaderboard,
+    execute_decoding_sweep,
+    execute_decoding_sweep_streaming,
+    load_sweep_records,
+    run_decoding_unit,
+    write_run_summary,
+)
+from .registry import (
+    EstimatorCapabilities,
+    get_capabilities,
+    get_estimator_cls,
+    get_foundation_model_spec,
+    list_capabilities,
+    list_foundation_models,
+    register_estimator,
+    register_estimator_spec,
+)
+from .result import ExperimentResult
+from .stats import (
+    aggregate_predictions_for_inference,
+    benjamini_hochberg,
+    binomial_accuracy_test,
+    correct_sweep_pvalues,
+    run_statistical_assessment,
+)
+from .targets import prepare_target, safe_group_n_splits
 
 __all__ = [
-    "ExperimentConfig",
-    "register_estimator",
-    "get_estimator_cls",
+    "CVConfig",
+    "ChanceAssessmentConfig",
+    "CheckpointConfig",
+    "ClassicalModelConfig",
+    "DecodingUnit",
+    "DeviceConfig",
+    "ErasureConfig",
+    "EstimatorCapabilities",
+    # Execution
     "Experiment",
-    "cross_validate_score",
+    # Configs
+    "ExperimentConfig",
+    "ExperimentResult",
+    "FeatureSelectionConfig",
+    "FoundationEmbeddingModelConfig",
+    "FrozenBackboneDecoderConfig",
+    "LoRAConfig",
+    "NeuralFineTuneConfig",
+    "QuantizationConfig",
+    "ReducerConfig",
+    "SignalMetadata",
+    "StatisticalAssessmentConfig",
+    "TemporalAlignmentConfig",
+    "TemporalDecoderConfig",
+    "TrainerConfig",
+    "TuningConfig",
+    "aggregate_predictions_for_inference",
+    # Sweep orchestration
+    "allocate_inner_jobs",
+    "allocate_outer_inner",
+    "benjamini_hochberg",
+    "binomial_accuracy_test",
+    "build_leaderboard",
+    "completed_for_config",
+    "config_hash",
+    "correct_sweep_pvalues",
+    "execute_decoding_sweep",
+    "execute_decoding_sweep_streaming",
+    "get_capabilities",
+    "get_cv_splitter",
+    "get_estimator_cls",
+    "get_foundation_model_spec",
+    "get_scorer",
+    "grouped_chance_assessment",
+    "list_capabilities",
+    "list_foundation_models",
+    "load_completed_result_records",
+    "load_sweep_records",
+    "prepare_target",
+    "redact_sensitive",
+    # Model Discovery & Metadata
+    "register_estimator",
+    "register_estimator_spec",
+    "resolve_primary_metric_name",
+    "run_decoding_unit",
+    # Stats Utilities
+    "run_statistical_assessment",
+    "safe_group_n_splits",
+    "stamp_primary_metric",
+    "write_run_status",
+    "write_run_summary",
 ]

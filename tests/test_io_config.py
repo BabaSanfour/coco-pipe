@@ -48,6 +48,43 @@ def test_bids_config_explicit():
     assert cfg.window_length == 2.5
 
 
+def test_bids_config_extended_fields():
+    """Fields added to mirror the BIDSDataset loader signature."""
+    cfg = BIDSConfig(path="/root")
+    # New defaults match the loader.
+    assert cfg.runs is None
+    assert cfg.target_col is None
+    assert cfg.event_id is None
+    assert cfg.tmin == -0.2
+    assert cfg.tmax == 0.5
+    assert cfg.baseline is None
+    assert cfg.drop_short_epochs is True
+
+    cfg = BIDSConfig(
+        path="/root",
+        runs=["01", "02"],
+        target_col="group",
+        event_id={"go": 1},
+        tmin=-0.1,
+        tmax=0.8,
+        baseline=(None, 0.0),
+        drop_short_epochs=False,
+    )
+    assert cfg.runs == ["01", "02"]
+    assert cfg.target_col == "group"
+    assert cfg.event_id == {"go": 1}
+    assert cfg.baseline == (None, 0.0)
+    assert cfg.drop_short_epochs is False
+
+
+def test_embedding_config_legacy_bids_fields():
+    """EmbeddingConfig exposes the legacy task/run/processing selectors."""
+    cfg = EmbeddingConfig(path="/emb", task="rest", run="01", processing="clean")
+    assert cfg.task == "rest"
+    assert cfg.run == "01"
+    assert cfg.processing == "clean"
+
+
 def test_embedding_config_defaults():
     """Test EmbeddingConfig defaults."""
     cfg = EmbeddingConfig(path="/emb")
@@ -86,4 +123,4 @@ def test_dataset_config_discriminator():
 def test_dataset_config_invalid_mode():
     """Test invalid mode in discriminator."""
     with pytest.raises(ValidationError):
-        DatasetConfig(**{"dataset": {"mode": "unknown", "path": "path"}})
+        DatasetConfig(dataset={"mode": "unknown", "path": "path"})

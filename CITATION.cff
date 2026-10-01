@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+title: coco-pipe
+message: "If you use coco-pipe in academic work, please cite this software."
+type: software
+
+authors:
+  - family-names: Abdelhedi
+    given-names: Hamza
+
+repository-code: https://github.com/BabaSanfour/coco-pipe
+url: https://github.com/BabaSanfour/coco-pipe
+license: MIT
+
+keywords:
+  - eeg
+  - meg
+  - neuroscience
+  - machine-learning
+  - deep-learning
+  - foundation-models
+  - dimensionality-reduction
+  - biosignals
+
+abstract: >
+  coco-pipe is a modular framework for biosignal analytics,
+  machine learning, deep learning, and foundation-model workflows.
+
+version: 0.0.1
+date-released: 2026-06-22

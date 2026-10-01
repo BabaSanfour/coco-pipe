@@ -6,8 +6,6 @@ from sklearn.preprocessing import StandardScaler
 from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.transform import SklearnWrapper, SpatialWhitener
 
-# --- SklearnWrapper Tests ---
-
 
 def test_sklearn_wrapper_standard_scaler():
     """Test wrapping a simple scaler."""
@@ -51,9 +49,6 @@ def test_sklearn_wrapper_validation():
     wrapper_norm.fit(DataContainer(np.zeros((2, 2)), dims=("o", "f")))
     with pytest.raises(NotImplementedError):
         wrapper_norm.inverse_transform(DataContainer(np.zeros((2, 2)), dims=("o", "f")))
-
-
-# --- SpatialWhitener Tests ---
 
 
 def test_spatial_whitener_methods():
@@ -104,3 +99,28 @@ def test_spatial_whitener_errors():
     dc_valid = DataContainer(np.zeros((2, 2)), dims=("obs", "channel"))
     with pytest.raises(AttributeError):
         w2.transform(dc_valid)
+
+
+def _wrapper_container_2d():
+    return DataContainer(np.random.randn(6, 3), dims=("obs", "feature"))
+
+
+def _wrapper_container_3d():
+    return DataContainer(np.random.randn(6, 3, 2), dims=("obs", "channel", "time"))
+
+
+def test_sklearn_wrapper_transform_before_fit():
+    with pytest.raises(RuntimeError, match="not fitted"):
+        SklearnWrapper(StandardScaler()).transform(_wrapper_container_2d())
+
+
+def test_sklearn_wrapper_transform_non_2d():
+    wrapper = SklearnWrapper(StandardScaler()).fit(_wrapper_container_2d())
+    with pytest.raises(ValueError, match="2D"):
+        wrapper.transform(_wrapper_container_3d())
+
+
+def test_sklearn_wrapper_inverse_transform_non_2d():
+    wrapper = SklearnWrapper(StandardScaler()).fit(_wrapper_container_2d())
+    with pytest.raises(ValueError, match="2D"):
+        wrapper.inverse_transform(_wrapper_container_3d())

@@ -5,9 +5,9 @@ Data Structures
 Standardized containers for passing data between Datasets, Preprocessing, and main
 modules.
 
-This module provides the `DataContainer`, an N-dimensional tensor wrapper that manages
-metadata, coordinates, and labels alongside the raw data matrix. It serves as the
-common currency for the entire pipeline.
+This module provides the `~coco_pipe.io.DataContainer`, an N-dimensional tensor wrapper
+that manages metadata, coordinates, and labels alongside the raw data matrix. It serves
+as the common currency for the entire pipeline.
 
 Examples
 --------
@@ -18,21 +18,21 @@ Examples
 >>> X = np.random.randn(10, 64, 500)
 >>> container = DataContainer(
 ...     X=X,
-...     dims=('obs', 'channel', 'time'),
+...     dims=("obs", "channel", "time"),
 ...     coords={
-...         'channel': ['Fz', 'Cz', 'Pz'], # ... etc
-...         'time': np.linspace(0, 1.0, 500)
+...         "channel": ["Fz", "Cz", "Pz"],  # ... etc
+...         "time": np.linspace(0, 1.0, 500),
 ...     },
 ...     y=np.random.randint(0, 2, 10),
-...     ids=[f'sub-01_trial-{i}' for i in range(10)]
+...     ids=[f"sub-01_trial-{i}" for i in range(10)],
 ... )
 
 # 2. Creating a container for simple Tabular Features (N_subjects, N_features)
 >>> X_tab = np.random.randn(20, 5)
 >>> container_tab = DataContainer(
 ...     X=X_tab,
-...     dims=('obs', 'feature'),
-...     coords={'feature': ['age', 'IQ', 'response_time', 'power_alpha', 'power_beta']}
+...     dims=("obs", "feature"),
+...     coords={"feature": ["age", "IQ", "response_time", "power_alpha", "power_beta"]},
 ... )
 """
 
@@ -42,9 +42,10 @@ import itertools
 import logging
 import re
 import warnings
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -91,16 +92,16 @@ class DataContainer:
     (10, 64, 500)
 
     Accessing coordinates:
-    >>> container.coords['channel'][:3]
+    >>> container.coords["channel"][:3]
     ['Fz', 'Cz', 'Pz']
     """
 
     X: np.ndarray
-    dims: Tuple[str, ...]
-    coords: Dict[str, Union[List, np.ndarray, Sequence]] = field(default_factory=dict)
-    y: Optional[np.ndarray] = None
-    ids: Optional[np.ndarray] = None
-    meta: Dict[str, Any] = field(default_factory=dict)
+    dims: tuple[str, ...]
+    coords: dict[str, list | np.ndarray | Sequence] = field(default_factory=dict)
+    y: np.ndarray | None = None
+    ids: np.ndarray | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         # Validation
@@ -110,7 +111,7 @@ class DataContainer:
                 f"but `dims` has {len(self.dims)} labels {self.dims}."
             )
 
-        # Check coords lengths
+        # Check coords lengths.
         for dim, labels in self.coords.items():
             if dim in self.dims:
                 axis = self.dims.index(dim)
@@ -121,10 +122,40 @@ class DataContainer:
                     )
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         return self.X.shape
 
-    def save(self, path: Union[str, Any]) -> None:
+    def _coord_axis(self, name: str, labels: Any, obs_dim_idx: int) -> int:
+        """Resolve the data axis a coordinate aligns to, or ``-1`` if none.
+
+        Resolution order:
+
+        1. A coordinate named exactly like a dimension aligns to that dimension.
+        2. A *prefixed* coordinate ``{dim}_{suffix}`` (e.g. ``feature_family``)
+           is metadata for ``{dim}`` and aligns to that axis regardless of
+           lengths. This keeps auxiliary feature/sensor metadata bound to the
+           right axis even when two dimensions share a length.
+        3. Otherwise alignment is inferred by length, preferring the ``obs``
+           axis on ties so observation-level metadata is never mis-assigned.
+        """
+        if name in self.dims:
+            return self.dims.index(name)
+        prefix_dim = max(
+            (dim for dim in self.dims if name.startswith(f"{dim}_")),
+            key=len,
+            default=None,
+        )
+        if prefix_dim is not None:
+            return self.dims.index(prefix_dim)
+        length = len(labels)
+        if obs_dim_idx != -1 and length == self.X.shape[obs_dim_idx]:
+            return obs_dim_idx
+        for axis, dim_len in enumerate(self.X.shape):
+            if length == dim_len:
+                return axis
+        return -1
+
+    def save(self, path: str | Any) -> None:
         """
         Save the DataContainer to disk using joblib.
 
@@ -133,17 +164,34 @@ class DataContainer:
         path : str or Path
             Destination file path.
         """
-        from pathlib import Path
+        from ._serialization import save_object
 
-        import joblib
+        saved = save_object(self, path)
+        logger.info(f"DataContainer saved to {saved}")
 
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self, p)
-        logger.info(f"DataContainer saved to {p}")
+    def observation_frame(self) -> pd.DataFrame:
+        """Return observation-aligned coordinates and stable sample IDs."""
+        if "obs" not in self.dims:
+            raise ValueError("DataContainer has no 'obs' dimension.")
+        obs_dim_idx = self.dims.index("obs")
+        n_obs = self.X.shape[obs_dim_idx]
+        columns: dict[str, Any] = {}
+        for key, values in self.coords.items():
+            array = np.asarray(values)
+            if (
+                array.ndim == 1
+                and len(array) == n_obs
+                and self._coord_axis(key, array, obs_dim_idx) == obs_dim_idx
+            ):
+                columns[str(key)] = array
+        if self.ids is not None:
+            columns["sample_id"] = np.asarray(self.ids).astype(str)
+        elif "sample_id" not in columns:
+            columns["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
+        return pd.DataFrame(columns, index=np.arange(n_obs))
 
     @classmethod
-    def load(cls, path: Union[str, Any]) -> "DataContainer":
+    def load(cls, path: str | Any) -> "DataContainer":
         """
         Load a DataContainer from disk.
 
@@ -156,22 +204,162 @@ class DataContainer:
         -------
         DataContainer
         """
-        from pathlib import Path
+        from ._serialization import load_object
 
-        import joblib
+        return load_object(path, expected_type=cls)
 
-        p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"File not found: {p}")
+    @classmethod
+    def concat(
+        cls,
+        containers: Sequence["DataContainer"],
+        fill_condition_from_meta: bool = True,
+    ) -> "DataContainer":
+        """Concatenate containers along their observation axis.
 
-        obj = joblib.load(p)
-        if not isinstance(obj, cls):
-            raise TypeError(f"Loaded object is {type(obj)}, expected {cls.__name__}")
+        All containers must use matching dimensions and non-observation
+        shapes. Observation-aligned coordinates are concatenated, filling
+        missing entries with ``None`` when a coordinate is absent from a
+        container. Non-observation coordinates are copied from the first
+        container.
 
-        return obj
+        Parameters
+        ----------
+        containers : sequence of DataContainer
+            One or more containers to concatenate.
+        fill_condition_from_meta : bool, default=True
+            If no observation-level ``condition`` coordinate is available,
+            create one from each container's ``meta["condition"]`` value.
+
+        Returns
+        -------
+        DataContainer
+            The concatenated container.
+        """
+        containers = list(containers)
+        if not containers:
+            raise ValueError("Need at least one container to concatenate.")
+
+        base = containers[0]
+        if "obs" not in base.dims:
+            raise ValueError("Containers must include an 'obs' dimension.")
+        if any(container.dims != base.dims for container in containers[1:]):
+            raise ValueError("All containers must have matching dims.")
+
+        obs_axis = base.dims.index("obs")
+        non_obs_shape = tuple(
+            size for axis, size in enumerate(base.X.shape) if axis != obs_axis
+        )
+        for container in containers[1:]:
+            candidate_shape = tuple(
+                size for axis, size in enumerate(container.X.shape) if axis != obs_axis
+            )
+            if candidate_shape != non_obs_shape:
+                raise ValueError(
+                    "All containers must have matching non-obs dimensions."
+                )
+
+        coords: dict[str, np.ndarray] = {}
+        base_n_obs = base.X.shape[obs_axis]
+
+        # Dimension coordinates are non-observation coordinates by definition.
+        # Auxiliary vectors are non-observation metadata when any container
+        # where they are present shows that they are not obs-aligned.
+        non_obs_coord_keys = set()
+        for key, values in base.coords.items():
+            arr = np.asarray(values)
+            if key in base.dims and key != "obs":
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+                continue
+            if arr.ndim != 1:
+                continue
+
+            present_values = [
+                (
+                    np.asarray(container.coords[key]),
+                    container.X.shape[obs_axis],
+                )
+                for container in containers
+                if key in container.coords
+            ]
+            has_non_obs_alignment = any(
+                candidate.ndim != 1 or len(candidate) != n_obs
+                for candidate, n_obs in present_values
+            )
+            if len(arr) != base_n_obs or has_non_obs_alignment:
+                coords[key] = arr
+                non_obs_coord_keys.add(key)
+
+        obs_keys = set()
+        for container in containers:
+            n_obs = container.X.shape[obs_axis]
+            for key, values in container.coords.items():
+                arr = np.asarray(values)
+                if (
+                    key not in non_obs_coord_keys
+                    and arr.ndim == 1
+                    and len(arr) == n_obs
+                ):
+                    obs_keys.add(key)
+
+        for key in sorted(obs_keys):
+            parts = []
+            for container in containers:
+                n_obs = container.X.shape[obs_axis]
+                if key not in container.coords:
+                    parts.append(np.full(n_obs, None, dtype=object))
+                    continue
+
+                arr = np.asarray(container.coords[key])
+                if arr.ndim != 1 or len(arr) != n_obs:
+                    raise ValueError(
+                        f"Observation coordinate '{key}' must be 1D and aligned "
+                        "to the 'obs' dimension in every container where present."
+                    )
+                parts.append(arr)
+            coords[key] = np.concatenate(parts)
+
+        if fill_condition_from_meta and "condition" not in coords:
+            coords["condition"] = np.concatenate(
+                [
+                    np.full(
+                        container.X.shape[obs_axis],
+                        container.meta.get("condition"),
+                        dtype=object,
+                    )
+                    for container in containers
+                ]
+            )
+
+        y = None
+        if all(container.y is not None for container in containers):
+            y = np.concatenate([np.asarray(container.y) for container in containers])
+
+        ids = None
+        if all(container.ids is not None for container in containers):
+            ids = np.concatenate(
+                [np.asarray(container.ids) for container in containers]
+            )
+
+        return cls(
+            X=np.concatenate(
+                [np.asarray(container.X) for container in containers],
+                axis=obs_axis,
+            ),
+            dims=base.dims,
+            coords=coords,
+            y=y,
+            ids=ids,
+            meta={
+                "source": "concat",
+                "conditions": [
+                    container.meta.get("condition") for container in containers
+                ],
+            },
+        )
 
     def __repr__(self) -> str:
-        dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape)]
+        dim_strs = [f"{d}={s}" for d, s in zip(self.dims, self.X.shape, strict=False)]
         return (
             f"<DataContainer [{' x '.join(dim_strs)}], "
             f"coords={list(self.coords.keys())}>"
@@ -222,7 +410,7 @@ class DataContainer:
             raise ValueError("Observation metadata export requires an 'obs' dimension.")
 
         obs_len = self.X.shape[self.dims.index("obs")]
-        data: Dict[str, np.ndarray] = {}
+        data: dict[str, np.ndarray] = {}
 
         if include_ids:
             if self.ids is None:
@@ -264,11 +452,11 @@ class DataContainer:
         Parameters
         ----------
         **indexers : dict
-            Key: Dimension name (e.g., 'obs', 'channel', 'time').
-            Value: Integer indices to select. Can be:
-                - List or numpy array of integers: [0, 1, 5]
-                - Slice object: slice(0, 10)
-                - Single integer: 0
+            Dimension names mapped to the desired index. The index can be:
+
+            - List or numpy array of integers: [0, 1, 5]
+            - Slice object: slice(0, 10)
+            - Single integer: 0
 
             Note: If you provide a list of indices with repeats (e.g., [0, 0, 1]),
             the output will be oversampled accordingly.
@@ -296,44 +484,30 @@ class DataContainer:
             return self
 
         slices = [slice(None)] * self.X.ndim
-
-        self.X.shape[0] if "obs" in self.dims else 0
         obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
 
-        new_coords = self.coords.copy()
-
-        # Apply slicers
+        # Build the per-axis slicers from the requested indexers.
         for dim_name, indices in indexers.items():
             if dim_name not in self.dims:
                 logger.warning(
                     f"Dimension {dim_name} not in {self.dims}, skipping isel."
                 )
                 continue
-
-            d_idx = self.dims.index(dim_name)
-
-            # Normalize int to list to preserve dimension
+            # Normalize int to list to preserve the dimension.
             if isinstance(indices, int):
                 indices = [indices]
+            slices[self.dims.index(dim_name)] = indices
 
-            # Update specific dim slice
-            slices[d_idx] = indices
-
-            # Handle metadata alignment
-            dim_len_old = self.X.shape[d_idx]
-
-            # We must be careful not to update coords twice if orthogonal slicing
-            # But here we just prepare new_coords values
-
-            for k, v in self.coords.items():
-                if dim_name in self.dims and k == dim_name:
-                    # This IS the coordinate for this dimension
-                    new_coords[k] = np.array(v)[indices]
-                elif (
-                    len(v) == dim_len_old and k not in self.dims
-                ):  # Don't overwrite other dim labels
-                    # Heuristic match
-                    new_coords[k] = np.array(v)[indices]
+        # Re-slice each coordinate exactly once, using its resolved axis. This
+        # avoids mis-slicing aux coordinates when two dimensions share a length.
+        new_coords = self.coords.copy()
+        for name, labels in self.coords.items():
+            axis = self._coord_axis(name, labels, obs_dim_idx)
+            if axis == -1:
+                continue
+            sl = slices[axis]
+            if not (isinstance(sl, slice) and sl == slice(None)):
+                new_coords[name] = np.array(labels)[sl]
 
         # Orthogonal Application
         try:
@@ -373,7 +547,7 @@ class DataContainer:
         self,
         target: str = "y",
         strategy: str = "undersample",
-        covariates: Optional[List[str]] = None,
+        covariates: list[str] | None = None,
         random_state: int = 42,
         **kwargs,
     ) -> "DataContainer":
@@ -386,17 +560,21 @@ class DataContainer:
 
         Parameters
         ----------
-        target : str, default='y'
-            Name of the target variable.
+        target : str or array-like
+            The target vector to balance against:
+
             - 'y': Uses `self.y`.
             - Any other string: Looks for the variable in `self.coords`.
-        strategy : {'undersample', 'oversample', 'auto'}, default='undersample'
+            - Array-like: Direct labels to use.
+        method : str, default='auto'
+            Balancing strategy:
+
             - 'undersample': Downsample majority classes to match the minority
-              class count.
+              class frequency. Uses `self.ids` to ensure repeatability.
             - 'oversample': Upsample minority classes (with replacement) to match
-              the majority class.
+              the majority frequency.
             - 'auto': Heuristic choice. Uses undersampling if total size remains >
-              50% of original, else oversampling.
+              20% of original, else oversampling.
         covariates : list of str, optional
             List of covariate names in `self.coords` to preserve distribution of.
             If provided, the balancing is performed *within* strata defined by these
@@ -406,6 +584,7 @@ class DataContainer:
             Change this value to produce different random subsets (e.g., for bagging).
         **kwargs : dict
             Additional arguments passed to internal logic:
+
             - n_bins (int): Number of bins for continuous covariates (default 5).
             - binning (str): 'quantile' (default) or 'uniform' binning.
             - prefer_clean_rows (bool): If True, weighs sampling to prefer rows
@@ -419,18 +598,18 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Simple Undersampling of 'y'
-        >>> balanced = container.balance(strategy='undersample')
+        >>> balanced = container.balance(strategy="undersample")
 
         >>> # 2. Balance based on a metadata column 'condition'
-        >>> balanced = container.balance(target='condition')
+        >>> balanced = container.balance(target="condition")
 
         >>> # 3. Stratified Balancing (Balance 'y' while preserving 'sex' and 'age'
         >>> #    ratios)
-        >>> balanced = container.balance(target='y', covariates=['sex', 'age'])
+        >>> balanced = container.balance(target="y", covariates=["sex", "age"])
 
         >>> # 4. Iterative Bootstrapping (Different seeds)
         >>> for seed in [1, 2, 3]:
-        ...     subset = container.balance(strategy='undersample', random_state=seed)
+        ...     subset = container.balance(strategy="undersample", random_state=seed)
         ...     # process subset...
         """
         # 1. Construct temporary DataFrame for Metadata
@@ -478,9 +657,9 @@ class DataContainer:
 
         # 1. Simple Case (No Covariates)
         if not covariates:
-            size = {
-                c: min_c if strategy == "undersample" else max_c for c in counts.index
-            }
+            size = dict.fromkeys(
+                counts.index, min_c if strategy == "undersample" else max_c
+            )
             indices_val = sample_indices(
                 df_meta,
                 target,
@@ -503,13 +682,13 @@ class DataContainer:
             tmp = df_meta.assign(__strata__=strata_s)
             indices_parts = []
 
-            for _, g in tmp.groupby("__strata__"):
+            for _, g in tmp.groupby("__strata__", observed=False):
                 sc = g[target].value_counts()
                 if len(sc) <= 1:
                     # Cannot balance within a single-class stratum
                     if strategy != "undersample":
                         M = int(counts.max())
-                        size_map = {c: M for c in sc.index}
+                        size_map = dict.fromkeys(sc.index, M)
                         indices_parts.append(
                             sample_indices(
                                 g,
@@ -542,10 +721,9 @@ class DataContainer:
 
             if not indices_parts:
                 # Fallback: global balance
-                sz = {
-                    c: min_c if strategy == "undersample" else max_c
-                    for c in counts.index
-                }
+                sz = dict.fromkeys(
+                    counts.index, min_c if strategy == "undersample" else max_c
+                )
                 indices_val = sample_indices(
                     df_meta,
                     target,
@@ -605,22 +783,22 @@ class DataContainer:
         Examples
         --------
         >>> # 1. Exact Selection (Sensors)
-        >>> sub = container.select(channel=['Fz', 'Cz'])
+        >>> sub = container.select(channel=["Fz", "Cz"])
 
         >>> # 2. Wildcard Selection (All Alpha features)
-        >>> sub = container.select(feature='*alpha*')
+        >>> sub = container.select(feature="*alpha*")
 
         >>> # 3. Range Selection (Time)
-        >>> sub = container.select(time={'>=': 0.1, '<': 0.5})
+        >>> sub = container.select(time={">=": 0.1, "<": 0.5})
 
         >>> # 4. Case-Insensitive Fuzzy Matching
-        >>> sub = container.select(channel=['fz'], ignore_case=True)
+        >>> sub = container.select(channel=["fz"], ignore_case=True)
 
         >>> # 5. Filter by Target (y)
-        >>> sub = container.select(y=['Patient'])
+        >>> sub = container.select(y=["Patient"])
 
         >>> # 6. Complex Logic (Subjects 1-5 via Operator)
-        >>> sub = container.select(subject_id={'>=': 1, '<=': 5})
+        >>> sub = container.select(subject_id={">=": 1, "<=": 5})
 
         >>> # 7. Stratified Selection (First 2 epochs per subject via Callable)
         >>> def first_n(ids, n=2):
@@ -629,8 +807,6 @@ class DataContainer:
         >>> sub = container.select(ids=first_n)
         """
         slices = [slice(None)] * self.X.ndim
-        self.coords.copy()
-
         obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
 
         for key, query in selections.items():
@@ -711,7 +887,7 @@ class DataContainer:
                     "<=": lambda a, b: a <= b,
                     "==": lambda a, b: a == b,
                     "!=": lambda a, b: a != b,
-                    "in": lambda a, b: np.isin(a, b),
+                    "in": np.isin,
                 }
                 for op, val in query.items():
                     if op not in ops:
@@ -801,38 +977,13 @@ class DataContainer:
             indexer[axis] = sl
             X_new = X_new[tuple(indexer)]
 
-        # Update coordinates to match new X
+        # Update coordinates to match new X. Each coord is mapped to its axis
+        # once (obs-priority on ties); coords matching no axis are dropped.
         final_coords = {}
         for coord_name, labels in self.coords.items():
-            # Check if coordinate aligns with any dimension
-            aligned_dim_idx = -1
-
-            if coord_name in self.dims:
-                aligned_dim_idx = self.dims.index(coord_name)
-            else:
-                # Heuristic: Find matching dimension length
-                # Note: Ambiguity if multiple dims have same length.
-                # We prioritize 'obs' if length matches, then others.
-
-                # Check obs first
-                if obs_dim_idx != -1 and len(labels) == self.X.shape[obs_dim_idx]:
-                    aligned_dim_idx = obs_dim_idx
-                else:
-                    for d_i, d_len in enumerate(self.X.shape):
-                        if len(labels) == d_len:
-                            aligned_dim_idx = d_i
-                            break
-
+            aligned_dim_idx = self._coord_axis(coord_name, labels, obs_dim_idx)
             if aligned_dim_idx != -1:
-                sl = slices[aligned_dim_idx]
-                if isinstance(sl, slice):
-                    final_coords[coord_name] = np.array(labels)[sl]
-                else:
-                    final_coords[coord_name] = np.array(labels)[sl]
-            else:
-                # Coordinate didn't match any dimension? Drop it to be safe, or keep?
-                # If validation passes, this shouldn't happen unless corrupt.
-                pass
+                final_coords[coord_name] = np.array(labels)[slices[aligned_dim_idx]]
 
         # Update y/ids
         y_new = self.y
@@ -849,7 +1000,11 @@ class DataContainer:
 
         return replace(self, X=X_new, coords=final_coords, y=y_new, ids=ids_new)
 
-    def flatten(self, preserve: Union[str, List[str]] = "obs") -> "DataContainer":
+    def flatten(
+        self,
+        preserve: str | list[str] = "obs",
+        sep: str = "_",
+    ) -> "DataContainer":
         """
         Flatten dimensions NOT in `preserve` into a single 'feature' dimension.
 
@@ -859,12 +1014,15 @@ class DataContainer:
 
         Parameters
         ----------
-        preserve : str or List[str], default='obs'
-            Dimensions to keep. All other dimensions will be collapsed into a
-            single 'feature' dimension.
-            - 'obs': Result shape (N_obs, N_features). Standard specifiction.
+        preserve : str or list of str, default="obs"
+            Dimensions to preserve. All other dimensions are flattened into a new
+            dimension 'feature'.
+
+            - 'obs': Result shape (N_obs, N_features). Standard specification.
             - ['obs', 'time']: Result shape (N_obs, N_time, N_features).
               Useful for time-resolved decoding distributions.
+        sep : str, default="_"
+            Separator used when generating composite feature names.
 
         Returns
         -------
@@ -874,14 +1032,14 @@ class DataContainer:
         Examples
         --------
         >>> # Flatten (10, 64, 500) -> (10, 32000)
-        >>> flat = container.flatten(preserve='obs')
+        >>> flat = container.flatten(preserve="obs")
         >>> flat.shape
         (10, 32000)
-        >>> flat.coords['feature'][0]
+        >>> flat.coords["feature"][0]
         'Fz_0.0'
 
         >>> # Flatten spatial only, keep time (10, 64, 500) -> (10, 500, 64)
-        >>> time_resolved = container.flatten(preserve=['obs', 'time'])
+        >>> time_resolved = container.flatten(preserve=["obs", "time"])
         """
         if isinstance(preserve, str):
             preserve = [preserve]
@@ -911,11 +1069,11 @@ class DataContainer:
             np.prod([self.X.shape[self.dims.index(d)] for d in to_flatten])
         )
 
-        new_shape = tuple(preserved_shape) + (flattened_len,)
+        new_shape = (*tuple(preserved_shape), flattened_len)
         X_flat = X_trans.reshape(new_shape)
 
         # New Dims
-        new_dims = tuple(preserve) + ("feature",)
+        new_dims = (*tuple(preserve), "feature")
 
         # New Coords
         # We keep coords for preserved dimensions.
@@ -926,23 +1084,48 @@ class DataContainer:
                 if k not in self.dims and len(v) == n_obs:
                     new_coords[k] = v
 
-        flat_coords_list = []
+        primary_coords = []
+        parallel_by_dim: dict[str, dict[str, Any]] = {}
+        obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
         for d in to_flatten:
-            c = self.coords.get(d)
-            if c is not None:
-                flat_coords_list.append(c)
-            else:
-                flat_coords_list.append(np.arange(self.X.shape[self.dims.index(d)]))
+            axis = self.dims.index(d)
+            primary = self.coords.get(d)
+            if primary is None:
+                primary = np.arange(self.X.shape[axis])
+            primary_coords.append(primary)
+            extras = {
+                name: vals
+                for name, vals in self.coords.items()
+                if name not in self.dims
+                and self._coord_axis(name, vals, obs_dim_idx) == axis
+            }
+            if extras:
+                parallel_by_dim[d] = extras
 
         # Create Cartesian product
-        if flat_coords_list:
+        if primary_coords:
             # Check size first to avoid memory explosion?
-            total_size = np.prod([len(x) for x in flat_coords_list])
+            total_size = np.prod([len(x) for x in primary_coords])
             if total_size < 200000:  # Limit to ~200k features strings
+                index_product = list(
+                    itertools.product(*[range(len(c)) for c in primary_coords])
+                )
                 combo_labels = [
-                    "_".join(map(str, x)) for x in itertools.product(*flat_coords_list)
+                    sep.join(str(primary_coords[ax][i]) for ax, i in enumerate(combo))
+                    for combo in index_product
                 ]
                 new_coords["feature"] = combo_labels
+                for axis, d in enumerate(to_flatten):
+                    for name, vals in parallel_by_dim.get(d, {}).items():
+                        new_coords[name] = [
+                            vals[combo[axis]] for combo in index_product
+                        ]
+            else:
+                warnings.warn(
+                    f"flatten(): {total_size} features exceeds the 200000 label cap; "
+                    "'feature' coordinate names were not generated.",
+                    stacklevel=2,
+                )
 
         return replace(
             self,
@@ -951,6 +1134,39 @@ class DataContainer:
             coords=new_coords,
             meta={**self.meta, "flattened_from": self.dims},
         )
+
+    def feature_schema(self) -> "pd.DataFrame | None":
+        """Return feature-axis metadata, or None when no feature coord exists.
+
+        Only coordinates aligned to the feature axis are included. ``feature_*``
+        metadata is mapped to canonical schema names such as ``family`` and
+        ``measure``; primary dimension coords folded by ``flatten()`` are used
+        in the feature labels and are not recovered as structured metadata.
+        """
+        if "feature" not in self.dims or "feature" not in self.coords:
+            return None
+        feature_axis = self.dims.index("feature")
+        obs_dim_idx = self.dims.index("obs") if "obs" in self.dims else -1
+        n = len(self.coords["feature"])
+        aliases = {
+            "feature_family": "family",
+            "feature_scope": "scope",
+            "feature_channel": "channel",
+            "feature_sensor": "channel",
+            "feature_measure": "measure",
+            "feature_subfamily": "subfamily",
+            "feature_descriptor": "descriptor",
+        }
+        data = {"column": list(self.coords["feature"])}
+        for name, vals in self.coords.items():
+            if name == "feature" or name in self.dims or len(vals) != n:
+                continue
+            if self._coord_axis(name, vals, obs_dim_idx) != feature_axis:
+                continue
+            schema_name = aliases.get(name, name)
+            if schema_name not in data:
+                data[schema_name] = list(vals)
+        return pd.DataFrame(data)
 
     def stack(self, dims: Sequence[str], new_dim: str = "obs") -> "DataContainer":
         """
@@ -978,7 +1194,7 @@ class DataContainer:
         --------
         >>> # Stack time into observations:
         >>> # (10 obs, 64 ch, 500 time) -> (5000 obs, 64 ch)
-        >>> stacked = container.stack(dims=('obs', 'time'), new_dim='obs')
+        >>> stacked = container.stack(dims=("obs", "time"), new_dim="obs")
         >>> stacked.shape
         (5000, 64)
         """
@@ -999,7 +1215,7 @@ class DataContainer:
         prod_len = int(np.prod(stack_shape))
         preserved_shape = [self.X.shape[i] for i in preserve_indices]
 
-        new_shape = (prod_len,) + tuple(preserved_shape)
+        new_shape = (prod_len, *tuple(preserved_shape))
         X_new = X_trans.reshape(new_shape)
 
         # 3. Handle Metadata Expansion (if new_dim is 'obs' or overrides it)
@@ -1057,7 +1273,27 @@ class DataContainer:
                     mi.to_frame(index=False).astype(str).agg("_".join, axis=1).values
                 )
 
-        new_dims_final = (new_dim,) + tuple(preserved)
+        new_dims_final = (new_dim, *tuple(preserved))
+
+        n_obs_orig = (
+            self.X.shape[self.dims.index("obs")] if "obs" in self.dims else None
+        )
+        snapshot_coords: dict[str, np.ndarray] = {
+            d: np.asarray(self.coords[d]).copy() for d in dims if d in self.coords
+        }
+        for coord_name, values in self.coords.items():
+            if coord_name in dims or coord_name in self.dims:
+                continue
+            arr = np.asarray(values)
+            if n_obs_orig is not None and arr.shape[0] == n_obs_orig:
+                snapshot_coords.setdefault(coord_name, arr.copy())
+
+        snapshot = {
+            "y": (None if self.y is None else np.asarray(self.y).copy()),
+            "ids": (None if self.ids is None else np.asarray(self.ids).copy()),
+            "coords": snapshot_coords,
+            "original_dims": tuple(self.dims),
+        }
 
         return replace(
             self,
@@ -1070,6 +1306,7 @@ class DataContainer:
                 **self.meta,
                 "stacked_from": dims,
                 "stacked_shapes": tuple(stack_shape),
+                "_stacked_snapshot": snapshot,
             },
         )
 
@@ -1098,9 +1335,9 @@ class DataContainer:
         Examples
         --------
         >>> # Stack 'trials' and 'time' -> 'obs'
-        >>> stacked = container.stack(('trials', 'time'), new_dim='obs')
+        >>> stacked = container.stack(("trials", "time"), new_dim="obs")
         >>> # Unstack 'obs' -> ('trials', 'time') (automatically inferred)
-        >>> unstacked = stacked.unstack('obs')
+        >>> unstacked = stacked.unstack("obs")
         """
         if dim not in self.dims:
             raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
@@ -1161,6 +1398,27 @@ class DataContainer:
             self.ids if (self.ids is None or len(self.ids) != current_len) else None
         )
 
+        snapshot = self.meta.get("_stacked_snapshot")
+        if snapshot is not None:
+            if snapshot.get("y") is not None:
+                new_y = snapshot["y"]
+            if snapshot.get("ids") is not None:
+                new_ids = snapshot["ids"]
+            for coord_name, values in snapshot.get("coords", {}).items():
+                new_coords[coord_name] = values
+
+            original_dims = snapshot.get("original_dims")
+            if original_dims is not None and set(original_dims) == set(final_dims):
+                # Restore the original dim order by transposing.
+                current_dims = tuple(final_dims)
+                permutation = [current_dims.index(d) for d in original_dims]
+                X_final = np.transpose(X_final, permutation)
+                final_dims = list(original_dims)
+
+        # Drop the snapshot once consumed so downstream stacks don't carry it.
+        new_meta = {k: v for k, v in self.meta.items() if k != "_stacked_snapshot"}
+        new_meta["unstacked_from"] = dim
+
         return replace(
             self,
             X=X_final,
@@ -1168,10 +1426,118 @@ class DataContainer:
             y=new_y,
             ids=new_ids,
             coords=new_coords,
-            meta={**self.meta, "unstacked_from": dim},
+            meta=new_meta,
         )
 
-    def center(self, dim: str = "time", inplace: bool = False) -> "DataContainer":
+    def with_features(
+        self,
+        X: np.ndarray,
+        names: Sequence[str] | None = None,
+        feature_dim: str | None = None,
+        new_dim_name: str = "component",
+    ) -> "DataContainer":
+        """
+        Return a new container with the feature axis replaced.
+
+        Typical use: re-attach reduced-dimensionality scores (e.g. PCA
+        components) to a container, so downstream operations (``unstack``,
+        ``aggregate``, plotting) keep working with proper coordinates.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            New data array. The leading axes must match the container's
+            non-feature axes; the trailing axis is the new feature axis.
+        names : sequence of str, optional
+            Coordinate labels for the new feature axis. When ``None``,
+            integer indices are used. Must have length ``X.shape[-1]``.
+        feature_dim : str, optional
+            Name of the dimension being replaced. Defaults to the last
+            dimension of the container.
+        new_dim_name : str, default='component'
+            Dimension name to assign to the replaced axis when
+            ``feature_dim`` is not present in ``self.dims`` (e.g., when
+            replacing ``channel`` with ``component`` after PCA).
+
+        Returns
+        -------
+        DataContainer
+            New container with ``X`` replaced and the feature-axis coord
+            updated. All other dims, coords, ``y``, ``ids``, and meta are
+            preserved.
+
+        Raises
+        ------
+        ValueError
+            If ``X``'s leading shape doesn't match the container, or if
+            ``names`` has the wrong length.
+
+        Examples
+        --------
+        >>> # After fitting PCA on stacked data:
+        >>> scores = reducer.fit_transform(c_stacked.X)  # (n_obs, 3)
+        >>> c_pc = c_stacked.with_features(
+        ...     scores,
+        ...     names=["PC1", "PC2", "PC3"],
+        ...     new_dim_name="component",
+        ... )
+        >>> c_pc.dims
+        ('obs', 'component')
+        """
+        X = np.asarray(X)
+        if X.ndim != self.X.ndim:
+            raise ValueError(
+                f"`X` must have the same number of dimensions as the container "
+                f"({self.X.ndim}); got {X.ndim}."
+            )
+        if X.shape[:-1] != self.X.shape[:-1]:
+            raise ValueError(
+                f"`X`'s leading axes {X.shape[:-1]} must match the container's "
+                f"non-feature axes {self.X.shape[:-1]}."
+            )
+
+        if feature_dim is None:
+            feature_dim = self.dims[-1]
+
+        # The output axis is renamed to ``new_dim_name`` unconditionally.
+        # When the caller wants to keep the original dim name, they pass
+        # ``new_dim_name=feature_dim`` (or rely on the same name).
+        new_dim = new_dim_name
+
+        n_features_new = X.shape[-1]
+        if names is not None:
+            names_arr = np.asarray(names)
+            if names_arr.shape[0] != n_features_new:
+                raise ValueError(
+                    f"`names` length {names_arr.shape[0]} does not match new "
+                    f"feature count {n_features_new}."
+                )
+        else:
+            names_arr = np.arange(n_features_new)
+
+        # Build new dims tuple, swapping feature_dim → new_dim if changed
+        new_dims = tuple(new_dim if d == feature_dim else d for d in self.dims)
+
+        # Build new coords: drop the old feature coord (if present) and set
+        # the new one
+        new_coords = {k: v for k, v in self.coords.items() if k != feature_dim}
+        new_coords[new_dim] = names_arr
+
+        return replace(
+            self,
+            X=X,
+            dims=new_dims,
+            coords=new_coords,
+            meta={
+                **self.meta,
+                "with_features_from": feature_dim,
+                "with_features_to": new_dim,
+            },
+        )
+
+    def center(
+        self, dim: str | Sequence[str] = "time", inplace: bool = False
+    ) -> "DataContainer":
         """
         Remove mean along a specified dimension (Centering/Baseline Correction).
 
@@ -1181,8 +1547,9 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str, default='time'
-            Dimension name to center over (e.g., 'time', 'channel', 'obs').
+        dim : str or sequence of str, default='time'
+            Dimension name(s) to center over (e.g., 'time', 'channel', 'obs',
+            or ('obs', 'time')).
         inplace : bool, default=False
             If True, modifies X in-place to save memory.
             Returns self.
@@ -1195,24 +1562,28 @@ class DataContainer:
         Examples
         --------
         >>> # Baseline correction over time
-        >>> container.center(dim='time')
+        >>> container.center(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
         X -= mean
 
         if inplace:
             return self
-        else:
-            return replace(self, X=X)
+        return replace(self, X=X)
 
     def zscore(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: str | Sequence[str] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Standardize (Z-score) along a specified dimension.
@@ -1222,8 +1593,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to standardize.
+        dim : str or sequence of str
+            Dimension(s) to standardize.
         eps : float
             Stability epsilon to avoid division by zero.
         inplace : bool
@@ -1235,27 +1606,31 @@ class DataContainer:
         Examples
         --------
         >>> # Standardize each channel's timecourse
-        >>> container.zscore(dim='time')
+        >>> container.zscore(dim="time")
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean = np.nanmean(X, axis=axis, keepdims=True)
-        std = np.nanstd(X, axis=axis, keepdims=True)
+        mean = np.nanmean(X, axis=axes, keepdims=True)
+        std = np.nanstd(X, axis=axes, keepdims=True)
 
         X -= mean
         X /= std + eps
 
         if inplace:
             return self
-        else:
-            return replace(self, X=X)
+        return replace(self, X=X)
 
     def rms_scale(
-        self, dim: str = "time", eps: float = 1e-8, inplace: bool = False
+        self,
+        dim: str | Sequence[str] = "time",
+        eps: float = 1e-8,
+        inplace: bool = False,
     ) -> "DataContainer":
         """
         Scale by Root Mean Square (RMS) amplitude along a dimension.
@@ -1265,8 +1640,8 @@ class DataContainer:
 
         Parameters
         ----------
-        dim : str
-            Dimension to scale.
+        dim : str or sequence of str
+            Dimension(s) to scale.
         eps : float
             Stability epsilon.
         inplace : bool
@@ -1275,32 +1650,120 @@ class DataContainer:
         -------
         DataContainer
         """
-        if dim not in self.dims:
-            raise ValueError(f"Dimension '{dim}' not found in {self.dims}")
+        dims_list = [dim] if isinstance(dim, str) else dim
+        for d in dims_list:
+            if d not in self.dims:
+                raise ValueError(f"Dimension '{d}' not found in {self.dims}")
 
-        axis = self.dims.index(dim)
+        axes = tuple(self.dims.index(d) for d in dims_list)
         X = self.X if inplace else self.X.copy()
 
-        mean_sq = np.nanmean(X**2, axis=axis, keepdims=True)
+        mean_sq = np.nanmean(X**2, axis=axes, keepdims=True)
         rms = np.sqrt(mean_sq)
 
         X /= rms + eps
 
         if inplace:
             return self
-        else:
-            return replace(self, X=X)
+        return replace(self, X=X)
 
     def baseline_correction(
-        self, dim: str = "time", inplace: bool = False
+        self, dim: str | Sequence[str] = "time", inplace: bool = False
     ) -> "DataContainer":
         """Alias for center(). Common in EEG."""
         return self.center(dim=dim, inplace=inplace)
 
+    def combine_coords(
+        self,
+        keys: Sequence[str],
+        name: str,
+        *,
+        sep: str = "_",
+        pair_sep: str | None = "-",
+        overwrite: bool = False,
+    ) -> "DataContainer":
+        """Return a copy with a new coordinate combining several existing coords.
+
+        Each element of the new coordinate joins the corresponding elements of
+        ``keys`` in the order given. This materializes a single composite key
+        (e.g. a ``recording_id`` from ``subject``/``session``/``run``) that can
+        then be used anywhere a single coordinate is expected — most notably as
+        the ``by`` argument to :meth:`aggregate`, but also for ``select``,
+        ``observation_frame``, or provenance labels.
+
+        Parameters
+        ----------
+        keys : sequence of str
+            Names of existing coordinates to combine. All must be present in
+            ``coords`` and share the same length.
+        name : str
+            Name of the new coordinate to create.
+        sep : str, default="_"
+            Separator placed between components.
+        pair_sep : str or None, default="-"
+            Separator between a component's source name and its value, yielding
+            ``"<key><pair_sep><value>"`` (e.g. ``"subject-0001"``). When
+            ``None``, names are omitted and only the values are joined.
+        overwrite : bool, default=False
+            Whether to replace ``name`` if a coordinate by that name exists.
+
+        Returns
+        -------
+        DataContainer
+            A copy with the new composite coordinate added.
+
+        Raises
+        ------
+        ValueError
+            If ``keys`` is empty, any key is missing, the keys differ in
+            length, or ``name`` already exists and ``overwrite`` is False.
+
+        Examples
+        --------
+        >>> grouped = container.combine_coords(
+        ...     ["subject", "session", "run"], "recording_id"
+        ... ).aggregate(by="recording_id", stats="mean")
+        """
+        if not keys:
+            raise ValueError("`keys` must contain at least one coordinate name.")
+        missing = [k for k in keys if k not in self.coords]
+        if missing:
+            raise ValueError(
+                f"Coordinates not found: {missing}. Available: {sorted(self.coords)}."
+            )
+        if name in self.coords and not overwrite:
+            raise ValueError(
+                f"Coordinate '{name}' already exists. "
+                "Pass overwrite=True to replace it."
+            )
+
+        arrays = [np.asarray(self.coords[k], dtype=object) for k in keys]
+        lengths = {arr.shape[0] for arr in arrays}
+        if len(lengths) != 1:
+            sizes = {k: arr.shape[0] for k, arr in zip(keys, arrays, strict=True)}
+            raise ValueError(
+                f"Coordinates to combine must share a length; got {sizes}."
+            )
+
+        n = arrays[0].shape[0]
+        combined = np.empty(n, dtype=object)
+        for i in range(n):
+            if pair_sep is None:
+                combined[i] = sep.join(str(arr[i]) for arr in arrays)
+            else:
+                combined[i] = sep.join(
+                    f"{k}{pair_sep}{arr[i]}"
+                    for k, arr in zip(keys, arrays, strict=True)
+                )
+
+        new_coords = dict(self.coords)
+        new_coords[name] = combined
+        return replace(self, coords=new_coords)
+
     def aggregate(
         self,
-        by: Union[str, np.ndarray, List[Any]],
-        stats: Union[str, Sequence[str]] = "mean",
+        by: str | np.ndarray | list[Any],
+        stats: str | Sequence[str] = "mean",
         min_count: int = 1,
         on_insufficient: str = "raise",
     ) -> "DataContainer":
@@ -1310,9 +1773,10 @@ class DataContainer:
         Parameters
         ----------
         by : str or array-like
-            Group definition for the observation axis.
+            Grouping definition.
+
             - If str: resolve the key from ``self.coords`` or from ``self.y``
-              when ``by == "y"``.
+              (if "y" is passed).
             - If array-like: explicit group labels aligned with ``obs``.
         stats : str or sequence of str, default="mean"
             Aggregation statistic or ordered list of statistics. Supported
@@ -1410,14 +1874,11 @@ class DataContainer:
                 f"Grouping array length {len(groups)} must match obs length {n_obs}."
             )
 
-        if obs_idx != 0:
-            X_moved = np.moveaxis(self.X, obs_idx, 0)
-        else:
-            X_moved = self.X
+        X_moved = np.moveaxis(self.X, obs_idx, 0) if obs_idx != 0 else self.X
 
         other_dims = tuple(dim for dim in self.dims if dim != "obs")
-        group_positions: Dict[Any, List[int]] = {}
-        ordered_groups: List[Any] = []
+        group_positions: dict[Any, list[int]] = {}
+        ordered_groups: list[Any] = []
         for obs_position, group_id in enumerate(groups.tolist()):
             if group_id not in group_positions:
                 ordered_groups.append(group_id)
@@ -1488,7 +1949,7 @@ class DataContainer:
             row_count: int,
             valid_row_count: int,
             message: str,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             return {
                 "group_id": group_id,
                 "group_index": group_index,
@@ -1500,10 +1961,10 @@ class DataContainer:
 
         n_groups = len(ordered_groups)
         rest_shape = X_moved.shape[1:]
-        reduced_shape = (n_groups, len(stats_out)) + rest_shape
+        reduced_shape = (n_groups, len(stats_out), *rest_shape)
         agg_moved = np.empty(reduced_shape, dtype=np.float64)
         epoch_counts = np.empty(n_groups, dtype=np.int64)
-        failures: List[Dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
 
         for group_index, group_id in enumerate(ordered_groups):
             obs_positions = np.asarray(group_positions[group_id], dtype=int)
@@ -1536,7 +1997,7 @@ class DataContainer:
                 if on_insufficient == "warn":
                     warnings.warn(message, stacklevel=2)
                 failures.append(failure)
-                agg_moved[group_index] = np.full((len(stats_out),) + rest_shape, np.nan)
+                agg_moved[group_index] = np.full((len(stats_out), *rest_shape), np.nan)
                 continue
 
             counts_flat = np.isfinite(group_X_flat).sum(axis=0, dtype=np.int64)
@@ -1549,12 +2010,12 @@ class DataContainer:
                 )
 
         if len(stats_out) == 1:
-            moved_dims = ("obs",) + other_dims
+            moved_dims = ("obs", *other_dims)
             final_dims = self.dims
             agg_values = agg_moved[:, 0, ...]
         else:
-            moved_dims = ("obs", "stat") + other_dims
-            final_dims_list: List[str] = []
+            moved_dims = ("obs", "stat", *other_dims)
+            final_dims_list: list[str] = []
             for dim in self.dims:
                 final_dims_list.append(dim)
                 if dim == "obs":
@@ -1570,7 +2031,7 @@ class DataContainer:
 
         new_y = None
         if self.y is not None:
-            grouped_y: List[Any] = []
+            grouped_y: list[Any] = []
             y_consistent = True
             for group_id in ordered_groups:
                 values = np.asarray(self.y)[group_positions[group_id]]
@@ -1596,7 +2057,7 @@ class DataContainer:
                 continue
             if len(values) != n_obs:
                 continue
-            grouped_values: List[Any] = []
+            grouped_values: list[Any] = []
             consistent = True
             values_array = np.asarray(values, dtype=object)
             for group_id in ordered_groups:
@@ -1634,8 +2095,8 @@ class DataContainer:
 
     def aggregate_groups(
         self,
-        by: Union[str, np.ndarray, List[Any]],
-        groups: Sequence[Dict[str, Any]],
+        by: str | np.ndarray | list[Any],
+        groups: Sequence[dict[str, Any]],
         min_count: int = 1,
         on_insufficient: str = "raise",
         skip_empty: bool = True,
@@ -1703,14 +2164,14 @@ class DataContainer:
         exclude_keys = tuple(f"exclude_{key}" for key in include_keys)
         allowed_group_keys = {"name", "stats", *include_keys, *exclude_keys}
 
-        def _normalize_patterns(value: Any) -> Tuple[str, ...]:
+        def _normalize_patterns(value: Any) -> tuple[str, ...]:
             if value is None:
                 return ()
             if isinstance(value, str):
                 return (value,)
             return tuple(str(item) for item in value)
 
-        def _selector_mask(spec: Dict[str, Any], *, exclude: bool) -> np.ndarray:
+        def _selector_mask(spec: dict[str, Any], *, exclude: bool) -> np.ndarray:
             selector_keys = exclude_keys if exclude else include_keys
             mask = np.zeros(feature_names.size, dtype=bool)
             for key in selector_keys:
@@ -1755,10 +2216,10 @@ class DataContainer:
                     )
             return mask
 
-        combined_parts: List[np.ndarray] = []
-        combined_feature_names: List[str] = []
-        aggregate_failures: List[Dict[str, Any]] = []
-        base_agg: Optional["DataContainer"] = None
+        combined_parts: list[np.ndarray] = []
+        combined_feature_names: list[str] = []
+        aggregate_failures: list[dict[str, Any]] = []
+        base_agg: DataContainer | None = None
 
         for group_index, group in enumerate(groups):
             if not isinstance(group, dict):

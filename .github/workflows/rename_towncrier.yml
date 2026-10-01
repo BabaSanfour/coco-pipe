@@ -1,0 +1,31 @@
+name: Rename Towncrier fragment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rename-towncrier:
+    name: Rename Towncrier fragment
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+
+      - uses: ./.github/actions/rename_towncrier
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          directory: changelog.d
+          types: feature,bugfix,doc,misc
+
+      - name: Commit renamed fragment
+        uses: stefanzweifel/git-auto-commit-action@b863ae1933cb653a53c021fe36dbb774e1fb9403 # v5
+        with:
+          commit_message: "MAINT: rename Towncrier fragment"

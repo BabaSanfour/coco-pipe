@@ -1,7 +1,0 @@
-# @package _global_
-config:
-  method: UMAP
-  n_components: 2
-  n_neighbors: 30
-  min_dist: 0.3
-  metric: cosine

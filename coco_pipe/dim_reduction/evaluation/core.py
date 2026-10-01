@@ -10,7 +10,8 @@ dim-reduction stack:
 - ``evaluate_embedding(...)`` evaluates an explicit embedding and returns
   scalar metrics, scalar metadata, diagnostics, and tidy metric records.
 - ``MethodSelector`` compares and ranks multiple already-scored
-  ``DimReduction`` objects without refitting or recomputing embeddings.
+  ``~coco_pipe.dim_reduction.DimReduction`` objects without refitting or recomputing
+  embeddings.
 
 The module is intentionally evaluation-only. It does not fit reducers,
 transform data, reconstruct 3D trajectory tensors from flat embeddings, or
@@ -23,26 +24,29 @@ Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
 if TYPE_CHECKING:
-    from ..core import DimReduction
+    # Import via the package re-export rather than the ``core`` submodule so the
+    # type-only reference does not register as an import cycle edge.
+    from coco_pipe.dim_reduction import DimReduction
 
-from ...decoding.configs import CVConfig
-from ...decoding.utils import cross_validate_score
+from .._constants import (
+    DEFAULT_MAX_CORANKING_SAMPLES,
+    SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
+)
+from ..config import EvaluationConfig
+from ._supervised import _cross_validate_score
 from .geometry import (
     trajectory_acceleration,
     trajectory_curvature,
@@ -63,10 +67,11 @@ from .metrics import (
     trustworthiness,
 )
 
-__all__ = ["evaluate_embedding", "MethodSelector"]
+__all__ = ["MethodSelector", "evaluate_embedding"]
 
 METRIC_COLUMNS = ("method", "metric", "value", "scope", "scope_value")
-SEPARATION_LOGREG_BALANCED_ACCURACY = "separation_logreg_balanced_accuracy"
+SEPARATION_RF_BALANCED_ACCURACY = SEPARATION_RF_METRIC_KEY
+SEPARATION_LOGREG_BALANCED_ACCURACY = SEPARATION_METRIC_KEY
 SWEEP_METRICS = (
     "trustworthiness",
     "continuity",
@@ -94,6 +99,7 @@ RANKING_DIRECTIONS = {
     "continuity": "desc",
     "lcmc": "desc",
     "shepard_correlation": "desc",
+    SEPARATION_RF_BALANCED_ACCURACY: "desc",
     SEPARATION_LOGREG_BALANCED_ACCURACY: "desc",
     "mrre_intrusion": "asc",
     "mrre_extrusion": "asc",
@@ -107,10 +113,10 @@ def _summarize_trajectory_metric(
     *,
     summary_type: str,
     use_last_axis: bool = False,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Return scalar summaries for one trajectory metric payload."""
     arr = np.asarray(values, dtype=float)
-    summary_: Dict[str, float] = {}
+    summary_: dict[str, float] = {}
     if summary_type == "peak":
         summary_[f"{prefix}_mean"] = float(np.nanmean(arr))
         summary_[f"{prefix}_peak"] = float(np.nanmax(arr))
@@ -125,11 +131,11 @@ def _summarize_trajectory_metric(
 def _evaluate_trajectory_metrics(
     method_name: str,
     X_emb: np.ndarray,
-    metric_selection: Optional[set],
-    labels: Optional[np.ndarray] = None,
-    times: Optional[np.ndarray] = None,
+    metric_selection: set | None,
+    labels: np.ndarray | None = None,
+    times: np.ndarray | None = None,
     separation_method: str = "centroid",
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """
     Compute trajectory summaries and diagnostics for native 3D embeddings.
 
@@ -191,20 +197,20 @@ def _evaluate_trajectory_metrics(
         if len(candidate) == traj.shape[0]:
             labels = candidate
 
-    metrics_payload: Dict[str, Any] = {}
-    metadata_payload: Dict[str, Any] = {
+    metrics_payload: dict[str, Any] = {}
+    metadata_payload: dict[str, Any] = {
         "trajectory_count": int(traj.shape[0]),
         "trajectory_length": int(traj.shape[1]),
     }
-    diagnostics_payload: Dict[str, Any] = {
+    diagnostics_payload: dict[str, Any] = {
         "trajectory_times_": times,
     }
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
 
     metrics = (
         ("trajectory_speed", trajectory_speed, "peak", False, 2),
         ("trajectory_acceleration", trajectory_acceleration, "peak", False, 3),
-        ("trajectory_curvature", trajectory_curvature, "peak", False, 2),
+        ("trajectory_curvature", trajectory_curvature, "peak", False, 3),
         ("trajectory_turning_angle", trajectory_turning_angle, "peak", False, 3),
         ("trajectory_dispersion", trajectory_dispersion, "peak", False, 1),
         (
@@ -305,11 +311,12 @@ def _evaluate_standard_metrics(
     method_name: str,
     X_eval: np.ndarray,
     X_emb_eval: np.ndarray,
-    metric_selection: Optional[set],
+    metric_selection: set | None,
     n_neighbors: int,
-    k_values: Optional[Sequence[int]],
-    random_state: Optional[int],
-) -> Tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]]]:
+    k_values: Sequence[int] | None,
+    random_state: int | None,
+    max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """
     Compute standard co-ranking and Shepard-based metrics for a 2D embedding.
 
@@ -320,7 +327,7 @@ def _evaluate_standard_metrics(
     X_eval : np.ndarray
         Original data with shape ``(n_samples, n_features)``.
     X_emb_eval : np.ndarray
-        Embedded data with shape ``(n_samples, n_components)``.
+        Embedded data with shape ``(n_samples, n_dims)``.
     metric_selection : set of str or None
         Requested standard metrics. ``None`` computes all standard metrics
         supported by this evaluator.
@@ -342,9 +349,9 @@ def _evaluate_standard_metrics(
     records : list of dict
         Tidy long-form metric records.
     """
-    metrics_payload: Dict[str, Any] = {}
-    diagnostics_payload: Dict[str, Any] = {}
-    records: List[Dict[str, Any]] = []
+    metrics_payload: dict[str, Any] = {}
+    diagnostics_payload: dict[str, Any] = {}
+    records: list[dict[str, Any]] = []
 
     requested_k_metrics = (
         set(SWEEP_METRICS)
@@ -360,21 +367,30 @@ def _evaluate_standard_metrics(
 
     n_samples = X_eval.shape[0]
     if requested_k_metrics:
-        Q = compute_coranking_matrix(X_eval, X_emb_eval)
+        X_coranking, X_emb_coranking = X_eval, X_emb_eval
+        if max_eval_samples is not None and n_samples > max_eval_samples:
+            rng = np.random.default_rng(random_state)
+            subsample = np.sort(
+                rng.choice(n_samples, size=max_eval_samples, replace=False)
+            )
+            X_coranking = X_eval[subsample]
+            X_emb_coranking = X_emb_eval[subsample]
+        n_coranking = X_coranking.shape[0]
+        Q = compute_coranking_matrix(X_coranking, X_emb_coranking)
         diagnostics_payload["coranking_matrix_"] = Q
-        valid_k: List[int] = []
+        valid_k: list[int] = []
         needs_positive_normalizer = bool(
             {"trustworthiness", "continuity"} & requested_k_metrics
         )
         for k in [n_neighbors] if k_values is None else list(k_values):
-            if k <= 0 or k >= (n_samples - 1):
+            if k <= 0 or k >= (n_coranking - 1):
                 continue
-            if needs_positive_normalizer and (2 * n_samples - 3 * k - 1) <= 0:
+            if needs_positive_normalizer and (2 * n_coranking - 3 * k - 1) <= 0:
                 continue
             valid_k.append(k)
 
         for k in valid_k:
-            row_values: Dict[str, float] = {}
+            row_values: dict[str, float] = {}
             for metric_name, metric_func in (
                 ("trustworthiness", trustworthiness),
                 ("continuity", continuity),
@@ -414,11 +430,13 @@ def _evaluate_standard_metrics(
             sample_size=1000,
             random_state=random_state,
         )
-        shepard_metrics = {
-            "shepard_correlation": float(np.corrcoef(d_orig, d_emb)[0, 1])
-            if len(d_orig) > 1
-            else np.nan
-        }
+        # corrcoef divides by each input's std; constant (zero-variance)
+        # distances make it undefined, so guard rather than emit a warning.
+        if len(d_orig) > 1 and np.std(d_orig) > 0 and np.std(d_emb) > 0:
+            shepard_correlation = float(np.corrcoef(d_orig, d_emb)[0, 1])
+        else:
+            shepard_correlation = np.nan
+        shepard_metrics = {"shepard_correlation": shepard_correlation}
         metrics_payload.update(shepard_metrics)
         diagnostics_payload["shepard_distances_"] = {
             "original": d_orig,
@@ -442,19 +460,21 @@ def _evaluate_standard_metrics(
 
 def evaluate_embedding(
     X_emb: np.ndarray,
-    X: Optional[np.ndarray] = None,
+    X: np.ndarray | None = None,
     method_name: str = "embedding",
-    metrics: Optional[Sequence[str]] = None,
-    labels: Optional[np.ndarray] = None,
-    groups: Optional[np.ndarray] = None,
-    times: Optional[np.ndarray] = None,
-    quality_metadata: Optional[Dict[str, Any]] = None,
-    diagnostics: Optional[Dict[str, Any]] = None,
-    random_state: Optional[int] = None,
+    metrics: Sequence[str] | None = None,
+    labels: np.ndarray | None = None,
+    groups: np.ndarray | None = None,
+    times: np.ndarray | None = None,
+    quality_metadata: dict[str, Any] | None = None,
+    diagnostics: dict[str, Any] | None = None,
+    random_state: int | None = None,
     n_neighbors: int = 5,
-    k_values: Optional[Sequence[int]] = None,
-    separation_method: str = "centroid",
-) -> Dict[str, Any]:
+    k_values: Sequence[int] | None = None,
+    separation_method: str | None = None,
+    max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
+    config: EvaluationConfig | None = None,
+) -> dict[str, Any]:
     """
     Evaluate an already computed embedding.
 
@@ -463,7 +483,7 @@ def evaluate_embedding(
     X_emb : np.ndarray
         Embedded data to evaluate.
 
-        - ``(n_samples, n_components)`` triggers standard co-ranking and
+        - ``(n_samples, n_dims)`` triggers standard co-ranking and
           Shepard-style metrics.
         - ``(n_trajectories, n_times, n_dims)`` triggers trajectory metrics.
     X : np.ndarray, optional
@@ -494,10 +514,23 @@ def evaluate_embedding(
     n_neighbors : int, default=5
         Neighborhood size for single-score standard metrics.
     k_values : sequence of int, optional
-        Neighborhood sizes for benchmark sweeps.
-    separation_method : str, default="centroid"
+        Neighborhood sizes for benchmark sweeps. Explicit values take precedence
+        over ``config``.
+    separation_method : str, optional
         Separation definition passed to ``trajectory_separation`` when
-        trajectory labels are available.
+        trajectory labels are available. ``None`` defers to ``config`` and
+        otherwise falls back to ``"centroid"``.
+    max_eval_samples : int, optional
+        Row cap for the dense co-ranking geometry metrics
+        (trustworthiness/continuity/lcmc/mrre). Above this count they are
+        estimated on one random subsample of rows shared between ``X`` and
+        ``X_emb``; ``None`` disables the cap. Defaults to
+        :data:`DEFAULT_MAX_CORANKING_SAMPLES`. The Shepard correlation samples
+        its own pairs independently and is unaffected.
+    config : EvaluationConfig, optional
+        Typed evaluation configuration. Supplies ``metrics``, ``k_values`` (from
+        ``config.k_range``), and ``separation_method`` for any of those left
+        unset by an explicit argument. Explicit arguments always win.
 
     Returns
     -------
@@ -529,7 +562,7 @@ def evaluate_embedding(
     --------
     coco_pipe.dim_reduction.core.DimReduction.score
         Manager-level wrapper that prepares inputs and stores the returned
-        evaluation payload on a fitted ``DimReduction`` object.
+        evaluation payload on a fitted ``~coco_pipe.dim_reduction.DimReduction`` object.
     MethodSelector
         Post-hoc comparison and ranking across multiple scored reductions.
 
@@ -557,16 +590,30 @@ def evaluate_embedding(
     >>> "trajectory_speed_mean" in result["metrics"]
     True
     """
+    if config is not None:
+        score_kwargs = config.to_score_kwargs()
+        if metrics is None:
+            metrics = score_kwargs["metrics"]
+        if k_values is None:
+            k_values = score_kwargs["k_values"]
+        if separation_method is None:
+            separation_method = score_kwargs["separation_method"]
+    if separation_method is None:
+        separation_method = "centroid"
+
     X_emb = np.asarray(X_emb)
     if X is not None:
         X = np.asarray(X)
     metric_selection = None if metrics is None else set(metrics)
 
     standard_metric_names = set(SWEEP_METRICS) | {"shepard_correlation"}
-    supervised_metric_names = {SEPARATION_LOGREG_BALANCED_ACCURACY}
+    supervised_metric_names = {
+        SEPARATION_RF_BALANCED_ACCURACY,
+        SEPARATION_LOGREG_BALANCED_ACCURACY,
+    }
     trajectory_metric_names = set(DEFAULT_SCORE_METRICS) - standard_metric_names
 
-    metrics_payload: Dict[str, Any] = {}
+    metrics_payload: dict[str, Any] = {}
     if quality_metadata is None:
         metadata_payload = {}
     elif not isinstance(quality_metadata, dict):
@@ -580,7 +627,7 @@ def evaluate_embedding(
         raise TypeError("Evaluation diagnostics must be a dictionary.")
     else:
         diagnostics_payload = dict(diagnostics)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
 
     if X_emb.ndim == 2:
         if metric_selection is None:
@@ -610,27 +657,52 @@ def evaluate_embedding(
                 n_neighbors=n_neighbors,
                 k_values=k_values,
                 random_state=random_state,
+                max_eval_samples=max_eval_samples,
             )
             metrics_payload.update(std_metrics)
             diagnostics_payload.update(std_diagnostics)
             records.extend(std_records)
+        if supervised_selection and (labels is None or groups is None):
+            requested = ", ".join(sorted(supervised_selection))
+            raise ValueError(f"`labels` and `groups` are required for {requested}.")
+        if SEPARATION_RF_BALANCED_ACCURACY in supervised_selection:
+            separation_score = _cross_validate_score(
+                RandomForestClassifier(
+                    n_estimators=300,
+                    class_weight="balanced",
+                    n_jobs=1,
+                    random_state=42,
+                ),
+                X_emb,
+                labels,
+                groups=groups,
+                cv_strategy="stratified_group_kfold",
+                n_splits=5,
+                shuffle=True,
+                random_state=42,
+                metric="balanced_accuracy",
+                use_scaler=False,
+            )
+            metrics_payload[SEPARATION_RF_BALANCED_ACCURACY] = separation_score
+            records.append(
+                {
+                    "method": method_name,
+                    "metric": SEPARATION_RF_BALANCED_ACCURACY,
+                    "value": separation_score,
+                    "scope": "global",
+                    "scope_value": "global",
+                }
+            )
         if SEPARATION_LOGREG_BALANCED_ACCURACY in supervised_selection:
-            if labels is None or groups is None:
-                raise ValueError(
-                    f"`labels` and `groups` are required for "
-                    f"'{SEPARATION_LOGREG_BALANCED_ACCURACY}'."
-                )
-            separation_score = cross_validate_score(
+            separation_score = _cross_validate_score(
                 LogisticRegression(max_iter=1000, class_weight="balanced"),
                 X_emb,
                 labels,
                 groups=groups,
-                cv_config=CVConfig(
-                    strategy="stratified_group_kfold",
-                    n_splits=5,
-                    shuffle=True,
-                    random_state=42,
-                ),
+                cv_strategy="stratified_group_kfold",
+                n_splits=5,
+                shuffle=True,
+                random_state=42,
                 metric="balanced_accuracy",
                 use_scaler=True,
             )
@@ -682,14 +754,14 @@ class MethodSelector:
     Compare and rank already-scored dimensionality reduction methods.
 
     ``MethodSelector`` is intentionally post-hoc. It does not fit reducers or
-    compute embeddings. Each reducer must already be a scored ``DimReduction``
-    instance with cached ``metric_records_``.
+    compute embeddings. Each reducer must already be a scored
+    ``~coco_pipe.dim_reduction.DimReduction`` instance with cached ``metric_records_``.
 
     Parameters
     ----------
     reducers : dict or list of DimReduction
-        Scored ``DimReduction`` objects to compare. Lists are converted to a
-        method-keyed mapping using ``reducer.method``.
+        Scored ``~coco_pipe.dim_reduction.DimReduction`` objects to compare. Lists are
+        converted to a method-keyed mapping using ``reducer.method``.
 
     Attributes
     ----------
@@ -723,9 +795,7 @@ class MethodSelector:
     True
     """
 
-    def __init__(
-        self, reducers: Union[Dict[str, "DimReduction"], List["DimReduction"]]
-    ):
+    def __init__(self, reducers: dict[str, DimReduction] | list[DimReduction]):
         """
         Create a post-hoc comparison layer over scored reductions.
 
@@ -738,12 +808,15 @@ class MethodSelector:
         Raises
         ------
         TypeError
-            If any provided object is not a ``DimReduction`` instance.
+            If any provided object is not a ``~coco_pipe.dim_reduction.DimReduction``
+            instance.
         """
-        from ..core import DimReduction
+        # Import via the package re-export rather than the ``core`` submodule so
+        # this lazy runtime check does not register as an import cycle edge.
+        from coco_pipe.dim_reduction import DimReduction
 
         if isinstance(reducers, list):
-            validated: Dict[str, DimReduction] = {}
+            validated: dict[str, DimReduction] = {}
             for reducer in reducers:
                 if not isinstance(reducer, DimReduction):
                     raise TypeError(
@@ -764,18 +837,18 @@ class MethodSelector:
         self.metric_records_ = []
 
     @classmethod
-    def from_records(cls, records: List[Dict[str, Any]]) -> "MethodSelector":
+    def from_records(cls, records: list[dict[str, Any]]) -> MethodSelector:
         """Create a selector directly from long-form metric records."""
         selector = cls({})
         selector.metric_records_ = [dict(record) for record in records]
         return selector
 
     @classmethod
-    def from_frame(cls, frame: pd.DataFrame) -> "MethodSelector":
+    def from_frame(cls, frame: pd.DataFrame) -> MethodSelector:
         """Create a selector directly from a metric-record DataFrame."""
         return cls.from_records(frame.to_dict(orient="records"))
 
-    def collect(self) -> "MethodSelector":
+    def collect(self) -> MethodSelector:
         """
         Collect cached metric records from already-scored reducers.
 
@@ -815,7 +888,7 @@ class MethodSelector:
         True
         """
         self.metric_records_ = []
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for name, reducer in self.reducers.items():
             if not reducer.metric_records_:
                 raise ValueError(
@@ -872,8 +945,8 @@ class MethodSelector:
         self,
         selection_metric: str,
         *,
-        selection_k: Optional[int] = None,
-        tie_breakers: Optional[Sequence[str]] = None,
+        selection_k: int | None = None,
+        tie_breakers: Sequence[str] | None = None,
     ) -> pd.DataFrame:
         """
         Rank methods using one primary metric and optional tie-breakers.
@@ -923,9 +996,13 @@ class MethodSelector:
         >>> reducer = reducers[0]
         >>> embedding = reducer.fit_transform(X)
         >>> reducer.score(embedding, X=X, k_values=[5])
-        >>> ranked = MethodSelector(reducers).collect().rank_methods(
-        ...     "trustworthiness",
-        ...     selection_k=5,
+        >>> ranked = (
+        ...     MethodSelector(reducers)
+        ...     .collect()
+        ...     .rank_methods(
+        ...         "trustworthiness",
+        ...         selection_k=5,
+        ...     )
         ... )
         >>> ranked.iloc[0]["method"] == reducer.method
         True
