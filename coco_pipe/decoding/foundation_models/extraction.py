@@ -310,9 +310,13 @@ class FoundationEmbeddingExtractor:
 
         Transformer backbones (e.g. LaBraM) build an attention map per window, so
         forwarding every window of a long recording at once can exhaust GPU
-        memory. When ``batch_size`` is set, windows are forwarded in chunks and
-        concatenated -- numerically identical to a single pass, since each window
-        is embedded independently -- capping peak memory at one chunk.
+        memory. When ``batch_size`` is set, windows are forwarded in chunks --
+        numerically identical to a single pass, since each window is embedded
+        independently -- capping peak memory at one chunk.
+
+        Each chunk is written straight into a pre-allocated destination rather
+        than collected and concatenated, so peak host memory is one output array
+        plus one chunk instead of two full copies of the output.
         """
         batch_size = self.batch_size
         n_windows = len(model_input)
@@ -324,19 +328,41 @@ class FoundationEmbeddingExtractor:
                 for start in range(0, n_windows, batch_size)
             ]
         )
-        outputs = [
-            model.transform(batch, return_tokens=True)
-            if return_tokens
-            else model.transform(batch)
-            for batch in batches
-        ]
+
+        embeddings: np.ndarray | None = None
+        tokens: np.ndarray | None = None
+        filled = 0
+        for batch in batches:
+            if return_tokens:
+                embedding_part, token_part = model.transform(batch, return_tokens=True)
+                token_part = np.asarray(token_part)
+            else:
+                embedding_part, token_part = model.transform(batch), None
+            embedding_part = np.asarray(embedding_part)
+
+            if embeddings is None:
+                embeddings = np.empty(
+                    (n_windows, *embedding_part.shape[1:]), dtype=embedding_part.dtype
+                )
+            embeddings[filled : filled + len(embedding_part)] = embedding_part
+
+            if token_part is not None:
+                if tokens is None:
+                    tokens = np.empty(
+                        (n_windows, *token_part.shape[1:]), dtype=token_part.dtype
+                    )
+                tokens[filled : filled + len(token_part)] = token_part
+
+            filled += len(embedding_part)
+
+        if filled != n_windows:
+            embeddings = embeddings[:filled]
+            if tokens is not None:
+                tokens = tokens[:filled]
+
         if return_tokens:
-            embedding_parts, token_parts = zip(*outputs, strict=True)
-            return (
-                np.concatenate([np.asarray(part) for part in embedding_parts], axis=0),
-                np.concatenate([np.asarray(part) for part in token_parts], axis=0),
-            )
-        return np.concatenate([np.asarray(part) for part in outputs], axis=0)
+            return embeddings, tokens
+        return embeddings
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
