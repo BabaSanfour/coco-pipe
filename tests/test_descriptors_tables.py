@@ -38,14 +38,14 @@ def _metadata(n, recordings):
 # mad_failures_from_qc  (reject = drop_epoch_outliers + this helper)
 # --------------------------------------------------------------------------- #
 def test_mad_failures_from_qc_records_dropped_epochs():
-    X = np.ones((6, 2))
+    X = np.ones((8, 2))
     X[0, 0] = 1000.0  # strong outlier
     container = _container(X, ["band_abs_alpha_ch-Fz", "band_abs_beta_ch-Fz"])
 
     clean, qc = drop_epoch_outliers(container, outlier_fraction_threshold=0.0)
     failures = mad_failures_from_qc(qc)
 
-    assert clean.X.shape[0] == 5
+    assert clean.X.shape[0] == 7
     assert len(failures) == 1
     assert failures[0]["obs_id"] == "o0"
     assert failures[0]["family"] == "MAD_Rejection"

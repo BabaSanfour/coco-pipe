@@ -331,13 +331,10 @@ def compute_row_outlier_scores(
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)
     mad = pd.DataFrame(deviations).median(axis=0, skipna=True).to_numpy(dtype=float)
-    scaled_mad = 1.4826 * mad
+    mean_ad = pd.DataFrame(deviations).mean(axis=0, skipna=True).to_numpy(dtype=float)
+    scale = np.where(mad == 0, 1.2533 * mean_ad, 1.4826 * mad)
     with np.errstate(divide="ignore", invalid="ignore"):
-        robust_z = np.where(
-            scaled_mad == 0,
-            np.where(deviations == 0, 0.0, np.inf),
-            deviations / scaled_mad,
-        )
+        robust_z = np.where(scale == 0, 0.0, deviations / scale)
 
     finite_values = np.isfinite(values)
     outlier_flags = finite_values & (robust_z > z_threshold)

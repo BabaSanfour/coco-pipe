@@ -138,6 +138,15 @@ def test_row_scores_zero_mad_with_deviation():
     assert (result.iloc[:3]["outlier_fraction"] == 0.0).all()
 
 
+def test_row_scores_zero_mad_quantised_column_flags_only_extremes():
+    values = [2.0] * 6 + [1.0, 3.0, 1.0, 3.0] + [40.0]
+    result = compute_row_outlier_scores(pd.DataFrame({"f1": values}), ["f1"])
+
+    assert np.isfinite(result["mad_z_max"]).all()
+    assert (result.iloc[:10]["outlier_fraction"] == 0.0).all()
+    assert result.iloc[10]["outlier_fraction"] == pytest.approx(1.0)
+
+
 def test_row_scores_has_stable_schema_and_index():
     df = pd.DataFrame(
         {"f1": [1.0, 2.0], "f2": [1.0, 2.0]},
@@ -157,9 +166,9 @@ def test_row_scores_has_stable_schema_and_index():
 def test_compute_subject_outlier_burden_uses_featurewise_mad():
     df = pd.DataFrame(
         {
-            "subject": [f"s{i}" for i in range(6)],
-            "constant_with_outlier": [1.0, 1.0, 1.0, 1.0, 1.0, 100.0],
-            "stable": [2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            "subject": [f"s{i}" for i in range(8)],
+            "constant_with_outlier": [1.0] * 7 + [100.0],
+            "stable": [2.0] * 8,
         }
     )
 
@@ -168,26 +177,26 @@ def test_compute_subject_outlier_burden_uses_featurewise_mad():
         ["constant_with_outlier", "stable"],
     )
 
-    assert burden["subject"].tolist() == [f"s{i}" for i in range(6)]
-    assert burden["n_outlier_features"].tolist() == [0, 0, 0, 0, 0, 1]
-    assert burden["outlier_fraction"].tolist() == [0.0] * 5 + [0.5]
-    assert burden["n_epochs"].tolist() == [1] * 6
+    assert burden["subject"].tolist() == [f"s{i}" for i in range(8)]
+    assert burden["n_outlier_features"].tolist() == [0] * 7 + [1]
+    assert burden["outlier_fraction"].tolist() == [0.0] * 7 + [0.5]
+    assert burden["n_epochs"].tolist() == [1] * 8
 
 
 def test_subject_burden_scores_epochs_before_aggregation():
     df = pd.DataFrame(
         {
-            "subject": ["s1", "s1", "s2", "s2", "s3", "s3"],
-            "f1": [0.0, 0.0, 0.0, 0.0, -100.0, 100.0],
+            "subject": [f"s{i}" for i in range(1, 9) for _ in range(2)],
+            "f1": [0.0] * 14 + [-100.0, 100.0],
         }
     )
 
     burden = compute_subject_outlier_burden(df, ["f1"])
-    s3 = burden.loc[burden["subject"] == "s3"].iloc[0]
+    s8 = burden.loc[burden["subject"] == "s8"].iloc[0]
 
-    assert s3["outlier_fraction"] == pytest.approx(1.0)
-    assert s3["n_outlier_features"] == pytest.approx(1.0)
-    assert s3["n_epochs"] == 2
+    assert s8["outlier_fraction"] == pytest.approx(1.0)
+    assert s8["n_outlier_features"] == pytest.approx(1.0)
+    assert s8["n_epochs"] == 2
 
 
 def test_compute_subject_outlier_burden_validation_and_empty_features():
@@ -964,7 +973,7 @@ def test_drop_epoch_outliers_group_by_feature():
 
 
 def test_drop_epoch_outliers_group_by_reads_container_feature_schema():
-    X = np.ones((6, 2))
+    X = np.ones((8, 2))
     X[0, 0] = 1000.0
     container = DataContainer(
         X=X,
@@ -972,9 +981,9 @@ def test_drop_epoch_outliers_group_by_reads_container_feature_schema():
         coords={
             "feature": ["f0", "f1"],
             "feature_family": ["connectivity", "band"],
-            "subject": np.array(["a"] * 6),
+            "subject": np.array(["a"] * 8),
         },
-        ids=np.arange(6).astype(str),
+        ids=np.arange(8).astype(str),
     )
 
     masks, result = drop_epoch_outliers(
@@ -983,7 +992,7 @@ def test_drop_epoch_outliers_group_by_reads_container_feature_schema():
         outlier_fraction_threshold=0.0,
     )
 
-    assert masks["connectivity"].tolist() == [False, True, True, True, True, True]
+    assert masks["connectivity"].tolist() == [False] + [True] * 7
     assert masks["band"].all()
     assert result.per_family_dropped["connectivity"][0].obs_id == "0"
 
@@ -995,13 +1004,13 @@ def test_drop_epoch_outliers_group_by_min_obs_raises():
 
 def test_drop_epoch_outliers_group_by_records_drop():
     # One strong per-feature outlier is dropped, exercising record dedup.
-    X = np.ones((6, 2))
+    X = np.ones((8, 2))
     X[0, 0] = 1000.0
     container = DataContainer(
         X=X,
         dims=("obs", "feature"),
-        coords={"feature": ["f0", "f1"], "subject": np.array(["a"] * 6)},
-        ids=np.arange(6).astype(str),
+        coords={"feature": ["f0", "f1"], "subject": np.array(["a"] * 8)},
+        ids=np.arange(8).astype(str),
     )
     _, result = drop_epoch_outliers(
         container, group_by="feature", outlier_fraction_threshold=0.0
