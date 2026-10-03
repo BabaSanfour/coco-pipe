@@ -292,6 +292,59 @@ def test_run_paired_permutation_assessment_full():
     assert res.iloc[0]["Observed"] == 0.0
 
 
+def _paired_predictions(folds, y_pred, n=8):
+    return pd.DataFrame(
+        {
+            "Model": "m",
+            "Fold": folds,
+            "SampleID": [f"s{i}" for i in range(n)],
+            "Group": [f"g{i // 2}" for i in range(n)],
+            "y_true": [0, 1] * (n // 2),
+            "y_pred": y_pred,
+        }
+    )
+
+
+def test_paired_prediction_test_pairs_by_sample_not_fold():
+    from coco_pipe.decoding import paired_prediction_test
+
+    a = _paired_predictions([0, 0, 1, 1, 0, 0, 1, 1], [0, 1] * 4)
+    b = _paired_predictions([1, 1, 0, 0, 1, 1, 0, 0], [0] * 8)
+    result = paired_prediction_test(
+        a, b, metric="accuracy", n_permutations=20, random_state=0
+    )
+    assert result.loc[0, "ScoreA"] == 1.0
+    assert result.loc[0, "ScoreB"] == 0.5
+    assert result.loc[0, "NUnits"] == 4
+
+
+def test_paired_prediction_test_refuses_different_samples():
+    from coco_pipe.decoding import paired_prediction_test
+
+    a = _paired_predictions([0] * 8, [0, 1] * 4)
+    b = _paired_predictions([0] * 8, [0] * 8).iloc[:6]
+    with pytest.raises(ValueError, match="same samples"):
+        paired_prediction_test(a, b, metric="accuracy", n_permutations=5)
+
+
+def test_run_paired_permutation_assessment_ignores_fold_differences():
+    from unittest.mock import MagicMock
+
+    res_a, res_b = MagicMock(), MagicMock()
+    res_a.get_predictions.return_value = _paired_predictions(
+        [0, 0, 1, 1, 0, 0, 1, 1], [0, 1] * 4
+    )
+    res_b.get_predictions.return_value = _paired_predictions(
+        [1, 1, 0, 0, 1, 1, 0, 0], [0] * 8
+    )
+    config = StatisticalAssessmentConfig(
+        chance=ChanceAssessmentConfig(n_permutations=10), unit_of_inference="sample"
+    )
+    res = run_paired_permutation_assessment(res_a, res_b, "m", "accuracy", config)
+    assert res.iloc[0]["NEff"] == 8
+    assert res.iloc[0]["Observed"] == pytest.approx(0.5)
+
+
 def test_aggregate_predictions_error_paths():
     df = pd.DataFrame({"y_true": [0, 1], "y_pred": [0, 0]})
 

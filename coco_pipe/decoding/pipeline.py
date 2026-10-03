@@ -40,10 +40,12 @@ from ._constants import (
     RUNS_DIRNAME,
     SWEEP_RUNS_FILENAME,
 )
+from ._splitters import resolve_effective_n_splits
 from .configs import ExperimentConfig
 from .experiment import Experiment
 from .persistence import (
     completed_for_config,
+    data_digest,
     load_completed_result_records,
     redact_sensitive,
     stamp_primary_metric,
@@ -139,11 +141,40 @@ def run_decoding_unit(
     """
     output_dir = Path(unit.output_dir)
     metrics = list(unit.experiment_config.metrics or ())
+    y = np.asarray(unit.y)
+    groups = None if unit.groups is None else np.asarray(unit.groups)
+    # The resume hash covers the unit's exact input data as well as its config,
+    # so a changed table, row set or feature set never reuses a stale fit.
+    run_config = {
+        **unit.run_config,
+        "data_fingerprint": data_digest(
+            unit.X, y, groups, unit.sample_ids, unit.feature_names
+        ),
+    }
+    # What two records must share to be paired: the CV design and the
+    # (order-free) set of samples scored. A malformed unit (e.g. mismatched
+    # lengths) gets none, so the fit records the failure and stays unpaired.
+    cv = unit.experiment_config.cv
+    sample_ids = unit.sample_ids if unit.sample_ids is not None else range(len(y))
+    try:
+        design = {
+            "cv_strategy": cv.strategy,
+            "effective_n_splits": resolve_effective_n_splits(cv, y=y, groups=groups),
+            "cv_random_state": cv.random_state,
+            "cohort_signature": data_digest(
+                sorted(zip(map(str, sample_ids), map(str, y.tolist()), strict=True))
+            ),
+            "n_samples": len(y),
+            "n_groups": len(y) if groups is None else int(pd.unique(groups).size),
+        }
+    except ValueError:
+        design = {}
+    context = {**dict(unit.context), **design}
     # Resume check runs outside the try: a hash mismatch must abort the sweep.
-    if not unit.overwrite and completed_for_config(output_dir, unit.run_config):
+    if not unit.overwrite and completed_for_config(output_dir, run_config):
         LOGGER.info("Skipping completed decoding unit: %s", output_dir.name)
         return load_completed_result_records(
-            output_dir, context=unit.context, metrics=metrics
+            output_dir, context=context, metrics=metrics
         )
     try:
         result = Experiment(unit.experiment_config).run(
@@ -156,10 +187,10 @@ def run_decoding_unit(
             observation_level=unit.observation_level,
             inferential_unit=unit.inferential_unit,
         )
-        result.export(output_dir, config=unit.run_config)
+        result.export(output_dir, config=run_config)
         return _unit_records(
             result,
-            context=unit.context,
+            context=context,
             output_dir=output_dir,
             include_p_values=unit.include_p_values,
             metrics=metrics,
@@ -171,7 +202,7 @@ def run_decoding_unit(
         (output_dir / "_FAILED").write_text("", encoding="utf-8")
         return [
             {
-                **dict(unit.context),
+                **context,
                 "status": "failed",
                 "reason": f"{type(exc).__name__}: {exc}",
                 "output_dir": str(output_dir),

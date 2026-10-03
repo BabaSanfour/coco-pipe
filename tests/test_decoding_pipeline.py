@@ -94,6 +94,46 @@ def test_run_decoding_unit_fresh_then_resume(tmp_path):
     assert all(r["reason"] == "resumed" for r in resumed)
 
 
+def test_resume_refuses_a_fit_made_on_other_data(tmp_path):
+    # Same config, different rows: the stale fit must not be reused.
+    run_decoding_unit(_unit(tmp_path))
+    unit = _unit(tmp_path)
+    shifted = _unit(tmp_path, X=unit.X + 1.0)
+    with pytest.raises(RuntimeError, match="input data changed"):
+        run_decoding_unit(shifted)
+    relabelled = _unit(tmp_path, sample_ids=[f"t{idx}" for idx in range(20)])
+    with pytest.raises(RuntimeError, match="input data changed"):
+        run_decoding_unit(relabelled)
+
+
+def test_records_carry_cv_design_and_sample_set(tmp_path):
+    fresh = run_decoding_unit(_unit(tmp_path))
+    resumed = run_decoding_unit(_unit(tmp_path))
+    for record in (fresh[0], resumed[0]):
+        assert record["cv_strategy"] == "stratified_group_kfold"
+        assert record["effective_n_splits"] == 2
+        assert record["cv_random_state"] == 42
+        assert record["n_samples"] == 20
+        assert record["n_groups"] == 10
+    assert fresh[0]["cohort_signature"] == resumed[0]["cohort_signature"]
+
+    # The sample-set signature ignores row order but not membership.
+    unit = _unit(tmp_path)
+    order = np.arange(20)[::-1]
+    reordered = _unit(
+        tmp_path / "reordered",
+        X=unit.X[order],
+        y=unit.y[order],
+        groups=unit.groups[order],
+        sample_ids=unit.sample_ids.iloc[order].reset_index(drop=True),
+        sample_metadata=unit.sample_metadata.iloc[order].reset_index(drop=True),
+    )
+    assert (
+        run_decoding_unit(reordered)[0]["cohort_signature"]
+        == fresh[0]["cohort_signature"]
+    )
+
+
 def test_run_decoding_unit_records_failure(tmp_path):
     records = run_decoding_unit(_unit(tmp_path, y=np.array([0, 1, 0])), errors="record")
     assert records[0]["status"] == "failed"

@@ -68,6 +68,7 @@ from .stats import (
     benjamini_hochberg,
     binomial_accuracy_test,
     correct_sweep_pvalues,
+    paired_prediction_test,
     run_statistical_assessment,
 )
 from .targets import prepare_target, safe_group_n_splits
@@ -121,6 +122,7 @@ __all__ = [
     "list_foundation_models",
     "load_completed_result_records",
     "load_sweep_records",
+    "paired_prediction_test",
     "prepare_target",
     "redact_sensitive",
     # Model Discovery & Metadata

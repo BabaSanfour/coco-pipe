@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from coco_pipe.utils import stable_hash
@@ -73,6 +75,27 @@ def config_hash(config: Mapping[str, Any]) -> str:
     return stable_hash(config, length=16)
 
 
+def data_digest(*values: Any) -> str:
+    """Short SHA-256 over array-likes: dtype, shape and contents (``None`` allowed).
+
+    The decoding runner uses it for a unit's input-data fingerprint (part of the
+    resume hash) and for the sample-set signature paired comparisons must share.
+    """
+    digest = hashlib.sha256()
+    for value in values:
+        if value is None:
+            digest.update(b"<none>\x1e")
+            continue
+        array = np.ascontiguousarray(np.asarray(value))
+        digest.update(f"{array.dtype.str}{array.shape}".encode())
+        if array.dtype.kind in "OUS":
+            digest.update("\x1f".join(map(str, array.ravel().tolist())).encode())
+        else:
+            digest.update(array.tobytes())
+        digest.update(b"\x1e")
+    return digest.hexdigest()[:16]
+
+
 def completed_for_config(
     output_dir: str | Path,
     config: Mapping[str, Any],
@@ -91,7 +114,8 @@ def completed_for_config(
     actual = manifest.get("config_hash")
     if actual != expected:
         raise RuntimeError(
-            f"Config hash mismatch for completed output {output}: "
+            "Config hash mismatch (config or input data changed) for completed "
+            f"output {output}: "
             f"existing={actual}, requested={expected}. Use overwrite to replace it."
         )
     return True

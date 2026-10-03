@@ -18,9 +18,11 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from coco_pipe.decoding import ExperimentResult, stamp_primary_metric
+from coco_pipe.decoding.stats import benjamini_hochberg, paired_prediction_test
 from coco_pipe.io.units import split_unit_sensor
 from coco_pipe.viz import (
     info_from_montage,
@@ -1362,10 +1364,8 @@ def paired_delta_vs_baseline(
     group_names = list(group_columns)
     for raw_keys, group in frame.groupby(group_names, dropna=False, sort=False):
         keys = raw_keys if isinstance(raw_keys, tuple) else (raw_keys,)
-        key_lookup = tuple(keys)
         if compatible_lookup is not None and not compatible_lookup.get(
-            key_lookup,
-            True,
+            _lookup_key(keys), False
         ):
             continue
         baseline = group[group[family_column] == baseline_family].copy()
@@ -1391,10 +1391,70 @@ def paired_delta_vs_baseline(
                     metric_column: float(row[metric_column]),
                     "baseline_metric": float(baseline_row[metric_column]),
                     "_status": "success",
+                    **{
+                        f"{prefix}{field}": source.get(field)
+                        for prefix, source in (("", row), ("baseline_", baseline_row))
+                        for field in ("model", "output_dir", "primary_metric_name")
+                    },
                 }
             )
             rows.append(output)
     return pd.DataFrame(rows)
+
+
+def _lookup_key(keys: Sequence[Any]) -> tuple[Any, ...]:
+    """Group key with NaN normalised to None, so a NaN key still finds its entry."""
+    return tuple(None if pd.isna(key) else key for key in keys)
+
+
+def add_paired_prediction_tests(
+    delta_frame: pd.DataFrame,
+    *,
+    unit: str = "group",
+    n_permutations: int = 1000,
+    random_state: int = 0,
+) -> pd.DataFrame:
+    """Attach a paired permutation p-value to each challenger-vs-baseline delta.
+
+    Reads both runs' saved ``predictions.csv`` (from ``output_dir`` and
+    ``baseline_output_dir``) and runs
+    :func:`~coco_pipe.decoding.stats.paired_prediction_test` on the primary
+    metric, swapping models within *unit*. p-values are BH-corrected across the
+    rows. A row whose predictions are missing or do not cover the same samples
+    keeps a NaN p-value and the reason in ``paired_test_note``.
+    """
+    if delta_frame.empty:
+        return delta_frame
+    frame = delta_frame.copy()
+    cache: dict[Path, pd.DataFrame] = {}
+
+    def predictions(output_dir: Any, model: Any) -> pd.DataFrame:
+        path = Path(str(output_dir)) / "predictions.csv"
+        if path not in cache:
+            cache[path] = pd.read_csv(path)
+        table = cache[path]
+        return table[table["Model"] == model] if "Model" in table else table
+
+    p_values, notes = [], []
+    for row in frame.to_dict("records"):
+        try:
+            result = paired_prediction_test(
+                predictions(row["output_dir"], row["model"]),
+                predictions(row["baseline_output_dir"], row["baseline_model"]),
+                metric=str(row["primary_metric_name"]),
+                unit=unit,
+                n_permutations=n_permutations,
+                random_state=random_state,
+            )
+            p_values.append(float(result.iloc[0]["PValue"]))
+            notes.append("")
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            p_values.append(np.nan)
+            notes.append(f"{type(exc).__name__}: {exc}")
+    frame["paired_p_value"] = p_values
+    frame["paired_p_value_fdr"], _ = benjamini_hochberg(p_values)
+    frame["paired_test_note"] = notes
+    return frame
 
 
 def prepare_sweep_frame(
@@ -2035,6 +2095,7 @@ def make_head_to_head_report(
     asset_urls: dict[str, str] | str | None = "inline",
     extra_sections: Sequence[Section] = (),
     output_path: str | Path | None = None,
+    paired_test_permutations: int = 1000,
 ) -> Report:
     """Build the head-to-head comparison report from a tagged comparison frame.
 
@@ -2042,7 +2103,8 @@ def make_head_to_head_report(
     challenger) plus per-run metrics; the caller owns how it is assembled. The
     report shows a normalized leaderboard table, a cohort/CV compatibility panel,
     a head-to-head accuracy plot, and paired deltas versus *baseline_family* for
-    groups whose CV/cohort signatures are compatible.
+    groups whose CV/cohort signatures are compatible, each with a paired
+    permutation p-value from the saved predictions.
     """
     frame = enrich_head_to_head_frame(comparison_frame)
     report = Report(title=title, config=dict(config or {}), asset_urls=asset_urls)
@@ -2092,7 +2154,7 @@ def make_head_to_head_report(
     compatible_lookup: dict[tuple[Any, ...], bool] = {}
     if not compatibility.empty:
         compatible_lookup = {
-            tuple(row[column] for column in group_columns): bool(
+            _lookup_key([row[column] for column in group_columns]): bool(
                 row["paired_compatible"]
             )
             for row in compatibility.to_dict("records")
@@ -2149,12 +2211,16 @@ def make_head_to_head_report(
             report.add_section(plot_section)
 
     if not frame.empty:
-        has_signature = any(column in frame.columns for column in CV_SIGNATURE_COLUMNS)
+        # Deltas only for groups whose signatures were verified compatible; a
+        # group without signatures is unverified, not compatible.
         delta_frame = paired_delta_vs_baseline(
             frame,
             group_columns=tuple(group_columns),
             baseline_family=baseline_family,
-            compatible_lookup=compatible_lookup if has_signature else None,
+            compatible_lookup=compatible_lookup,
+        )
+        delta_frame = add_paired_prediction_tests(
+            delta_frame, n_permutations=paired_test_permutations
         )
         if not delta_frame.empty:
             delta_section = build_comparison_section(

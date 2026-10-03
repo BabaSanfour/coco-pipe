@@ -883,6 +883,51 @@ def _build_permutation_rows(
     return rows
 
 
+def _require_same_samples(merged: pd.DataFrame, n_a: int, n_b: int) -> None:
+    """Refuse a paired test unless every row of both runs pairs with matching labels."""
+    if not len(merged) == n_a == n_b:
+        raise ValueError(
+            "A paired comparison needs both runs scored on exactly the same samples: "
+            f"run A has {n_a} prediction rows, run B has {n_b}, {len(merged)} pair up."
+        )
+    if "y_true_A" in merged and not merged["y_true_A"].equals(merged["y_true_B"]):
+        raise ValueError("Paired runs disagree on y_true for the same SampleID.")
+
+
+def paired_prediction_test(
+    predictions_a: pd.DataFrame,
+    predictions_b: pd.DataFrame,
+    *,
+    metric: str,
+    unit: str = "group",
+    n_permutations: int = 1000,
+    random_state: int | None = None,
+) -> pd.DataFrame:
+    """Paired permutation test between two runs' out-of-fold predictions.
+
+    Each frame holds one model's predictions (``get_predictions()`` filtered to
+    that model, or its ``predictions.csv``). Rows are paired by ``SampleID`` and
+    ``y_true``; the runs may have used different folds. Raises ``ValueError``
+    unless both runs scored exactly the same samples. Model predictions are
+    swapped within *unit* (default: the CV group), so significance reflects the
+    number of independent units rather than rows.
+    """
+    from ._diagnostics import scalar_prediction_frame
+
+    frame_a = scalar_prediction_frame(predictions_a)
+    frame_b = scalar_prediction_frame(predictions_b)
+    keys = ["SampleID", "y_true"]
+    merged = frame_a.merge(frame_b, on=keys, suffixes=("_A", "_B"))
+    _require_same_samples(merged, len(frame_a), len(frame_b))
+    return assess_paired_comparison(
+        merged,
+        metric=metric,
+        unit=unit,
+        n_permutations=n_permutations,
+        random_state=random_state,
+    )
+
+
 def run_paired_permutation_assessment(
     results_a: ExperimentResult,
     results_b: ExperimentResult,
@@ -941,7 +986,10 @@ def run_paired_permutation_assessment(
     preds_a = preds_a[preds_a["Model"] == model]
     preds_b = preds_b[preds_b["Model"] == model]
 
-    merge_cols = ["SampleID", "Fold"]
+    # Pair by sample, not by fold: each run's prediction is out-of-fold, and two
+    # runs over the same samples can still draw different folds (e.g. different
+    # row order), which would silently drop pairs from a fold-keyed join.
+    merge_cols = ["SampleID"]
     temporal_cols = [c for c in TEMPORAL_COLUMNS if c in preds_a]
     merge_cols.extend(temporal_cols)
 
@@ -973,6 +1021,7 @@ def run_paired_permutation_assessment(
     merged = pd.merge(preds_a, preds_b, on=merge_cols, suffixes=("_A", "_B"))
     if merged.empty:
         raise ValueError("Could not align predictions for paired test.")
+    _require_same_samples(merged, len(preds_a), len(preds_b))
 
     def get_diff(group: pd.DataFrame) -> float:
         s_a = score_frame(
@@ -1594,27 +1643,29 @@ def _assess_paired_comparison_internal(
     n_units = len(u_indices)
     rng = np.random.default_rng(random_state)
 
+    # Swap whole units with one row mask per permutation (vectorised; a per-unit
+    # iloc loop is O(n_units) pandas writes per permutation).
+    unit_of_row = np.full(len(merged), -1)
+    for unit_idx, rows in enumerate(u_indices):
+        unit_of_row[rows] = unit_idx
+    covered = unit_of_row >= 0
+    swap_cols = ["y_pred"]
+    if "y_score" in frame_a.columns:
+        swap_cols.append("y_score")
+    swap_cols.extend(c for c in frame_a.columns if c.startswith("y_proba_"))
+    values_a = {col: frame_a[col].to_numpy() for col in swap_cols}
+    values_b = {col: frame_b[col].to_numpy() for col in swap_cols}
+
     null_diffs = np.zeros(n_permutations)
     for i in range(n_permutations):
         swaps = rng.choice([True, False], size=n_units)
+        mask = np.zeros(len(merged), dtype=bool)
+        mask[covered] = swaps[unit_of_row[covered]]
         perm_a = frame_a.copy()
         perm_b = frame_b.copy()
-
-        for unit_idx, should_swap in enumerate(swaps):
-            if should_swap:
-                idx = u_indices[unit_idx]
-                swap_cols = ["y_pred"]
-                if "y_score" in frame_a.columns:
-                    swap_cols.append("y_score")
-                swap_cols.extend(
-                    [c for c in frame_a.columns if c.startswith("y_proba_")]
-                )
-                for col in swap_cols:
-                    temp = perm_a.iloc[idx, perm_a.columns.get_loc(col)].copy()
-                    perm_a.iloc[idx, perm_a.columns.get_loc(col)] = perm_b.iloc[
-                        idx, perm_b.columns.get_loc(col)
-                    ]
-                    perm_b.iloc[idx, perm_b.columns.get_loc(col)] = temp
+        for col in swap_cols:
+            perm_a[col] = np.where(mask, values_b[col], values_a[col])
+            perm_b[col] = np.where(mask, values_a[col], values_b[col])
 
         null_diffs[i] = score_frame(perm_a, metric) - score_frame(perm_b, metric)
 
