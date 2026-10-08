@@ -368,9 +368,6 @@ class Experiment:
                 if hasattr(trainer, "model_dump")
                 else dict(trainer or {})
             )
-            optimizer = dict(_get_val(config, "optimizer", {}))
-            if "lr" in optimizer:
-                trainer_payload["lr"] = optimizer["lr"]
             device_cfg = _get_val(config, "device")
             device = _get_val(device_cfg, "device", "auto")
             lora = _get_val(config, "lora")

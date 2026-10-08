@@ -148,6 +148,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             Recognised extra keys:
             max_epochs : int, default 10
             lr : float, default 1e-3
+            weight_decay : float, default 0.01
             batch_size : int, default 32
 
         Returns
@@ -270,6 +271,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         **fit_params,
     ) -> BackendBase:
         """Shared skorch training loop. Both real backends use this verbatim."""
+        import torch
         from skorch import NeuralNetClassifier, NeuralNetRegressor
 
         groups = fit_params.pop("groups", None)
@@ -363,6 +365,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             module__output_dim=out_dim,
             device=self._device,
             max_epochs=fit_params.get("max_epochs", 10),
+            optimizer=torch.optim.AdamW,
+            optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
             lr=fit_params.get("lr", 1e-3),
             batch_size=fit_params.get("batch_size", 32),
             callbacks=callbacks,

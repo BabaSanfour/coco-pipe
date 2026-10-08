@@ -177,10 +177,16 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
             "max_epochs": 2,
             "batch_size": 4,
             "validation_fraction": 0.25,
+            "lr": 3e-4,
+            "weight_decay": 0.05,
         },
         checkpoints={"save": "best", "output_dir": tmp_path},
     )
     fitted = clone(classifier).fit(X, y, groups=groups)
+    optimizer = fitted.backend_._net_.optimizer_
+    assert type(optimizer).__name__ == "AdamW"
+    assert optimizer.defaults["lr"] == 3e-4
+    assert optimizer.defaults["weight_decay"] == 0.05
     probabilities = fitted.predict_proba(X)
     assert probabilities.shape == (16, 2)
     np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-6)

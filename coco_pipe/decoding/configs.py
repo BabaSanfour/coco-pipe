@@ -672,6 +672,8 @@ class TrainerConfig(BaseModel):
     early_stopping_patience: int | None = Field(None, ge=1)
     batch_size: int = Field(32, ge=1)
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
+    lr: float = Field(1e-3, gt=0, description="AdamW learning rate.")
+    weight_decay: float = Field(0.01, ge=0, description="AdamW weight decay.")
 
 
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
@@ -691,7 +693,6 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     n_outputs: int | None = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
-    optimizer: dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
