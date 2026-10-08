@@ -12,7 +12,6 @@ coordinates) throughout the transformation pipeline.
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -28,7 +27,7 @@ def _rebuild_container(
     old_container: DataContainer, new_X: np.ndarray
 ) -> DataContainer:
     """Helper to reconstruct DataContainer with new data and propagated metadata."""
-    return replace(old_container, X=new_X)
+    return old_container.replace(X=new_X)
 
 
 def _check_container(container: DataContainer):

@@ -369,7 +369,7 @@ def test_flattened_axis_metadata_feeds_family_qc():
     result = aggregate_family_qc(df, list(df.columns), feature_schema=schema)
 
     assert schema is not None
-    assert flat.coords["feature"] == ["Fz_m0", "Fz_m1"]
+    assert flat.coords["feature"].tolist() == ["Fz_m0", "Fz_m1"]
     assert schema["family"].tolist() == ["connectivity", "band"]
     assert result["family"].tolist() == ["band", "connectivity"]
     assert result.set_index("family").loc["band", "n_constant_features"] == 1

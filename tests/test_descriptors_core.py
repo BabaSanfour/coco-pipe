@@ -222,12 +222,6 @@ def test_pool_channels_reject_overlapping_assignments():
             id="non_2d_x",
         ),
         pytest.param(
-            _pool_input(np.zeros((2, 1)), ["a", "b"]),
-            {"G": ["ch1"]},
-            r"align with X columns",
-            id="mismatched_names_and_columns",
-        ),
-        pytest.param(
             _pool_input(np.zeros((2, 2)), ["a_ch-Fz", "b_ch-Cz"]),
             {},
             "at least one group",

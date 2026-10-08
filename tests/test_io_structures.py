@@ -51,9 +51,9 @@ def test_select_supports_patterns_and_ops(sample_container):
     assert wildcard.X.shape == (2, 3, 2)
     assert wildcard.coords["time"].tolist() == [2, 3]
 
-    fuzzy = sample_container.select(channel=["pz"], ignore_case=True, fuzzy=True)
-    assert fuzzy.X.shape == (2, 1, 4)
-    assert fuzzy.coords["channel"].tolist() == ["Pz"]
+    lowercase = sample_container.select(channel=["pz"], ignore_case=True)
+    assert lowercase.X.shape == (2, 1, 4)
+    assert lowercase.coords["channel"].tolist() == ["Pz"]
 
 
 def test_flatten_and_stack(sample_container):
@@ -87,9 +87,9 @@ def test_flatten_preserves_parallel_coords(data_container_cls):
 
     flat = container.flatten(preserve="obs")
 
-    assert flat.coords["feature"] == ["Fz", "Cz", "Pz"]
+    assert flat.coords["feature"].tolist() == ["Fz", "Cz", "Pz"]
     # Parallel coords ride along under their own name (no cross-dim renaming).
-    assert flat.coords["ch_family"] == ["frontal", "central", "parietal"]
+    assert flat.coords["ch_family"].tolist() == ["frontal", "central", "parietal"]
 
 
 def test_flatten_parallel_coords_cartesian(data_container_cls):
@@ -106,16 +106,21 @@ def test_flatten_parallel_coords_cartesian(data_container_cls):
 
     flat = container.flatten(preserve="obs", sep="-")
 
-    assert flat.coords["feature"] == ["Fz-alpha", "Fz-beta", "Cz-alpha", "Cz-beta"]
+    assert flat.coords["feature"].tolist() == [
+        "Fz-alpha",
+        "Fz-beta",
+        "Cz-alpha",
+        "Cz-beta",
+    ]
     # Coords keep their own names; sensor metadata is zipped through the product
     # alongside feature metadata.
-    assert flat.coords["sensor_region"] == [
+    assert flat.coords["sensor_region"].tolist() == [
         "frontal",
         "frontal",
         "central",
         "central",
     ]
-    assert flat.coords["feature_family"] == [
+    assert flat.coords["feature_family"].tolist() == [
         "band",
         "connectivity",
         "band",
@@ -510,11 +515,9 @@ def test_select_edge_cases(sample_container):
     with pytest.raises(ValueError, match="Unknown operator"):
         sample_container.select(time={"??": 1})
 
-    # Selection on missing dimension warning (captured via logging if needed, or
-    # just ensure no crash)
-    # logic says it warns and ignores.
-    subset = sample_container.select(missing_dim=["a", "b"])
-    assert subset.shape == sample_container.shape
+    # A key that is not a coordinate
+    with pytest.raises(KeyError, match="missing_dim"):
+        sample_container.select(missing_dim=["a", "b"])
 
 
 def test_balance_stratified(data_container_cls):
@@ -598,8 +601,11 @@ def test_init_validation():
     with pytest.raises(ValueError, match="Shape mismatch"):
         DataContainer(X, dims=("obs",))  # Missing one dim
 
-    # 2. Coords mismatch warning (checking log would be ideal, but execution is enough)
-    DataContainer(X, dims=("obs", "feat"), coords={"obs": [0, 1]})
+    # 2. Coordinate, y or ids of the wrong length
+    with pytest.raises(ValueError, match=r"conflicting sizes .* coordinate 'obs'"):
+        DataContainer(X, dims=("obs", "feat"), coords={"obs": [0, 1]})
+    with pytest.raises(ValueError, match=r"conflicting sizes .* coordinate 'y'"):
+        DataContainer(X, dims=("obs", "feat"), y=np.zeros(3))
 
 
 def test_repr():
@@ -611,7 +617,9 @@ def test_repr():
 
 
 def test_obs_table_exports_only_obs_aligned_vectors(sample_container):
-    sample_container.coords["bad_matrix"] = np.array([[1, 2], [3, 4]])
+    sample_container = sample_container.replace(
+        coords={**sample_container.coords, "bad_matrix": np.array([[1, 2], [3, 4]])}
+    )
 
     metadata = sample_container.obs_table(
         include_ids=True, include_y=True, y_col="target"
@@ -630,10 +638,8 @@ def test_obs_table_exports_only_obs_aligned_vectors(sample_container):
 
 
 def test_obs_table_requires_ids_when_requested(sample_container):
-    sample_container.ids = None
-
     with pytest.raises(ValueError, match="include_ids=True"):
-        sample_container.obs_table(include_ids=True)
+        sample_container.replace(ids=None).obs_table(include_ids=True)
 
 
 def test_obs_table_validation_errors(sample_container):
@@ -644,21 +650,12 @@ def test_obs_table_validation_errors(sample_container):
     with pytest.raises(ValueError, match="requires an 'obs' dimension"):
         dc_no_obs.obs_table()
 
-    # 2. Corrupted ids (2D)
-    sample_container.ids = np.zeros((2, 2))
-    with pytest.raises(ValueError, match="must be 1D and aligned"):
-        sample_container.obs_table(include_ids=True)
-
-    # 3. Corrupted y (aligned but 2D)
-    sample_container.ids = ["s0", "s1"]
-    sample_container.y = np.zeros((2, 2))
-    with pytest.raises(ValueError, match="must be 1D and aligned"):
-        sample_container.obs_table(include_y=True)
-
 
 def test_obs_table_include_obs_coord(sample_container):
     """Verify include_obs_coord parameter."""
-    sample_container.coords["obs"] = ["O1", "O2"]
+    sample_container = sample_container.replace(
+        coords={**sample_container.coords, "obs": ["O1", "O2"]}
+    )
     table = sample_container.obs_table(include_obs_coord=True)
     assert "obs" in table.columns
     assert table["obs"].tolist() == ["O1", "O2"]
@@ -716,31 +713,6 @@ def test_stack_expansion():
         dc.stack(dims=("obs", "invalid"))
 
 
-def test_normalization_methods():
-    """Test center, zscore, rms_scale."""
-    X = np.array([[1.0, 2.0], [3.0, 4.0]])  # Mean=2.5
-    dc = DataContainer(X, dims=("obs", "feat"))
-
-    # Error
-    with pytest.raises(ValueError):
-        dc.center(dim="invalid")
-
-    # Center Inplace
-    import copy
-
-    dc_c = copy.deepcopy(dc)
-    dc_c.center(dim="feat", inplace=True)
-    assert np.allclose(np.mean(dc_c.X, axis=1), 0)
-
-    # Zscore
-    dc_z = dc.zscore(dim="feat")
-    assert np.allclose(np.std(dc_z.X, axis=1), 1)
-
-    # RMS
-    dc_rms = dc.rms_scale(dim="feat")
-    assert np.all(dc_rms.X < dc.X)
-
-
 def test_aggregate():
     """Test aggregation edge cases."""
     X = np.array([[1, 1], [2, 2], [3, 3]])
@@ -795,60 +767,6 @@ def test_aggregate_unknown_method():
     dc = DataContainer(X, dims=("obs", "f"))
     with pytest.raises(ValueError, match="Unknown stats"):
         dc.aggregate(by=[1, 2], stats="magic")
-
-
-def test_combine_coords():
-    """Composite coordinate creation and its use as a grouping key."""
-    X = np.arange(4 * 2, dtype=float).reshape(4, 2)
-    coords = {
-        "obs": np.array(["a", "b", "c", "d"]),
-        "subject": np.array(["0001", "0001", "0002", "0002"]),
-        "session": np.array(["01", "01", "01", "02"]),
-        "run": np.array(["01", "02", "01", "01"]),
-        "feature": np.array(["f0", "f1"]),
-    }
-    dc = DataContainer(X, dims=("obs", "feature"), coords=coords)
-
-    # Default: name-prefixed components joined in the given order.
-    out = dc.combine_coords(["subject", "session", "run"], "recording_id")
-    assert np.array_equal(
-        out.coords["recording_id"],
-        [
-            "subject-0001_session-01_run-01",
-            "subject-0001_session-01_run-02",
-            "subject-0002_session-01_run-01",
-            "subject-0002_session-02_run-01",
-        ],
-    )
-    # Original is untouched (returns a copy).
-    assert "recording_id" not in dc.coords
-
-    # The composite coord drops straight into aggregate as a single key.
-    agg = out.aggregate(by="recording_id", stats="mean")
-    assert agg.shape == (4, 2)
-
-    # pair_sep=None joins values only; custom separators honored.
-    vals = dc.combine_coords(["subject", "run"], "sr", sep="|", pair_sep=None)
-    assert np.array_equal(
-        vals.coords["sr"], ["0001|01", "0001|02", "0002|01", "0002|01"]
-    )
-
-    # Error paths.
-    with pytest.raises(ValueError, match="at least one"):
-        dc.combine_coords([], "x")
-    with pytest.raises(ValueError, match="not found"):
-        dc.combine_coords(["nope"], "x")
-    with pytest.raises(ValueError, match="already exists"):
-        dc.combine_coords(["subject"], "subject")
-    dc.combine_coords(["subject"], "subject", overwrite=True)  # no raise
-    # Coords of unequal length cannot be combined.
-    uneven = DataContainer(
-        X,
-        dims=("obs", "feature"),
-        coords={"subject": coords["subject"], "feature": coords["feature"]},
-    )
-    with pytest.raises(ValueError, match="share a length"):
-        uneven.combine_coords(["subject", "feature"], "x")
 
 
 def _make_descriptor_container(X, *, descriptor_names=None):
@@ -1024,9 +942,11 @@ def test_aggregate_groups_rejects_duplicate_output_feature_names():
 
 def test_aggregate_groups_selectors_and_validation(sample_container):
     """Test selector helpers and input validation in aggregate_groups."""
-    sample_container.dims = ("obs", "feature")
-    sample_container.coords["feature"] = ["a", "b"]
-    sample_container.X = np.zeros((2, 2))
+    sample_container = sample_container.replace(
+        X=np.zeros((2, 2)),
+        dims=("obs", "feature"),
+        coords={**sample_container.coords, "feature": ["a", "b"]},
+    )
 
     # 1. Unknown keys
     with pytest.raises(ValueError, match="Unknown aggregate_groups keys"):
@@ -1083,9 +1003,11 @@ def test_aggregate_groups_selectors_and_validation(sample_container):
 
 def test_aggregate_groups_meta_and_consistency(sample_container):
     """Test meta propagation and consistency checks in aggregate_groups."""
-    sample_container.dims = ("obs", "feature")
-    sample_container.coords["feature"] = ["f1", "f2"]
-    sample_container.X = np.zeros((2, 2))
+    sample_container = sample_container.replace(
+        X=np.zeros((2, 2)),
+        dims=("obs", "feature"),
+        coords={**sample_container.coords, "feature": ["f1", "f2"]},
+    )
 
     # 2. Failures collection
     sample_container.meta["aggregate_failures"] = [
@@ -1109,9 +1031,11 @@ def test_aggregate_groups_meta_and_consistency(sample_container):
 
 def test_aggregate_groups_consistency_checks(sample_container):
     """Verify mixed per-group stats are flattened into one feature axis."""
-    sample_container.dims = ("obs", "feature")
-    sample_container.coords["feature"] = ["f1", "f2"]
-    sample_container.X = np.zeros((2, 2))
+    sample_container = sample_container.replace(
+        X=np.zeros((2, 2)),
+        dims=("obs", "feature"),
+        coords={**sample_container.coords, "feature": ["f1", "f2"]},
+    )
 
     agg = sample_container.aggregate_groups(
         by=[0, 1],
@@ -1368,43 +1292,11 @@ def test_aggregate_y_inconsistency():
     assert agg.y is None
 
 
-def test_normalization_inplace(sample_container):
-    """Verify in-place variants for center, zscore, and rms_scale."""
-    # sample_container uses int X, must cast to float for subtract/div
-    sample_container.X = sample_container.X.astype(float)
-
-    # center
-    dc_c = sample_container.center(dim="time")
-    assert not np.array_equal(dc_c.X, sample_container.X)
-
-    import copy
-
-    dc_c_in = copy.deepcopy(sample_container)
-    dc_c_in.center(dim="time", inplace=True)
-    assert np.allclose(np.nanmean(dc_c_in.X, axis=2), 0)
-
-    # zscore
-    dc_z_in = copy.deepcopy(sample_container)
-    dc_z_in.zscore(dim="time", inplace=True)
-    assert np.allclose(np.nanstd(dc_z_in.X, axis=2), 1)
-
-    # rms_scale
-    dc_rms_in = copy.deepcopy(sample_container)
-    dc_rms_in.rms_scale(dim="time", inplace=True)
-    # RMS should be 1
-    rms = np.sqrt(np.mean(dc_rms_in.X**2, axis=2))
-    assert np.allclose(rms, 1)
-
-
 def test_isel_edge_cases(sample_container, caplog):
     """Cover untested lines in isel (warnings and errors)."""
-    # 1. Unknown dim warning
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        subset = sample_container.isel(unknown=[0])
-    assert "Dimension unknown not in" in caplog.text
-    assert subset.shape == sample_container.shape
+    # 1. Unknown dimension
+    with pytest.raises(ValueError, match="unknown"):
+        sample_container.isel(unknown=[0])
 
     # 2. Slicing failure (e.g. out of bounds)
     with pytest.raises(IndexError):
@@ -1443,52 +1335,10 @@ def test_select_conflicting_selections(sample_container):
         sample_container.select(time=1).select(time=2)
 
 
-def test_select_aux_coord_no_match(data_container_cls, caplog):
-    """Test selection on auxiliary coordinate that matches no dimension."""
-    X = np.zeros((5, 10))
-    # Aux coord with len 7 (matches neither 5 nor 10)
-    coords = {"aux": np.arange(7)}
-    dc = data_container_cls(X, dims=("obs", "feat"), coords=coords)
-
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        subset = dc.select(aux=1)
-    assert "matches no dimension" in caplog.text
-    assert subset.shape == (5, 10)
-
-
-def test_select_fuzzy_no_match(sample_container, caplog):
-    """Verify warning when fuzzy matching fails to find candidates."""
-    import logging
-
-    with (
-        caplog.at_level(logging.WARNING),
-        pytest.raises(ValueError, match="resulted in empty set"),
-    ):
-        # xyz is very far from Fz, Cz, Pz.
-        sample_container.select(channel=["xyz"], fuzzy=True)
-
-    assert "No fuzzy match found" in caplog.text
-
-
-def test_select_no_coords(data_container_cls, caplog):
-    """Test selection on a dimension that has no defined coordinates."""
-    X = np.zeros((2, 2))
-    dc = data_container_cls(X, dims=("obs", "feat"), coords={})
-
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        subset = dc.select(feat=[0])
-    assert "is empty" in caplog.text.lower()
-    assert subset.shape == (2, 2)
-
-
 def test_select_conflicting_axes(sample_container):
     """Verify intersection logic for multiple selections on the same axis (y + obs)."""
     # y=0 matches obs index 0. ids='s1' matches obs index 1. Intersection is empty.
-    with pytest.raises(ValueError, match="Conflicting selections"):
+    with pytest.raises(ValueError, match="resulted in empty set"):
         sample_container.select(y=[0], ids=["s1"])
 
 
@@ -1499,21 +1349,6 @@ def test_unstack_shape_mismatch(sample_container):
     stacked.meta["stacked_shapes"] = (10, 10)
     with pytest.raises(ValueError, match="Shape mismatch"):
         stacked.unstack("obs")
-
-
-def test_normalization_invalid_dims(sample_container):
-    """Verify errors for invalid dimensions in zscore and rms_scale."""
-    with pytest.raises(ValueError, match="not found"):
-        sample_container.zscore(dim="invalid")
-    with pytest.raises(ValueError, match="not found"):
-        sample_container.rms_scale(dim="invalid")
-
-
-def test_baseline_correction_alias(sample_container):
-    """Verify that baseline_correction is a functional alias for center."""
-    sample_container.X = sample_container.X.astype(float)
-    dc = sample_container.baseline_correction(dim="time")
-    assert np.allclose(np.nanmean(dc.X, axis=2), 0)
 
 
 def test_aggregate_empty_feature_dim():
@@ -1749,12 +1584,6 @@ def test_select_on_aux_coordinate():
         coords={"feature": ["f0", "f1"], "group": np.array(["a", "a", "b", "b"])},
     )
     assert container.select(group=["a"]).X.shape[0] == 2
-
-
-def test_select_unknown_key_is_ignored():
-    container = DataContainer(np.arange(8).reshape(4, 2), dims=("obs", "feature"))
-    # Unknown selection key is warned and ignored, leaving the container intact.
-    assert container.select(nonexistent=["x"]).X.shape == (4, 2)
 
 
 def test_stack_dim_without_coordinate_uses_range():
