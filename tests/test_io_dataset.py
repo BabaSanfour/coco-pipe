@@ -412,8 +412,10 @@ def test_bids_dataset_identifies_recordings_by_entities(tmp_path, write_bids_epo
     assert container.coords["run"].tolist() == ["1", "1", "10", "10", "1", "1"]
     assert container.coords["age"].tolist() == [30] * 4 + [40] * 2
 
-    one_run = _load_epochs(tmp_path, subjects="01", runs="1", event_id="left")
-    assert one_run.ids.tolist() == ["sub-01_ses-A_task-rest_run-1_epoch-0000"]
+    # an epoch keeps its number in the recording whichever events are selected
+    one_run = _load_epochs(tmp_path, subjects="01", runs="1", event_id="right")
+    assert one_run.ids.tolist() == ["sub-01_ses-A_task-rest_run-1_epoch-0001"]
+    assert one_run.coords["epoch"].tolist() == [1]
 
 
 def test_bids_dataset_description_selects_the_file(tmp_path, write_bids_epochs):

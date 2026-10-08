@@ -399,9 +399,6 @@ def embedding_observation_id(
             if base.endswith(suffix):
                 base = base.removesuffix(suffix)
                 break
-    condition = str(metadata.get("condition", "")).strip()
-    if condition:
-        base = f"{base}_condition-{condition}"
     epoch = "" if window_position is None else f"_epoch-{window_position:04d}"
     return f"{base}{epoch}"
 
@@ -497,7 +494,7 @@ def load_embedding_derivatives(
                 )
             for idx, row in enumerate(values):
                 rows.append(row)
-                position = None if is_recording else idx
+                position = None if is_recording else int(payload["window_index"][idx])
                 ids.append(embedding_observation_id(metadata, path, position))
                 obs_meta = dict(metadata)
                 obs_meta["artifact_path"] = str(path)

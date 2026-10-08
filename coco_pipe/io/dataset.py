@@ -556,7 +556,8 @@ class BIDSDataset(BaseDataset):
     -----
     The ``recording_id`` coordinate is the BIDS entity string of a recording,
     e.g. ``sub-0001_ses-01_task-rest_run-01``. Observation IDs are
-    ``<recording_id>_epoch-<i>``.
+    ``<recording_id>_epoch-<i>``, where ``i`` is the ``epoch`` coordinate: the
+    position of the epoch in its recording, whichever events are selected.
 
     Examples
     --------
@@ -644,40 +645,44 @@ class BIDSDataset(BaseDataset):
         return dict(sorted(recordings.items()))
 
     def _read_epochs(self, bids_path: BIDSPath, saved: bool) -> mne.BaseEpochs:
-        """Read one recording as epochs."""
+        """Read one recording as epochs, numbered in ``metadata["epoch"]``."""
         if saved:
             # Derivative epochs have no sidecars to warn about.
             epochs = read_epochs_bids(bids_path, verbose="error")
+        else:
+            raw = read_raw_bids(bids_path, verbose=False).pick(["eeg", "meg"])
             if self.event_id is None:
-                return epochs
+                epochs = mne.make_fixed_length_epochs(
+                    raw,
+                    duration=self.window_length,
+                    overlap=self.window_length - (self.stride or self.window_length),
+                    preload=True,
+                    verbose=False,
+                )
+            else:
+                events, event_id = mne.events_from_annotations(
+                    raw, event_id=self.event_id, verbose=False
+                )
+                epochs = mne.Epochs(
+                    raw,
+                    events,
+                    event_id,
+                    tmin=self.tmin,
+                    tmax=self.tmax,
+                    baseline=self.baseline,
+                    preload=True,
+                    verbose=False,
+                )
+        # Numbered before any are filtered out, so an epoch keeps its number
+        # whichever events are asked for.
+        epochs.metadata = pd.DataFrame({"epoch": np.arange(len(epochs))})
+        if saved and self.event_id is not None:
             names = [self.event_id] if isinstance(self.event_id, str) else self.event_id
             names = [name for name in names if name in epochs.event_id]
             if not names:
                 raise ValueError(f"No epochs with event_id={self.event_id}.")
-            return epochs[names]
-
-        raw = read_raw_bids(bids_path, verbose=False).pick(["eeg", "meg"])
-        if self.event_id is None:
-            return mne.make_fixed_length_epochs(
-                raw,
-                duration=self.window_length,
-                overlap=self.window_length - (self.stride or self.window_length),
-                preload=True,
-                verbose=False,
-            )
-        events, event_id = mne.events_from_annotations(
-            raw, event_id=self.event_id, verbose=False
-        )
-        return mne.Epochs(
-            raw,
-            events,
-            event_id,
-            tmin=self.tmin,
-            tmax=self.tmax,
-            baseline=self.baseline,
-            preload=True,
-            verbose=False,
-        )
+            epochs = epochs[names]
+        return epochs
 
     def load(self) -> DataContainer:
         """
@@ -691,8 +696,8 @@ class BIDSDataset(BaseDataset):
             - y: The event code of each observation, or `target_col`.
             - ids: Unique identifiers for each observation.
             - coords: 'channel', 'time', and one entry per observation for
-              'obs', 'recording_id', 'subject', 'session', 'run' and the
-              subject metadata.
+              'obs', 'epoch', 'recording_id', 'subject', 'session', 'run' and
+              the subject metadata.
             - dims: ('obs', 'channel', 'time').
             - meta: 'sfreq', 'source', 'units', and 'load_failures' (the
               'recording_id' and 'error' of each recording that failed to load).
@@ -735,11 +740,11 @@ class BIDSDataset(BaseDataset):
                     logger.warning(f"Could not load {recording_id}: {error}")
                     load_failures.append({"recording_id": recording_id, "error": error})
                     continue
+                numbers = epochs.metadata["epoch"].to_numpy()
                 epochs.metadata = pd.DataFrame(
                     {
-                        "obs": [
-                            f"{recording_id}_epoch-{i:04d}" for i in range(len(epochs))
-                        ],
+                        "obs": [f"{recording_id}_epoch-{i:04d}" for i in numbers],
+                        "epoch": numbers,
                         "recording_id": recording_id,
                         "subject": bids_path.subject,
                         "session": bids_path.session or "",

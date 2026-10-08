@@ -434,9 +434,14 @@ class FoundationEmbeddingExtractor:
         signal_metadata: SignalMetadata,
         window_start: Sequence[int] | None = None,
         window_stop: Sequence[int] | None = None,
+        window_index: Sequence[int] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> FoundationEmbeddingResult:
-        """Extract one embedding per input window and one pooled recording vector."""
+        """Extract one embedding per input window and one pooled recording vector.
+
+        ``window_index`` is the number of each window in its recording; by
+        default the windows are numbered in the order given.
+        """
         X = np.asarray(epochs, dtype=np.float32)
         if X.ndim != 3:
             raise ValueError("epochs must have shape (window, channel, time).")
@@ -587,7 +592,11 @@ class FoundationEmbeddingExtractor:
             recording_embedding=np.asarray(recording),
             window_start=starts,
             window_stop=stops,
-            window_index=np.arange(len(X), dtype=int),
+            window_index=(
+                np.arange(len(X), dtype=int)
+                if window_index is None
+                else np.asarray(window_index, dtype=int)
+            ),
             metadata=payload,
             token_embeddings=tokens,
         )

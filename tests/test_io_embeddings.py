@@ -145,14 +145,14 @@ def test_native_four_dimensional_token_derivative_preserves_layout_and_dtype(tmp
     np.testing.assert_array_equal(loaded.X, native)
 
 
-def test_embedding_observation_id_includes_condition():
+def test_embedding_observation_id_is_recording_and_epoch():
     assert (
         embedding_observation_id(
             {"recording_id": "sub-01_run-01", "condition": "EO"},
             "unrelated_embedding.npz",
             2,
         )
-        == "sub-01_run-01_condition-EO_epoch-0002"
+        == "sub-01_run-01_epoch-0002"
     )
 
 
