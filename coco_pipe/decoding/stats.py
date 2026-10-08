@@ -1203,11 +1203,19 @@ def _bootstrap_engine(
     """
     rng = np.random.default_rng(random_state)
     n_units = len(units)
+    # Each resample takes its rows from one table by position. Concatenating a
+    # frame per sampled unit, n_bootstraps times, dominated the whole assessment.
+    table = pd.concat([unit_map[u] for u in units])
+    stops = np.cumsum([len(unit_map[u]) for u in units])
+    positions = {
+        u: np.arange(stop - len(unit_map[u]), stop)
+        for u, stop in zip(units, stops, strict=True)
+    }
     results = []
     for _ in range(n_bootstraps):
         boot_units = rng.choice(units, size=n_units, replace=True)
-        boot_frame = pd.concat([unit_map[u] for u in boot_units])
-        results.append(score_func(boot_frame))
+        rows = np.concatenate([positions[u] for u in boot_units])
+        results.append(score_func(table.iloc[rows]))
     return np.array(results)
 
 

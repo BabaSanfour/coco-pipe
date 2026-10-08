@@ -245,10 +245,13 @@ def allocate_inner_jobs(cfg: ExperimentConfig, n_jobs: int) -> ExperimentConfig:
 
 
 def allocate_outer_inner(total_jobs: int, n_units: int) -> tuple[int, int]:
-    """Split a job budget into outer workers and per-unit inner jobs."""
+    """Split a job budget into outer workers and the jobs each unit may use.
+
+    Every unit gets a worker while there are workers left; with fewer units
+    than workers, each unit takes an equal share of the budget.
+    """
     outer = max(1, min(total_jobs, max(n_units, 1)))
-    inner = total_jobs if outer == 1 else 1
-    return outer, inner
+    return outer, max(1, total_jobs // outer)
 
 
 def _records_to_json_safe(records: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:

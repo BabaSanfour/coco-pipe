@@ -21,7 +21,7 @@ from coco_pipe.decoding import (
     read_sweep,
     run_decoding_unit,
 )
-from coco_pipe.decoding.pipeline import allocate_inner_jobs
+from coco_pipe.decoding.pipeline import allocate_inner_jobs, allocate_outer_inner
 from coco_pipe.utils import run_task_batch
 
 
@@ -193,6 +193,12 @@ def test_read_sweep_gives_the_table_and_loads_units_on_demand(tmp_path):
     assert set(predictions["output_dir"]) == {str(units[1].output_dir)}
     assert len(predictions) == len(units[1].y)
     assert sweep.result(units[0].output_dir).summary().index.tolist() == ["logreg"]
+
+
+def test_job_budget_is_shared_between_units():
+    assert allocate_outer_inner(32, 2580) == (32, 1)
+    assert allocate_outer_inner(32, 4) == (4, 8)
+    assert allocate_outer_inner(32, 1) == (1, 32)
 
 
 def test_allocate_inner_jobs_splits_budget_across_fold_and_tuning_levels():
