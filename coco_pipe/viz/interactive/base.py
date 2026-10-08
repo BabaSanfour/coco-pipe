@@ -815,7 +815,8 @@ def plot_group_scatter_with_mean(
         raise ValueError("`error` must be 'sem' or 'sd'.")
     if point_labels is not None and len(point_labels) != len(groups):
         raise ValueError(
-            f"`point_labels` length {len(point_labels)} != `groups` length {len(groups)}."
+            f"`point_labels` length {len(point_labels)} != "
+            f"`groups` length {len(groups)}."
         )
 
     if color is None:

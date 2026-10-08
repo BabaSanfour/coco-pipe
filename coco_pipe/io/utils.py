@@ -1,9 +1,9 @@
-"""Miscellaneous IO helpers — BIDS loading, stratified sampling, and table utilities.
+"""Miscellaneous IO helpers — stratified sampling and table utilities.
 
 This module is intentionally thin: heavy quality logic lives in
 :mod:`coco_pipe.io.quality`; data-structure definitions live in
 :mod:`coco_pipe.io.structures`.  Everything here is either a small utility
-(``read_table``, ``normalize_subject_value``) or a sampling helper
+(``load_participants_tsv``, ``normalize_subject_value``) or a sampling helper
 (``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 

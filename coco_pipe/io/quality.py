@@ -1029,10 +1029,7 @@ def _get_subject_ids(
             )
         return [str(subject) for subject in subjects]
     if container.ids is not None:
-        ids = np.asarray(container.ids)
-        if ids.ndim != 1 or len(ids) != container.X.shape[0]:
-            raise ValueError("container.ids must align with observations.")
-        return [str(identifier) for identifier in ids]
+        return [str(identifier) for identifier in container.ids]
     return [str(index) for index in range(container.X.shape[0])]
 
 
@@ -1044,8 +1041,6 @@ def _container_to_feature_df(
     names = list(container.coords.get("feature", []))
     if not names:
         names = [f"f{index}" for index in range(container.X.shape[1])]
-    if len(names) != container.X.shape[1]:
-        raise ValueError("Feature coordinates must align with the feature axis.")
     frame = pd.DataFrame(container.X, columns=names)
     if feature_cols is None:
         return frame

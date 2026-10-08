@@ -51,7 +51,7 @@ from .quality import (
     run_qc,
 )
 from .structures import DataContainer
-from .transform import SklearnWrapper, SpatialWhitener
+from .transform import SklearnWrapper
 from .units import iter_analysis_units, split_unit_sensor
 from .utils import (
     compute_constant_feature_summary,
@@ -78,7 +78,6 @@ __all__ = [
     "EpochDropRecord",
     "QCResult",
     "SklearnWrapper",
-    "SpatialWhitener",
     "SubjectDropRecord",
     "TabularConfig",
     "combined_embedding_table_path",
