@@ -36,6 +36,7 @@ from .persistence import (
     completed_for_config,
     config_hash,
     load_completed_result_records,
+    read_run_manifest,
     redact_sensitive,
     resolve_primary_metric_name,
     stamp_primary_metric,
@@ -43,12 +44,14 @@ from .persistence import (
 )
 from .pipeline import (
     DecodingUnit,
+    Sweep,
     allocate_inner_jobs,
     allocate_outer_inner,
     build_leaderboard,
     execute_decoding_sweep,
     execute_decoding_sweep_streaming,
     load_sweep_records,
+    read_sweep,
     run_decoding_unit,
     write_run_summary,
 )
@@ -96,6 +99,7 @@ __all__ = [
     "ReducerConfig",
     "SignalMetadata",
     "StatisticalAssessmentConfig",
+    "Sweep",
     "TemporalAlignmentConfig",
     "TemporalDecoderConfig",
     "TrainerConfig",
@@ -124,6 +128,8 @@ __all__ = [
     "load_sweep_records",
     "paired_prediction_test",
     "prepare_target",
+    "read_run_manifest",
+    "read_sweep",
     "redact_sensitive",
     # Model Discovery & Metadata
     "register_estimator",

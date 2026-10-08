@@ -84,7 +84,8 @@ class ResultCollection:
         :func:`make_experiment_results_report`). ``results``/``contexts`` are
         keyed by tuples aligned to this order.
     results
-        Loaded result objects keyed by the axis-value tuple.
+        Result objects, or the paths they are saved at, keyed by the axis-value
+        tuple. Use :meth:`result` to get one loaded.
     contexts
         Per-result context metadata keyed by the same axis-value tuple.
     summary
@@ -95,6 +96,13 @@ class ResultCollection:
     results: dict[tuple[Any, ...], Any]
     contexts: dict[tuple[Any, ...], dict[str, Any]]
     summary: pd.DataFrame
+
+    def result(self, key: tuple[Any, ...]) -> Any:
+        """Return the result for ``key``, loading it if only its path is held."""
+        value = self.results[key]
+        if isinstance(value, (str, Path)):
+            value = ExperimentResult.load(value)
+        return value
 
     def filter(self, **criteria: Any) -> ResultCollection:
         """Return a collection restricted to exact context matches."""
@@ -531,7 +539,8 @@ def build_result_tabs(
 ) -> TabsElement | AccordionElement | None:
     """Build nested compact per-result sections from a collection."""
     tabs: dict[str, AccordionElement] = {}
-    for key, result in collection.results.items():
+    for key in collection.results:
+        result = collection.result(key)
         context = collection.contexts[key]
         label = " / ".join(str(context[name]) for name in collection.by)
         content = AccordionElement("Show result diagnostics", open=True)
@@ -690,7 +699,7 @@ def collect_mode_results(
     *,
     context_columns: Sequence[str] = DEFAULT_MODE_RESULT_CONTEXT_COLUMNS,
 ) -> ResultCollection | None:
-    """Collect unique successful result artifacts from a sweep result frame."""
+    """Collect the successful results of a sweep result frame, without loading them."""
     if "output_dir" not in mode_frame.columns:
         return None
     successful = split_by_status(mode_frame)[0]
@@ -704,15 +713,25 @@ def collect_mode_results(
     ]
     if not context:
         return None
+    results: dict[tuple[Any, ...], Path] = {}
+    contexts: dict[tuple[Any, ...], dict[str, Any]] = {}
     unique = successful[[*context, "output_dir"]].drop_duplicates()
-    items = [
-        (
-            {column: row[column] for column in context},
-            Path(str(row["output_dir"])) / "result.joblib",
-        )
-        for row in unique.to_dict("records")
-    ]
-    return collect_results(items, by=context)
+    for row in unique.to_dict("records"):
+        key = tuple(row[column] for column in context)
+        source = Path(str(row["output_dir"])) / "result.joblib"
+        if key in results:
+            raise ValueError(f"Duplicate result key {key!r} has multiple sources.")
+        results[key] = source
+        contexts[key] = {
+            **{column: row[column] for column in context},
+            "_source": str(source),
+        }
+    # The frame already holds each unit's summary rows: the saved results are
+    # only read when a section draws from one.
+    summary = successful.reset_index(drop=True)
+    if "model" in summary and "Model" not in summary:
+        summary["Model"] = summary["model"]
+    return ResultCollection(tuple(context), results, contexts, summary)
 
 
 def best_result_tabs(
@@ -1416,8 +1435,8 @@ def add_paired_prediction_tests(
 ) -> pd.DataFrame:
     """Attach a paired permutation p-value to each challenger-vs-baseline delta.
 
-    Reads both runs' saved ``predictions.csv`` (from ``output_dir`` and
-    ``baseline_output_dir``) and runs
+    Reads both runs' saved predictions (from the ``result.joblib`` of
+    ``output_dir`` and ``baseline_output_dir``) and runs
     :func:`~coco_pipe.decoding.stats.paired_prediction_test` on the primary
     metric, swapping models within *unit*. p-values are BH-corrected across the
     rows. A row whose predictions are missing or do not cover the same samples
@@ -1429,9 +1448,9 @@ def add_paired_prediction_tests(
     cache: dict[Path, pd.DataFrame] = {}
 
     def predictions(output_dir: Any, model: Any) -> pd.DataFrame:
-        path = Path(str(output_dir)) / "predictions.csv"
+        path = Path(str(output_dir)) / "result.joblib"
         if path not in cache:
-            cache[path] = pd.read_csv(path)
+            cache[path] = ExperimentResult.load(path).get_predictions()
         table = cache[path]
         return table[table["Model"] == model] if "Model" in table else table
 

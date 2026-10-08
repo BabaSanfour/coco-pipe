@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from coco_pipe.decoding import ExperimentResult, stamp_primary_metric
 from coco_pipe.report.core import Report, Section
 from coco_pipe.report.decoding_sweep import (
     add_paired_prediction_tests,
@@ -339,17 +340,24 @@ def test_flat_section_builds_from_persisted_results(tmp_path):
     frame_rows = []
     for unit in ("Fz", "Cz"):
         output_dir = tmp_path / unit
-        make_synthetic_result(n_models=2, n_times=1).save(output_dir / "result.joblib")
-        frame_rows.append(
-            {
-                "status": "success",
-                "scope": "EO",
-                "target": "adhd",
-                "analysis_mode": "sensor",
-                "unit_name": unit,
-                "output_dir": str(output_dir),
-            }
-        )
+        result = make_synthetic_result(n_models=2, n_times=1)
+        result.save(output_dir / "result.joblib")
+        # One row per model with its summary metrics, as a sweep records them.
+        for row in result.summary().reset_index().to_dict("records"):
+            frame_rows.append(
+                stamp_primary_metric(
+                    {
+                        "status": "success",
+                        "scope": "EO",
+                        "target": "adhd",
+                        "analysis_mode": "sensor",
+                        "unit_name": unit,
+                        "output_dir": str(output_dir),
+                        "model": row.pop("Model"),
+                        **row,
+                    }
+                )
+            )
 
     section = flat_section(
         pd.DataFrame(frame_rows),
@@ -621,17 +629,22 @@ def test_make_cv_signature_leaves_incomplete_rows_unsigned():
 
 
 def _write_predictions(output_dir, model, y_pred):
-    output_dir.mkdir(parents=True)
-    pd.DataFrame(
+    """Export a result holding only predictions, two folds over up to six samples."""
+    n = len(y_pred)
+    folds = np.array([0, 0, 1, 1, 0, 1])[:n]
+    predictions = [
         {
-            "Model": model,
-            "Fold": [0, 0, 1, 1, 0, 1],
-            "SampleID": [f"s{i}" for i in range(6)],
-            "Group": ["g0", "g0", "g1", "g1", "g2", "g2"],
-            "y_true": [0, 1, 0, 1, 0, 1],
-            "y_pred": y_pred,
+            "sample_index": np.flatnonzero(folds == fold),
+            "sample_id": np.array([f"s{i}" for i in np.flatnonzero(folds == fold)]),
+            "group": np.array(["g0", "g0", "g1", "g1", "g2", "g2"])[:n][folds == fold],
+            "y_true": np.array([0, 1, 0, 1, 0, 1])[:n][folds == fold],
+            "y_pred": np.asarray(y_pred)[folds == fold],
         }
-    ).to_csv(output_dir / "predictions.csv", index=False)
+        for fold in (0, 1)
+    ]
+    ExperimentResult({model: {"metrics": {}, "predictions": predictions}}).export(
+        output_dir
+    )
 
 
 def test_paired_deltas_carry_a_paired_permutation_p_value(tmp_path):
@@ -661,9 +674,7 @@ def test_paired_deltas_carry_a_paired_permutation_p_value(tmp_path):
 
 def test_paired_test_refuses_runs_scored_on_different_samples(tmp_path):
     _write_predictions(tmp_path / "base", "logreg", [0] * 6)
-    _write_predictions(tmp_path / "probe", "labram", [0, 1, 0, 1, 0, 1])
-    probe = pd.read_csv(tmp_path / "probe" / "predictions.csv").iloc[:5]
-    probe.to_csv(tmp_path / "probe" / "predictions.csv", index=False)
+    _write_predictions(tmp_path / "probe", "labram", [0, 1, 0, 1, 0])
     delta = pd.DataFrame(
         [
             {

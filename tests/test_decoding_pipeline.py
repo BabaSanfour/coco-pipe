@@ -14,6 +14,11 @@ from coco_pipe.decoding import (
     ExperimentConfig,
     StatisticalAssessmentConfig,
     TuningConfig,
+    execute_decoding_sweep,
+    execute_decoding_sweep_streaming,
+    load_sweep_records,
+    read_run_manifest,
+    read_sweep,
     run_decoding_unit,
 )
 from coco_pipe.decoding.pipeline import allocate_inner_jobs
@@ -87,8 +92,10 @@ def _unit(tmp_path, **overrides) -> DecodingUnit:
 def test_run_decoding_unit_fresh_then_resume(tmp_path):
     records = run_decoding_unit(_unit(tmp_path))
     assert records and all(r["status"] == "success" for r in records)
-    assert (tmp_path / "unit" / "_SUCCESS").exists()
-    assert (tmp_path / "unit" / "predictions.csv").exists()
+    assert sorted(path.name for path in (tmp_path / "unit").iterdir()) == [
+        "result.joblib",
+        "run_manifest.json",
+    ]
 
     resumed = run_decoding_unit(_unit(tmp_path))
     assert all(r["reason"] == "resumed" for r in resumed)
@@ -137,7 +144,7 @@ def test_records_carry_cv_design_and_sample_set(tmp_path):
 def test_run_decoding_unit_records_failure(tmp_path):
     records = run_decoding_unit(_unit(tmp_path, y=np.array([0, 1, 0])), errors="record")
     assert records[0]["status"] == "failed"
-    assert (tmp_path / "unit" / "_FAILED").exists()
+    assert read_run_manifest(tmp_path / "unit")["status"] == "failed"
 
 
 def test_run_decoding_unit_raises_on_config_hash_mismatch(tmp_path):
@@ -152,6 +159,40 @@ def test_units_run_through_task_batch(tmp_path):
     results = run_task_batch(units, run_decoding_unit, max_workers=2)
     assert len(results) == 3
     assert all(records and records[0]["status"] == "success" for records in results)
+
+
+def test_streaming_sweep_leaves_a_partial_inventory_when_it_breaks(tmp_path):
+    def batches():
+        yield [_unit(tmp_path / "first")]
+        raise RuntimeError("job killed")
+
+    with pytest.raises(RuntimeError, match="job killed"):
+        execute_decoding_sweep_streaming(
+            batches(), [], config={"n_jobs": 1}, output_root=tmp_path / "sweep"
+        )
+
+    assert (tmp_path / "sweep" / "_PARTIAL").exists()
+    (record,) = load_sweep_records(tmp_path / "sweep")
+    assert record["status"] == "success"
+    assert record["output_dir"] == str(tmp_path / "first" / "unit")
+
+
+def test_read_sweep_gives_the_table_and_loads_units_on_demand(tmp_path):
+    units = [_unit(tmp_path / name) for name in ("a", "b")]
+    execute_decoding_sweep(
+        units, [], config={"n_jobs": 1}, output_root=tmp_path / "sweep"
+    )
+
+    sweep = read_sweep(tmp_path / "sweep")
+
+    assert sweep.status == "PARTIAL"  # no primary mask was given to call it a success
+    assert sweep.results["output_dir"].tolist() == [str(u.output_dir) for u in units]
+    assert sweep.results["accuracy_mean"].notna().all()
+    one = sweep.results.iloc[[1]]
+    predictions = sweep.predictions(one)
+    assert set(predictions["output_dir"]) == {str(units[1].output_dir)}
+    assert len(predictions) == len(units[1].y)
+    assert sweep.result(units[0].output_dir).summary().index.tolist() == ["logreg"]
 
 
 def test_allocate_inner_jobs_splits_budget_across_fold_and_tuning_levels():

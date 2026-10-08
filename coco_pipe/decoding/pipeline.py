@@ -49,8 +49,10 @@ from .persistence import (
     load_completed_result_records,
     redact_sensitive,
     stamp_primary_metric,
+    write_run_manifest,
     write_run_status,
 )
+from .result import ExperimentResult
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,12 +60,14 @@ PrimaryMask = Callable[[pd.DataFrame], "pd.Series"]
 
 __all__ = [
     "DecodingUnit",
+    "Sweep",
     "allocate_inner_jobs",
     "allocate_outer_inner",
     "build_leaderboard",
     "execute_decoding_sweep",
     "execute_decoding_sweep_streaming",
     "load_sweep_records",
+    "read_sweep",
     "run_decoding_unit",
     "write_run_summary",
 ]
@@ -133,8 +137,8 @@ def run_decoding_unit(
     """Run one decoding unit and return one record per model.
 
     Resumes from a matching completed output when ``overwrite`` is false, else
-    runs the experiment, exports it (``result.joblib`` + tidy tables), and
-    extracts records. A resume config-hash mismatch is intentionally *not*
+    runs the experiment, exports it (``result.joblib`` + ``run_manifest.json``),
+    and extracts records. A resume config-hash mismatch is intentionally *not*
     caught — it raises so the sweep aborts rather than silently mixing configs.
     A runtime failure becomes a single ``status="failed"`` record when
     ``errors="record"`` (the default for a fault-tolerant sweep).
@@ -198,13 +202,14 @@ def run_decoding_unit(
     except Exception as exc:
         if errors == "raise":
             raise
+        reason = f"{type(exc).__name__}: {exc}"
         output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "_FAILED").write_text("", encoding="utf-8")
+        write_run_manifest(output_dir, {"status": "failed", "reason": reason})
         return [
             {
                 **context,
                 "status": "failed",
-                "reason": f"{type(exc).__name__}: {exc}",
+                "reason": reason,
                 "output_dir": str(output_dir),
             }
         ]
@@ -338,6 +343,74 @@ def load_sweep_records(output_root: Path) -> list[dict[str, Any]]:
     return runs
 
 
+@dataclass(frozen=True)
+class Sweep:
+    """A saved decoding sweep, as returned by :func:`read_sweep`.
+
+    Attributes
+    ----------
+    root : Path
+        The sweep's output directory.
+    results : pandas.DataFrame
+        One row per unit and model: the run context, the summary metrics and
+        ``output_dir``, the folder of the unit.
+    status : str
+        ``"SUCCESS"``, ``"PARTIAL"`` (some units failed, or the run did not
+        finish) or ``"FAILED"``.
+    """
+
+    root: Path
+    results: pd.DataFrame
+    status: str
+
+    def result(self, output_dir: str | Path) -> ExperimentResult:
+        """Load the full result of one unit."""
+        return ExperimentResult.load(Path(output_dir) / "result.joblib")
+
+    def predictions(self, rows: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Return the predictions of the units in ``rows``, in one table.
+
+        Parameters
+        ----------
+        rows : pandas.DataFrame, optional
+            A selection of :attr:`results`. All successful units by default.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per unit, model and sample, with ``output_dir`` first.
+        """
+        rows = self.results if rows is None else rows
+        rows = rows[rows["status"] == "success"]
+        tables = [
+            self.result(output_dir).get_predictions().assign(output_dir=output_dir)
+            for output_dir in pd.unique(rows["output_dir"])
+        ]
+        if not tables:
+            return pd.DataFrame()
+        table = pd.concat(tables, ignore_index=True)
+        return table[["output_dir", *table.columns.drop("output_dir")]]
+
+
+def read_sweep(output_root: str | Path) -> Sweep:
+    """Read a saved decoding sweep.
+
+    Only the results table is read; a unit's full result is loaded when asked
+    for with :meth:`Sweep.result` or :meth:`Sweep.predictions`. A sweep that is
+    still running, or that broke, can be read too: its status is ``"PARTIAL"``.
+    """
+    root = Path(output_root)
+    status = next(
+        (
+            name
+            for name in ("SUCCESS", "PARTIAL", "FAILED")
+            if (root / f"_{name}").exists()
+        ),
+        "PARTIAL",
+    )
+    return Sweep(root, pd.DataFrame(load_sweep_records(root)), status)
+
+
 def execute_decoding_sweep(
     units: list[DecodingUnit],
     failures: list[dict[str, Any]],
@@ -407,7 +480,12 @@ def execute_decoding_sweep_streaming(
     is the caller-owned list of enumeration-time skips, extended in place with
     runtime failures (so any *extra_outputs* closure over it sees them all), and
     every batch shares the same job budget/parallelism policy as the one-shot
-    variant. Outputs are persisted once, after the stream is exhausted.
+    variant.
+
+    After every batch the records so far are saved to the ``runs/`` inventory
+    and the run is marked ``_PARTIAL``, so a job that breaks leaves a readable
+    record of what finished. The full outputs are written once the stream is
+    exhausted.
     """
     total_jobs = resolve_n_jobs(int(config["n_jobs"]))
     raw_records: list[dict[str, Any]] = []
@@ -419,6 +497,14 @@ def execute_decoding_sweep_streaming(
                 reallocate_inner_jobs=reallocate_inner_jobs,
             )
         )
+        runs_dir = Path(output_root) / RUNS_DIRNAME
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        write_json(
+            runs_dir / SWEEP_RUNS_FILENAME,
+            _records_to_json_safe(raw_records),
+            indent=2,
+        )
+        write_run_status(output_root, "PARTIAL")
         # Drop the batch's units (and their X arrays) before pulling the next
         # scope so peak RSS tracks one scope, not the accumulated sweep.
         del batch
