@@ -769,6 +769,7 @@ class BIDSDataset(BaseDataset):
                 raise RuntimeError(message)
 
             epochs = mne.concatenate_epochs(epochs_list, verbose=False)
+            del epochs_list  # the per-recording copies are no longer needed
 
         coords = {
             "channel": np.array(epochs.ch_names),

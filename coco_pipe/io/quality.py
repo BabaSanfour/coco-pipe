@@ -1070,25 +1070,9 @@ def _filter_observations(
     container: DataContainer,
     keep_mask: np.ndarray,
 ) -> DataContainer:
-    from .structures import DataContainer
-
     keep_mask = np.asarray(keep_mask, dtype=bool)
     if keep_mask.shape != (container.X.shape[0],):
         raise ValueError("keep_mask must align with observations.")
-    coords = {}
-    for name, values in (container.coords or {}).items():
-        array = np.asarray(values)
-        if array.ndim == 1 and len(array) == container.X.shape[0]:
-            coords[name] = array[keep_mask]
-        else:
-            coords[name] = values
-    y = None if container.y is None else np.asarray(container.y)[keep_mask]
-    ids = None if container.ids is None else np.asarray(container.ids)[keep_mask]
-    return DataContainer(
-        X=container.X[keep_mask],
-        dims=container.dims,
-        coords=coords,
-        y=y,
-        ids=ids,
-        meta=_clean_filter_meta(copy.deepcopy(container.meta)),
-    )
+    filtered = container.isel(**{container.dims[0]: keep_mask})
+    filtered.meta = _clean_filter_meta(copy.deepcopy(filtered.meta))
+    return filtered
