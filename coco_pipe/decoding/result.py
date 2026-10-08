@@ -14,7 +14,7 @@ from ._constants import RESULT_SCHEMA_VERSION
 from ._diagnostics import (
     confusion_matrix_frame,
     curve_score_groups,
-    prediction_rows,
+    prediction_frame,
     proba_matrix,
     scalar_prediction_frame,
     score_rows,
@@ -170,97 +170,51 @@ class ExperimentResult:
         self,
         output_dir: str | Path,
         config: dict[str, Any] | None = None,
-        formats: Sequence[str] = ("csv",),
     ) -> dict[str, str]:
-        """Export the result object and all available tidy tables.
+        """Save the result and its run manifest to ``output_dir``.
 
-        Individual optional table failures are recorded in the run manifest
-        rather than invalidating an otherwise complete experiment.
+        Two files are written. ``result.joblib`` is this object: every tidy
+        table (predictions, fold scores, feature importances, ...) is read back
+        from it with :meth:`load` and the ``get_*`` methods. ``run_manifest.json``
+        holds the run config, its hash and the summary rows a resumed sweep
+        needs; it is written last and marks the export as complete.
 
         Parameters
         ----------
         output_dir : str or Path
-            Destination directory for the result object and tidy tables.
+            Destination directory.
         config : dict, optional
-            Effective run config recorded alongside the export.
-        formats : sequence of str, default=("csv",)
-            Table formats to write, any subset of ``{"csv", "parquet"}``.
-            Defaults to CSV only; CSV is required for resuming a run, so keep it
-            in the set unless you only need parquet. Add ``"parquet"`` for a
-            columnar copy at the cost of doubling the number of table files.
+            Effective run config recorded in the manifest.
+
+        Returns
+        -------
+        dict
+            The paths written, by name.
         """
-        import yaml
-
-        from .persistence import config_hash, redact_sensitive
-
-        requested = tuple(formats)
-        unsupported = sorted(set(requested) - {"csv", "parquet"})
-        if not requested or unsupported:
-            raise ValueError(
-                "formats must be a non-empty subset of {'csv', 'parquet'}; "
-                f"got {list(requested)}."
-            )
+        from .persistence import config_hash, redact_sensitive, write_run_manifest
 
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
         effective_config = dict(config or self.config or {})
-        written: dict[str, str] = {}
-        export_errors: dict[str, str] = {}
-        written["result"] = str(self.save(output / "result.joblib"))
-        accessors = {
-            "summary": self.summary,
-            "fold_scores": self.get_detailed_scores,
-            "predictions": self.get_predictions,
-            "splits": self.get_splits,
-            "confusion_matrices": self.get_confusion_matrices,
-            "feature_importances": self.get_feature_importances,
-            "selected_features": self.get_selected_features,
-            "feature_scores": self.get_feature_scores,
-            "feature_stability": self.get_feature_stability,
-            "fit_diagnostics": self.get_fit_diagnostics,
-            "statistical_assessment": self.get_statistical_assessment,
-            "model_artifacts": self.get_model_artifacts,
-        }
-        for name, accessor in accessors.items():
-            try:
-                table = accessor()
-                if not isinstance(table, pd.DataFrame):
-                    table = pd.DataFrame(table)
-                if name == "summary":
-                    table = table.reset_index()
-                for fmt in requested:
-                    target = output / f"{name}.{fmt}"
-                    key = name if fmt == "csv" else f"{name}_{fmt}"
-                    try:
-                        if fmt == "csv":
-                            table.to_csv(target, index=False)
-                        else:
-                            table.to_parquet(target, index=False)
-                    except (ImportError, ValueError, TypeError, OSError) as exc:
-                        export_errors[key] = f"{type(exc).__name__}: {exc}"
-                        continue
-                    written[key] = str(target)
-            except Exception as exc:
-                export_errors[name] = f"{type(exc).__name__}: {exc}"
-
-        summary_written = any(key in ("summary", "summary_parquet") for key in written)
-        if not summary_written:
-            raise RuntimeError(
-                "Experiment result export failed to produce the required summary table."
-            )
-        (output / "config_used.yaml").write_text(
-            yaml.safe_dump(redact_sensitive(effective_config), sort_keys=False),
-            encoding="utf-8",
-        )
+        result_path = self.save(output / "result.joblib")
         manifest = {
             "config_hash": config_hash(effective_config),
             "status": "success",
-            "artifacts": written,
-            "export_errors": export_errors,
+            "config": redact_sensitive(effective_config),
+            "summary": self.summary().reset_index().to_dict("records"),
         }
-        write_json(output / "run_manifest.json", manifest, indent=2, sort_keys=True)
-        (output / "_SUCCESS").write_text("", encoding="utf-8")
-        return written
+        # The fit is complete without its statistical assessment: a failure
+        # there is recorded, not allowed to mark the unit as failed.
+        try:
+            manifest["statistical_assessment"] = pd.DataFrame(
+                self.get_statistical_assessment()
+            ).to_dict("records")
+        except Exception as exc:
+            manifest["export_errors"] = {
+                "statistical_assessment": f"{type(exc).__name__}: {exc}"
+            }
+        manifest_path = write_run_manifest(output, manifest)
+        return {"result": str(result_path), "manifest": str(manifest_path)}
 
     @classmethod
     def load(cls, path: str | Path | Any) -> ExperimentResult:
@@ -542,19 +496,19 @@ class ExperimentResult:
         --------
         ExperimentResult.get_splits : Membership of samples in each fold.
         """
-        rows = []
-        time_axis = self.time_axis
+        frames = []
         target_models = [model] if model is not None else self.raw.keys()
-
         for m_name in target_models:
             res = self.raw.get(m_name, {})
             if "error" in res or "predictions" not in res:
                 continue
-            for fold_idx, preds in enumerate(res["predictions"]):
-                rows.extend(
-                    prediction_rows(m_name, fold_idx, preds, time_axis=time_axis)
-                )
-        return pd.DataFrame(rows)
+            frames.extend(
+                prediction_frame(m_name, fold_idx, preds, time_axis=self.time_axis)
+                for fold_idx, preds in enumerate(res["predictions"])
+            )
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
 
     def get_splits(self, model: str | None = None) -> pd.DataFrame:
         """
