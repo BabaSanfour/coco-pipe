@@ -83,7 +83,7 @@ def test_load_data_explicit_modes():
             tmax=0.5,
             baseline=None,
             units=None,
-            drop_short_epochs=True,
+            description=None,
             subject_metadata_df=None,
             subject_key=None,
             subjects=None,
@@ -112,38 +112,11 @@ def test_load_data_error():
         load_mod.load_data("dummy", mode="invalid")
 
 
-def test_load_data_bids_pre_epoched_load_existing(monkeypatch, tmp_path):
-    epo_path = tmp_path / "sub-0001" / "eeg" / "sub-0001_task-rest_epo.fif"
-    epo_path.parent.mkdir(parents=True)
-    epo_path.touch()
-    meta_df = np.array([["0001", 42, "case"]], dtype=object)
-
-    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda root: ["0001"])
-    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda root, sub: [])
-    monkeypatch.setattr(
-        dataset_mod,
-        "detect_runs",
-        lambda root, sub, ses, task, datatype: [None],
+def test_load_data_bids_saved_epochs(tmp_path, write_bids_epochs):
+    write_bids_epochs(tmp_path, "0001", description="base")
+    meta_df = dataset_mod.pd.DataFrame(
+        {"Study ID": [1], "age": [42], "group": ["case"]}
     )
-    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda root: {})
-    monkeypatch.setattr(
-        dataset_mod,
-        "_get_bids_path",
-        lambda: (
-            lambda **kwargs: (_ for _ in ()).throw(
-                AssertionError("BIDSPath should not be used for precomputed epochs")
-            )
-        ),
-    )
-
-    def fake_read_bids_entry(bids_path, **kwargs):
-        assert bids_path.fpath == epo_path
-        assert kwargs["is_pre_epoched"] is True
-        data = np.zeros((2, 1, 4))
-        times = np.arange(4)
-        return data, times, ["C1"], 100.0, np.array([7, 7])
-
-    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read_bids_entry)
 
     container = load_mod.load_data(
         tmp_path,
@@ -151,68 +124,25 @@ def test_load_data_bids_pre_epoched_load_existing(monkeypatch, tmp_path):
         task="rest",
         suffix="epo",
         loading_mode="load_existing",
-        subject_metadata_df=dataset_mod.pd.DataFrame(
-            meta_df, columns=["Study ID", "age", "group"]
-        ),
+        description="base",
+        subject_metadata_df=meta_df,
         subject_key="Study ID",
+        target_col="group",
     )
 
-    assert container.X.shape == (2, 1, 4)
-    assert container.ids.tolist() == ["0001_0", "0001_1"]
-    assert container.y.tolist() == [7, 7]
-    assert container.coords["Study ID"].tolist() == ["0001", "0001"]
-    assert container.coords["age"].tolist() == [42, 42]
-    assert container.coords["group"].tolist() == ["case", "case"]
-
-
-def test_load_data_bids_target_col_from_metadata(monkeypatch, tmp_path):
-    epo_path = tmp_path / "sub-0001" / "eeg" / "sub-0001_task-rest_epo.fif"
-    epo_path.parent.mkdir(parents=True)
-    epo_path.touch()
-    meta_df = np.array([["0001", "stimulant"]], dtype=object)
-
-    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda root: ["0001"])
-    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda root, sub: [])
-    monkeypatch.setattr(
-        dataset_mod,
-        "detect_runs",
-        lambda root, sub, ses, task, datatype: [None],
-    )
-    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda root: {})
-    monkeypatch.setattr(
-        dataset_mod,
-        "_get_bids_path",
-        lambda: (
-            lambda **kwargs: (_ for _ in ()).throw(
-                AssertionError("BIDSPath should not be used for precomputed epochs")
-            )
-        ),
-    )
-
-    def fake_read_bids_entry(bids_path, **kwargs):
-        assert bids_path.fpath == epo_path
-        return np.zeros((2, 1, 4)), np.arange(4), ["C1"], 100.0, np.array([7, 7])
-
-    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read_bids_entry)
-
-    container = load_mod.load_data(
-        tmp_path,
-        mode="bids",
-        task="rest",
-        suffix="epo",
-        loading_mode="load_existing",
-        subject_metadata_df=dataset_mod.pd.DataFrame(
-            meta_df, columns=["Study ID", "psychostimulant_category"]
-        ),
-        subject_key="Study ID",
-        target_col="psychostimulant_category",
-    )
-
-    assert container.coords["psychostimulant_category"].tolist() == [
-        "stimulant",
-        "stimulant",
+    assert container.X.shape == (2, 2, 20)
+    assert container.ids.tolist() == [
+        "sub-0001_task-rest_epoch-0000",
+        "sub-0001_task-rest_epoch-0001",
     ]
-    assert container.y.tolist() == ["stimulant", "stimulant"]
+    assert container.coords["Study ID"].tolist() == [1, 1]
+    assert container.coords["age"].tolist() == [42, 42]
+    assert container.y.tolist() == ["case", "case"]
+
+    with pytest.raises(ValueError, match="subject_key must be provided"):
+        load_mod.load_data(
+            tmp_path, mode="bids", suffix="epo", subject_metadata_df=meta_df
+        )
 
 
 def test_io_import_is_lightweight(monkeypatch):

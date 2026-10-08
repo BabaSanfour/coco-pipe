@@ -1,8 +1,4 @@
 import contextlib
-import importlib
-import sys
-import types
-from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -89,69 +85,6 @@ def test_embedding_dataset_glob_concat(tmp_path):
     assert container.ids.tolist() == ["subjA_0", "subjA_1", "subjB"]
 
 
-def test_bids_dataset_with_mocks(monkeypatch, tmp_path):
-    fake_mne = types.SimpleNamespace()
-
-    class FakeBIDSPath:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.fpath = MagicMock()
-            self.fpath.exists.return_value = True
-
-        def match(self):
-            return []
-
-    fake_mne_bids = types.SimpleNamespace(
-        BIDSPath=FakeBIDSPath, read_raw_bids=lambda *a, **k: None
-    )
-
-    monkeypatch.setitem(sys.modules, "mne", fake_mne)
-    monkeypatch.setitem(sys.modules, "mne_bids", fake_mne_bids)
-
-    dataset = importlib.reload(dataset_mod)
-    monkeypatch.setattr(dataset, "_get_bids_path", lambda: FakeBIDSPath)
-
-    monkeypatch.setattr(dataset, "detect_subjects", lambda root: ["01"])
-    monkeypatch.setattr(dataset, "detect_sessions", lambda root, sub: [])
-    monkeypatch.setattr(
-        dataset, "load_participants_tsv", lambda root: {"01": {"age": 30}}
-    )
-
-    def fake_read_bids_entry(
-        bids_path,
-        is_pre_epoched,
-        is_evoked,
-        mode,
-        window_length,
-        stride,
-        **kwargs,
-    ):
-        data = np.arange(2 * 3 * 4).reshape(2, 3, 4)
-        times = np.linspace(0, 1, 4)
-        ch = np.array(["C1", "C2", "C3"])
-        return data, times, ch, 100.0, None
-
-    monkeypatch.setattr(dataset, "read_bids_entry", fake_read_bids_entry)
-
-    ds = dataset.BIDSDataset(root=tmp_path, task="rest")
-    container = ds.load()
-
-    assert container.dims == ("obs", "channel", "time")
-    assert container.X.shape == (2, 3, 4)
-    assert container.coords["channel"].tolist() == ["C1", "C2", "C3"]
-    assert container.coords["time"].tolist() == [
-        0.0,
-        0.3333333333333333,
-        0.6666666666666666,
-        1.0,
-    ]
-    assert container.ids.tolist() == ["01_0", "01_1"]
-    assert container.meta["sfreq"] == 100.0
-    assert container.meta["sfreq"] == 100.0
-    assert container.coords["age"].tolist() == [30, 30]
-    assert container.coords["subject"].tolist() == ["01", "01"]
-
-
 def test_tabular_dataset_cleaning(tmp_path):
     # Create CSV with NaNs and Inf
     df = pd.DataFrame(
@@ -217,53 +150,6 @@ def test_embedding_dataset_recursive_and_mixed(tmp_path):
     ids_set = set(container.ids)
     assert "sub1" in ids_set
     assert "sub2" in ids_set
-
-
-def test_bids_dataset_mismatches(monkeypatch, tmp_path):
-    # Test warnings for channel mismatch
-
-    # Mock deps
-    monkeypatch.setitem(sys.modules, "mne", types.SimpleNamespace())
-    monkeypatch.setitem(
-        sys.modules,
-        "mne_bids",
-        types.SimpleNamespace(
-            BIDSPath=lambda **k: types.SimpleNamespace(match=list, **k),
-            read_raw_bids=lambda *a: None,
-        ),
-    )
-
-    dataset = importlib.reload(dataset_mod)
-    monkeypatch.setattr(
-        dataset,
-        "_get_bids_path",
-        lambda: lambda **k: types.SimpleNamespace(match=list, **k),
-    )
-
-    # One subject, two sessions
-    monkeypatch.setattr(dataset, "detect_subjects", lambda root: ["01"])
-    monkeypatch.setattr(dataset, "detect_sessions", lambda root, sub: ["ses1", "ses2"])
-    monkeypatch.setattr(dataset, "load_participants_tsv", lambda root: {})
-
-    # Mock reader to return different channels for ses2
-    def fake_read(bids_path, **kwargs):
-        ses = bids_path.session
-        if ses == "ses1":
-            ch = ["C1", "C2"]
-            data = np.zeros((1, 2, 10))
-        else:
-            ch = ["C1", "C3"]  # Mismatch
-            data = np.zeros((1, 2, 10))
-        return data, np.arange(10), np.array(ch), 100.0, None
-
-    monkeypatch.setattr(dataset, "read_bids_entry", fake_read)
-
-    ds = dataset.BIDSDataset(root=tmp_path)
-    container = ds.load()
-
-    assert container.X.shape == (2, 2, 10)
-    # First channel names prevail
-    assert container.coords["channel"].tolist() == ["C1", "C2"]
 
 
 def test_dataset_factory_errors(tmp_path):
@@ -445,79 +331,6 @@ def test_embedding_shape_mismatch(tmp_path, caplog):
     assert "Shape mismatch" in caplog.text
 
 
-def test_bids_concatenation_failure(monkeypatch, tmp_path):
-    """Test failure when subjects have different shapes."""
-    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda r: ["01", "02"])
-    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda r, s: [None])
-    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda r: {})
-
-    # Mock read_bids_entry to return different shapes
-    def fake_read(bids_path, **k):
-        sub = bids_path.subject
-        if sub == "01":
-            return np.zeros((1, 5, 10)), [0], ["c"], 100, None
-        return (
-            np.zeros((1, 6, 10)),
-            [0],
-            ["c"],
-            100,
-            None,
-        )  # Different channels count
-
-    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
-
-    # Patch BIDSPath validation to avoid real FS checks
-    class MockBIDSPath:
-        def __init__(self, subject, **kwargs):
-            self.subject = subject
-            self.kwargs = kwargs
-            self.fpath = MagicMock()
-            self.fpath.exists.return_value = True
-
-        def match(self):
-            return []
-
-    monkeypatch.setattr(dataset_mod, "_get_bids_path", lambda: MockBIDSPath)
-    monkeypatch.setitem(sys.modules, "mne", MagicMock())
-    monkeypatch.setitem(sys.modules, "mne_bids", MagicMock())
-
-    ds = dataset_mod.BIDSDataset(tmp_path)
-
-    with pytest.raises(ValueError, match="Concatenation failed"):
-        ds.load()
-
-
-def test_bids_time_warning(monkeypatch, tmp_path):
-    """Test warning for time length mismatch."""
-    monkeypatch.setattr(dataset_mod, "detect_subjects", lambda r: ["01", "02"])
-    monkeypatch.setattr(dataset_mod, "detect_sessions", lambda r, s: [None])
-    monkeypatch.setattr(dataset_mod, "load_participants_tsv", lambda r: {})
-
-    # Mock read_bids_entry
-    def fake_read(bids_path, **k):
-        sub = bids_path.subject
-        if sub == "01":
-            return np.zeros((1, 1, 10)), np.arange(10), ["c"], 100, None
-        # Different time length
-        return np.zeros((1, 1, 11)), np.arange(11), ["c"], 100, None
-
-    monkeypatch.setattr(dataset_mod, "read_bids_entry", fake_read)
-
-    class MockBIDSPath:
-        def __init__(self, subject, **kwargs):
-            self.subject = subject
-            self.kwargs = kwargs
-
-    monkeypatch.setattr(dataset_mod, "_get_bids_path", lambda: MockBIDSPath)
-    monkeypatch.setitem(sys.modules, "mne", MagicMock())
-    monkeypatch.setitem(sys.modules, "mne_bids", MagicMock())
-
-    ds = dataset_mod.BIDSDataset(tmp_path)
-
-    with pytest.warns(RuntimeWarning, match="Dropping 1 epoch"):
-        ds.load()
-
-
 def test_tabular_dataset_extra(tmp_path):
     p = tmp_path / "missing.csv"
     ds = TabularDataset(p)
@@ -565,67 +378,122 @@ def test_embedding_dataset_extra(tmp_path):
         ds.load()
 
 
-def test_bids_dataset_extra(tmp_path):
-    # Mocking subjects/sessions/runs parsing
-    sub_dir = tmp_path / "sub-01" / "ses-A" / "eeg"
-    sub_dir.mkdir(parents=True)
-    fpath = sub_dir / "sub-01_ses-A_task-rest_run-1_epo.fif"
-    fpath.touch()
+def _load_epochs(root, **kwargs):
+    return BIDSDataset(root, suffix="epo", mode="load_existing", **kwargs).load()
 
-    # Also need participants.tsv
-    (tmp_path / "participants.tsv").write_text("participant_id\ttarget\nsub-01\t1")
 
-    # subject_metadata_df
-    meta_df = pd.DataFrame({"sub": ["01"], "extra": [5]})
-
-    from coco_pipe.io import dataset as dmod
-
-    orig_read = dmod.read_bids_entry
-
-    def fake_read(*args, **kwargs):
-        return np.zeros((2, 2, 10)), np.zeros(10), ["C1", "C2"], 100, np.array([1, 1])
-
-    dmod.read_bids_entry = fake_read
-
-    ds = BIDSDataset(
-        tmp_path,
-        task="rest",
-        subjects="01",  # str
-        session="A",  # str
-        runs="1",  # str
-        suffix="epo",  # triggers pre_epoched logic
-        subject_metadata_df=meta_df,
-        subject_key="sub",
-        target_col="target",
+def test_bids_dataset_identifies_recordings_by_entities(tmp_path, write_bids_epochs):
+    write_bids_epochs(tmp_path, "01", session="A", run="1")
+    write_bids_epochs(tmp_path, "01", session="A", run="10")
+    write_bids_epochs(tmp_path, "02", session="A", run="1")
+    (tmp_path / "participants.tsv").write_text(
+        "participant_id\tage\nsub-01\t30\nsub-02\t40\n"
     )
 
-    res = ds.load()
-    assert res.X.shape == (2, 2, 10)
-    assert res.y is not None
-    assert "run" in res.coords
+    container = _load_epochs(tmp_path)
 
-    # Bad metadata
-    with pytest.raises(ValueError):
-        BIDSDataset(tmp_path, subject_metadata_df=meta_df).load()  # no subject_key
-    with pytest.raises(ValueError):
-        BIDSDataset(tmp_path, subject_metadata_df=meta_df, subject_key="missing").load()
+    assert container.dims == ("obs", "channel", "time")
+    assert container.X.shape == (6, 2, 20)
+    assert container.meta["sfreq"] == 100.0
+    assert container.coords["channel"].tolist() == ["C1", "C2"]
+    assert container.coords["recording_id"].tolist() == [
+        "sub-01_ses-A_task-rest_run-1",
+        "sub-01_ses-A_task-rest_run-1",
+        "sub-01_ses-A_task-rest_run-10",
+        "sub-01_ses-A_task-rest_run-10",
+        "sub-02_ses-A_task-rest_run-1",
+        "sub-02_ses-A_task-rest_run-1",
+    ]
+    assert container.ids[:2].tolist() == [
+        "sub-01_ses-A_task-rest_run-1_epoch-0000",
+        "sub-01_ses-A_task-rest_run-1_epoch-0001",
+    ]
+    assert container.coords["subject"].tolist() == ["01"] * 4 + ["02"] * 2
+    assert container.coords["run"].tolist() == ["1", "1", "10", "10", "1", "1"]
+    assert container.coords["age"].tolist() == [30] * 4 + [40] * 2
 
-    # Drop short epochs vs pad
-    def fake_read_short(*args, **kwargs):
-        # We will cycle shapes to simulate short epochs
-        nonlocal call_idx
-        call_idx += 1
-        if call_idx == 1:
-            return np.zeros((1, 2, 10)), np.zeros(10), ["C1", "C2"], 100, None
-        return np.zeros((1, 2, 5)), np.zeros(5), ["C1", "C2"], 100, None
+    one_run = _load_epochs(tmp_path, subjects="01", runs="1", event_id="left")
+    assert one_run.ids.tolist() == ["sub-01_ses-A_task-rest_run-1_epoch-0000"]
 
-    call_idx = 0
-    dmod.read_bids_entry = fake_read_short
-    ds2 = BIDSDataset(tmp_path, subjects=["01", "02"], drop_short_epochs=False)
-    # create second sub dir to get 2 calls
-    (tmp_path / "sub-02" / "eeg").mkdir(parents=True)
 
-    res2 = ds2.load()
-    assert res2.X.shape[2] == 5  # cropped to min
+def test_bids_dataset_description_selects_the_file(tmp_path, write_bids_epochs):
+    write_bids_epochs(tmp_path, "01", description="base", value=1.0)
+    write_bids_epochs(tmp_path, "01", description="alt", value=2.0)
 
-    dmod.read_bids_entry = orig_read
+    assert np.all(_load_epochs(tmp_path, description="base", units="V").X[:, 0] == 1)
+    assert np.all(_load_epochs(tmp_path, description="alt", units="V").X[:, 0] == 2)
+    with pytest.raises(ValueError, match="Several files match recording sub-01"):
+        _load_epochs(tmp_path)
+
+
+def test_bids_dataset_recordings_must_agree(tmp_path, write_bids_epochs):
+    write_bids_epochs(tmp_path, "01", ch_names=("C1", "C2"))
+    write_bids_epochs(tmp_path, "02", ch_names=("C2", "C1"))
+
+    container = _load_epochs(tmp_path, units="V")
+    assert container.coords["channel"].tolist() == ["C1", "C2"]
+    assert container.X[:, :, 0].tolist() == [[0, 1], [0, 1], [1, 0], [1, 0]]
+
+    write_bids_epochs(tmp_path, "03", ch_names=("C1", "C3"))
+    with pytest.raises(ValueError, match=r"ch_names.* must match"):
+        _load_epochs(tmp_path, subjects=["01", "03"])
+    write_bids_epochs(tmp_path, "04", sfreq=200.0)
+    with pytest.raises(ValueError, match=r"sfreq.* must match"):
+        _load_epochs(tmp_path, subjects=["01", "04"])
+
+
+def test_bids_dataset_raw_recordings(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    raw = mne.io.RawArray(
+        np.zeros((2, 300)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
+    )
+    raw.set_meas_date(0)
+    for subject in ("01", "02"):
+        write_raw_bids(
+            raw,
+            BIDSPath(root=tmp_path, subject=subject, task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+
+    container = BIDSDataset(
+        tmp_path, task="rest", datatype="meg", window_length=1.0
+    ).load()
+
+    assert container.X.shape == (6, 2, 100)
+    assert container.ids[:2].tolist() == [
+        "sub-01_task-rest_epoch-0000",
+        "sub-01_task-rest_epoch-0001",
+    ]
+    assert set(container.coords["recording_id"]) == {
+        "sub-01_task-rest",
+        "sub-02_task-rest",
+    }
+
+    with pytest.raises(RuntimeError, match="No valid data found"):
+        BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
+
+
+def test_bids_dataset_reports_recordings_that_fail_to_load(
+    tmp_path, write_bids_epochs, caplog
+):
+    write_bids_epochs(tmp_path, "01")
+    write_bids_epochs(tmp_path, "02").write_bytes(b"not a FIF file")
+
+    with caplog.at_level("WARNING"):
+        container = _load_epochs(tmp_path)
+
+    assert set(container.coords["subject"]) == {"01"}
+    (failure,) = container.meta["load_failures"]
+    assert failure["recording_id"] == "sub-02_task-rest"
+    assert failure["error"]
+    assert "Could not load sub-02_task-rest" in caplog.text
+
+    assert _load_epochs(tmp_path, subjects="01").meta["load_failures"] == []
+    with pytest.raises(
+        RuntimeError, match=r"No valid data found in .*sub-02_task-rest"
+    ):
+        _load_epochs(tmp_path, subjects="02")

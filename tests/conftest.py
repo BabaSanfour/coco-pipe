@@ -55,3 +55,49 @@ def _sandbox_runtime_env():
     os.environ.setdefault("MPLCONFIGDIR", mpl_dir)
     os.environ.setdefault("MNE_HOME", mne_dir)
     os.environ.setdefault("MNE_DONTWRITE_HOME", "true")
+
+
+@pytest.fixture
+def write_bids_epochs():
+    """Return a function that saves a two-epoch file under a BIDS root."""
+    import mne
+    import numpy as np
+    from mne_bids import BIDSPath
+
+    def write(
+        root,
+        subject,
+        *,
+        session=None,
+        run=None,
+        description=None,
+        ch_names=("C1", "C2"),
+        n_times=20,
+        sfreq=100.0,
+        value=0.0,
+    ):
+        path = BIDSPath(
+            root=root,
+            subject=subject,
+            session=session,
+            task="rest",
+            run=run,
+            description=description,
+            datatype="eeg",
+            suffix="epo",
+            extension=".fif",
+            check=False,
+        ).mkdir()
+        epochs = mne.EpochsArray(
+            np.zeros((2, len(ch_names), n_times))
+            + value
+            + np.arange(len(ch_names))[:, None],
+            mne.create_info(list(ch_names), sfreq, "eeg"),
+            events=np.array([[0, 0, 1], [n_times, 0, 2]]),
+            event_id={"left": 1, "right": 2},
+            verbose=False,
+        )
+        epochs.save(path.fpath, verbose=False)
+        return path.fpath
+
+    return write

@@ -60,8 +60,8 @@ def load_data(
     tmin: float = -0.2,
     tmax: float = 0.5,
     baseline: tuple[float | None, float | None] | None = None,
-    drop_short_epochs: bool = True,
     units: str | None = None,
+    description: str | None = None,
     subject_metadata_df: Any | None = None,
     subject_key: str | None = None,
     # --- Embedding Arguments ---
@@ -139,14 +139,13 @@ def load_data(
     datatype : str, default='eeg'
         Data type folder (e.g., 'eeg', 'meg', 'ieeg').
     suffix : str, optional
-        File suffix to load (e.g., 'eeg', 'epo', 'ave').
+        File suffix to load (e.g., 'eeg', 'epo').
     loading_mode : str, default='epochs'
         How to process the data. Renamed to ``loading_mode`` here (and in
         ``BIDSConfig``) to avoid colliding with this function's ``mode``
         argument; it is passed through as ``mode`` to ``BIDSDataset``.
 
         - 'epochs': Splices continuous data into fixed-length windows.
-        - 'continuous': Loads as single continuous segments.
         - 'load_existing': Loads pre-computed epochs.
     window_length : float, optional
         Window length in seconds (for 'epochs' mode).
@@ -158,6 +157,8 @@ def load_data(
         Column in `subject_metadata_df` containing the BIDS subject identifier.
     subjects : str or List[str], optional
         Specific subject IDs to load (without 'sub-').
+    description : str, optional
+        The ``desc`` entity of the files to load.
 
     Embedding Arguments (mode="embedding")
     --------------------------------------
@@ -248,8 +249,8 @@ def load_data(
             tmin=tmin,
             tmax=tmax,
             baseline=baseline,
-            drop_short_epochs=drop_short_epochs,
             units=units,
+            description=description,
             pattern=pattern,
             dims=dims,
             coords=coords,
@@ -298,8 +299,8 @@ def load_data(
             tmin=dataset_cfg.tmin,
             tmax=dataset_cfg.tmax,
             baseline=dataset_cfg.baseline,
-            drop_short_epochs=dataset_cfg.drop_short_epochs,
             units=dataset_cfg.units,
+            description=dataset_cfg.description,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
             subjects=dataset_cfg.subjects,
@@ -362,8 +363,8 @@ def _build_config(
     tmin,
     tmax,
     baseline,
-    drop_short_epochs,
     units,
+    description,
     pattern,
     dims,
     coords,
@@ -404,8 +405,8 @@ def _build_config(
             tmin=tmin,
             tmax=tmax,
             baseline=baseline,
-            drop_short_epochs=drop_short_epochs,
             units=units,
+            description=description,
         )
     if mode == "embedding":
         return EmbeddingConfig(

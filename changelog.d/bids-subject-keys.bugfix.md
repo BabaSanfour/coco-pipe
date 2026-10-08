@@ -1,0 +1,1 @@
+`BIDSDataset` now matches subject metadata to recordings on normalized subject labels, so `1`, `01`, `0001` and `sub-0001` refer to the same subject in `participants.tsv` and in `subject_metadata_df`. A `participants.tsv` that cannot be read now raises instead of being ignored.

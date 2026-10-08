@@ -58,7 +58,6 @@ def test_bids_config_extended_fields():
     assert cfg.tmin == -0.2
     assert cfg.tmax == 0.5
     assert cfg.baseline is None
-    assert cfg.drop_short_epochs is True
 
     cfg = BIDSConfig(
         path="/root",
@@ -68,13 +67,11 @@ def test_bids_config_extended_fields():
         tmin=-0.1,
         tmax=0.8,
         baseline=(None, 0.0),
-        drop_short_epochs=False,
     )
     assert cfg.runs == ["01", "02"]
     assert cfg.target_col == "group"
     assert cfg.event_id == {"go": 1}
     assert cfg.baseline == (None, 0.0)
-    assert cfg.drop_short_epochs is False
 
 
 def test_embedding_config_legacy_bids_fields():

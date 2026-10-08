@@ -9,23 +9,16 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
+import mne
 import numpy as np
 import pandas as pd
+from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
 
-from ._serialization import default_id_extractor, smart_reader
+from ._serialization import smart_reader
 from .structures import DataContainer
-from .utils import (
-    _get_bids_path,
-    detect_runs,
-    detect_sessions,
-    detect_subjects,
-    load_participants_tsv,
-    read_bids_entry,
-    split_column,
-)
+from .utils import load_participants_tsv, normalize_subject_value, split_column
 
 logger = logging.getLogger(__name__)
 
@@ -360,8 +353,7 @@ class EmbeddingDataset(BaseDataset):
         Custom function to read a Path and return a numpy array or dict.
         If None, uses `smart_reader` based on file extension.
     id_fn : callable, optional
-        Custom function to extract subject ID from a Path.
-        If None, uses `default_id_extractor`.
+        Function returning the subject ID of a Path. Defaults to the file stem.
     task : str, optional
         (Legacy BIDS) Task name to construct search pattern.
     run : str, optional
@@ -412,7 +404,7 @@ class EmbeddingDataset(BaseDataset):
 
         # 2. Set Reader
         self.reader = reader if reader else smart_reader
-        self.id_fn = id_fn if id_fn else default_id_extractor
+        self.id_fn = id_fn or (lambda path: path.stem)
 
     def load(self) -> DataContainer:
         # Find files
@@ -508,11 +500,12 @@ class EmbeddingDataset(BaseDataset):
 
 class BIDSDataset(BaseDataset):
     """
-    Dataset for loading M/EEG data formatted according to the BIDS standard.
+    Dataset for loading epoched M/EEG data from a BIDS dataset.
 
-    This class supports loading valid BIDS structures, handling multiple subjects,
-    sessions, and data types (Raw, Epoched, Evoked). It automatically extracts
-    metadata from `participants.tsv` and aligns it with the loaded data.
+    Recordings are found and read with MNE-BIDS, as :class:`mne.Epochs`, and
+    stacked with :func:`mne.concatenate_epochs`, so they must share their
+    channels, sampling rate and epoch length. Metadata from ``participants.tsv``
+    is attached to every observation.
 
     Parameters
     ----------
@@ -521,27 +514,49 @@ class BIDSDataset(BaseDataset):
     task : str, optional
         The task name (e.g., 'rest', 'audiovisual').
     session : str or List[str], optional
-        The session ID(s) to load. If None, detects all available sessions.
+        The session ID(s) to load. If None, all sessions are loaded.
     datatype : str, default='eeg'
         The data type to load (e.g., 'eeg', 'meg').
     suffix : str, optional
-        The suffix of the files to load.
-        - If None, defaults to `datatype`.
-        - Use 'epo' to load pre-computed epochs.
-        - Use 'ave' to load evoked data.
+        The suffix of the files to load. Defaults to `datatype`, or to 'epo'
+        for pre-computed epochs.
     mode : str, default='epochs'
-        The loading mode:
-        - 'epochs': Splices raw continuous data into fixed-length windows.
-        - 'continuous': Loads raw data as single continuous segments (1 epoch per run).
-        - 'load_existing': treated as pre-computed epochs (requires `suffix='epo'`).
+        - 'epochs': cut raw recordings into epochs.
+        - 'load_existing': read pre-computed epochs (``*_epo.fif``).
+    target_col : str, optional
+        Metadata column to expose as the target ``y``. By default ``y`` holds
+        the event codes.
     window_length : float, optional
-        Length of window in seconds for 'epochs' mode.
+        Length in seconds of the fixed-length epochs cut from raw recordings.
     stride : float, optional
-        Stride between windows in seconds. If None, defaults to `window_length`
-        (no overlap).
+        Stride between windows in seconds. Defaults to `window_length`.
     subjects : str or List[str], optional
-        Specific subject IDs to load (without 'sub-' prefix). If None, detects all
-        subjects.
+        Subject IDs to load (without 'sub-' prefix). If None, all subjects.
+    runs : str or List[str], optional
+        Run IDs to load. If None, all runs.
+    event_id : dict, str or list of str, optional
+        For raw recordings, the events to epoch around (see
+        :func:`mne.events_from_annotations`), in place of fixed-length windows.
+        For pre-computed epochs, the event names to keep.
+    subject_metadata_df : DataFrame, optional
+        Subject-level metadata to attach, in addition to ``participants.tsv``.
+    subject_key : str, optional
+        Column of `subject_metadata_df` holding the subject ID.
+    tmin, tmax : float
+        Epoch limits in seconds around each event, with `event_id` on raw
+        recordings.
+    baseline : tuple, optional
+        Baseline interval, with `event_id` on raw recordings.
+    units : str, optional
+        Units of the returned data (see :meth:`mne.Epochs.get_data`).
+    description : str, optional
+        The ``desc`` entity of the files to load.
+
+    Notes
+    -----
+    The ``recording_id`` coordinate is the BIDS entity string of a recording,
+    e.g. ``sub-0001_ses-01_task-rest_run-01``. Observation IDs are
+    ``<recording_id>_epoch-<i>``.
 
     Examples
     --------
@@ -569,8 +584,8 @@ class BIDSDataset(BaseDataset):
         tmin: float = -0.2,
         tmax: float = 0.5,
         baseline: tuple[float | None, float | None] | None = None,
-        drop_short_epochs: bool = True,
         units: str | None = None,
+        description: str | None = None,
     ):
         self.root = Path(root)
         self.task = task
@@ -589,8 +604,80 @@ class BIDSDataset(BaseDataset):
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
-        self.drop_short_epochs = drop_short_epochs
         self.units = units
+        self.description = description
+
+    def _find_recordings(self, saved: bool) -> dict[str, BIDSPath]:
+        """Return the ``BIDSPath`` of each recording to load, by recording ID."""
+        paths = find_matching_paths(
+            self.root,
+            subjects=self.subjects,
+            sessions=self.session,
+            tasks=self.task,
+            runs=self.runs,
+            descriptions=self.description,
+            datatypes=self.datatype,
+            suffixes=self.suffix or ("epo" if saved else self.datatype),
+            extensions=".fif" if saved else None,
+            ignore_json=True,
+        )
+        recordings = {}
+        for path in paths:
+            recording_id = BIDSPath(
+                subject=path.subject,
+                session=path.session,
+                task=path.task,
+                acquisition=path.acquisition,
+                run=path.run,
+            ).basename
+            if not saved:
+                # Raw formats can have several files per recording (.vhdr, .eeg).
+                recordings.setdefault(recording_id, path.copy().update(extension=None))
+            elif recording_id in recordings:
+                raise ValueError(
+                    f"Several files match recording {recording_id}: "
+                    f"{recordings[recording_id].basename} and {path.basename}. "
+                    "Pass `description` to choose one."
+                )
+            else:
+                recordings[recording_id] = path
+        return dict(sorted(recordings.items()))
+
+    def _read_epochs(self, bids_path: BIDSPath, saved: bool) -> mne.BaseEpochs:
+        """Read one recording as epochs."""
+        if saved:
+            # Derivative epochs have no sidecars to warn about.
+            epochs = read_epochs_bids(bids_path, verbose="error")
+            if self.event_id is None:
+                return epochs
+            names = [self.event_id] if isinstance(self.event_id, str) else self.event_id
+            names = [name for name in names if name in epochs.event_id]
+            if not names:
+                raise ValueError(f"No epochs with event_id={self.event_id}.")
+            return epochs[names]
+
+        raw = read_raw_bids(bids_path, verbose=False).pick(["eeg", "meg"])
+        if self.event_id is None:
+            return mne.make_fixed_length_epochs(
+                raw,
+                duration=self.window_length,
+                overlap=self.window_length - (self.stride or self.window_length),
+                preload=True,
+                verbose=False,
+            )
+        events, event_id = mne.events_from_annotations(
+            raw, event_id=self.event_id, verbose=False
+        )
+        return mne.Epochs(
+            raw,
+            events,
+            event_id,
+            tmin=self.tmin,
+            tmax=self.tmax,
+            baseline=self.baseline,
+            preload=True,
+            verbose=False,
+        )
 
     def load(self) -> DataContainer:
         """
@@ -601,20 +688,27 @@ class BIDSDataset(BaseDataset):
         DataContainer
             A container with:
             - X: Data array of shape (N_obs, N_channels, N_time).
+            - y: The event code of each observation, or `target_col`.
             - ids: Unique identifiers for each observation.
-            - coords: Dictionary containing 'channel', 'time', 'obs', and metadata.
+            - coords: 'channel', 'time', and one entry per observation for
+              'obs', 'recording_id', 'subject', 'session', 'run' and the
+              subject metadata.
             - dims: ('obs', 'channel', 'time').
-        """
-        # Resolve subjects
-        if self.subjects is None:
-            subjects = detect_subjects(self.root)
-            subjects = sorted(subjects)
-        elif isinstance(self.subjects, str):
-            subjects = [self.subjects]
-        else:
-            subjects = sorted(self.subjects)
+            - meta: 'sfreq', 'source', 'units', and 'load_failures' (the
+              'recording_id' and 'error' of each recording that failed to load).
 
-        # Load participants.tsv metadata
+        Raises
+        ------
+        RuntimeError
+            If no recording could be loaded.
+        ValueError
+            If the recordings cannot be stacked (see
+            :func:`mne.concatenate_epochs`).
+        """
+        saved = self.mode == "load_existing" or "epo" in (self.suffix or "")
+        if not saved and self.window_length is None and self.event_id is None:
+            raise ValueError("Raw recordings need `window_length` or `event_id`.")
+
         meta_lookup = load_participants_tsv(self.root)
         if self.subject_metadata_df is not None:
             if self.subject_key is None:
@@ -627,297 +721,77 @@ class BIDSDataset(BaseDataset):
                     "in subject_metadata_df."
                 )
             for _, row in self.subject_metadata_df.iterrows():
-                sub = str(row[self.subject_key]).replace("sub-", "")
+                sub = normalize_subject_value(row[self.subject_key])
                 meta_lookup.setdefault(sub, {}).update(row.to_dict())
 
-        data_list = []
-        ids_list = []
-        # Per-trial BIDS path components — exposed as obs-aligned coords so
-        # downstream callers can group by subject/session/run without
-        # parsing the composite ``ids`` strings.
-        subject_per_trial: list[str] = []
-        session_per_trial: list[str] = []
-        run_per_trial: list[str] = []
-        meta_columns = (
-            {k: [] for k in next(iter(meta_lookup.values()))} if meta_lookup else {}
-        )
-        labels_list = []
+        epochs_list = []
+        load_failures: list[dict[str, str]] = []
+        with mne.use_log_level("WARNING"):
+            for recording_id, bids_path in self._find_recordings(saved).items():
+                try:
+                    epochs = self._read_epochs(bids_path, saved)
+                except Exception as e:
+                    error = f"{type(e).__name__}: {e}"
+                    logger.warning(f"Could not load {recording_id}: {error}")
+                    load_failures.append({"recording_id": recording_id, "error": error})
+                    continue
+                epochs.metadata = pd.DataFrame(
+                    {
+                        "obs": [
+                            f"{recording_id}_epoch-{i:04d}" for i in range(len(epochs))
+                        ],
+                        "recording_id": recording_id,
+                        "subject": bids_path.subject,
+                        "session": bids_path.session or "",
+                        "run": bids_path.run or "",
+                        **meta_lookup.get(
+                            normalize_subject_value(bids_path.subject), {}
+                        ),
+                    }
+                )
+                if epochs_list and set(epochs.ch_names) == set(epochs_list[0].ch_names):
+                    epochs.reorder_channels(epochs_list[0].ch_names)
+                epochs_list.append(epochs)
 
-        ch_names = None
-        times = None
-        sfreq = None
-
-        # Determine Loading Strategy
-        # If suffix implies pre-computed data
-        is_pre_epoched = (self.suffix and "epo" in self.suffix) or (
-            self.mode == "load_existing"
-        )
-        is_evoked = (self.suffix and "ave" in self.suffix) or (self.datatype == "ave")
-
-        for sub in subjects:
-            # Resolve sessions
-            if self.session is None:
-                sessions = detect_sessions(self.root, sub)
-                if not sessions:
-                    sessions = [None]
-            elif isinstance(self.session, str):
-                sessions = [self.session]
-            else:
-                sessions = self.session
-
-            sub_meta = meta_lookup.get(sub, {})
-
-            for ses in sessions:
-                # Resolve runs
-                if self.runs is None:
-                    runs = detect_runs(
-                        self.root, sub, ses, task=self.task, datatype=self.datatype
+            if not epochs_list:
+                message = f"No valid data found in {self.root}"
+                if load_failures:
+                    message += (
+                        f": {len(load_failures)} recording(s) could not be loaded, "
+                        f"the first being {load_failures[0]['recording_id']} "
+                        f"({load_failures[0]['error']})"
                     )
-                    if not runs:
-                        runs = [None]
-                elif isinstance(self.runs, str):
-                    runs = [self.runs]
-                else:
-                    runs = self.runs
+                raise RuntimeError(message)
 
-                for run in runs:
-                    if is_pre_epoched:
-                        pre_epoched_dir = self.root / f"sub-{sub}"
-                        if ses:
-                            pre_epoched_dir = pre_epoched_dir / f"ses-{ses}"
-                        pre_epoched_dir = pre_epoched_dir / self.datatype
+            epochs = mne.concatenate_epochs(epochs_list, verbose=False)
 
-                        stem_parts = [f"sub-{sub}"]
-                        if ses:
-                            stem_parts.append(f"ses-{ses}")
-                        if self.task:
-                            stem_parts.append(f"task-{self.task}")
-                        if run:
-                            stem_parts.append(f"run-{run}")
+        coords = {
+            "channel": np.array(epochs.ch_names),
+            "time": epochs.times,
+            **{name: epochs.metadata[name].to_numpy() for name in epochs.metadata},
+        }
+        for name in ("session", "run"):
+            if not coords[name].astype(bool).any():
+                del coords[name]
 
-                        pre_epoched_suffix = self.suffix or "epo"
-                        stem = "*_".join(stem_parts)
-                        matches = sorted(
-                            pre_epoched_dir.glob(f"{stem}*_{pre_epoched_suffix}.fif")
-                        )
-                        bids_path = SimpleNamespace(
-                            fpath=(
-                                matches[0]
-                                if matches
-                                else pre_epoched_dir
-                                / f"{stem}_{pre_epoched_suffix}.fif"
-                            ),
-                            match=lambda matches=matches: matches,
-                        )
-                    else:
-                        bids_path = _get_bids_path()(
-                            subject=sub,
-                            session=ses,
-                            task=self.task,
-                            run=run,
-                            datatype=self.datatype,
-                            root=self.root,
-                            suffix=self.suffix or self.datatype,
-                        )
-
-                    try:
-                        # --- LOAD STRATEGY (Delegated) ---
-                        data, current_times, current_ch, current_sfreq, current_y = (
-                            read_bids_entry(
-                                bids_path,
-                                is_pre_epoched=is_pre_epoched,
-                                is_evoked=is_evoked,
-                                mode=self.mode,
-                                window_length=self.window_length,
-                                stride=self.stride,
-                                event_id=self.event_id,
-                                tmin=self.tmin,
-                                tmax=self.tmax,
-                                baseline=self.baseline,
-                                units=self.units,
-                            )
-                        )
-
-                        # --- CONSISTENCY CHECKS ---
-                        if ch_names is None:
-                            ch_names = current_ch
-                            sfreq = current_sfreq
-                            times = current_times
-                        else:
-                            # 1. Channel Consistency
-                            if list(current_ch) != list(ch_names):
-                                diff = set(current_ch) ^ set(ch_names)
-                                logger.warning(
-                                    f"Channel mismatch for sub-{sub} ses-{ses}. "
-                                    f"Expected {len(ch_names)}, got {len(current_ch)}. "
-                                    f"Differing channels: {list(diff)[:5]}..."
-                                )
-
-                            # 2. Time/Length Consistency
-                            if len(current_times) != len(times):
-                                logger.warning(
-                                    f"Time length mismatch for sub-{sub} ses-{ses}. "
-                                    f"Expected {len(times)}, got {len(current_times)}. "
-                                    "This may cause concatenation failure."
-                                )
-                            elif not np.allclose(current_times, times, atol=1e-5):
-                                # Often simple jitter in start times, but important if
-                                # rigorous
-                                pass
-
-                        # --- APPEND DATA ---
-                        data_list.append(data)
-                        if current_y is not None:
-                            labels_list.append(current_y)
-
-                        # --- GENERATE IDs & METADATA ---
-                        # data shape is (N_epochs, C, T)
-                        n_epochs = data.shape[0]
-
-                        sid_base = f"{sub}"
-                        if ses:
-                            sid_base += f"_{ses}"
-                        if run:
-                            sid_base += f"_run-{run}"
-
-                        new_ids = [f"{sid_base}_{i}" for i in range(n_epochs)]
-                        ids_list.extend(new_ids)
-
-                        # BIDS path components, one entry per epoch
-                        subject_per_trial.extend([str(sub)] * n_epochs)
-                        session_per_trial.extend([str(ses) if ses else ""] * n_epochs)
-                        run_per_trial.extend([str(run) if run else ""] * n_epochs)
-
-                        # Repeatedly append subject metadata for each epoch
-                        for k, v in sub_meta.items():
-                            meta_columns.setdefault(k, []).extend([v] * n_epochs)
-
-                    except Exception as e:
-                        logger.debug(f"Failed to load subject {sub} session {ses}: {e}")
-                        continue
-
-        if not data_list:
-            raise RuntimeError(f"No valid data found in {self.root}")
-
-        # --- HANDLE VARIABLE EPOCH LENGTHS ---
-        # Some recordings have edge epochs shorter than the requested window
-        # (event placed too close to end-of-file).  Build a per-epoch boolean
-        # mask so we can filter the flat id/coord lists consistently.
-        t_lengths = [d.shape[2] for d in data_list]
-        t_expected = max(t_lengths)
-        if min(t_lengths) < t_expected:
-            import warnings as _warnings
-
-            short_set = {i for i, t in enumerate(t_lengths) if t < t_expected}
-            n_short = sum(data_list[i].shape[0] for i in short_set)
-
-            # Build epoch-level keep mask aligned with ids_list / *_per_trial lists
-            epoch_keep = []
-            for i, d in enumerate(data_list):
-                epoch_keep.extend([i not in short_set] * d.shape[0])
-            epoch_keep = np.asarray(epoch_keep, dtype=bool)
-
-            if self.drop_short_epochs:
-                _warnings.warn(
-                    f"Dropping {n_short} epoch(s) from {len(short_set)} batch(es) "
-                    f"with fewer than {t_expected} time samples "
-                    f"(pass drop_short_epochs=False to crop to shortest instead).",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                data_list = [
-                    data_list[i] for i in range(len(data_list)) if i not in short_set
-                ]
-                labels_list = (
-                    [
-                        labels_list[i]
-                        for i in range(len(labels_list))
-                        if i not in short_set
-                    ]
-                    if labels_list
-                    else labels_list
-                )
-                ids_list = [v for v, k in zip(ids_list, epoch_keep, strict=False) if k]
-                subject_per_trial = [
-                    v for v, k in zip(subject_per_trial, epoch_keep, strict=False) if k
-                ]
-                session_per_trial = [
-                    v for v, k in zip(session_per_trial, epoch_keep, strict=False) if k
-                ]
-                run_per_trial = [
-                    v for v, k in zip(run_per_trial, epoch_keep, strict=False) if k
-                ]
-                for col in meta_columns:
-                    meta_columns[col] = [
-                        v
-                        for v, k in zip(meta_columns[col], epoch_keep, strict=False)
-                        if k
-                    ]
-            else:
-                t_min = min(t_lengths)
-                _warnings.warn(
-                    f"Variable epoch lengths detected ({t_min}-{t_expected} samples). "
-                    f"Cropping all epochs to {t_min} samples "
-                    f"(pass drop_short_epochs=True to drop short epochs instead).",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                data_list = [d[:, :, :t_min] for d in data_list]
-                if times is not None:
-                    times = times[:t_min]
-
-        # --- CONCATENATE ---
-        try:
-            # data_list contains (N_i, C, T)
-            X_out = np.concatenate(data_list, axis=0)
-            y_out = np.concatenate(labels_list, axis=0) if labels_list else None
-        except ValueError as e:
-            shapes = [d.shape for d in data_list[:5]]
-            raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
-
-        coords = {}
-        if ch_names is not None and len(ch_names) > 0:
-            coords["channel"] = np.array(ch_names)
-        if times is not None:
-            coords["time"] = times
-        if ids_list:
-            coords["obs"] = np.array(ids_list)
-
-        # BIDS path coords (subject / session / run) — populated from
-        # the loop above so downstream code can ``container.coords['subject']``
-        # directly rather than parsing ``container.ids``.
-        if subject_per_trial:
-            coords["subject"] = np.array(subject_per_trial)
-        if session_per_trial and any(s for s in session_per_trial):
-            coords["session"] = np.array(session_per_trial)
-        if run_per_trial and any(r for r in run_per_trial):
-            coords["run"] = np.array(run_per_trial)
-
-        # Add metadata coords
-        for k, v in meta_columns.items():
-            if len(v) == len(ids_list):
-                coords[k] = np.array(v)
-
+        y = epochs.events[:, 2]
         if self.target_col is not None:
             if self.target_col not in coords:
                 raise ValueError(
                     f"target_col '{self.target_col}' not found in BIDS coords."
                 )
-            if len(coords[self.target_col]) != len(ids_list):
-                raise ValueError(
-                    f"target_col '{self.target_col}' length "
-                    f"{len(coords[self.target_col])} does not match "
-                    f"the number of observations {len(ids_list)}."
-                )
-            y_out = np.array(coords[self.target_col])
-
-        dims = ("obs", "channel", "time")
+            y = coords[self.target_col]
 
         return DataContainer(
-            X=X_out,
-            y=y_out,
-            ids=np.array(ids_list),
-            dims=dims,
+            X=epochs.get_data(units=self.units, copy=False),
+            y=y,
+            ids=coords["obs"],
+            dims=("obs", "channel", "time"),
             coords=coords,
-            meta={"sfreq": sfreq, "source": str(self.root), "units": self.units},
+            meta={
+                "sfreq": epochs.info["sfreq"],
+                "source": str(self.root),
+                "units": self.units,
+                "load_failures": load_failures,
+            },
         )

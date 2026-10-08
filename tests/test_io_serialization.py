@@ -1,7 +1,6 @@
 """Unit tests for the shared low-level serialization primitives."""
 
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -10,7 +9,6 @@ import pytest
 
 from coco_pipe.io import _serialization as serialization_mod
 from coco_pipe.io._serialization import (
-    default_id_extractor,
     load_object,
     read_json,
     read_table,
@@ -147,11 +145,6 @@ def test_read_table_unsupported_format_raises(tmp_path):
 # --------------------------------------------------------------------------- #
 # Blob reader + id extraction
 # --------------------------------------------------------------------------- #
-def test_default_id_extractor(tmp_path):
-    assert default_id_extractor(tmp_path / "sub-01_task-rest.pkl") == "01"
-    assert default_id_extractor(tmp_path / "patient_x.pkl") == "patient_x"
-
-
 def test_smart_reader(tmp_path):
     import pickle
 
@@ -212,11 +205,6 @@ def test_smart_reader_h5(tmp_path):
     p5 = tmp_path / "test5.unknown"
     with pytest.raises(ValueError):
         smart_reader(p5)
-
-
-def test_default_id_extractor_path_helper():
-    assert default_id_extractor(Path("sub-0007_task-rest_emb.pkl")) == "0007"
-    assert default_id_extractor(Path("plainfile.npy")) == "plainfile"
 
 
 def test_write_json_non_atomic(tmp_path):

@@ -6,7 +6,6 @@ from ._constants import (
     DESCRIPTOR_ONLY_ANALYSIS_MODES,
 )
 from ._serialization import (
-    default_id_extractor,
     load_object,
     read_json,
     read_table,
@@ -87,7 +86,6 @@ __all__ = [
     "compute_feature_missingness",
     "compute_row_outlier_scores",
     "compute_subject_outlier_burden",
-    "default_id_extractor",
     "discover_embedding_derivatives",
     "drop_epoch_outliers",
     "drop_subject_outliers",

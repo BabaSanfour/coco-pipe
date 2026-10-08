@@ -41,6 +41,7 @@ dependencies = [
   "matplotlib<3.13",
   "seaborn",
   "scipy>=1.11.0",
+  "xarray",
   "pyriemann>=0.7",
   "pyyaml",
   "pydantic",
@@ -52,6 +53,10 @@ dependencies = [
   # Report text is markdown; without this package the report silently falls
   # back to escaped plain text (literal ** and backticks).
   "markdown",
+  # mne-bids 0.20 only locks shared files with filelock>=3.20.4
+  "mne>=1.9.0",
+  "mne-bids>=0.20",
+  "filelock>=3.20.4",
 ]
 
 [project.optional-dependencies]
@@ -181,8 +186,6 @@ spatiotemporal = [
 ]
 
 eeg = [
-  "mne>=1.9.0",
-  "mne-bids>=0.10.0",
   "meegkit",
 ]
 
@@ -229,8 +232,6 @@ full = [
   "gudhi",
   "pydmd",
   "meegkit",
-  "mne>=1.9.0",
-  "mne-bids>=0.10.0",
   "specparam",
   "antropy",
   "neurokit2",
