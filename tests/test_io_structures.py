@@ -264,6 +264,12 @@ def test_save_load_roundtrip(tmp_path, sample_container):
     assert loaded.dims == sample_container.dims
     np.testing.assert_array_equal(loaded.X, sample_container.X)
     np.testing.assert_array_equal(loaded.y, sample_container.y)
+    np.testing.assert_array_equal(loaded.ids, sample_container.ids)
+    assert loaded.coords.keys() == sample_container.coords.keys()
+    assert loaded.coords["group"].tolist() == ["control", "patient"]
+    # each coordinate comes back on the dimension it was on
+    assert loaded.isel(obs=[1]).coords["group"].tolist() == ["patient"]
+    assert loaded.isel(obs=[1]).coords["channel"].tolist() == ["Fz", "Cz", "Pz"]
 
 
 def test_concat_two_flat_containers():
@@ -679,7 +685,7 @@ def test_save_load_errors(tmp_path):
     bad_file = tmp_path / "bad.joblib"
     joblib.dump({"not": "a container"}, bad_file)
 
-    with pytest.raises(TypeError, match="Loaded object is"):
+    with pytest.raises(ValueError, match="does not hold a saved DataContainer"):
         DataContainer.load(bad_file)
 
 

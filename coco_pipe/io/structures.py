@@ -143,6 +143,9 @@ _AGGREGATE_STATS = {
 }
 
 
+_SAVE_FORMAT = "coco_pipe.DataContainer/1"
+
+
 class DataContainer:
     """
     Generic container for N-dimensional neurophysiological data.
@@ -290,7 +293,11 @@ class DataContainer:
 
     def save(self, path: str | Any) -> None:
         """
-        Save the DataContainer to disk using joblib.
+        Save the container to ``path`` with joblib.
+
+        The file holds plain arrays and dictionaries (the data, each
+        coordinate with its dimension, ``y``, ``ids`` and ``meta``), not a
+        pickled instance, so it can still be read after this class changes.
 
         Parameters
         ----------
@@ -299,8 +306,19 @@ class DataContainer:
         """
         from ._serialization import save_object
 
-        saved = save_object(self, path)
-        logger.info(f"DataContainer saved to {saved}")
+        save_object(
+            {
+                "format": _SAVE_FORMAT,
+                "X": self.X,
+                "dims": self.dims,
+                "coords": {
+                    name: (coord.dims, coord.values)
+                    for name, coord in self.data.coords.items()
+                },
+                "meta": dict(self.meta),
+            },
+            path,
+        )
 
     def observation_frame(self) -> pd.DataFrame:
         """Return observation-aligned coordinates and stable sample IDs."""
@@ -326,7 +344,7 @@ class DataContainer:
     @classmethod
     def load(cls, path: str | Any) -> "DataContainer":
         """
-        Load a DataContainer from disk.
+        Load a container saved with :meth:`save`.
 
         Parameters
         ----------
@@ -336,10 +354,27 @@ class DataContainer:
         Returns
         -------
         DataContainer
+
+        Raises
+        ------
+        FileNotFoundError
+            If ``path`` does not exist.
+        ValueError
+            If the file does not hold a saved container.
         """
         from ._serialization import load_object
 
-        return load_object(path, expected_type=cls)
+        payload = load_object(path)
+        if not isinstance(payload, dict) or payload.get("format") != _SAVE_FORMAT:
+            raise ValueError(f"{path} does not hold a saved DataContainer.")
+        return cls(
+            xr.DataArray(
+                payload["X"],
+                dims=payload["dims"],
+                coords=payload["coords"],
+                attrs=payload["meta"],
+            )
+        )
 
     @classmethod
     def concat(
