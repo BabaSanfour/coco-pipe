@@ -692,6 +692,7 @@ class BIDSDataset(BaseDataset):
         -------
         DataContainer
             A container with:
+
             - X: Data array of shape (N_obs, N_channels, N_time).
             - y: The event code of each observation, or `target_col`.
             - ids: Unique identifiers for each observation.
