@@ -268,6 +268,9 @@ class BrainDecodeBackend(BackendBase):
             # the rows matching the input ``chs_info`` by name (braindecode#991),
             # so any montage that is a subset of the pretraining set works.
             kw.setdefault("channel_embedding", "pretrain_aligned")
+            # braindecode builds a classification head either way, sized from
+            # the window length.
+            kw.setdefault("n_times", n_times)
         elif model_key == "biot":
             # Plain BIOT on the 16-channel TCP bipolar montage built by exact
             # subtraction (see channel_plan.adapter); never InterpolatedBIOT.
@@ -287,7 +290,8 @@ class BrainDecodeBackend(BackendBase):
             load_kwargs["filename"] = filename
         effective_outputs = (
             1
-            if model_key in {"cbramod", "luna", "eegpt"} and n_outputs is None
+            if model_key in {"cbramod", "luna", "eegpt", "signaljepa"}
+            and n_outputs is None
             else n_outputs
         )
         if effective_outputs is not None:

@@ -55,8 +55,20 @@ def _resolve_hf_token(token: str | None) -> str | None:
         return None
 
 
+REAL_MODEL_KEYS = (
+    "cbramod",
+    "labram",
+    "reve",
+    "luna",
+    "biot",
+    "eegpt",
+    "signaljepa",
+    "bendr",
+)
+
+
 def validate_real_checkpoints(
-    model_keys: Sequence[str] = ("cbramod", "labram", "reve", "luna"),
+    model_keys: Sequence[str] = REAL_MODEL_KEYS,
     device: str = "cpu",
     token: str | None = None,
     ch_names: Sequence[str] | None = None,
@@ -143,7 +155,7 @@ def validate_real_checkpoints(
 
 
 def validate_real_training(
-    model_keys: Sequence[str] = ("cbramod", "labram", "reve", "luna"),
+    model_keys: Sequence[str] = REAL_MODEL_KEYS,
     train_modes: Sequence[str] = ("linear_probe", "full", "lora"),
     device: str = "cpu",
     token: str | None = None,

@@ -250,10 +250,13 @@ class HuggingFaceBackend(BackendBase):
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
-                target_modules=list(lora_target_modules),
+                target_modules=(
+                    lora_target_modules
+                    if isinstance(lora_target_modules, str)
+                    else list(lora_target_modules)
+                ),
                 lora_dropout=lora_dropout,
                 bias="none",
-                task_type="FEATURE_EXTRACTION",
             )
             backbone = get_peft_model(backbone, lora_cfg)
         elif train_mode == "frozen":

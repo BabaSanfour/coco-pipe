@@ -133,7 +133,7 @@ torch = [
 ]
 
 braindecode = [
-  "braindecode>=1.5.0,<1.6",
+  "braindecode>=1.8",
 ]
 
 hf = [
@@ -149,7 +149,7 @@ peft = [
 foundation = [
   "torch",
   "skorch",
-  "braindecode>=1.4.0,<1.6",
+  "braindecode>=1.8",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -235,7 +235,7 @@ full = [
   "specparam",
   "antropy",
   "neurokit2",
-  "braindecode>=1.4.0,<1.6",
+  "braindecode>=1.8",
   "transformers",
   "huggingface-hub",
   "peft",

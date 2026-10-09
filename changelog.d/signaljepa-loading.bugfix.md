@@ -1,0 +1,1 @@
+SignalJEPA loads again with braindecode 1.5, for embeddings and for fine-tuning: the model was built without the window length its head needs. The real-checkpoint checks now cover all eight backbones.
