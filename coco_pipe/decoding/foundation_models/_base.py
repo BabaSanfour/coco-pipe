@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -49,6 +49,17 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """
         self._model = None
         self._net_ = None
+
+    def head_module(self) -> Any:
+        """Return the output head, the part that a probe phase trains alone."""
+        model = getattr(self, "_model", None)
+        candidates = [getattr(self, "_head", None)] + [
+            getattr(model, name, None) for name in ("final_layer", "classifier", "head")
+        ]
+        for candidate in candidates:
+            if candidate is not None:
+                return candidate
+        raise NotImplementedError(f"{type(self).__name__} does not expose its head.")
 
     @abstractmethod
     def reset_head(self, n_outputs: int) -> BackendBase:
@@ -150,6 +161,11 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             lr : float, default 1e-3
             weight_decay : float, default 0.01
             batch_size : int, default 32
+            lr_warmup_epochs : int, default 0
+            accumulate_grad_batches : int, default 1
+            focal_gamma : float or None, default None
+            probe_epochs : int, default 0
+            probe_lr : float or None, default None
 
         Returns
         -------
@@ -271,8 +287,12 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         **fit_params,
     ) -> BackendBase:
         """Shared skorch training loop. Both real backends use this verbatim."""
+        from functools import partial
+
         import torch
         from skorch import NeuralNetClassifier, NeuralNetRegressor
+
+        from . import _training
 
         groups = fit_params.pop("groups", None)
         class_weight = fit_params.pop("class_weight", None)
@@ -299,6 +319,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             import torch.nn as nn
 
             net_kwargs["criterion"] = nn.CrossEntropyLoss
+            if fit_params.get("focal_gamma") is not None:
+                net_kwargs["criterion"] = _training.FocalLoss
+                net_kwargs["criterion__gamma"] = float(fit_params["focal_gamma"])
             if class_weight is not None:
                 import torch
 
@@ -359,19 +382,67 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 )
             )
 
-        self._net_ = net_cls(
-            module=self._get_skorch_module(),
-            module__backend=self,
-            module__output_dim=out_dim,
-            device=self._device,
-            max_epochs=fit_params.get("max_epochs", 10),
-            optimizer=torch.optim.AdamW,
-            optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
-            lr=fit_params.get("lr", 1e-3),
-            batch_size=fit_params.get("batch_size", 32),
-            callbacks=callbacks,
-            **net_kwargs,
-        )
+        max_epochs = int(fit_params.get("max_epochs", 10))
+        lr = fit_params.get("lr", 1e-3)
+        warmup_epochs = int(fit_params.get("lr_warmup_epochs", 0))
+        if warmup_epochs:
+            from skorch.callbacks import LRScheduler
+
+            callbacks.append(
+                LRScheduler(
+                    policy=torch.optim.lr_scheduler.LambdaLR,
+                    lr_lambda=partial(
+                        _training.warmup_cosine,
+                        warmup_epochs=warmup_epochs,
+                        max_epochs=max_epochs,
+                    ),
+                )
+            )
+        accumulate = int(fit_params.get("accumulate_grad_batches", 1))
+        if accumulate > 1:
+            net_cls = (
+                _training.AccumulatingClassifier
+                if self._task == "classification"
+                else _training.AccumulatingRegressor
+            )
+            net_kwargs["accumulate_grad_batches"] = accumulate
+
+        def build_net(max_epochs, lr, callbacks):
+            return net_cls(
+                module=self._get_skorch_module(),
+                module__backend=self,
+                module__output_dim=out_dim,
+                device=self._device,
+                max_epochs=max_epochs,
+                optimizer=torch.optim.AdamW,
+                optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
+                lr=lr,
+                batch_size=fit_params.get("batch_size", 32),
+                callbacks=callbacks,
+                **net_kwargs,
+            )
+
+        probe_epochs = int(fit_params.get("probe_epochs", 0))
+        if probe_epochs:
+            # Train the head alone first: everything else that would train is
+            # frozen for this phase, then released for the training below.
+            probe = build_net(probe_epochs, fit_params.get("probe_lr") or lr, [])
+            probe.initialize()
+            head = {id(parameter) for parameter in self.head_module().parameters()}
+            frozen = [
+                parameter
+                for parameter in probe.module_.parameters()
+                if parameter.requires_grad and id(parameter) not in head
+            ]
+            for parameter in frozen:
+                parameter.requires_grad = False
+            try:
+                probe.partial_fit(X, y)
+            finally:
+                for parameter in frozen:
+                    parameter.requires_grad = True
+
+        self._net_ = build_net(max_epochs, lr, callbacks)
         self._net_.fit(X, y)
         return self
 

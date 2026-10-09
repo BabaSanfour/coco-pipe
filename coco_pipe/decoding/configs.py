@@ -674,6 +674,41 @@ class TrainerConfig(BaseModel):
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
     lr: float = Field(1e-3, gt=0, description="AdamW learning rate.")
     weight_decay: float = Field(0.01, ge=0, description="AdamW weight decay.")
+    lr_warmup_epochs: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Epochs of linear learning-rate warmup, followed by a cosine decay to "
+            "the last epoch. 0 keeps the learning rate constant."
+        ),
+    )
+    accumulate_grad_batches: int = Field(
+        1,
+        ge=1,
+        description=(
+            "Batches whose gradients are averaged before each optimizer step, for "
+            "an effective batch size of batch_size times this."
+        ),
+    )
+    focal_gamma: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Focusing strength of the focal loss used for classification. None "
+            "uses cross-entropy."
+        ),
+    )
+    probe_epochs: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Epochs spent training the head alone, with everything else frozen, "
+            "before the training that train_mode describes. 0 skips this phase."
+        ),
+    )
+    probe_lr: float | None = Field(
+        None, gt=0, description="Learning rate of the probe phase. Defaults to lr."
+    )
 
 
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
