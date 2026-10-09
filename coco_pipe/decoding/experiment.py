@@ -7,6 +7,7 @@ Main executor for decoding experiments.
 from __future__ import annotations
 
 import atexit
+import itertools
 import logging
 import time
 from collections import defaultdict
@@ -47,6 +48,27 @@ from .registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_dict_grid(grid: dict[str, list], params: dict[str, Any]) -> dict[str, list]:
+    """Turn keys such as ``lora__r`` into candidates for the dict parameter.
+
+    Scikit-learn can only search over whole parameters, so the values given for
+    the fields of one dict parameter are combined into a list of full dicts.
+    """
+    merged, fields = {}, {}
+    for key, values in grid.items():
+        name, _, field = key.partition("__")
+        if field and isinstance(params.get(name), dict):
+            fields.setdefault(name, {})[field] = values
+        else:
+            merged[key] = values
+    for name, choices in fields.items():
+        merged[name] = [
+            {**params[name], **dict(zip(choices, combination, strict=True))}
+            for combination in itertools.product(*choices.values())
+        ]
+    return merged
 
 
 class Experiment:
@@ -505,7 +527,9 @@ class Experiment:
         """Wrap an estimator with hyperparameter search (GridSearch/RandomSearch)."""
         from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 
-        grid = self.config.grids[name]
+        grid = _merge_dict_grid(
+            self.config.grids[name], estimator.named_steps["clf"].get_params(deep=False)
+        )
         mapped = {k if "__" in k else f"clf__{k}": v for k, v in grid.items()}
         valid = estimator.get_params(deep=True)
         invals = [k for k in mapped if k not in valid]
@@ -875,6 +899,7 @@ class Experiment:
                 ),
                 force_serial=(n_jobs == 1),
                 sample_weight=sample_weight,
+                score_by_group=self.config.cv.score_by_group,
             )
             for train_idx, test_idx in splits
         )

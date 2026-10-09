@@ -1,0 +1,1 @@
+A tuning grid can address one field of a dict parameter as `<parameter>__<field>`, for example `lora__r`, `lora__alpha` or `trainer__lr` on a fine-tuned model. Fields left out of the grid keep their configured value.

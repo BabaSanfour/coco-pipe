@@ -803,3 +803,52 @@ def test_fit_and_score_fold_releases_foundation_only(monkeypatch):
 
     _run_fold_with_family("foundation", MockEstimator(), monkeypatch)
     assert fired["count"] == 1
+
+
+def test_score_by_group_scores_one_prediction_per_group():
+    from sklearn.metrics import accuracy_score, roc_auc_score
+
+    from coco_pipe.decoding import CVConfig, Experiment, ExperimentConfig
+    from coco_pipe.decoding.configs import LogisticRegressionConfig
+
+    rng = np.random.default_rng(0)
+    groups = np.repeat(np.arange(20), 6)
+    y = groups % 2
+    X = rng.normal(size=(120, 4)) + 0.4 * y[:, None]
+
+    def run(score_by_group):
+        config = ExperimentConfig(
+            models={"lr": LogisticRegressionConfig()},
+            cv=CVConfig(
+                strategy="stratified_group_kfold",
+                n_splits=2,
+                group_key="subject",
+                score_by_group=score_by_group,
+            ),
+            metrics=["accuracy", "roc_auc"],
+            n_jobs=1,
+        )
+        metadata = {"subject": groups, "session": ["01"] * len(groups)}
+        return Experiment(config).run(X, y, groups=groups, sample_metadata=metadata)
+
+    def fold_scores(result):
+        scores = result.get_detailed_scores("lr")
+        return scores.pivot(index="Fold", columns="Metric", values="Value")
+
+    pooled, per_sample = run(True), run(False)
+
+    # the stored predictions stay per sample; only the fold scores change
+    predictions = pooled.get_predictions("lr")
+    assert len(predictions) == 120
+    scores = fold_scores(pooled)
+    for fold, rows in predictions.groupby("Fold"):
+        by_group = rows.groupby("Group").agg(
+            y_true=("y_true", "first"), proba=("y_proba_1", "mean")
+        )
+        assert scores.loc[fold, "roc_auc"] == pytest.approx(
+            roc_auc_score(by_group["y_true"], by_group["proba"])
+        )
+        assert scores.loc[fold, "accuracy"] == pytest.approx(
+            accuracy_score(by_group["y_true"], by_group["proba"] > 0.5)
+        )
+    assert not np.allclose(scores["roc_auc"], fold_scores(per_sample)["roc_auc"])

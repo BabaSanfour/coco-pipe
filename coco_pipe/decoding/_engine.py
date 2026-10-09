@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn import config_context
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, is_classifier
 from sklearn.feature_selection import (
     SelectKBest,
     SequentialFeatureSelector,
@@ -171,6 +171,56 @@ class _SafeSelectKBest(BaseEstimator):
         return self.selector_.get_support(indices=indices)
 
 
+def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict:
+    """Reduce the test predictions of a fold to one prediction per group.
+
+    Probabilities, decision scores and regression predictions are averaged
+    within a group. A pooled class is the one with the highest mean probability,
+    or the most predicted one when the model gives no probabilities.
+
+    Parameters
+    ----------
+    fold_data : dict
+        Per-sample ``group``, ``y_true``, ``y_pred`` and, when available,
+        ``y_proba`` and ``y_score``.
+    classes : np.ndarray or None
+        Sorted class labels, or None for regression.
+
+    Returns
+    -------
+    dict
+        The same keys, with one row per group.
+    """
+    if fold_data["group"] is None:
+        raise ValueError("score_by_group needs groups.")
+    groups, first, index = np.unique(
+        fold_data["group"], return_index=True, return_inverse=True
+    )
+    y_true = np.asarray(fold_data["y_true"])
+    if not np.array_equal(y_true[first][index], y_true):
+        raise ValueError("score_by_group needs one target value per group.")
+
+    def mean(values):
+        values = np.asarray(values, dtype=float)
+        total = np.zeros((len(groups), *values.shape[1:]))
+        np.add.at(total, index, values)
+        counts = np.bincount(index).reshape(-1, *[1] * (values.ndim - 1))
+        return total / counts
+
+    pooled = {"group": groups, "y_true": y_true[first]}
+    for key in ("y_proba", "y_score"):
+        if fold_data.get(key) is not None:
+            pooled[key] = mean(fold_data[key])
+    if classes is None:
+        pooled["y_pred"] = mean(fold_data["y_pred"])
+        return pooled
+    votes = pooled.get("y_proba")
+    if votes is None:
+        votes = mean(np.asarray(fold_data["y_pred"])[:, None] == classes[None, :])
+    pooled["y_pred"] = classes[votes.argmax(axis=1)]
+    return pooled
+
+
 def fit_and_score_fold(
     estimator: BaseEstimator,
     X: np.ndarray,
@@ -190,6 +240,7 @@ def fit_and_score_fold(
     search_enabled: bool = False,
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
+    score_by_group: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -381,6 +432,12 @@ def fit_and_score_fold(
 
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
+    scored = fold_data
+    if score_by_group:
+        scored = pool_by_group(
+            fold_data, np.unique(y[train_idx]) if is_classifier(estimator) else None
+        )
+        y_test, y_pred = scored["y_true"], scored["y_pred"]
     is_multiclass = type_of_target(y_test) == "multiclass"
     metric_specs = {m: get_metric_spec(m) for m in metrics}
 
@@ -391,12 +448,12 @@ def fit_and_score_fold(
             if m_spec.response_method == "predict":
                 y_est, is_p = y_pred, False
             elif m_spec.response_method == "proba":
-                y_est, is_p = fold_data.get("y_proba"), True
+                y_est, is_p = scored.get("y_proba"), True
             else:  # proba_or_score
-                y_est = fold_data.get("y_proba")
+                y_est = scored.get("y_proba")
                 is_p = True
                 if y_est is None:
-                    y_est, is_p = fold_data.get("y_score"), False
+                    y_est, is_p = scored.get("y_score"), False
 
             scores[name] = compute_metric_safe(
                 m_spec.scorer,
@@ -910,11 +967,11 @@ def compact_search_results(estimator: BaseEstimator) -> list[dict[str, Any]]:
     for idx, p in enumerate(params):
         row = {"candidate": idx, "params": dict(p)}
         if ranks is not None:
-            row["rank"] = int(ranks[idx])
+            row["rank_test_score"] = int(ranks[idx])
         if means is not None:
-            row["mean"] = float(means[idx])
+            row["mean_test_score"] = float(means[idx])
         if stds is not None:
-            row["std"] = float(stds[idx])
+            row["std_test_score"] = float(stds[idx])
         results.append(row)
 
     return results

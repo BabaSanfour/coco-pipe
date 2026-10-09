@@ -848,6 +848,14 @@ class CVConfig(BaseModel):
     group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
     )
+    score_by_group: bool = Field(
+        False,
+        description=(
+            "Score each fold on one prediction per group: the test predictions of "
+            "a group are averaged before the metrics are computed. Predictions are "
+            "stored per sample either way."
+        ),
+    )
     auto_reduce_n_splits: bool = Field(
         True,
         description=(
@@ -1196,7 +1204,8 @@ class ExperimentConfig(BaseModel):
     # Map of Friendly Name -> Polymorphic Config Object
     models: dict[str, ModelConfigType]
 
-    # Map of Friendly Name -> Parameter Grid (Search Space)
+    # Map of Friendly Name -> Parameter Grid (Search Space). A field of a dict
+    # parameter is addressed as "<parameter>__<field>", e.g. "lora__r".
     grids: dict[str, dict[str, list[Any]]] | None = None
 
     cv: CVConfig = Field(default_factory=CVConfig)

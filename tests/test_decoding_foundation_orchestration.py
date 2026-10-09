@@ -427,6 +427,52 @@ def test_experiment_dispatches_frozen_and_trainable_paths(tmp_path):
     assert set(result.summary().index) == {"frozen", "neural"}
 
 
+def test_grid_over_lora_and_trainer_fields():
+    from coco_pipe.decoding.configs import LoRAConfig, TuningConfig
+
+    rng = np.random.default_rng(4)
+    X = rng.normal(size=(48, 2, 20)).astype("float32")
+    y = np.repeat([0, 1], 24)
+    groups = np.array([f"p{index:02d}" for index in range(12) for _ in range(4)])
+    grouped = {"strategy": "stratified_group_kfold", "group_key": "subject"}
+    config = ExperimentConfig(
+        models={
+            "neural": NeuralFineTuneConfig(
+                model_key="cbramod",
+                backend="fake",
+                sfreq=200,
+                ch_names=["C3", "C4"],
+                lora=LoRAConfig(dropout=0.1),
+                trainer=TrainerConfig(max_epochs=1, batch_size=8),
+            )
+        },
+        grids={"neural": {"lora__r": [4, 8], "trainer__lr": [1e-3, 1e-2]}},
+        tuning=TuningConfig(enabled=True, cv=CVConfig(n_splits=2, **grouped), n_jobs=1),
+        cv=CVConfig(n_splits=2, **grouped),
+        metrics=["accuracy"],
+        n_jobs=1,
+    )
+    result = Experiment(config).run(
+        X,
+        y,
+        groups=groups,
+        sample_metadata={"subject": groups, "session": ["01"] * len(groups)},
+    )
+
+    search = result.get_search_results("neural")
+    tried = search[search["Fold"] == 0]["Params"].tolist()
+    assert sorted((p["clf__lora"]["r"], p["clf__trainer"]["lr"]) for p in tried) == [
+        (4, 1e-3),
+        (4, 1e-2),
+        (8, 1e-3),
+        (8, 1e-2),
+    ]
+    # fields outside the grid keep their configured value
+    assert {p["clf__lora"]["dropout"] for p in tried} == {0.1}
+    assert {p["clf__trainer"]["max_epochs"] for p in tried} == {1}
+    assert search["MeanTestScore"].notna().all()
+
+
 def test_gated_checkpoint_without_token_reports_authentication_required(
     monkeypatch,
 ):
