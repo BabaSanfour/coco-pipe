@@ -28,8 +28,7 @@ import numpy as np
 
 from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import ParametricDescriptorConfig
-from ._parametric_fit import _ParametricFitBatch, fit_parametric_batch
-from ._psd import compute_psd
+from ._parametric_fit import _ParametricFitBatch
 from .base import BasePSDDescriptorExtractor, _DescriptorBlock, make_failure_record
 
 
@@ -60,10 +59,8 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
     sensor-level naming is applied afterward through
     :meth:`BaseDescriptorExtractor._finalize_descriptor`.
 
-    When the pipeline provides a precomputed PSD batch through
-    :meth:`extract_psd`, the extractor reuses that shared spectral input
-    and expects an explicit shared `fit_batch`. Standalone :meth:`extract`
-    remains available for family-local PSD and fit computation.
+    `DescriptorPipeline` passes the shared PSD batch and the shared
+    parametric fit batch to :meth:`extract_psd`.
     """
 
     family_name = "parametric"
@@ -142,20 +139,12 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
             Parametric-family descriptor block aligned with the input
             observation axis.
 
-        Raises
-        ------
-        ValueError
-            If ``fit_batch`` is not supplied.
-
         Notes
         -----
         This method consumes explicit shared intermediates. It does not compute
         PSDs or fit models on its own.
         """
         channel_names = channel_names or [f"ch-{idx}" for idx in range(psds.shape[1])]
-        if fit_batch is None:
-            raise ValueError("Parametric extract_psd() requires a supplied fit_batch.")
-
         chunk_metric_arrays = fit_batch.metrics
         metrics: list[str] = []
         if "aperiodic" in self.config.outputs:
@@ -214,81 +203,4 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
                 "psd_method": self.config.psd_method,
             },
             failures=failures,
-        )
-
-    def extract(
-        self,
-        X: np.ndarray,
-        sfreq: float | None,
-        channel_names: list[str] | None,
-        ids: np.ndarray | None,
-        runtime,
-        obs_offset: int = 0,
-    ) -> _DescriptorBlock:
-        """Extract parametric descriptors from segmented multi-channel data.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input array with shape ``(n_obs, n_channels, n_times)``. Each row
-            already represents one observation segment produced upstream.
-        sfreq : float, optional
-            Sampling frequency in Hertz.
-        channel_names : list of str, optional
-            Explicit channel labels aligned with axis 1 of ``X``.
-        ids : np.ndarray, optional
-            Observation identifiers aligned with axis 0 of ``X``.
-        runtime : DescriptorRuntimeConfig
-            Runtime execution controls shared across descriptor families.
-        obs_offset : int, default=0
-            Global observation offset added to any collected failure records.
-
-        Returns
-        -------
-        _DescriptorBlock
-            Parametric-family descriptor block aligned with the input
-            observation axis.
-
-        Raises
-        ------
-        ImportError
-            If the optional `mne` or `specparam` backend is unavailable.
-        ValueError
-            If PSD computation encounters an invalid runtime condition.
-        RuntimeError
-            If shared fit materialization encounters a runtime failure and
-            ``runtime.on_error == "raise"``.
-
-        Notes
-        -----
-        This standalone path computes a PSD for the current batch, fits one
-        explicit parametric batch payload for this family, and then delegates
-        to :meth:`extract_psd`. When the family is executed through
-        `DescriptorPipeline`, the shared planner supplies the PSD and fit
-        payload instead.
-        """
-        psds, freqs = compute_psd(
-            X,
-            sfreq=sfreq,
-            method=self.config.psd_method,
-            fmin=self.config.freq_range[0],
-            fmax=self.config.freq_range[1],
-            n_jobs=None,
-        )
-        fit_batch = fit_parametric_batch(
-            psds,
-            freqs,
-            self.config,
-            runtime,
-            need_periodic_psd=False,
-            include_metrics=True,
-        )
-        return self.extract_psd(
-            psds,
-            freqs,
-            channel_names=channel_names,
-            ids=ids,
-            runtime=runtime,
-            obs_offset=obs_offset,
-            fit_batch=fit_batch,
         )

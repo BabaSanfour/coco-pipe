@@ -4,8 +4,8 @@ Base interfaces for descriptor extraction backends.
 This module defines the internal contracts shared by built-in descriptor
 extractors. The module exposes:
 
-- `BaseDescriptorExtractor` for families that consume validated raw signal
-  batches
+- `BaseDescriptorExtractor`, shared by all families; families that read the
+  raw signal (complexity) add `extract()`
 - `BasePSDDescriptorExtractor` for families that consume shared PSD batches
 - `_DescriptorBlock` as the private family output payload
 - `make_failure_record` as the shared normalized failure-record helper
@@ -96,12 +96,14 @@ def make_failure_record(
     }
 
 
-class BaseDescriptorExtractor(ABC):
+class BaseDescriptorExtractor:
     """
-    Abstract base class for descriptor extraction families.
+    Base class for descriptor extraction families.
 
-    Subclasses receive already validated NumPy inputs and must return one
-    `_DescriptorBlock` aligned on the observation axis. The base class keeps
+    Subclasses receive already validated NumPy inputs and return one
+    `_DescriptorBlock` aligned on the observation axis. Families that read
+    the raw signal define ``extract()``; PSD families derive from
+    `BasePSDDescriptorExtractor` instead. The base class keeps
     the extractor API narrow and provides a shared helper for sensor-level
     finalization and deterministic descriptor naming.
 
@@ -120,7 +122,7 @@ class BaseDescriptorExtractor(ABC):
     Notes
     -----
     Extractors are stateless at runtime. They do not learn parameters across
-    calls; all runtime state is provided explicitly through `extract()`.
+    calls; all runtime state is passed explicitly.
 
     Concrete extractors are expected to:
 
@@ -128,34 +130,6 @@ class BaseDescriptorExtractor(ABC):
        each metric
     2. pass those values through :meth:`_finalize_descriptor`
     3. return one `_DescriptorBlock` with aligned names, metadata, and failures
-
-    Examples
-    --------
-    A minimal concrete extractor typically looks like:
-
-    >>> class MeanOverTimeExtractor(BaseDescriptorExtractor):
-    ...     family_name = "toy"
-    ...
-    ...     def extract(
-    ...         self,
-    ...         X,
-    ...         sfreq,
-    ...         channel_names,
-    ...         ids,
-    ...         runtime,
-    ...     ):
-    ...         values = X.mean(axis=-1)
-    ...         X_out, names = self._finalize_descriptor(
-    ...             values,
-    ...             family_prefix="toy",
-    ...             metric_name="mean",
-    ...             channel_names=channel_names,
-    ...         )
-    ...         return _DescriptorBlock(
-    ...             family=self.family_name,
-    ...             X=X_out,
-    ...             descriptor_names=names,
-    ...         )
     """
 
     family_name = "base"
@@ -187,53 +161,6 @@ class BaseDescriptorExtractor(ABC):
             "deterministic": True,
             "optional_dependencies": [],
         }
-
-    @abstractmethod
-    def extract(
-        self,
-        X: np.ndarray,
-        sfreq: float | None,
-        channel_names: list[str] | None,
-        ids: np.ndarray | None,
-        runtime: DescriptorRuntimeConfig,
-        obs_offset: int = 0,
-    ) -> _DescriptorBlock:
-        """Extract descriptors from a validated input array.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input array with shape ``(n_obs, n_channels, n_times)``.
-        sfreq : float, optional
-            Sampling frequency in Hertz.
-        channel_names : list of str, optional
-            Explicit channel labels aligned with axis 1 of ``X``.
-        ids : np.ndarray, optional
-            Observation identifiers aligned with axis 0 of ``X``.
-        runtime : DescriptorRuntimeConfig
-            Runtime execution controls shared across extractors.
-        obs_offset : int, default=0
-            Global observation offset applied to any collected failure records.
-
-        Returns
-        -------
-        _DescriptorBlock
-            Family-specific descriptor matrix plus metadata and failures.
-
-        Raises
-        ------
-        ImportError
-            If an optional backend required by the extractor is unavailable.
-        ValueError
-            If the extractor encounters an invalid runtime condition and the
-            configured error policy requires raising.
-
-        Notes
-        -----
-        The recommended pattern is to keep family-specific computation local to
-        the extractor and delegate sensor-level naming behavior to
-        :meth:`_finalize_descriptor`.
-        """
 
     def _finalize_descriptor(
         self,
@@ -287,7 +214,7 @@ class BaseDescriptorExtractor(ABC):
         return values, names
 
 
-class BasePSDDescriptorExtractor(BaseDescriptorExtractor):
+class BasePSDDescriptorExtractor(BaseDescriptorExtractor, ABC):
     """
     Abstract base class for descriptor families that consume PSD batches.
 
@@ -301,11 +228,6 @@ class BasePSDDescriptorExtractor(BaseDescriptorExtractor):
     planner one formal PSD-consumer contract shared by spectral and parametric
     families.
 
-    Notes
-    -----
-    PSD consumers may still expose `extract()` to satisfy the generic family
-    interface, but the shared planner uses `psd_request()` and `extract_psd()`
-    exclusively once PSD intermediates have been materialized.
     """
 
     @abstractmethod
