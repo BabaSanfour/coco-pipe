@@ -713,8 +713,10 @@ def variance_decomposition_report(
     report = pd.DataFrame.from_records(rows)
     report.attrs["notes"] = [
         "Fractions are descriptive and depend on the selected feature scaling.",
-        "Permutation p-values are Monte Carlo diagnostics, not multiplicity-corrected "
-        "confirmatory tests.",
+        (
+            "Permutation p-values are Monte Carlo diagnostics, not "
+            "multiplicity-corrected confirmatory tests."
+        ),
         (
             "Observation-level probe CV can retain session/temporal dependence; pass "
             "probe_blocks to hold out whole acquisition blocks."

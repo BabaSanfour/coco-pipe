@@ -80,7 +80,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
 
     def __init__(self, config: BandDescriptorConfig, fit_config):
         super().__init__(config)
-        self.config = config
         self.fit_config = fit_config
 
     @property

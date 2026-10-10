@@ -67,7 +67,6 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
 
     def __init__(self, config: ParametricDescriptorConfig):
         super().__init__(config)
-        self.config = config
 
     @property
     def capabilities(self) -> dict[str, Any]:

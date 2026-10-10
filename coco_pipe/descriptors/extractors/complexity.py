@@ -115,7 +115,6 @@ class ComplexityDescriptorExtractor(BaseDescriptorExtractor):
 
     def __init__(self, config: ComplexityDescriptorConfig):
         super().__init__(config)
-        self.config = config
 
     @property
     def capabilities(self) -> dict[str, Any]:

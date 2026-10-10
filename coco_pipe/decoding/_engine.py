@@ -88,11 +88,10 @@ def _release_foundation_memory(estimator: Any) -> None:
     gc.collect()
     try:
         import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 class GroupedSequentialFeatureSelector(SequentialFeatureSelector):

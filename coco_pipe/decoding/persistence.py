@@ -99,10 +99,29 @@ def data_digest(*values: Any) -> str:
 RUN_MANIFEST_FILENAME = "run_manifest.json"
 
 
+def make_serializable(obj: Any) -> Any:
+    """Recursively convert NumPy types to JSON-safe Python primitives."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.int64, np.int32, np.int16, np.integer)):
+        return int(obj)
+    if isinstance(obj, (np.float64, np.float32, np.floating)):
+        return float(obj)
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    if isinstance(obj, Path):
+        return str(obj)
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj
+
+
 def write_run_manifest(output_dir: str | Path, manifest: Mapping[str, Any]) -> Path:
     """Write a unit's manifest in one step, so it is never seen half-written."""
-    from .result import make_serializable
-
     path = Path(output_dir) / RUN_MANIFEST_FILENAME
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(

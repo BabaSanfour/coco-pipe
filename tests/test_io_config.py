@@ -47,7 +47,7 @@ def test_dataset_config_picks_the_config_by_mode():
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: TabularConfig(),
+        TabularConfig,
         lambda: TabularConfig(path="data.csv", clean_kwargs="not_a_dict"),
         lambda: BIDSConfig(path="/root", n_jobs=0),
         lambda: DatasetConfig(dataset={"mode": "unknown", "path": "path"}),

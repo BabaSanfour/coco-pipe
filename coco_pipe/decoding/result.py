@@ -19,6 +19,12 @@ from ._diagnostics import (
     scalar_prediction_frame,
     score_rows,
 )
+from .persistence import (
+    config_hash,
+    make_serializable,
+    redact_sensitive,
+    write_run_manifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -191,8 +197,6 @@ class ExperimentResult:
         dict
             The paths written, by name.
         """
-        from .persistence import config_hash, redact_sensitive, write_run_manifest
-
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
         effective_config = dict(config or self.config or {})
@@ -2253,24 +2257,3 @@ class ExperimentResult:
             return pd.DataFrame()
 
         return pd.concat(frames, ignore_index=True)
-
-
-def make_serializable(obj: Any) -> Any:
-    """Recursively convert NumPy types to JSON-safe Python primitives."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, (np.int64, np.int32, np.int16, np.integer)):
-        return int(obj)
-    if isinstance(obj, (np.float64, np.float32, np.floating)):
-        return float(obj)
-    if isinstance(obj, (np.bool_, bool)):
-        return bool(obj)
-    if isinstance(obj, dict):
-        return {str(k): make_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [make_serializable(v) for v in obj]
-    if isinstance(obj, Path):
-        return str(obj)
-    if hasattr(obj, "model_dump"):
-        return obj.model_dump()
-    return obj

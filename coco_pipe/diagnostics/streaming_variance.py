@@ -918,9 +918,13 @@ def streamed_variance_decomposition_report(
     report = pd.DataFrame.from_records(rows)
     report.attrs["notes"] = [
         "Fractions are descriptive and depend on the selected feature scaling.",
-        "Permutation p-values are Monte Carlo diagnostics, not "
-        "multiplicity-corrected confirmatory tests.",
-        "The streamed subject probe uses fold-local standardization and a CPU "
-        "float32 PyTorch linear model.",
+        (
+            "Permutation p-values are Monte Carlo diagnostics, not "
+            "multiplicity-corrected confirmatory tests."
+        ),
+        (
+            "The streamed subject probe uses fold-local standardization and a CPU "
+            "float32 PyTorch linear model."
+        ),
     ]
     return report
