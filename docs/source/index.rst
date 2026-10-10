@@ -132,4 +132,5 @@ matures.
    api_reference
    Examples <auto_examples/index>
    Contributing <contributing>
+   release_notes
    vision
