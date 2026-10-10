@@ -150,6 +150,18 @@ def test_permutation_assessment_counts_the_chosen_units(unit, column, n_units, l
     assert (row["NEff"], row["InferentialUnit"]) == (n_units, label)
 
 
+def test_permutation_assessment_needs_one_label_per_unit():
+    X, y = _grouped_data()
+    # each "site" holds subjects of both classes
+    metadata = pd.DataFrame({"Subject": GROUPS, "Session": "01", "site": GROUPS // 2})
+    experiment = _experiment(
+        {"lr": LogisticRegressionConfig()},
+        _assessment("custom", "site", method="permutation", n_permutations=3),
+    )
+    with pytest.raises(ValueError, match="label varies within inference unit"):
+        experiment.run(X, y, groups=GROUPS, sample_metadata=metadata)
+
+
 def test_permutation_assessment_inputs():
     X, y = _grouped_data()
     # neither groups nor metadata: every permutation reruns without them

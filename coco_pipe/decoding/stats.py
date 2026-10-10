@@ -777,6 +777,12 @@ def _run_permutation_loop(
         mask = unit_values == u
         u_y = y[mask]
         if experiment_config.task == "classification":
+            if np.unique(u_y).size > 1:
+                raise ValueError(
+                    f"The label varies within inference unit {u!r}; a permutation "
+                    "test swaps whole units, so each unit needs one label. Use a "
+                    "unit inside which the target is constant."
+                )
             unit_labels_orig.append(u_y[0])
         else:
             unit_labels_orig.append(np.mean(u_y))
