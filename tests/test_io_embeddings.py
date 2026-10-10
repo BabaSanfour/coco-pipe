@@ -9,7 +9,6 @@ import pytest
 
 from coco_pipe.decoding.foundation_models import FoundationEmbeddingResult
 from coco_pipe.io.embeddings import (
-    _json_value,
     combined_embedding_table_path,
     discover_embedding_derivatives,
     embedding_observation_id,
@@ -154,6 +153,11 @@ def test_embedding_observation_id_is_recording_and_epoch():
         )
         == "sub-01_run-01_epoch-0002"
     )
+    # without a recording_id, pooled and token files of a recording agree
+    pooled, tokens = "sub-01_run-01_embedding.npz", "sub-01_run-01_tokens.npz"
+    assert embedding_observation_id({}, pooled, 3) == embedding_observation_id(
+        {}, tokens, 3
+    )
 
 
 def test_save_embedding_outputs_writes_independent_pooled_and_token_artifacts(tmp_path):
@@ -261,15 +265,6 @@ def test_manifest_discovery_partitions_by_kind(tmp_path):
     assert discover_embedding_derivatives(tmp_path, kind="token") == [tok]
 
 
-def test_pooled_and_token_fallback_observation_ids_match(tmp_path):
-    metadata = {"model_key": "demo"}
-    pooled = tmp_path / "sub-01_ses-01_run-01_embedding.npz"
-    tokens = tmp_path / "sub-01_ses-01_run-01_tokens.npz"
-    assert embedding_observation_id(metadata, pooled, 3) == (
-        embedding_observation_id(metadata, tokens, 3)
-    )
-
-
 def test_loader_requires_one_model_space(tmp_path):
     for model_key, subject in (("cbramod", "01"), ("reve", "02")):
         result = FoundationEmbeddingResult(
@@ -297,30 +292,34 @@ def test_loader_requires_one_model_space(tmp_path):
     assert selected.meta["model_key"] == "reve"
 
 
-def test_sidecar_stringifies_unknown_metadata_objects(tmp_path):
+@dataclass
+class Record:
+    a: int
+
+
+def test_sidecar_converts_metadata_to_json(tmp_path):
     result = FoundationEmbeddingResult(
         window_embeddings=np.ones((1, 2)),
         recording_embedding=np.ones(2),
         window_start=np.array([0]),
         window_stop=np.array([10]),
         window_index=np.array([0]),
-        metadata={"model_key": "cbramod", "opaque": object()},
+        metadata={
+            "model_key": "cbramod",
+            "opaque": object(),
+            "record": Record(1),
+            "array": np.array([1, 2]),
+            "count": np.int64(1),
+            "path": Path("foo/bar"),
+        },
     )
     path = tmp_path / "sub-01_desc-cbramod_embedding.npz"
     save_embedding_derivative(result, path)
     metadata = json.loads(path.with_suffix(".json").read_text())
     assert metadata["opaque"].startswith("<builtins.object:")
-
-
-def test_json_value_types():
-    @dataclass
-    class Dummy:
-        a: int
-
-    assert _json_value(Dummy(1)) == {"a": 1}
-    assert _json_value(np.array([1, 2])) == [1, 2]
-    assert _json_value(np.int64(1)) == 1
-    assert _json_value(Path("foo/bar")) == "foo/bar"
+    assert metadata["record"] == {"a": 1}
+    assert (metadata["array"], metadata["count"]) == ([1, 2], 1)
+    assert metadata["path"] == "foo/bar"
 
 
 def test_validate_embedding_errors(tmp_path):
@@ -429,6 +428,13 @@ def test_write_manifest_and_discover(tmp_path):
     paths = discover_embedding_derivatives(tmp_path, model_key="foo")
     assert len(paths) == 0
 
+    # failed records, records without a path and unreadable manifests list nothing
+    empty = tmp_path / "empty"
+    write_embedding_manifest(empty, [{"status": "failed"}, {"status": "success"}])
+    assert discover_embedding_derivatives(empty) == []
+    (empty / "run_manifest.json").write_text("bad json")
+    assert discover_embedding_derivatives(empty) == []
+
 
 def test_discover_finds_model_variant_missing_from_manifest(tmp_path):
     raw = tmp_path / "sub-1_embedding.npz"
@@ -520,55 +526,6 @@ def test_write_dataset_description(tmp_path):
     assert data["SourceDatasets"][0]["Name"] == "Source"
 
 
-def test_json_value_fallback():
-    class CustomObj:
-        def __str__(self):
-            return "custom"
-
-    assert "<" in _json_value(CustomObj())
-
-
-def test_discover_embeddings_extra(tmp_path):
-    # Manifest with bad status / missing artifact_path
-    records = [{"status": "failed"}, {"status": "success"}]  # missing artifact_path
-    write_embedding_manifest(tmp_path, records)
-    paths = discover_embedding_derivatives(tmp_path)
-    assert len(paths) == 0
-
-    # Manifest bad JSON
-    (tmp_path / "run_manifest.json").write_text("bad json")
-    paths = discover_embedding_derivatives(tmp_path)
-    assert len(paths) == 0
-
-
-def test_load_embeddings_window(tmp_path):
-    path1 = tmp_path / "1_embedding.npz"
-    sidecar1 = tmp_path / "1_embedding.json"
-    np.savez(
-        path1,
-        window_embeddings=np.array([[1, 2], [3, 4]]),
-        recording_embedding=np.array([1, 2]),
-        window_start=[1, 2],
-        window_stop=[2, 3],
-        window_index=[1, 2],
-    )
-    sidecar1.write_text('{"model_key": "M1"}')
-
-    # Canonical "epoch" representation (one row per epoch).
-    ds = load_embedding_derivatives(tmp_path, representation="epoch")
-    assert ds.shape == (2, 2)
-    assert ds.meta["representation"] == "epoch"
-
-    # The old "window" name is no longer accepted.
-    with pytest.raises(ValueError, match=r"epoch.*recording"):
-        load_embedding_derivatives(tmp_path, representation="window")
-
-
-def test_load_embeddings_empty_dir(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        load_embedding_derivatives(tmp_path)
-
-
 def test_load_embedding_derivatives_aggregate_by(tmp_path):
     result = FoundationEmbeddingResult(
         window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
@@ -586,6 +543,13 @@ def test_load_embedding_derivatives_aggregate_by(tmp_path):
         tmp_path, representation="epoch", aggregate_by="subject"
     )
     assert agg.X.shape[0] == 1
+    assert agg.meta["representation"] == "epoch"
+    # the old "window" name is no longer accepted
+    with pytest.raises(ValueError, match=r"epoch.*recording"):
+        load_embedding_derivatives(tmp_path, representation="window")
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError):
+        load_embedding_derivatives(tmp_path / "empty")
 
 
 def _write_combined_table(tmp_path, model_key, condition, representation):
@@ -617,16 +581,9 @@ def test_load_combined_embedding_table_roundtrip(tmp_path):
     assert "subject" in container.coords
     assert container.meta["model_key"] == "cbramod"
     assert container.meta["source"] == "combined_table"
-
-
-def test_load_combined_embedding_table_aggregate_by_subject(tmp_path):
-    _write_combined_table(tmp_path, "cbramod", "EO_baseline", "recording")
     agg = load_combined_embedding_table(
         tmp_path, "cbramod", "EO_baseline", "recording", aggregate_by="subject"
     )
-    assert agg.X.shape[0] == 2  # two unique subjects
-
-
-def test_load_combined_embedding_table_missing_raises(tmp_path):
+    assert agg.X.shape[0] == 2
     with pytest.raises(FileNotFoundError):
         load_combined_embedding_table(tmp_path, "cbramod", "EO_baseline", "epoch")

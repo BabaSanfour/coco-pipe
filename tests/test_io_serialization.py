@@ -1,13 +1,12 @@
-"""Unit tests for the shared low-level serialization primitives."""
+"""Tests for the shared serialization helpers."""
 
-import sys
-from unittest.mock import MagicMock, patch
+import pickle
 
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.io import _serialization as serialization_mod
 from coco_pipe.io._serialization import (
     load_object,
     read_json,
@@ -19,202 +18,90 @@ from coco_pipe.io._serialization import (
 )
 
 
-# --------------------------------------------------------------------------- #
-# JSON
-# --------------------------------------------------------------------------- #
-def test_write_read_json_roundtrip(tmp_path):
-    payload = {"a": 1, "b": [1, 2, 3], "c": {"nested": True}}
+@pytest.mark.parametrize("atomic", [True, False])
+def test_json_round_trip(tmp_path, atomic):
     path = tmp_path / "sub" / "payload.json"
-    returned = write_json(path, payload)
-    assert returned == path
-    assert path.exists()
+    payload = {"b": [1, 2, 3], "a": {"nested": True}}
+    assert write_json(path, payload, atomic=atomic, sort_keys=True) == path
+    write_json(path, payload, atomic=atomic, sort_keys=True)  # overwrite
     assert read_json(path) == payload
+    text = path.read_text(encoding="utf-8")
+    assert text.index('"a"') < text.index('"b"')
+    assert [p.name for p in path.parent.iterdir()] == ["payload.json"]
 
 
-def test_write_json_atomic_leaves_no_tmp(tmp_path):
-    path = tmp_path / "p.json"
-    write_json(path, {"x": 1}, atomic=True)
-    write_json(path, {"x": 2}, atomic=True)
-    assert read_json(path) == {"x": 2}
-    # No leftover temp siblings.
-    assert [p.name for p in tmp_path.iterdir()] == ["p.json"]
-
-
-def test_write_json_sort_keys(tmp_path):
-    path = tmp_path / "sorted.json"
-    write_json(path, {"b": 1, "a": 2}, sort_keys=True)
-    assert path.read_text(encoding="utf-8").index('"a"') < path.read_text(
-        encoding="utf-8"
-    ).index('"b"')
-
-
-# --------------------------------------------------------------------------- #
-# joblib object persistence
-# --------------------------------------------------------------------------- #
-def test_save_load_object_roundtrip(tmp_path):
-    obj = {"array": np.arange(5), "label": "x"}
+def test_object_round_trip(tmp_path):
     path = tmp_path / "nested" / "obj.joblib"
-    assert save_object(obj, path) == path
-    loaded = load_object(path)
-    assert loaded["label"] == "x"
+    assert save_object({"array": np.arange(5), "label": "x"}, path) == path
+    loaded = load_object(path, expected_type=dict)
     np.testing.assert_array_equal(loaded["array"], np.arange(5))
 
-
-def test_load_object_expected_type_ok(tmp_path):
-    path = tmp_path / "d.joblib"
-    save_object({"k": 1}, path)
-    assert load_object(path, expected_type=dict) == {"k": 1}
-
-
-def test_load_object_expected_type_mismatch(tmp_path):
-    path = tmp_path / "lst.joblib"
-    save_object([1, 2, 3], path)
+    save_object([1, 2, 3], tmp_path / "list.joblib")
     with pytest.raises(TypeError, match="expected dict"):
-        load_object(path, expected_type=dict)
-
-
-def test_load_object_missing(tmp_path):
+        load_object(tmp_path / "list.joblib", expected_type=dict)
     with pytest.raises(FileNotFoundError):
         load_object(tmp_path / "nope.joblib")
 
 
-# --------------------------------------------------------------------------- #
-# NPZ
-# --------------------------------------------------------------------------- #
-def test_save_npz_atomic_overwrite(tmp_path):
+@pytest.mark.parametrize("atomic", [True, False])
+def test_npz_round_trip(tmp_path, atomic):
     path = tmp_path / "arr.npz"
-    save_npz(path, a=np.arange(3))
-    save_npz(path, a=np.arange(3) + 10)
-    with np.load(path) as npz:
+    save_npz(path, atomic=atomic, a=np.arange(3))
+    save_npz(
+        path,
+        atomic=atomic,
+        a=np.arange(3) + 10,
+        payload=np.asarray([{"k": "v"}], dtype=object),
+    )
+    with np.load(path, allow_pickle=True) as npz:
         np.testing.assert_array_equal(npz["a"], np.arange(3) + 10)
-    # No leftover temp siblings.
+        assert dict(npz["payload"][0]) == {"k": "v"}
     assert [p.name for p in tmp_path.iterdir()] == ["arr.npz"]
 
 
-def test_save_npz_object_payload_roundtrip(tmp_path):
-    path = tmp_path / "diag.npz"
-    save_npz(path, payload=np.asarray([{"k": "v"}], dtype=object))
-    with np.load(path, allow_pickle=True) as npz:
-        assert dict(npz["payload"][0]) == {"k": "v"}
-
-
-# --------------------------------------------------------------------------- #
-# Tabular reader
-# --------------------------------------------------------------------------- #
-def test_read_table_csv(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text("subject;feature\nsub-1;1.5\nsub-2;2.5\n", encoding="utf-8")
-    table = read_table(path)
-    assert table.to_dict(orient="records") == [
+def test_read_table(tmp_path):
+    csv = tmp_path / "features.csv"
+    csv.write_text("subject;feature\nsub-1;1.5\nsub-2;2.5\n", encoding="utf-8")
+    assert read_table(csv).to_dict(orient="records") == [
         {"subject": "sub-1", "feature": 1.5},
         {"subject": "sub-2", "feature": 2.5},
     ]
+    csv.write_text("subject|feature\nsub-1|1.5\n", encoding="utf-8")
+    assert read_table(csv, sep="|").columns.tolist() == ["subject", "feature"]
+    # unnamed and empty columns are dropped
+    csv.write_text("subject,feature,Unnamed: 2,empty\nsub-1,1.5,,\n", encoding="utf-8")
+    assert read_table(csv).columns.tolist() == ["subject", "feature"]
 
-
-def test_read_table_parquet(monkeypatch, tmp_path):
-    path = tmp_path / "features.parquet"
+    parquet = tmp_path / "features.parquet"
     expected = pd.DataFrame({"subject": ["sub-1"], "feature": [1.5]})
-    read_parquet = MagicMock(return_value=expected)
-    monkeypatch.setattr(serialization_mod.pd, "read_parquet", read_parquet)
-    table = read_table(path)
-    read_parquet.assert_called_once_with(path)
-    pd.testing.assert_frame_equal(table, expected)
+    expected.to_parquet(parquet, index=False)
+    pd.testing.assert_frame_equal(read_table(parquet), expected)
 
-
-def test_read_table_drops_unnamed_and_empty_columns(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text("subject,feature,Unnamed: 2,empty\nsub-1,1.5,,\n", encoding="utf-8")
-    table = read_table(path)
-    assert table.columns.tolist() == ["subject", "feature"]
-
-
-def test_read_table_explicit_separator(tmp_path):
-    path = tmp_path / "features.csv"
-    path.write_text("subject|feature\nsub-1|1.5\n", encoding="utf-8")
-    table = read_table(path, sep="|")
-    assert table.to_dict(orient="records") == [{"subject": "sub-1", "feature": 1.5}]
-
-
-def test_read_table_unsupported_format_raises(tmp_path):
-    path = tmp_path / "features.tsv"
-    path.touch()
+    (tmp_path / "features.tsv").touch()
     with pytest.raises(ValueError, match=r"Expected \.csv or \.parquet"):
-        read_table(path)
+        read_table(tmp_path / "features.tsv")
 
 
-# --------------------------------------------------------------------------- #
-# Blob reader + id extraction
-# --------------------------------------------------------------------------- #
 def test_smart_reader(tmp_path):
-    import pickle
-
-    p_pkl = tmp_path / "test.pkl"
-    with open(p_pkl, "wb") as f:
+    with open(tmp_path / "test.pkl", "wb") as f:
         pickle.dump({"a": 1}, f)
-    assert smart_reader(p_pkl) == {"a": 1}
+    assert smart_reader(tmp_path / "test.pkl") == {"a": 1}
+    np.save(tmp_path / "test.npy", np.array([1, 2]))
+    assert smart_reader(tmp_path / "test.npy").tolist() == [1, 2]
+    (tmp_path / "test.json").write_text('{"key": "val"}')
+    assert smart_reader(tmp_path / "test.json") == {"key": "val"}
 
-    p_npy = tmp_path / "test.npy"
-    np.save(p_npy, np.array([1, 2]))
-    assert np.array_equal(smart_reader(p_npy), [1, 2])
-
-    p_json = tmp_path / "test.json"
-    p_json.write_text('{"key": "val"}')
-    assert smart_reader(p_json) == {"key": "val"}
-
-    p_bad = tmp_path / "test.xyz"
-    p_bad.touch()
-    with pytest.raises(ValueError, match="Unsupported extension"):
-        smart_reader(p_bad)
-
-    # H5 (mocked to avoid the dependency in this case).
-    p_h5 = tmp_path / "test.h5"
-    p_h5.touch()
-    with patch.dict(sys.modules, {"h5py": MagicMock()}):
-        m_h5 = sys.modules["h5py"]
-        m_file = m_h5.File.return_value.__enter__.return_value
-        m_file.keys.return_value = ["data"]
-        m_file.__getitem__.return_value.__getitem__.return_value = "h5_data"
-        assert smart_reader(p_h5) == "h5_data"
-
-
-def test_smart_reader_h5(tmp_path):
-    import h5py
-
-    p1 = tmp_path / "test1.h5"
-    with h5py.File(p1, "w") as f:
-        f.create_dataset("embeddings", data=np.array([1, 2]))
-    assert len(smart_reader(p1)) == 2
-
-    p2 = tmp_path / "test2.h5"
-    with h5py.File(p2, "w") as f:
-        f.create_dataset("data", data=np.array([1, 2]))
-    assert len(smart_reader(p2)) == 2
-
-    p3 = tmp_path / "test3.h5"
-    with h5py.File(p3, "w") as f:
-        f.create_dataset("random", data=np.array([1, 2]))
-    assert len(smart_reader(p3)) == 2
-
-    p4 = tmp_path / "test4.h5"
-    with h5py.File(p4, "w") as f:
+    # an HDF5 file is read from "embeddings", "data", or its only dataset
+    for name in ("embeddings", "data", "random"):
+        with h5py.File(tmp_path / f"{name}.h5", "w") as f:
+            f.create_dataset(name, data=np.array([1, 2]))
+        assert smart_reader(tmp_path / f"{name}.h5").tolist() == [1, 2]
+    with h5py.File(tmp_path / "two.h5", "w") as f:
         f.create_dataset("a", data=np.array([1]))
         f.create_dataset("b", data=np.array([2]))
     with pytest.raises(ValueError):
-        smart_reader(p4)
+        smart_reader(tmp_path / "two.h5")
 
-    p5 = tmp_path / "test5.unknown"
-    with pytest.raises(ValueError):
-        smart_reader(p5)
-
-
-def test_write_json_non_atomic(tmp_path):
-    path = tmp_path / "p_nonatomic.json"
-    write_json(path, {"x": 1}, atomic=False)
-    assert read_json(path) == {"x": 1}
-
-
-def test_save_npz_non_atomic(tmp_path):
-    path = tmp_path / "a_nonatomic.npz"
-    save_npz(path, atomic=False, a=np.arange(3))
-    with np.load(path) as npz:
-        np.testing.assert_array_equal(npz["a"], np.arange(3))
+    (tmp_path / "test.xyz").touch()
+    with pytest.raises(ValueError, match="Unsupported extension"):
+        smart_reader(tmp_path / "test.xyz")

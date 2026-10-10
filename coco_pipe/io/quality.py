@@ -1066,8 +1066,6 @@ def _filter_observations(
     keep_mask: np.ndarray,
 ) -> DataContainer:
     keep_mask = np.asarray(keep_mask, dtype=bool)
-    if keep_mask.shape != (container.X.shape[0],):
-        raise ValueError("keep_mask must align with observations.")
     filtered = container.isel(**{container.dims[0]: keep_mask})
     filtered.meta = _clean_filter_meta(copy.deepcopy(filtered.meta))
     return filtered
