@@ -3,6 +3,7 @@ name: Changelog
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -28,5 +29,6 @@ jobs:
           python -m pip install towncrier
 
       - name: Check changelog fragment
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
         run: |
           towncrier check --compare-with origin/main
