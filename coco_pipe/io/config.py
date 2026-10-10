@@ -100,9 +100,6 @@ class EmbeddingConfig(BaseDatasetConfig):
     pattern: str = "*.pkl"
     dims: tuple[str, ...] = ("obs", "feature")
     coords: dict[str, list | Any] | None = None
-    task: str | None = None
-    run: str | None = None
-    processing: str | None = None
 
 
 class DatasetConfig(BaseModel):

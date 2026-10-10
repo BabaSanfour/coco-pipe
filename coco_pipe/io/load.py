@@ -68,8 +68,6 @@ def load_data(
     pattern: str = "*.pkl",
     dims: tuple[str, ...] = ("obs", "feature"),
     coords: dict[str, list | np.ndarray] | None = None,
-    run: str | None = None,
-    processing: str | None = None,
     reader: Any | None = None,
     id_fn: Any | None = None,
     # --- Common Arguments ---
@@ -254,8 +252,6 @@ def load_data(
             pattern=pattern,
             dims=dims,
             coords=coords,
-            run=run,
-            processing=processing,
             subjects=subjects,
         )
 
@@ -315,9 +311,6 @@ def load_data(
             pattern=dataset_cfg.pattern,
             dims=dataset_cfg.dims,
             coords=dataset_cfg.coords,
-            task=dataset_cfg.task,
-            run=dataset_cfg.run,
-            processing=dataset_cfg.processing,
             reader=reader,
             id_fn=id_fn,
             subjects=dataset_cfg.subjects,
@@ -370,8 +363,6 @@ def _build_config(
     pattern,
     dims,
     coords,
-    run,
-    processing,
     subjects,
 ) -> TabularConfig | BIDSConfig | EmbeddingConfig:
     """Construct and validate the mode-appropriate config from raw kwargs."""
@@ -417,9 +408,6 @@ def _build_config(
             pattern=pattern,
             dims=dims,
             coords=coords,
-            task=task,
-            run=run,
-            processing=processing,
         )
     raise ValueError(
         f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."

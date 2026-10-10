@@ -342,7 +342,7 @@ class EmbeddingDataset(BaseDataset):
     Parameters
     ----------
     path : str or Path
-        Root directory containing the embedding files.
+        Directory searched for embedding files, or a single file.
     pattern : str, default=r'\*.pkl'
         Glob pattern to match files (e.g., ``*.npy``, ``sub-*_emb.pkl``).
     dims : tuple of str, default=('obs', 'feature')
@@ -355,12 +355,6 @@ class EmbeddingDataset(BaseDataset):
         If None, uses `smart_reader` based on file extension.
     id_fn : callable, optional
         Function returning the subject ID of a Path. Defaults to the file stem.
-    task : str, optional
-        (Legacy BIDS) Task name to construct search pattern.
-    run : str, optional
-        (Legacy BIDS) Run name to construct search pattern.
-    processing : str, optional
-        (Legacy BIDS) Processing label.
     subjects : int or list, optional
         If int, loads first N subjects. If list, loads specific subjects
         (matched by `id_fn`).
@@ -380,36 +374,22 @@ class EmbeddingDataset(BaseDataset):
         coords: dict[str, list | np.ndarray] | None = None,
         reader: Any | None = None,
         id_fn: Any | None = None,
-        task: str | None = None,
-        run: str | None = None,
-        processing: str | None = None,
         subjects: int | list[int] | None = None,
     ):
         self.path = Path(path)
         self.subjects = subjects
         self.dims = dims
         self.coords_in = coords or {}
-
-        # 1. Determine Pattern
-        if any([task, run, processing]):
-            # Legacy BIDS-like construction
-            p_parts = ["sub-*"]
-            if task:
-                p_parts.append(f"task-{task}")
-            if run:
-                p_parts.append(f"run-{run}")
-            p_parts.append(f"embeddings{processing or ''}.pkl")
-            self.pattern = "_".join(p_parts)
-        else:
-            self.pattern = pattern
-
-        # 2. Set Reader
+        self.pattern = pattern
         self.reader = reader if reader else smart_reader
         self.id_fn = id_fn or (lambda path: path.stem)
 
     def load(self) -> DataContainer:
-        # Find files
-        files = sorted(self.path.rglob(self.pattern))
+        files = (
+            [self.path]
+            if self.path.is_file()
+            else sorted(self.path.rglob(self.pattern))
+        )
 
         if not files:
             raise FileNotFoundError(
