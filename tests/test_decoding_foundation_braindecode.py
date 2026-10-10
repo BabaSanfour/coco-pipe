@@ -1,58 +1,198 @@
-"""Tests for BrainDecodeBackend. All network I/O is mocked."""
+"""Tests for BrainDecodeBackend on real braindecode models with random weights.
 
-import os
-import warnings
-from unittest.mock import MagicMock, patch
+Only the download is replaced: each model is built from its class instead of
+being fetched from the Hugging Face Hub.
+"""
+
+import importlib.util
 
 import numpy as np
 import pytest
 
 from coco_pipe.decoding._specs import SignalMetadata
-from coco_pipe.decoding.foundation_models._braindecode import (
-    _BD_MODEL_MAP,
-    BrainDecodeBackend,
-)
+from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
+from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
 
+pytest.importorskip("braindecode")
+torch = pytest.importorskip("torch")
+# BIOT's STFT warning comes from braindecode, not from this package.
+pytestmark = pytest.mark.filterwarnings("ignore:A window was not provided")
 
-def test_braindecode_available_when_packages_present(monkeypatch):
-    monkeypatch.setattr(
-        BrainDecodeBackend, "is_available", classmethod(lambda cls: True)
+BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
+# Settings a checkpoint's config would otherwise provide.
+CHECKPOINT_DEFAULTS = {
+    "LaBraM": {"n_times": 3000},
+    "InterpolatedLaBraM": {"n_times": 3000},
+    "BIOT": {"n_times": 2000, "sfreq": 200.0},
+}
+
+
+@pytest.fixture
+def offline(monkeypatch, tmp_path):
+    """Build models from their classes; return the kwargs each load received."""
+    import braindecode.models as bm
+    import huggingface_hub
+    import mne
+
+    calls = []
+
+    def build(cls, repo_id, **kwargs):
+        calls.append(kwargs)
+        params = {
+            key: value
+            for key, value in kwargs.items()
+            if key not in {"revision", "filename", "token"}
+        }
+        for key, value in CHECKPOINT_DEFAULTS.get(cls.__name__, {}).items():
+            params.setdefault(key, value)
+        return cls(**params)
+
+    classes = ("BENDR", "BIOT", "CBraMod", "LaBraM", "InterpolatedLaBraM", "LUNA")
+    for name in (*classes, "SignalJEPA_Contextual"):
+        if hasattr(bm, name):
+            monkeypatch.setattr(
+                getattr(bm, name), "from_pretrained", classmethod(build)
+            )
+
+    # EEGPT reads its weights file itself: give it a randomly initialised one.
+    info = mne.create_info(list(DEFAULT_CHANNELS), 250.0, "eeg")
+    info.set_montage("standard_1020")
+    eegpt = bm.EEGPT(
+        chs_info=info["chs"],
+        n_chans=len(DEFAULT_CHANNELS),
+        n_times=500,
+        sfreq=250.0,
+        n_outputs=1,
+        chan_proj_type="none",
     )
-    assert BrainDecodeBackend.is_available()
-
-
-def test_braindecode_not_available_without_braindecode(monkeypatch):
+    weights = tmp_path / "eegpt.pt"
+    torch.save(eegpt.state_dict(), weights)
     monkeypatch.setattr(
-        BrainDecodeBackend, "is_available", classmethod(lambda cls: False)
+        huggingface_hub, "hf_hub_download", lambda *a, **k: str(weights)
     )
-    assert not BrainDecodeBackend.is_available()
+    return calls
 
 
-def test_bd_model_map_covers_expected_models():
-    expected = {"cbramod", "biot", "labram", "eegpt", "signaljepa", "bendr"}
-    assert expected <= set(_BD_MODEL_MAP)
+def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
+    spec = get_estimator_spec(model_key)
+    if model_key == "labram":
+        kwargs.setdefault("interpolate_channels", True)
+    backend = BrainDecodeBackend.load(
+        model_key,
+        spec,
+        n_outputs=n_outputs,
+        device="cpu",
+        train_mode=train_mode,
+        electrode_names=list(DEFAULT_CHANNELS),
+        sfreq=spec.pretrained_sfreq,
+        **kwargs,
+    )
+    backend.signal_metadata_ = SignalMetadata(
+        sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
+    )
+    n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 2)
+    X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
+    return backend, X.astype(np.float32)
 
 
-def test_qlora_raises_not_implemented_for_braindecode(monkeypatch):
+def _trainable(backend):
+    return {
+        name
+        for component in backend.checkpoint_components().values()
+        for name, parameter in component.named_parameters()
+        if parameter.requires_grad
+    }
+
+
+@pytest.mark.parametrize("model_key", BACKBONES)
+def test_backbones_embed_and_expose_their_tokens(offline, model_key):
+    backend, X = _load(model_key)
+    spec = get_estimator_spec(model_key)
+
+    embeddings = backend.transform(X)
+    assert embeddings.shape == (4, spec.embedding_dim)
+    assert np.isfinite(embeddings).all()
+
+    pooled, tokens = backend.transform(X, return_tokens=True)
+    np.testing.assert_allclose(pooled, embeddings, rtol=1e-5, atol=1e-6)
+    layout = backend.get_token_output_metadata()
+    assert len(layout["token_axes"]) == tokens.ndim
+    assert tokens.shape[0] == 4
+    feature_axis = layout["token_axes"].index(layout["token_feature_axis"])
+    assert tokens.shape[feature_axis] == spec.embedding_dim
+    assert "model" in backend.checkpoint_components()
+
+
+@pytest.mark.parametrize("model_key", ["cbramod", "bendr"])
+def test_train_modes_choose_what_trains(offline, model_key):
+    frozen, _ = _load(model_key, "frozen")
+    head = _trainable(frozen)
+    assert head and all("lora" not in name for name in head)
+
+    full, _ = _load(model_key, "full")
+    assert len(_trainable(full)) > len(head)
+
+    lora, _ = _load(model_key, "lora", lora_r=4, lora_alpha=8)
+    trained = _trainable(lora)
+    assert any("lora_" in name for name in trained)
+    assert len(trained) < len(_trainable(full))
+
+
+def test_fit_predict_and_reset_head(offline):
+    backend, X = _load("cbramod", "full")
+    y = np.array([0, 1, 0, 1])
+    backend.fit(X, y, max_epochs=1, batch_size=2, validation_fraction=0.0)
+    # no validation split: the epoch trains on all four windows
+    assert "valid_loss" not in backend.training_history()[0]
+    # without groups, the fraction is held out by sample
+    backend.fit(np.tile(X, (2, 1, 1)), np.tile(y, 2), max_epochs=1, batch_size=2)
+    assert "valid_loss" in backend.training_history()[0]
+    assert backend.predict(X).shape == (4,)
+    assert backend.predict_proba(X).shape == (4, 2)
+
+    backend.reset_head(3)
+    backend.fit(X, np.array([0, 1, 2, 0]), max_epochs=1, validation_fraction=0.0)
+    assert backend.predict_proba(X).shape == (4, 3)
+
+
+def test_load_passes_the_pinned_checkpoint(offline):
+    _load("cbramod")
+    spec = get_estimator_spec("cbramod")
+    assert offline[-1]["revision"] == spec.checkpoint_revision
+
+
+def test_labram_interpolates_missing_channels(offline):
+    backend, _ = _load("labram")
+    adaptation = backend.get_channel_adaptation()
+    names = {name.upper() for name in DEFAULT_CHANNELS}
+    assert {name.upper() for name in adaptation["source_channels"]} == names
+    assert {name.upper() for name in adaptation["direct_channels"]} <= names
+    assert adaptation["interpolated_channels"]
+    assert adaptation["interpolation_method"]
+
+    plain, _ = _load("cbramod")
+    assert not plain.get_channel_adaptation().get("interpolated_channels")
+
+
+def test_eegpt_refuses_a_partly_loaded_checkpoint(offline, tmp_path, monkeypatch):
+    import huggingface_hub
+
+    torch.save({}, tmp_path / "empty.pt")
     monkeypatch.setattr(
-        BrainDecodeBackend, "is_available", classmethod(lambda cls: True)
+        huggingface_hub, "hf_hub_download", lambda *a, **k: str(tmp_path / "empty.pt")
     )
+    with pytest.raises(RuntimeError, match="left weights unloaded"):
+        _load("eegpt")
+
+
+def test_load_errors(offline, monkeypatch):
+    spec = get_estimator_spec("cbramod")
     with pytest.raises(NotImplementedError, match="QLoRA"):
         BrainDecodeBackend.load(
-            "cbramod",
-            get_estimator_spec("cbramod"),
-            n_outputs=None,
-            device="cpu",
-            train_mode="qlora",
+            "cbramod", spec, n_outputs=None, device="cpu", train_mode="qlora"
         )
-
-
-def test_unsupported_model_key_raises():
-    with (
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        pytest.raises(ValueError, match="BrainDecodeBackend does not support"),
-    ):
+    with pytest.raises(ValueError, match="BrainDecodeBackend does not support"):
         BrainDecodeBackend.load(
             "reve",
             get_estimator_spec("reve"),
@@ -61,224 +201,47 @@ def test_unsupported_model_key_raises():
             train_mode="frozen",
         )
 
+    import braindecode.models as bm
 
-def _make_mock_bd_model(feat_dim: int = 200, n_outputs: int = 2):
-    """Return a MagicMock that mimics a BrainDecode EEGModuleMixin model."""
-    import torch
+    monkeypatch.delattr(bm, "InterpolatedLaBraM", raising=False)
+    with pytest.raises(ImportError, match="requires InterpolatedLaBraM"):
+        _load("labram")
 
-    model = MagicMock()
-    model.to.return_value = model  # nn.Module.to() returns self
-    model.parameters.return_value = []
-    feats = torch.zeros(1, feat_dim)
-    model.return_value = {"features": feats, "logits": torch.zeros(1, n_outputs)}
-    model.side_effect = None
-    return model
-
-
-@pytest.fixture()
-def mock_bd_model():
-    return _make_mock_bd_model()
-
-
-def _load_with_mock(model_key: str, mock_model, train_mode: str = "frozen"):
-    meta = get_estimator_spec(model_key)
-    class_name, module_path = _BD_MODEL_MAP[model_key]
-
-    import importlib
-
-    orig = importlib.import_module
-
-    def _fake_import(name, *a, **kw):
-        if name == module_path:
-            mod = MagicMock()
-            setattr(
-                mod,
-                class_name,
-                MagicMock(from_pretrained=MagicMock(return_value=mock_model)),
-            )
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        return BrainDecodeBackend.load(
-            model_key,
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode=train_mode,
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a: None if name == "braindecode" else real_find_spec(name, *a),
+    )
+    assert not BrainDecodeBackend.is_available()
+    with pytest.raises(ImportError, match="requires braindecode"):
+        BrainDecodeBackend.load(
+            "cbramod", spec, n_outputs=2, device="cpu", train_mode="frozen"
         )
 
 
-def test_load_cbramod_returns_braindecode_backend(mock_bd_model):
-    adapter = _load_with_mock("cbramod", mock_bd_model)
-    assert isinstance(adapter, BrainDecodeBackend)
-
-
-def test_frozen_mode_calls_eval(mock_bd_model):
-    _load_with_mock("cbramod", mock_bd_model, train_mode="frozen")
-    mock_bd_model.eval.assert_called()
-
-
-def _make_fitted_adapter(model_key: str = "cbramod", sfreq: float = 200.0):
-    import torch
-
-    meta = get_estimator_spec(model_key)
-    n_ch = meta.pretrained_n_chans or 19
-    feat_dim = meta.embedding_dim
-
-    model = MagicMock()
-    feats = torch.zeros(4, feat_dim)
-    logits = torch.zeros(4, 2)
-    model.return_value = {"features": feats, "logits": logits}
-    model.parameters.return_value = []
-
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=model,
-        feat_dim=feat_dim,
-        n_outputs=2,
+def test_transform_checks_its_input(offline):
+    backend, X = _load("cbramod")
+    unfitted = BrainDecodeBackend(
+        metadata=get_estimator_spec("cbramod"),
+        model=backend._model,
+        feat_dim=200,
+        n_outputs=None,
         device="cpu",
         train_mode="frozen",
         task="classification",
     )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=sfreq,
-        ch_names=[f"ch{i}" for i in range(n_ch)],
+    with pytest.raises(RuntimeError, match="fitted"):
+        unfitted.transform(X)
+
+    backend.signal_metadata_ = SignalMetadata(
+        sfreq=100.0, ch_names=list(DEFAULT_CHANNELS)
     )
-    return adapter, model, n_ch
+    with pytest.warns(UserWarning, match="sfreq"):
+        backend.transform(X)
 
 
-def test_transform_returns_ndarray_not_dict():
-    adapter, _, n_ch = _make_fitted_adapter()
-    out = adapter.transform(np.zeros((4, n_ch, 400), dtype=np.float32))
-    assert isinstance(out, np.ndarray)
-    assert not isinstance(out, dict)
-
-
-def test_transform_shape_matches_embedding_dim():
-    adapter, _, n_ch = _make_fitted_adapter()
-    meta = get_estimator_spec("cbramod")
-    out = adapter.transform(np.zeros((4, n_ch, 400), dtype=np.float32))
-    assert out.shape == (4, meta.embedding_dim)
-
-
-def test_transform_return_tokens_preserves_native_cbramod_output():
-    import torch
-
-    adapter, model, n_ch = _make_fitted_adapter()
-    native = torch.arange(4 * 3 * 2 * 200, dtype=torch.float32).reshape(4, 3, 2, 200)
-    model.return_value = {"features": native, "logits": torch.zeros(4, 2)}
-
-    pooled, tokens = adapter.transform(
-        np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
-    )
-
-    assert pooled.shape == (4, 200)
-    np.testing.assert_array_equal(tokens, native.numpy())
-    np.testing.assert_allclose(pooled, native.numpy().mean(axis=(1, 2)))
-
-
-@pytest.mark.parametrize(
-    ("model_key", "token_shape", "expected_metadata"),
-    [
-        (
-            "biot",
-            (4, 6, 256),
-            {
-                "token_source": "encoder.transformer_output",
-                "token_axes": ["window", "channel_time_patch", "feature"],
-                "token_observation_axes": ["channel_time_patch"],
-                "token_feature_axis": "feature",
-            },
-        ),
-        (
-            "bendr",
-            (4, 512, 6),
-            {
-                "token_source": "contextualizer_output",
-                "token_axes": ["window", "feature", "context_token"],
-                "token_observation_axes": ["context_token"],
-                "token_feature_axis": "feature",
-            },
-        ),
-    ],
-)
-def test_transform_captures_native_tokens_before_biot_and_bendr_pooling(
-    model_key, token_shape, expected_metadata
-):
-    import torch
-
-    class _FixedTokens(torch.nn.Module):
-        def __init__(self, values):
-            super().__init__()
-            self.register_buffer("values", values)
-
-        def forward(self, _x):
-            return self.values
-
-    class _TokenModel(torch.nn.Module):
-        def __init__(self, values):
-            super().__init__()
-            if model_key == "biot":
-                self.encoder = torch.nn.Module()
-                self.encoder.transformer = _FixedTokens(values)
-            else:
-                self.encoder = torch.nn.Identity()
-                self.contextualizer = _FixedTokens(values)
-
-        def forward(self, x, return_features=False):
-            if model_key == "biot":
-                native = self.encoder.transformer(x)
-                features = native.mean(dim=1)
-            else:
-                native = self.contextualizer(x)
-                features = native[:, :, 0]
-            return {"features": features, "logits": torch.zeros(len(x), 2)}
-
-    native = torch.arange(np.prod(token_shape), dtype=torch.float32).reshape(
-        token_shape
-    )
-    model = _TokenModel(native)
-    metadata = get_estimator_spec(model_key)
-    n_ch = metadata.pretrained_n_chans or 19
-    adapter = BrainDecodeBackend(
-        metadata=metadata,
-        model=model,
-        feat_dim=metadata.embedding_dim,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=metadata.pretrained_sfreq,
-        ch_names=[f"ch{i}" for i in range(n_ch)],
-    )
-
-    pooled, tokens = adapter.transform(
-        np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
-    )
-
-    # BENDR pools its time tokens; the start token at index 0 is left out.
-    expected_pooled = (
-        native.mean(dim=1) if model_key == "biot" else native[:, :, 1:].mean(dim=2)
-    )
-    np.testing.assert_array_equal(tokens, native.numpy())
-    np.testing.assert_array_equal(pooled, expected_pooled.numpy())
-    assert adapter.get_token_output_metadata() == expected_metadata
-    token_module = (
-        model.encoder.transformer if model_key == "biot" else model.contextualizer
-    )
-    assert not token_module._forward_hooks
-
-
-def test_biot_token_hook_is_removed_when_forward_fails():
-    import torch
-
+def test_token_hook_is_removed_when_forward_fails():
     class _Transformer(torch.nn.Module):
         def forward(self, x):
             return x.transpose(1, 2)
@@ -295,7 +258,7 @@ def test_biot_token_hook_is_removed_when_forward_fails():
 
     metadata = get_estimator_spec("biot")
     model = _BrokenBIOT()
-    adapter = BrainDecodeBackend(
+    backend = BrainDecodeBackend(
         metadata=metadata,
         model=model,
         feat_dim=metadata.embedding_dim,
@@ -304,588 +267,9 @@ def test_biot_token_hook_is_removed_when_forward_fails():
         train_mode="frozen",
         task="classification",
     )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=metadata.pretrained_sfreq,
-        ch_names=[f"ch{i}" for i in range(19)],
+    backend.signal_metadata_ = SignalMetadata(
+        sfreq=metadata.pretrained_sfreq, ch_names=[f"ch{i}" for i in range(19)]
     )
-
     with pytest.raises(RuntimeError, match="forward failed"):
-        adapter.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
-
+        backend.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
     assert not model.encoder.transformer._forward_hooks
-
-
-def test_transform_raises_before_fit():
-    meta = get_estimator_spec("cbramod")
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=MagicMock(),
-        feat_dim=200,
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    with pytest.raises(RuntimeError, match="fitted"):
-        adapter.transform(np.zeros((2, 19, 400)))
-
-
-def test_sfreq_mismatch_warns_for_eegpt():
-    adapter, _, n_ch = _make_fitted_adapter("eegpt", sfreq=200.0)
-    X = np.zeros((4, n_ch, 400), dtype=np.float32)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        adapter.transform(X)
-    assert any("sfreq" in str(w.message) for w in caught)
-
-
-def test_channel_mismatch_raises_for_labram():
-    meta = get_estimator_spec("labram")
-
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=MagicMock(),
-        feat_dim=200,
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=200.0,
-        ch_names=[f"ch{i}" for i in range(128)],
-    )
-    with pytest.raises(ValueError, match="128 channels"):
-        adapter.transform(np.zeros((2, 64, 400)))
-
-
-def test_reset_head_delegates_to_bd_model():
-    adapter, model, _ = _make_fitted_adapter()
-    adapter.reset_head(10)
-    model.reset_head.assert_called_once_with(10)
-    assert adapter._n_outputs == 10
-
-
-def test_configure_peft_applies_lora(monkeypatch):
-    """configure_peft() wraps the model with peft LoRA."""
-    meta = get_estimator_spec("cbramod")
-    mock_model = MagicMock()
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=mock_model,
-        feat_dim=200,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    wrapped = MagicMock()
-    with patch("peft.get_peft_model", return_value=wrapped) as mock_peft:
-        adapter.configure_peft({"r": 4, "lora_alpha": 8, "target_modules": ["q_proj"]})
-    mock_peft.assert_called_once()
-    assert adapter._model is wrapped
-    assert adapter._train_mode == "lora"
-
-
-def test_cbramod_src_directory_does_not_exist():
-    assert not os.path.exists("coco_pipe/decoding/foundation_models/cbramod_src"), (
-        "cbramod_src/ must be deleted — BrainDecode provides the implementation"
-    )
-
-
-def test_load_revision_and_filename():
-    import torch
-
-    param = torch.nn.Parameter(torch.zeros(2))
-    mock_model = _make_mock_bd_model()
-    mock_model.parameters.return_value = [param]
-
-    # Check that revision and filename are passed correctly to from_pretrained
-    from dataclasses import replace
-
-    meta = replace(
-        get_estimator_spec("cbramod"),
-        checkpoint_revision="v1.0",
-        checkpoint_filename="model.ckpt",
-    )
-
-    import importlib
-
-    orig = importlib.import_module
-
-    from_pretrained_mock = MagicMock(return_value=mock_model)
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        backend = BrainDecodeBackend.load(
-            "cbramod",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-
-    from_pretrained_mock.assert_called_once()
-    kwargs = from_pretrained_mock.call_args[1]
-    assert kwargs.get("revision") == "v1.0"
-    assert kwargs.get("filename") == "model.ckpt"
-    assert param.requires_grad is False
-
-    # Test checkpoint_components and get_channel_adaptation (no interpolation)
-    assert backend.checkpoint_components() == {"model": mock_model}
-    adapt = backend.get_channel_adaptation()
-    assert adapt["source_channels"] == []
-
-
-def test_load_lora_train_mode():
-    mock_model = _make_mock_bd_model()
-    meta = get_estimator_spec("cbramod")
-
-    import importlib
-
-    orig = importlib.import_module
-
-    from_pretrained_mock = MagicMock(return_value=mock_model)
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-        patch("peft.get_peft_model", return_value=mock_model) as mock_peft,
-    ):
-        backend = BrainDecodeBackend.load(
-            "cbramod",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="lora",
-        )
-    mock_peft.assert_called_once()
-    assert backend._train_mode == "lora"
-
-
-def test_load_not_available_raises():
-    with (
-        patch.object(BrainDecodeBackend, "is_available", return_value=False),
-        pytest.raises(ImportError, match="requires braindecode"),
-    ):
-        BrainDecodeBackend.load(
-            "cbramod",
-            get_estimator_spec("cbramod"),
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-
-
-def test_reset_head_not_implemented():
-    import importlib
-
-    orig = importlib.import_module
-
-    # Test cbramod raises NotImplementedError on load
-    mock_model_cbra = MagicMock()
-    mock_model_cbra.to.return_value = mock_model_cbra
-    mock_model_cbra.reset_head.side_effect = NotImplementedError()
-
-    def _fake_import_cbra(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.CBraMod = MagicMock(
-                from_pretrained=MagicMock(return_value=mock_model_cbra)
-            )
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import_cbra),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-        pytest.raises(NotImplementedError),
-    ):
-        BrainDecodeBackend.load(
-            "cbramod",
-            get_estimator_spec("cbramod"),
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-
-    # Test luna ignores NotImplementedError on load
-    mock_model_luna = MagicMock()
-    mock_model_luna.to.return_value = mock_model_luna
-    mock_model_luna.reset_head.side_effect = NotImplementedError()
-
-    def _fake_import_luna(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.LUNA = MagicMock(
-                from_pretrained=MagicMock(return_value=mock_model_luna)
-            )
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import_luna),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        backend_luna = BrainDecodeBackend.load(
-            "luna",
-            get_estimator_spec("luna"),
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-        assert backend_luna is not None
-
-
-def test_reset_head_frozen_trainable():
-    import torch
-
-    mock_model = MagicMock()
-    head = MagicMock()
-    param = torch.nn.Parameter(torch.zeros(2))
-    head.parameters.return_value = [param]
-    mock_model.final_layer = head
-
-    meta = get_estimator_spec("cbramod")
-
-    import importlib
-
-    orig = importlib.import_module
-    from_pretrained_mock = MagicMock(return_value=mock_model)
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.CBraMod = MagicMock(from_pretrained=from_pretrained_mock)
-            return mod
-        return orig(name, *a, **kw)
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        BrainDecodeBackend.load(
-            "cbramod",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-    assert param.requires_grad is True
-
-
-def test_load_interpolate_channels_unsupported(monkeypatch):
-    monkeypatch.setattr(
-        BrainDecodeBackend, "is_available", classmethod(lambda cls: True)
-    )
-
-    import importlib
-
-    orig = importlib.import_module
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock(spec=[])  # Has no InterpolatedLaBraM/InterpolatedLabram
-            return mod
-        return orig(name, *a, **kw)
-
-    meta = get_estimator_spec("labram")
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        pytest.raises(ImportError, match="requires InterpolatedLaBraM"),
-    ):
-        BrainDecodeBackend.load(
-            "labram",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-            interpolate_channels=True,
-        )
-
-
-def test_load_interpolate_channels_supported():
-    mock_model = _make_mock_bd_model()
-
-    import importlib
-
-    orig = importlib.import_module
-
-    from_pretrained_mock = MagicMock(return_value=mock_model)
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.InterpolatedLaBraM = MagicMock(from_pretrained=from_pretrained_mock)
-            return mod
-        return orig(name, *a, **kw)
-
-    meta = get_estimator_spec("labram")
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        backend = BrainDecodeBackend.load(
-            "labram",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-            interpolate_channels=True,
-        )
-        assert backend._uses_interpolation is True
-
-
-def test_load_montage_warning():
-    mock_model = _make_mock_bd_model()
-
-    import importlib
-
-    orig = importlib.import_module
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.CBraMod = MagicMock(from_pretrained=MagicMock(return_value=mock_model))
-            return mod
-        return orig(name, *a, **kw)
-
-    meta = get_estimator_spec("cbramod")
-
-    # We want mne montage setting to raise an exception to trigger the
-    # warnings.warn block
-    mock_info = MagicMock()
-    mock_info.set_montage.side_effect = Exception("montage error")
-
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-        patch("mne.create_info", return_value=mock_info),
-        pytest.warns(UserWarning, match="Could not assign the standard_1020"),
-    ):
-        BrainDecodeBackend.load(
-            "cbramod",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-            electrode_names=["Fp1", "Fp2"],
-        )
-
-
-def test_luna_special_defaults():
-    mock_model = _make_mock_bd_model()
-
-    import importlib
-
-    orig = importlib.import_module
-
-    from_pretrained_mock = MagicMock(return_value=mock_model)
-
-    def _fake_import(name, *a, **kw):
-        if name == "braindecode.models":
-            mod = MagicMock()
-            mod.LUNA = MagicMock(from_pretrained=from_pretrained_mock)
-            return mod
-        return orig(name, *a, **kw)
-
-    meta = get_estimator_spec("luna")
-    with (
-        patch("importlib.import_module", side_effect=_fake_import),
-        patch.object(BrainDecodeBackend, "is_available", return_value=True),
-        patch.object(BrainDecodeBackend, "_probe_feat_dim", return_value=200),
-    ):
-        BrainDecodeBackend.load(
-            "luna",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-        )
-    from_pretrained_mock.assert_called_once()
-    kwargs = from_pretrained_mock.call_args[1]
-    assert kwargs.get("embed_dim") == 64
-    assert kwargs.get("num_queries") == 4
-    assert kwargs.get("depth") == 8
-
-
-def test_probe_feat_dim_real_pass():
-    import torch
-
-    mock_model = MagicMock()
-    mock_model.side_effect = lambda X, return_features=True: {
-        "features": torch.zeros(1, 150)
-    }
-    meta = get_estimator_spec("cbramod")
-    dim = BrainDecodeBackend._probe_feat_dim(mock_model, meta, "cpu", n_times=100)
-    assert dim == 150
-
-
-def test_luna_forward_features():
-    import torch
-
-    mock_model = MagicMock()
-    mock_norm = MagicMock()
-    mock_model.norm = mock_norm
-
-    # We simulate registration of the forward hook which captures output when called
-    def fake_register_hook(hook_fn):
-        def trigger_hook(tensor):
-            # Output of norm layer
-            hook_fn(mock_model, None, torch.zeros(1, 80))
-
-        mock_model.side_effect = trigger_hook
-        mock_hook = MagicMock()
-        return mock_hook
-
-    mock_norm.register_forward_hook.side_effect = fake_register_hook
-
-    res = BrainDecodeBackend._forward_features(
-        mock_model, torch.zeros(1, 19, 100), "luna"
-    )
-    assert res.shape == (1, 80)
-
-    # Trigger RuntimeError when latent is not captured
-    mock_norm.register_forward_hook.side_effect = lambda fn: MagicMock()
-    mock_model.side_effect = lambda tensor: None
-    with pytest.raises(RuntimeError, match="LUNA latent representation"):
-        BrainDecodeBackend._forward_features(
-            mock_model, torch.zeros(1, 19, 100), "luna"
-        )
-
-
-def test_get_skorch_module():
-    import torch
-    import torch.nn as nn
-
-    meta = get_estimator_spec("cbramod")
-    mock_model = MagicMock(spec=nn.Module)
-    mock_model.modules.return_value = []
-
-    backend = BrainDecodeBackend(
-        metadata=meta,
-        model=mock_model,
-        feat_dim=200,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-
-    module_cls = backend._get_skorch_module()
-    module = module_cls(backend, output_dim=2)
-    assert isinstance(module, nn.Module)
-
-    # Test forward passing dict/tensor
-    mock_model.return_value = {"logits": torch.zeros(2, 2)}
-    out = module(torch.zeros(2, 19, 100))
-    assert out.shape == (2, 2)
-
-    mock_model.return_value = torch.zeros(2, 2)
-    out = module(torch.zeros(2, 19, 100))
-    assert out.shape == (2, 2)
-
-    # Test module.train with frozen backbone
-    param = MagicMock()
-    param.requires_grad = (
-        True  # Need requires_grad=True to execute module.train() loop body
-    )
-    mock_submodule = MagicMock()
-    mock_submodule.parameters.return_value = [param]
-    mock_model.modules.return_value = [mock_submodule]
-
-    module.train(True)
-    mock_model.eval.assert_called()
-    mock_submodule.train.assert_called_once()
-
-
-def test_predict_classification_and_regression():
-    import torch
-
-    meta = get_estimator_spec("cbramod")
-    mock_model = MagicMock()
-
-    # 1. Regression
-    mock_model.return_value = torch.zeros(2, 1)
-    backend_reg = BrainDecodeBackend(
-        metadata=meta,
-        model=mock_model,
-        feat_dim=200,
-        n_outputs=1,
-        device="cpu",
-        train_mode="frozen",
-        task="regression",
-    )
-    backend_reg.signal_metadata_ = SignalMetadata(sfreq=200.0, ch_names=["ch0"])
-    preds = backend_reg.predict(np.zeros((2, 1, 100)))
-    assert preds.shape == (2,)
-
-    # 2. Classification (argmax path)
-    mock_model.return_value = torch.tensor([[0.1, 0.9], [0.8, 0.2]])
-    backend_clf = BrainDecodeBackend(
-        metadata=meta,
-        model=mock_model,
-        feat_dim=200,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    backend_clf.signal_metadata_ = SignalMetadata(sfreq=200.0, ch_names=["ch0"])
-    preds = backend_clf.predict(np.zeros((2, 1, 100)))
-    assert np.array_equal(preds, [1, 0])
-
-
-def test_channel_adaptation_with_interpolation():
-    meta = get_estimator_spec("labram")
-    mock_model = MagicMock()
-
-    mock_layer = MagicMock()
-    mock_layer.tgt_chs_info = [{"ch_name": "Fp1"}, {"ch_name": "Fp2"}]
-    mock_layer.matrix = MagicMock()
-    mock_layer.matrix.shape = (2, 2)
-    mock_layer.method = "spline"
-    mock_layer.mode = "name_match"
-    mock_model.interpolation_layer = mock_layer
-
-    backend = BrainDecodeBackend(
-        metadata=meta,
-        model=mock_model,
-        feat_dim=200,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    backend._uses_interpolation = True
-    backend.signal_metadata_ = SignalMetadata(sfreq=200.0, ch_names=["Fp1"])
-
-    adapt = backend.get_channel_adaptation()
-    assert adapt["source_channels"] == ["Fp1"]
-    assert adapt["target_channels"] == ["Fp1", "Fp2"]
-    assert adapt["direct_channels"] == ["Fp1"]
-    assert adapt["interpolated_channels"] == ["Fp2"]
-    assert adapt["interpolation_method"] == "spline"
