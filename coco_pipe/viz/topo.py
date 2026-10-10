@@ -20,7 +20,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 
-from ..utils import montage_name
 from ._utils import info_from_montage
 from .base import plot_topomap
 
@@ -28,13 +27,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=8)
-def standard_montage_channels(montage: str = "standard_1020") -> frozenset[str]:
+def standard_montage_channels(montage: str = "colin27_1020") -> frozenset[str]:
     """Return the lower-cased channel names of a standard MNE *montage*."""
     import mne
 
     return frozenset(
-        name.lower()
-        for name in mne.channels.make_standard_montage(montage_name(montage)).ch_names
+        name.lower() for name in mne.channels.make_standard_montage(montage).ch_names
     )
 
 
@@ -42,7 +40,7 @@ def feature_names_are_channels(
     feature_names: Sequence[str] | None,
     channels: Sequence[str] | None = None,
     *,
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
 ) -> bool:
     """Return ``True`` when every feature name is a known montage channel.
 
@@ -73,7 +71,7 @@ def plot_topomap_from_channel_values(
     unit: str | None = None,
     bad_channels: list[str] | None = None,
     *,
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
 ) -> plt.Figure | None:
     """Topomap plotting without a raw object (uses standard montage).
 

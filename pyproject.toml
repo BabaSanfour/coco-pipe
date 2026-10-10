@@ -54,7 +54,8 @@ dependencies = [
   # back to escaped plain text (literal ** and backticks).
   "markdown",
   # mne-bids 0.20 only locks shared files with filelock>=3.20.4
-  "mne>=1.9.0",
+  # colin27_1020 / colin27_1005 montage names
+  "mne>=1.13",
   "mne-bids>=0.20",
   "filelock>=3.20.4",
 ]

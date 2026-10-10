@@ -21,12 +21,12 @@ _CHANNELS = ["Fz", "Cz", "Pz", "Oz"]
 
 
 def test_standard_montage_channels_lowercased_and_cached():
-    names = standard_montage_channels("standard_1020")
+    names = standard_montage_channels("colin27_1020")
     assert isinstance(names, frozenset)
     assert {"fz", "cz", "pz", "oz"} <= names
     assert all(name == name.lower() for name in names)
     # lru_cache returns the same object for the same montage.
-    assert standard_montage_channels("standard_1020") is names
+    assert standard_montage_channels("colin27_1020") is names
 
 
 # --- feature_names_are_channels ---------------------------------------------
@@ -37,7 +37,7 @@ def test_feature_names_are_channels_default_montage():
 
 
 def test_feature_names_are_channels_accepts_legacy_names_by_default():
-    # MNE's standard_1020 montage carries both legacy (T3/T4) and modern
+    # MNE's colin27_1020 montage carries both legacy (T3/T4) and modern
     # (T7/T8) nomenclature, so both pass the default gate.
     assert feature_names_are_channels(["T3", "T4", "Cz"]) is True
     assert feature_names_are_channels(["T7", "T8", "Cz"]) is True

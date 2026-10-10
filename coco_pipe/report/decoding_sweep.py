@@ -1220,7 +1220,7 @@ def sensor_section(
     mode_frame: pd.DataFrame,
     *,
     scope_label: str,
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
     **kwargs: Any,
 ) -> Any:
     """Build sensor-level comparison views and optional topomap."""
@@ -1754,7 +1754,7 @@ DEFAULT_CLASSICAL_SECTION_BUILDERS: dict[str, Callable[..., Any]] = {
         group_by=("target", "selection_mode"),
         axis="Model",
     ),
-    "sensor": partial(sensor_section, montage="standard_1020"),
+    "sensor": partial(sensor_section, montage="colin27_1020"),
     "family": partial(
         grouped_section,
         group_col="family",

@@ -205,21 +205,6 @@ def slug(value: object, *, max_len: int = 80) -> str:
     return text[:max_len]
 
 
-def montage_name(name: str) -> str:
-    """Return the name the installed MNE uses for a built-in montage.
-
-    MNE 1.13 renamed ``standard_1020`` / ``standard_1005`` to ``colin27_1020``
-    / ``colin27_1005`` (same positions) and deprecated the old names.
-    """
-    import mne
-
-    if name.startswith("standard_10"):
-        renamed = name.replace("standard_", "colin27_")
-        if renamed in mne.channels.get_builtin_montages():
-            return renamed
-    return name
-
-
 def resolve_n_jobs(n_jobs: int) -> int:
     """Resolve ``n_jobs`` to a concrete positive integer.
 

@@ -10,7 +10,6 @@ import pandas as pd
 from matplotlib.collections import LineCollection
 from matplotlib.colors import TwoSlopeNorm
 
-from ..utils import montage_name
 from ._utils import _coerce_series, coerce_sensor_layout, finalize_axes
 from .theme import DIVERGING, QUALITATIVE, SEQUENTIAL, coco_theme, figure_size
 
@@ -1692,7 +1691,7 @@ def plot_roi_sensors(
     container: Any,
     rois: Mapping[str, Sequence[str]],
     palette: Sequence[Any] | None = None,
-    montage: str | Any = "standard_1005",
+    montage: str | Any = "colin27_1005",
     figsize: tuple[float, float] | None = None,
     axes_kws: dict | None = None,
 ) -> tuple[plt.Figure, np.ndarray]:
@@ -1709,7 +1708,7 @@ def plot_roi_sensors(
         default colorblind palette.
     montage
         The MNE montage to use for plotting sensors. Can be a string name of a
-        standard montage (e.g. 'standard_1005') or an mne.channels.DigMontage object.
+        standard montage (e.g. 'colin27_1005') or an mne.channels.DigMontage object.
     figsize
         Figure size. If None, automatically scaled based on the number of ROIs.
     axes_kws
@@ -1728,7 +1727,7 @@ def plot_roi_sensors(
     ch_names = list(np.asarray(container.coords["channel"]).astype(str))
     info = mne.create_info(ch_names=ch_names, sfreq=160, ch_types="eeg")
     info.set_montage(
-        mne.channels.make_standard_montage(montage_name(montage))
+        mne.channels.make_standard_montage(montage)
         if isinstance(montage, str)
         else montage
     )

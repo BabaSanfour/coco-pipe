@@ -8,7 +8,6 @@ import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 
-from ..utils import montage_name
 from .theme import ColorKind
 
 if TYPE_CHECKING:
@@ -409,7 +408,7 @@ def coerce_sensor_layout(
 
 def info_from_montage(
     names: Sequence[str],
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
     sfreq: float = 100.0,
 ):
     """Build an EEG ``mne.Info`` from channel names using a standard montage.
@@ -424,7 +423,7 @@ def info_from_montage(
     names
         Channel names to place. Matched case-sensitively against the montage.
     montage
-        Name of a standard MNE montage (e.g. ``"standard_1020"``).
+        Name of a standard MNE montage (e.g. ``"colin27_1020"``).
     sfreq
         Nominal sampling frequency for the synthetic info; unused for layout.
 
@@ -440,7 +439,7 @@ def info_from_montage(
             "info_from_montage requires 'mne'. Install the neuroviz extra."
         ) from exc
 
-    montage_obj = mne.channels.make_standard_montage(montage_name(montage))
+    montage_obj = mne.channels.make_standard_montage(montage)
     montage_names = set(montage_obj.ch_names)
     kept = [str(name) for name in names if str(name) in montage_names]
     info = mne.create_info(kept, sfreq=sfreq, ch_types="eeg")
