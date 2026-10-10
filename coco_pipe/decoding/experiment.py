@@ -852,7 +852,9 @@ class Experiment:
         splits = list(cv.split(X, y, groups))
 
         for train_idx, test_idx in splits:
-            _validate_fold_integrity(y[train_idx], y[test_idx], spec.task)
+            _validate_fold_integrity(
+                y[train_idx], y[test_idx], spec.task, self.config.metrics
+            )
 
         est = clone(estimator)
 
@@ -1106,7 +1108,7 @@ class Experiment:
 
 
 def _validate_fold_integrity(
-    y_train: np.ndarray, y_test: np.ndarray, tasks: tuple
+    y_train: np.ndarray, y_test: np.ndarray, tasks: tuple, metrics: Sequence[str]
 ) -> None:
     """Check if CV folds are degenerate before fitting."""
     if y_train.size == 0 or y_test.size == 0:
@@ -1119,7 +1121,13 @@ def _validate_fold_integrity(
         )
 
     if "classification" in tasks and np.min(y_test) == np.max(y_test):
-        raise ValueError(
-            f"Degenerate Test Fold: Only one class found ({y_test[0]}). "
-            "Metrics like ROC-AUC are undefined for single-class test sets."
-        )
+        # Label metrics (accuracy, F1, ...) are defined on one class; metrics on
+        # scores or probabilities (ROC-AUC, average precision, ...) are not.
+        need_both = [
+            m for m in metrics if get_metric_spec(m).response_method != "predict"
+        ]
+        if need_both:
+            raise ValueError(
+                f"Degenerate Test Fold: only one class ({y_test[0]}), but "
+                f"{need_both} need both classes in every test fold."
+            )

@@ -147,6 +147,23 @@ def test_run_decoding_unit_records_failure(tmp_path):
     assert read_run_manifest(tmp_path / "unit")["status"] == "failed"
 
 
+def test_run_decoding_unit_reports_a_model_that_fails(tmp_path):
+    config = _experiment_config()
+    broken = ClassicalModelConfig(
+        estimator="LogisticRegression",
+        params={"solver": "liblinear", "penalty": "elasticnet"},
+        input_kind="tabular",
+    )
+    config = config.model_copy(update={"models": {**config.models, "broken": broken}})
+    records = {
+        r["model"]: r
+        for r in run_decoding_unit(_unit(tmp_path, experiment_config=config))
+    }
+    assert records["logreg"]["status"] == "success"
+    assert records["broken"]["status"] == "failed"
+    assert "elasticnet" in records["broken"]["reason"]
+
+
 def test_run_decoding_unit_raises_on_config_hash_mismatch(tmp_path):
     run_decoding_unit(_unit(tmp_path))
     drifted = _unit(tmp_path, run_config={"tag": "unit", "drift": True})
