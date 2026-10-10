@@ -76,11 +76,11 @@ def correct_sweep_pvalues(
     out["significant_fdr"] = False
     present = [column for column in family_columns if column in out.columns]
     groups = (
-        [(None, out.index)]
+        [out.index]
         if not present
-        else out.groupby(present, dropna=False).groups.items()
+        else [frame.index for _, frame in out.groupby(present, dropna=False)]
     )
-    for _, indices in groups:
+    for indices in groups:
         index = list(indices)
         adjusted, rejected = benjamini_hochberg(
             out.loc[index, p_column].to_numpy(dtype=float),

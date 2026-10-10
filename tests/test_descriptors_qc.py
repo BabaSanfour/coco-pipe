@@ -107,12 +107,8 @@ def test_classify_mixed_families():
 
     result = classify_descriptor_columns(names)
 
-    assert result["family"].tolist() == [
-        "band",
-        "param",
-        "complexity",
-        None,
-    ]
+    assert result["family"].tolist()[:3] == ["band", "param", "complexity"]
+    assert pd.isna(result["family"].iloc[3])
     assert KNOWN_FAMILY_TOKENS == ("band", "param", "complexity")
 
 
