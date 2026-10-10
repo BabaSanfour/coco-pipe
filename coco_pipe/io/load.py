@@ -301,6 +301,8 @@ def load_data(
             baseline=dataset_cfg.baseline,
             units=dataset_cfg.units,
             description=dataset_cfg.description,
+            dtype=dataset_cfg.dtype,
+            n_jobs=dataset_cfg.n_jobs,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
             subjects=dataset_cfg.subjects,

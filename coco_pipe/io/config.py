@@ -86,6 +86,8 @@ class BIDSConfig(BaseDatasetConfig):
     tmax: float = 0.5
     baseline: tuple[float | None, float | None] | None = None
     units: str | None = Field(None, description="Units to load EEG data in.")
+    dtype: str = Field("float32", description="Data type of the returned array.")
+    n_jobs: int = Field(1, ge=1, description="Threads reading recordings at once.")
     description: str | None = Field(
         None, description="`desc` entity of the files to load."
     )

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -498,6 +499,10 @@ class EmbeddingDataset(BaseDataset):
         )
 
 
+class _NoMatchingEvents(Exception):
+    """A recording has none of the requested events."""
+
+
 class BIDSDataset(BaseDataset):
     """
     Dataset for loading epoched M/EEG data from a BIDS dataset.
@@ -551,6 +556,12 @@ class BIDSDataset(BaseDataset):
         Units of the returned data (see :meth:`mne.Epochs.get_data`).
     description : str, optional
         The ``desc`` entity of the files to load.
+    dtype : str, default="float32"
+        Data type of the returned array.
+    n_jobs : int, default=1
+        Number of threads reading recordings at the same time. Reading is
+        mostly waiting on the file system, so threads help on network or
+        cluster storage.
 
     Notes
     -----
@@ -587,6 +598,8 @@ class BIDSDataset(BaseDataset):
         baseline: tuple[float | None, float | None] | None = None,
         units: str | None = None,
         description: str | None = None,
+        dtype: str = "float32",
+        n_jobs: int = 1,
     ):
         self.root = Path(root)
         self.task = task
@@ -607,6 +620,8 @@ class BIDSDataset(BaseDataset):
         self.baseline = baseline
         self.units = units
         self.description = description
+        self.dtype = dtype
+        self.n_jobs = n_jobs
 
     def _find_recordings(self, saved: bool) -> dict[str, BIDSPath]:
         """Return the ``BIDSPath`` of each recording to load, by recording ID."""
@@ -645,10 +660,23 @@ class BIDSDataset(BaseDataset):
         return dict(sorted(recordings.items()))
 
     def _read_epochs(self, bids_path: BIDSPath, saved: bool) -> mne.BaseEpochs:
-        """Read one recording as epochs, numbered in ``metadata["epoch"]``."""
+        """Open one recording as epochs, without loading the data.
+
+        Epochs are numbered in ``metadata["epoch"]``; bad epochs are dropped so
+        that ``len`` is final.
+        """
+        wanted = (
+            None
+            if self.event_id is None
+            else [self.event_id]
+            if isinstance(self.event_id, str)
+            else list(self.event_id)
+        )
         if saved:
             # Derivative epochs have no sidecars to warn about.
-            epochs = read_epochs_bids(bids_path, verbose="error")
+            epochs = read_epochs_bids(
+                bids_path, extra_params={"preload": False}, verbose="error"
+            )
         else:
             raw = read_raw_bids(bids_path, verbose=False).pick(["eeg", "meg"])
             if self.event_id is None:
@@ -656,10 +684,12 @@ class BIDSDataset(BaseDataset):
                     raw,
                     duration=self.window_length,
                     overlap=self.window_length - (self.stride or self.window_length),
-                    preload=True,
+                    preload=False,
                     verbose=False,
                 )
             else:
+                if not set(wanted) & set(raw.annotations.description):
+                    raise _NoMatchingEvents
                 events, event_id = mne.events_from_annotations(
                     raw, event_id=self.event_id, verbose=False
                 )
@@ -670,17 +700,18 @@ class BIDSDataset(BaseDataset):
                     tmin=self.tmin,
                     tmax=self.tmax,
                     baseline=self.baseline,
-                    preload=True,
+                    preload=False,
                     verbose=False,
                 )
+            # Raw epochs falling on bad annotations are only known once read.
+            epochs.drop_bad(verbose=False)
         # Numbered before any are filtered out, so an epoch keeps its number
         # whichever events are asked for.
         epochs.metadata = pd.DataFrame({"epoch": np.arange(len(epochs))})
-        if saved and self.event_id is not None:
-            names = [self.event_id] if isinstance(self.event_id, str) else self.event_id
-            names = [name for name in names if name in epochs.event_id]
+        if saved and wanted is not None:
+            names = [name for name in wanted if name in epochs.event_id]
             if not names:
-                raise ValueError(f"No epochs with event_id={self.event_id}.")
+                raise _NoMatchingEvents
             epochs = epochs[names]
         return epochs
 
@@ -694,13 +725,18 @@ class BIDSDataset(BaseDataset):
             A container with:
 
             - X: Data array of shape (N_obs, N_channels, N_time).
-            - y: The event code of each observation, or `target_col`.
+            - y: The event code of each observation (codes in
+              ``meta["event_id"]``, the same for every recording), or
+              `target_col`.
             - ids: Unique identifiers for each observation.
             - coords: 'channel', 'time', and one entry per observation for
-              'obs', 'epoch', 'recording_id', 'subject', 'session', 'run' and
-              the subject metadata.
+              'obs', 'epoch', 'recording_id', 'bad_channels' (comma-separated,
+              as marked in the file), 'subject', 'session', 'run' and the
+              subject metadata.
             - dims: ('obs', 'channel', 'time').
-            - meta: 'sfreq', 'source', 'units', and 'load_failures' (the
+            - meta: 'sfreq', 'source', 'units', 'event_id',
+              'skipped_no_matching_events' (recordings with none of the
+              requested events, skipped without a warning), and 'load_failures' (the
               'recording_id' and 'error' of each recording that failed to load).
 
         Raises
@@ -730,23 +766,74 @@ class BIDSDataset(BaseDataset):
                 sub = normalize_subject_value(row[self.subject_key])
                 meta_lookup.setdefault(sub, {}).update(row.to_dict())
 
-        epochs_list = []
+        def open_recording(bids_path: BIDSPath) -> mne.BaseEpochs | str | None:
+            try:
+                return self._read_epochs(bids_path, saved)
+            except _NoMatchingEvents:
+                return None
+            except Exception as e:
+                return f"{type(e).__name__}: {e}"
+
+        recordings = self._find_recordings(saved)
+        opened: list[tuple[str, mne.BaseEpochs, list[int]]] = []
+        stand_ins: list[mne.BaseEpochs] = []
         load_failures: list[dict[str, str]] = []
-        with mne.use_log_level("WARNING"):
-            for recording_id, bids_path in self._find_recordings(saved).items():
-                try:
-                    epochs = self._read_epochs(bids_path, saved)
-                except Exception as e:
-                    error = f"{type(e).__name__}: {e}"
-                    logger.warning(f"Could not load {recording_id}: {error}")
-                    load_failures.append({"recording_id": recording_id, "error": error})
+        skipped: list[str] = []
+        event_codes: dict[str, int] = {}
+        # One log level for the whole load: MNE's per-call ``verbose`` sets a
+        # process-wide level, which threads would reset under each other.
+        with (
+            mne.use_log_level("ERROR"),
+            ThreadPoolExecutor(max_workers=max(1, self.n_jobs)) as pool,
+        ):
+            # Pass 1 opens every recording without its data, to learn its size
+            # and check it can be stacked; map keeps the recording order.
+            for (recording_id, bids_path), epochs in zip(
+                recordings.items(),
+                pool.map(open_recording, recordings.values()),
+                strict=True,
+            ):
+                if epochs is None:
+                    skipped.append(recording_id)
                     continue
-                numbers = epochs.metadata["epoch"].to_numpy()
-                epochs.metadata = pd.DataFrame(
+                if isinstance(epochs, str):
+                    logger.warning(f"Could not load {recording_id}: {epochs}")
+                    load_failures.append(
+                        {"recording_id": recording_id, "error": epochs}
+                    )
+                    continue
+                # A one-sample copy carries the info, events and metadata, so
+                # concatenate_epochs can check and stack them without the data.
+                stand_in = mne.EpochsArray(
+                    np.zeros((len(epochs), len(epochs.ch_names), 1)),
+                    epochs.info,
+                    events=epochs.events,
+                    tmin=epochs.tmin,
+                    event_id=epochs.event_id,
+                    metadata=epochs.metadata,
+                    baseline=None,
+                    verbose=False,
+                )
+                # Recordings may number the same event differently and mark
+                # different bad channels; concatenate_epochs needs them equal.
+                for name in stand_in.event_id:
+                    event_codes.setdefault(name, len(event_codes) + 1)
+                recode = {
+                    code: event_codes[name] for name, code in stand_in.event_id.items()
+                }
+                stand_in.events[:, 2] = [recode[code] for code in stand_in.events[:, 2]]
+                stand_in.event_id = {
+                    name: event_codes[name] for name in stand_in.event_id
+                }
+                bad_channels = ",".join(stand_in.info["bads"])
+                stand_in.info["bads"] = []
+                numbers = stand_in.metadata["epoch"].to_numpy()
+                stand_in.metadata = pd.DataFrame(
                     {
                         "obs": [f"{recording_id}_epoch-{i:04d}" for i in numbers],
                         "epoch": numbers,
                         "recording_id": recording_id,
+                        "bad_channels": bad_channels,
                         "subject": bids_path.subject,
                         "session": bids_path.session or "",
                         "run": bids_path.run or "",
@@ -755,12 +842,33 @@ class BIDSDataset(BaseDataset):
                         ),
                     }
                 )
-                if epochs_list and set(epochs.ch_names) == set(epochs_list[0].ch_names):
-                    epochs.reorder_channels(epochs_list[0].ch_names)
-                epochs_list.append(epochs)
+                order = list(range(len(epochs.ch_names)))
+                if stand_ins:
+                    first = stand_ins[0].ch_names
+                    if set(stand_in.ch_names) == set(first):
+                        order = [stand_in.ch_names.index(ch) for ch in first]
+                        stand_in.reorder_channels(first)
+                    if len(epochs.times) != len(opened[0][1].times):
+                        raise ValueError(
+                            f"Epochs must have same times: {recording_id} has "
+                            f"{len(epochs.times)} samples, not "
+                            f"{len(opened[0][1].times)}."
+                        )
+                opened.append((recording_id, epochs, order))
+                stand_ins.append(stand_in)
 
-            if not epochs_list:
+            if skipped:
+                logger.info(
+                    f"Skipped {len(skipped)} recording(s) with no events in "
+                    f"event_id={self.event_id}."
+                )
+            if not stand_ins:
                 message = f"No valid data found in {self.root}"
+                if skipped:
+                    message += (
+                        f"; {len(skipped)} recording(s) have no events in "
+                        f"event_id={self.event_id}"
+                    )
                 if load_failures:
                     message += (
                         f": {len(load_failures)} recording(s) could not be loaded, "
@@ -769,12 +877,31 @@ class BIDSDataset(BaseDataset):
                     )
                 raise RuntimeError(message)
 
-            epochs = mne.concatenate_epochs(epochs_list, verbose=False)
-            del epochs_list  # the per-recording copies are no longer needed
+            # MNE checks that the recordings agree and stacks events and metadata.
+            epochs = mne.concatenate_epochs(stand_ins, verbose=False)
+            del stand_ins
+
+            # Pass 2 reads each recording's data straight into its rows of the
+            # output, so at most one float64 recording per thread is in memory.
+            counts = [len(recording) for _, recording, _ in opened]
+            starts = np.concatenate([[0], np.cumsum(counts)])
+            X = np.empty(
+                (starts[-1], len(epochs.ch_names), len(opened[0][1].times)),
+                dtype=self.dtype,
+            )
+
+            def fill(index: int) -> None:
+                _, recording, order = opened[index]
+                X[starts[index] : starts[index + 1]] = recording.get_data(
+                    units=self.units
+                )[:, order]
+
+            list(pool.map(fill, range(len(opened))))
+            opened.clear()
 
         coords = {
             "channel": np.array(epochs.ch_names),
-            "time": epochs.times,
+            "time": epochs.tmin + np.arange(X.shape[2]) / epochs.info["sfreq"],
             **{name: epochs.metadata[name].to_numpy() for name in epochs.metadata},
         }
         for name in ("session", "run"):
@@ -789,16 +916,19 @@ class BIDSDataset(BaseDataset):
                 )
             y = coords[self.target_col]
 
+        sfreq = epochs.info["sfreq"]
         return DataContainer(
-            X=epochs.get_data(units=self.units, copy=False),
+            X=X,
             y=y,
             ids=coords["obs"],
             dims=("obs", "channel", "time"),
             coords=coords,
             meta={
-                "sfreq": epochs.info["sfreq"],
+                "sfreq": sfreq,
                 "source": str(self.root),
                 "units": self.units,
+                "event_id": event_codes,
                 "load_failures": load_failures,
+                "skipped_no_matching_events": skipped,
             },
         )

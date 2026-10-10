@@ -394,6 +394,7 @@ def test_bids_dataset_identifies_recordings_by_entities(tmp_path, write_bids_epo
 
     assert container.dims == ("obs", "channel", "time")
     assert container.X.shape == (6, 2, 20)
+    assert container.X.dtype == np.float32
     assert container.meta["sfreq"] == 100.0
     assert container.coords["channel"].tolist() == ["C1", "C2"]
     assert container.coords["recording_id"].tolist() == [
@@ -411,6 +412,11 @@ def test_bids_dataset_identifies_recordings_by_entities(tmp_path, write_bids_epo
     assert container.coords["subject"].tolist() == ["01"] * 4 + ["02"] * 2
     assert container.coords["run"].tolist() == ["1", "1", "10", "10", "1", "1"]
     assert container.coords["age"].tolist() == [30] * 4 + [40] * 2
+
+    # reading with threads keeps the recording order
+    threaded = _load_epochs(tmp_path, n_jobs=3)
+    assert threaded.ids.tolist() == container.ids.tolist()
+    np.testing.assert_array_equal(threaded.X, container.X)
 
     # an epoch keeps its number in the recording whichever events are selected
     one_run = _load_epochs(tmp_path, subjects="01", runs="1", event_id="right")
@@ -442,6 +448,20 @@ def test_bids_dataset_recordings_must_agree(tmp_path, write_bids_epochs):
     write_bids_epochs(tmp_path, "04", sfreq=200.0)
     with pytest.raises(ValueError, match=r"sfreq.* must match"):
         _load_epochs(tmp_path, subjects=["01", "04"])
+
+
+def test_bids_dataset_stacks_recordings_that_number_events_differently(
+    tmp_path, write_bids_epochs
+):
+    write_bids_epochs(tmp_path, "01")
+    write_bids_epochs(tmp_path, "02", event_id={"left": 2, "right": 1}, bads=["C2"])
+
+    container = _load_epochs(tmp_path)
+
+    # one code per event name across recordings
+    left = container.meta["event_id"]["left"]
+    assert container.y.tolist() == [left, 3 - left] * 2
+    assert container.coords["bad_channels"].tolist() == ["", "", "C2", "C2"]
 
 
 def test_bids_dataset_raw_recordings(tmp_path):
@@ -495,6 +515,15 @@ def test_bids_dataset_reports_recordings_that_fail_to_load(
     assert "Could not load sub-02_task-rest" in caplog.text
 
     assert _load_epochs(tmp_path, subjects="01").meta["load_failures"] == []
+
+    # a recording with none of the requested events is skipped, not a failure
+    write_bids_epochs(tmp_path, "03", event_id={"up": 1, "down": 2})
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        left = _load_epochs(tmp_path, subjects=["01", "03"], event_id="left")
+    assert left.meta["load_failures"] == []
+    assert left.meta["skipped_no_matching_events"] == ["sub-03_task-rest"]
+    assert "sub-03" not in caplog.text
     with pytest.raises(
         RuntimeError, match=r"No valid data found in .*sub-02_task-rest"
     ):

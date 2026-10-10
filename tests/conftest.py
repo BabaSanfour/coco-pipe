@@ -75,7 +75,10 @@ def write_bids_epochs():
         n_times=20,
         sfreq=100.0,
         value=0.0,
+        event_id=None,
+        bads=(),
     ):
+        event_id = event_id or {"left": 1, "right": 2}
         path = BIDSPath(
             root=root,
             subject=subject,
@@ -93,10 +96,13 @@ def write_bids_epochs():
             + value
             + np.arange(len(ch_names))[:, None],
             mne.create_info(list(ch_names), sfreq, "eeg"),
-            events=np.array([[0, 0, 1], [n_times, 0, 2]]),
-            event_id={"left": 1, "right": 2},
+            events=np.array(
+                [[i * n_times, 0, code] for i, code in enumerate(event_id.values())]
+            ),
+            event_id=event_id,
             verbose=False,
         )
+        epochs.info["bads"] = list(bads)
         epochs.save(path.fpath, verbose=False)
         return path.fpath
 
