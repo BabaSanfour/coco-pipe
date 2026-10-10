@@ -17,8 +17,6 @@ from coco_pipe.utils import montage_name
 
 pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
-# BIOT's STFT warning comes from braindecode, not from this package.
-pytestmark = pytest.mark.filterwarnings("ignore:A window was not provided")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
 # Settings a checkpoint's config would otherwise provide.

@@ -516,11 +516,16 @@ def test_real_foundation_checkpoints():
         }
         for record in records
     )
-    assert all(
-        record["status"] == "verified"
-        for record in records
-        if record["model_key"] != "reve"
-    )
+    # SignalJEPA's pretrained encoder collapses in braindecode itself (to report
+    # upstream); the check has to keep flagging it until that is fixed
+    known_degenerate = {"signaljepa"}
+    for record in records:
+        if record["model_key"] == "reve":
+            continue
+        expected = (
+            "degenerate" if record["model_key"] in known_degenerate else "verified"
+        )
+        assert record["status"] == expected, record
 
 
 @pytest.mark.real_checkpoints
