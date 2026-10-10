@@ -1,1 +1,0 @@
-`BIDSDataset` no longer skips a recording that fails to load without a trace: it logs a warning with the reason, lists the recording under `load_failures` in the container metadata, and names the first failure in the error raised when nothing could be loaded.

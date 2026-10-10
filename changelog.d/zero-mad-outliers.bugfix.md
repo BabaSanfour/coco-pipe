@@ -1,1 +1,0 @@
-Fix robust outlier scoring for columns whose MAD is zero (over half the values equal the median, e.g. quantised counts): every non-median value used to get an infinite z-score and count as an outlier. Such columns now fall back to the mean absolute deviation (modified z-score), so only genuinely extreme values are flagged.

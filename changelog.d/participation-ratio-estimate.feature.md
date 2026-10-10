@@ -1,1 +1,0 @@
-When the exact variance participation ratio would need a feature Gram matrix above `participation_ratio_max_gram_bytes`, `streamed_variance_decomposition_report` now estimates it (Hutchinson's estimator, 256 random probes, two passes over the batches) instead of skipping it. Those rows have status `"estimated"` and give the relative standard error in `reason`.

@@ -1,1 +1,0 @@
-`EmbeddingDataset`, `EmbeddingConfig` and `load_data` no longer take `task`, `run` and `processing`, which built a `sub-*_task-*_run-*_embeddings<processing>.pkl` glob by hand; pass that glob as `pattern` instead.

@@ -1,1 +1,0 @@
-Fine-tuning without groups now honours `validation_fraction`: `0` trains on all windows and any other value holds out that fraction (stratified for classification). It used to fall back to skorch's default 5-fold split whatever the fraction. With groups (as in `Experiment`) nothing changes.

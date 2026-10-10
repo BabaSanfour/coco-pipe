@@ -1,1 +1,0 @@
-coco-pipe requires MNE 1.13 or newer and uses its `colin27_1020` / `colin27_1005` montages, the new names of `standard_1020` / `standard_1005` (same channels and positions), so MNE no longer warns that the old names are deprecated. Montage defaults in `coco_pipe.viz` and the decoding reports are now `colin27_*`.
