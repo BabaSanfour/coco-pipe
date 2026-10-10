@@ -652,26 +652,24 @@ class BIDSDataset(BaseDataset):
             if isinstance(self.event_id, str)
             else list(self.event_id)
         )
+        # No per-call ``verbose``: it would change the level set for the whole
+        # load while other threads read.
         if saved:
-            # Derivative epochs have no sidecars to warn about.
-            epochs = read_epochs_bids(
-                bids_path, extra_params={"preload": False}, verbose="error"
-            )
+            epochs = read_epochs_bids(bids_path, extra_params={"preload": False})
         else:
-            raw = read_raw_bids(bids_path, verbose=False).pick(["eeg", "meg"])
+            raw = read_raw_bids(bids_path).pick(["eeg", "meg"])
             if self.event_id is None:
                 epochs = mne.make_fixed_length_epochs(
                     raw,
                     duration=self.window_length,
                     overlap=self.window_length - (self.stride or self.window_length),
                     preload=False,
-                    verbose=False,
                 )
             else:
                 if not set(wanted) & set(raw.annotations.description):
                     raise _NoMatchingEvents
                 events, event_id = mne.events_from_annotations(
-                    raw, event_id=self.event_id, verbose=False
+                    raw, event_id=self.event_id
                 )
                 epochs = mne.Epochs(
                     raw,
@@ -681,10 +679,9 @@ class BIDSDataset(BaseDataset):
                     tmax=self.tmax,
                     baseline=self.baseline,
                     preload=False,
-                    verbose=False,
                 )
             # Raw epochs falling on bad annotations are only known once read.
-            epochs.drop_bad(verbose=False)
+            epochs.drop_bad()
         # Numbered before any are filtered out, so an epoch keeps its number
         # whichever events are asked for.
         epochs.metadata = pd.DataFrame({"epoch": np.arange(len(epochs))})
@@ -792,7 +789,6 @@ class BIDSDataset(BaseDataset):
                     event_id=epochs.event_id,
                     metadata=epochs.metadata,
                     baseline=None,
-                    verbose=False,
                 )
                 # Recordings may number the same event differently and mark
                 # different bad channels; concatenate_epochs needs them equal.
@@ -858,7 +854,7 @@ class BIDSDataset(BaseDataset):
                 raise RuntimeError(message)
 
             # MNE checks that the recordings agree and stacks events and metadata.
-            epochs = mne.concatenate_epochs(stand_ins, verbose=False)
+            epochs = mne.concatenate_epochs(stand_ins)
             del stand_ins
 
             # Pass 2 reads each recording's data straight into its rows of the
