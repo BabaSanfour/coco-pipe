@@ -8,6 +8,8 @@ on:
       - "coco_pipe/**"
       - "examples/**"
       - "README.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -16,6 +18,8 @@ on:
       - "coco_pipe/**"
       - "examples/**"
       - "README.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
