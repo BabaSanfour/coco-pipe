@@ -69,8 +69,14 @@ jobs:
           cache: pip
 
       - name: Install package
+        env:
+          # annoy compiles with -march=native (-mcpu=native on arm), and the pip
+          # cache carries that wheel to runners with other CPUs, where it dies
+          # with "Illegal instruction". Build it portable and never reuse it.
+          ANNOY_COMPILER_ARGS: ${{ runner.os != 'Windows' && '-D_CRT_SECURE_NO_WARNINGS,-fpermissive,-O3,-ffast-math,-fno-associative-math,-DANNOYLIB_MULTITHREADED_BUILD,-std=c++14' || '' }}
         run: |
           python -m pip install --upgrade pip
+          python -m pip cache remove annoy
           python -m pip install -e ".[full,test]"
 
       - name: Run tests
@@ -115,8 +121,12 @@ jobs:
           cache: pip
 
       - name: Install package
+        env:
+          # See the test job: a portable annoy, never a cached native build.
+          ANNOY_COMPILER_ARGS: "-D_CRT_SECURE_NO_WARNINGS,-fpermissive,-O3,-ffast-math,-fno-associative-math,-DANNOYLIB_MULTITHREADED_BUILD,-std=c++14"
         run: |
           python -m pip install --upgrade pip
+          python -m pip cache remove annoy
           python -m pip install -e ".[full,test]"
 
       - name: Run real checkpoint tests
