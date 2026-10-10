@@ -1307,6 +1307,8 @@ class ExperimentResult:
             "Model",
             "Metric",
             "Observed",
+            "CILower",
+            "CIUpper",
             "PValue",
             "CorrectedPValue",
             "Significant",

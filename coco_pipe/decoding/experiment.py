@@ -828,7 +828,12 @@ class Experiment:
                 y,
                 groups,
                 self._sample_ids,
-                self._sample_metadata,
+                # Each permutation re-runs run() with this metadata; without
+                # Subject/Session (no groups or metadata given) it must not be
+                # passed, or run() rejects it as incomplete.
+                self._sample_metadata
+                if {"Subject", "Session"} <= set(self._sample_metadata.columns)
+                else None,
                 self._feature_names,
                 self._time_axis,
                 self._observation_level,

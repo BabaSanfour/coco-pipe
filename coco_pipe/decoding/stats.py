@@ -409,6 +409,24 @@ def run_statistical_assessment(
     """
     stats_config = experiment_config.statistical_assessment
     unit = inferential_unit
+    # A unit set in the config takes precedence over the one run() was given.
+    if stats_config.unit_of_inference == "sample":
+        unit = "sample"
+    elif stats_config.unit_of_inference in {"group_mean", "group_majority"}:
+        unit = "group"
+        stats_config = stats_config.model_copy(
+            update={
+                "custom_aggregation": stats_config.unit_of_inference.removeprefix(
+                    "group_"
+                )
+            }
+        )
+    elif stats_config.unit_of_inference == "custom":
+        if not stats_config.custom_unit_column:
+            raise ValueError(
+                "unit_of_inference='custom' requires custom_unit_column to be set."
+            )
+        unit = "custom"
     metrics = experiment_config.get_all_evaluation_metrics()
     if stats_config.metrics:
         metrics = [m for m in metrics if m in stats_config.metrics]
@@ -737,18 +755,20 @@ def _run_permutation_loop(
     from coco_pipe.decoding import Experiment
 
     rng = np.random.default_rng(config.random_state)
+    # run() capitalises metadata columns, so they are matched ignoring case.
+    columns = {
+        str(column).casefold(): column
+        for column in (sample_metadata.columns if sample_metadata is not None else [])
+    }
+    target_col = config.custom_unit_column if unit == "custom" else unit
     if unit == "sample":
         unit_values = np.arange(len(y))
-    elif sample_metadata is not None and unit in sample_metadata.columns:
-        unit_values = sample_metadata[unit].to_numpy()
     elif groups is not None and unit in {"Group", "group"}:
         unit_values = np.asarray(groups)
+    elif str(target_col).casefold() in columns:
+        unit_values = sample_metadata[columns[str(target_col).casefold()]].to_numpy()
     else:
-        target_col = config.custom_unit_column if unit == "custom" else unit
-        if sample_metadata is not None and target_col in sample_metadata.columns:
-            unit_values = sample_metadata[target_col].to_numpy()
-        else:
-            raise ValueError(f"Could not resolve unit values for '{unit}'.")
+        raise ValueError(f"Could not resolve unit values for '{unit}'.")
     unique_units, unit_map_idx = np.unique(unit_values, return_inverse=True)
     n_unique = len(unique_units)
 
@@ -1166,19 +1186,20 @@ def _score_by_coordinates(
         "zero_one_loss",
         "hamming_loss",
     }:
-        y_true_mat = frame.pivot(
-            index="InferentialUnitID", columns=temporal_cols, values="y_true"
+        # A mean per coordinate, so a unit drawn twice by the bootstrap
+        # counts twice.
+        hits = frame["y_true"].to_numpy() == frame["y_pred"].to_numpy()
+        if metric != "accuracy":
+            hits = ~hits
+        means = (
+            pd.Series(hits, index=frame.index, dtype=float)
+            .groupby([frame[col] for col in temporal_cols], dropna=False)
+            .mean()
         )
-        y_pred_mat = frame.pivot(
-            index="InferentialUnitID", columns=temporal_cols, values="y_pred"
-        )
-
-        if metric == "accuracy":
-            scores_array = (y_true_mat.values == y_pred_mat.values).mean(axis=0)
-        else:
-            scores_array = (y_true_mat.values != y_pred_mat.values).mean(axis=0)
-
-        return dict(zip(y_true_mat.columns, scores_array, strict=False))
+        return {
+            key if isinstance(key, tuple) else (key,): float(value)
+            for key, value in means.items()
+        }
 
     scores = {}
     for key, group in frame.groupby(temporal_cols, dropna=False):

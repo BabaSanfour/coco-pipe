@@ -1,0 +1,1 @@
+Time-resolved permutation assessments with a bootstrap confidence interval no longer fail: scoring accuracy per time point pivoted on the inferential unit, which a bootstrap resample repeats. It is now a mean per time point.
