@@ -1538,7 +1538,7 @@ class ExperimentResult:
         n_permutations : int, default=1000
             Number of permutations for each paired test.
         correction : str, default='fdr_bh'
-            Multiple comparison correction method (e.g., 'bonferroni', 'fdr_bh').
+            ``"fdr_bh"`` (Benjamini-Hochberg) or ``"none"``.
         random_state : int, optional
             Random seed for permutations.
 

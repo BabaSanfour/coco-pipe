@@ -33,26 +33,13 @@ def benjamini_hochberg(
     *,
     alpha: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Correct a family of p-values with the Benjamini-Hochberg procedure."""
+    """Benjamini-Hochberg adjusted p-values and rejections; NaN stays NaN."""
     values = np.asarray(p_values, dtype=float)
-    adjusted = np.full(values.shape, np.nan, dtype=float)
-    rejected = np.zeros(values.shape, dtype=bool)
+    adjusted = np.full(values.shape, np.nan)
     valid = np.isfinite(values)
-    if not valid.any():
-        return adjusted, rejected
-    raw = values[valid]
-    order = np.argsort(raw)
-    ranked = raw[order]
-    n = len(ranked)
-    corrected_ranked = np.minimum.accumulate((ranked * n / np.arange(1, n + 1))[::-1])[
-        ::-1
-    ]
-    corrected_ranked = np.clip(corrected_ranked, 0.0, 1.0)
-    corrected = np.empty(n, dtype=float)
-    corrected[order] = corrected_ranked
-    adjusted[valid] = corrected
-    rejected[valid] = corrected <= alpha
-    return adjusted, rejected
+    if valid.any():
+        adjusted[valid] = false_discovery_control(values[valid], method="bh")
+    return adjusted, adjusted <= alpha
 
 
 def correct_sweep_pvalues(
@@ -1828,9 +1815,8 @@ def apply_multiple_comparison_correction(
     --------------------
     When testing multiple hypotheses (e.g., across many timepoints or models),
     the probability of a Type I error (false positive) increases. This
-    utility applies standard corrections like Bonferroni (strict) or False
-    Discovery Rate (FDR; Benjamini-Hochberg) to control the family-wise error
-    rate or the expected proportion of false discoveries.
+    utility controls the expected proportion of false discoveries with the
+    Benjamini-Hochberg False Discovery Rate (FDR) procedure.
 
     Parameters
     ----------
@@ -1839,7 +1825,7 @@ def apply_multiple_comparison_correction(
     p_col : str, default='PValue'
         Name of the column containing raw p-values.
     method : str, default='fdr_bh'
-        Correction method (e.g., 'fdr_bh', 'bonferroni').
+        ``"fdr_bh"`` (Benjamini-Hochberg) or ``"none"``.
     alpha : float, default=0.05
         Significance level.
 
@@ -1851,21 +1837,15 @@ def apply_multiple_comparison_correction(
     Examples
     --------
     >>> # corrected = apply_multiple_comparison_correction(results_df, method='fdr_bh')
-
-    See Also
-    --------
-    statsmodels.stats.multitest.multipletests : Underlying implementation.
     """
-    from statsmodels.stats.multitest import multipletests
-
-    if df.empty or len(df) < 2 or not method:
+    if method not in ("fdr_bh", "none"):
+        raise ValueError(f"Unknown correction {method!r}; use 'fdr_bh' or 'none'.")
+    if df.empty or len(df) < 2 or method == "none":
         if "Significant" not in df.columns and not df.empty:
             df["Significant"] = df[p_col] < alpha
         return df
 
-    reject, corrected, _, _ = multipletests(
-        df[p_col].to_numpy(), alpha=alpha, method=method
-    )
+    corrected, reject = benjamini_hochberg(df[p_col], alpha=alpha)
 
     df = df.copy()
     df["PValueCorrected"] = corrected

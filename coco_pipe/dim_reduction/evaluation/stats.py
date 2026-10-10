@@ -21,8 +21,7 @@ from itertools import combinations
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_rel
-from statsmodels.stats.multitest import multipletests
+from scipy.stats import false_discovery_control, ttest_rel
 
 from .geometry import trajectory_separation
 
@@ -110,8 +109,7 @@ def paired_condition_stats(
         )
 
     out = pd.DataFrame(rows)
-    _, p_fdr, _, _ = multipletests(out["p_uncorrected"].fillna(1.0), method="fdr_bh")
-    out["p_fdr"] = p_fdr
+    out["p_fdr"] = false_discovery_control(out["p_uncorrected"].fillna(1.0))
     return out
 
 
@@ -207,8 +205,7 @@ def grouped_condition_stats(
         )
 
     out = pd.DataFrame(rows)
-    _, p_fdr, _, _ = multipletests(out["p_uncorrected"].fillna(1.0), method="fdr_bh")
-    out["p_fdr"] = p_fdr
+    out["p_fdr"] = false_discovery_control(out["p_uncorrected"].fillna(1.0))
     return out
 
 
