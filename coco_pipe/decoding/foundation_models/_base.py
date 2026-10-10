@@ -329,7 +329,17 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                     class_weight, dtype=torch.float32
                 ).to(self._device)
         validation_fraction = float(fit_params.get("validation_fraction", 0.2))
-        if groups is not None and validation_fraction > 0:
+        if validation_fraction <= 0:
+            net_kwargs["train_split"] = None
+        elif groups is None:
+            from skorch.dataset import ValidSplit
+
+            net_kwargs["train_split"] = ValidSplit(
+                validation_fraction,
+                stratified=self._task == "classification",
+                random_state=fit_params.get("random_state", 42),
+            )
+        else:
             from sklearn.model_selection import (
                 GroupShuffleSplit,
                 StratifiedGroupKFold,
