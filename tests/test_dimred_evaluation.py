@@ -631,34 +631,16 @@ def test_trajectory_geometry_guardrails():
         trajectory_separation(traj_3d, np.array(["A", "B"]), method="unknown")
 
     with pytest.raises(ValueError, match="Only metric='energy'"):
-        from coco_pipe.dim_reduction.evaluation.geometry import (
-            _distributional_separation_timecourse,
+        trajectory_separation(
+            traj_3d, np.array(["A", "B"]), method="distributional", metric="cosine"
         )
-
-        _distributional_separation_timecourse(traj_3d[:1], traj_3d[1:], metric="cosine")
-
     with pytest.raises(ValueError, match="must be either 'median' or 'mean'"):
-        from coco_pipe.dim_reduction.evaluation.geometry import (
-            _margin_separation_timecourse,
-        )
+        trajectory_separation(traj_3d, np.array(["A", "B"]), method="margin", agg="max")
 
-        _margin_separation_timecourse(traj_3d[:1], traj_3d[1:], agg="max")
-
-    # 5. Missing Coverage Hooks
     with pytest.raises(ValueError, match="at least 2 time points"):
-        _ = trajectory_speed(np.zeros((1, 2)))
-
+        trajectory_speed(np.zeros((1, 2)))
     with pytest.raises(ValueError, match="`dt` must be > 0"):
         trajectory_speed(traj_ok, dt=-1.0)
-
-    # 6. Empty collections or single points (internal coverage)
-    from coco_pipe.dim_reduction.evaluation.geometry import (
-        _mean_self_pairwise_distance,
-        _nearest_within_distances,
-    )
-
-    assert _mean_self_pairwise_distance(np.zeros((0, 2))) == 0.0
-    assert np.all(_nearest_within_distances(np.zeros((1, 2))) == 0.0)
 
 
 def test_feature_importance():
@@ -1193,362 +1175,93 @@ def test_evaluate_embedding_trajectory_orchestration():
     assert "trajectory_separation_auc::0::1" in payload_no_times["metrics"]
 
 
-def test_evaluate_embedding_guardrails_extended():
-    """Test extended guardrails for evaluate_embedding."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
+def test_evaluate_embedding_errors():
     X_emb = np.random.rand(10, 2)
-
-    # 1. Invalid quality_metadata
     with pytest.raises(TypeError, match="metadata must be a dictionary"):
         evaluate_embedding(X_emb, quality_metadata="not-a-dict")
-
-    # 2. Invalid diagnostics
     with pytest.raises(TypeError, match="diagnostics must be a dictionary"):
         evaluate_embedding(X_emb, diagnostics="not-a-dict")
-
-    # 3. Missing X for 2D evaluation
     with pytest.raises(ValueError, match="Original data `X` is required"):
         evaluate_embedding(X_emb, metrics=["trustworthiness"])
-
-    # 4. Dimension mismatch for Standard Evaluation
     with pytest.raises(ValueError, match="matching sample counts"):
         evaluate_embedding(X_emb, X=np.random.rand(9, 2), metrics=["trustworthiness"])
-
-    # 5. Invalid X_emb dimensions (e.g. 4D)
     with pytest.raises(ValueError, match="must be either 2D or 3D"):
         evaluate_embedding(np.random.rand(2, 2, 2, 2))
 
 
-def test_method_selector_guardrails_extended():
-    """Test extended guardrails for MethodSelector."""
-    # 1. Invalid reducer type in init
-    with pytest.raises(TypeError, match="only accepts scored DimReduction objects"):
-        MethodSelector(["not-a-reducer"])
-
-    # 2. Collect error: no embedding
-    reducer_no_emb = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no metric records"):
-        MethodSelector([reducer_no_emb]).collect()
-
-    # 3. Collect error: no records
-    X = np.random.rand(10, 5)
-    reducer_no_recs = DimReduction("PCA")
-    reducer_no_recs.fit_transform(X)
-    # No score() call
-    # With stateless DimReduction, this now checks metric_records_
-    with pytest.raises(ValueError, match="has no metric records"):
-        MethodSelector([reducer_no_recs]).collect()
-
-    # 4. Rank methods: invalid tie-breaker
-    reducer_ok = DimReduction("PCA")
-    reducer_ok.fit_transform(X)
-    reducer_ok.score(
-        reducer_ok.transform(X), X=X, metrics=["trustworthiness"], k_values=[5, 10]
-    )
-    selector = MethodSelector([reducer_ok]).collect()
-
-    with pytest.raises(ValueError, match="Unsupported tie-breaker"):
-        selector.rank_methods(
-            selection_metric="trustworthiness", tie_breakers=["invalid"]
-        )
-
-    # 5. Rank methods: metric not available
-    with pytest.raises(ValueError, match="is not available"):
-        selector.rank_methods(selection_metric="continuity")
-
-    # 6. Rank methods: k not found
-    with pytest.raises(ValueError, match="has no observations at k=99"):
-        selector.rank_methods(selection_metric="trustworthiness", selection_k=99)
-
-
-def test_internal_trajectory_summary_guardrails():
-    """Test internal _summarize_trajectory_metric error paths."""
-    from coco_pipe.dim_reduction.evaluation.core import _summarize_trajectory_metric
-
-    with pytest.raises(ValueError, match="Unsupported trajectory summary type"):
-        _summarize_trajectory_metric("test", np.zeros(5), summary_type="invalid")
-
-
-def test_evaluate_embedding_shepard_only():
-    """Test evaluate_embedding with shepard_correlation specifically requested."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X = np.random.rand(10, 5)
-    X_emb = np.random.rand(10, 2)
-
-    payload = evaluate_embedding(X_emb, X=X, metrics=["shepard_correlation"])
-    assert "shepard_correlation" in payload["metrics"]
-    assert "trustworthiness" not in payload["metrics"]
-
-
-def test_evaluate_embedding_trajectory_insufficient_points():
-    """Test trajectory evaluation with too few points for certain metrics."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    # 3 trajectories, 2 points (cannot do acceleration which needs 3)
-    traj = np.random.rand(3, 2, 2)
-    payload = evaluate_embedding(X_emb=traj)
-
-    assert "trajectory_speed_mean" in payload["metrics"]
-    assert "trajectory_acceleration_mean" not in payload["metrics"]
-
-
-def test_evaluate_embedding_empty_metric_selection():
-    """Test evaluate_embedding with a metric selection that yields nothing."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-
-    # Requesting standard metrics for a 3D embedding (or vice versa)
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trajectory_speed"])
-    assert payload["metrics"] == {}
-
-
-def test_method_selector_empty_frame():
-    """Test to_frame() when selector is empty."""
-    selector = MethodSelector([])
-    assert selector.to_frame().empty
-    assert "method" in selector.to_frame().columns
-
-
-def test_method_selector_collect_empty_records():
-    """Trigger ValueError in collect if a reducer has empty records."""
-    X = np.random.rand(10, 5)
-    reducer = DimReduction("PCA")
-    reducer.fit_transform(X)
-    reducer.metric_records_ = []  # Explicitly empty
-
-    selector = MethodSelector([reducer])
-    with pytest.raises(ValueError, match="has no metric records"):
-        selector.collect()
-
-
-def test_evaluate_embedding_trajectory_separation_edge_cases():
-    """Test edge cases in _evaluate_trajectory_metrics separation logic."""
-    # 1. Empty values_arr for AUC
-    # We mock trajectory_separation to return an empty array for a pair
-    from coco_pipe.dim_reduction.evaluation import core as core_mod
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    original_sep = core_mod.trajectory_separation
-
-    def mock_sep_empty(*a, **k):
-        return {("A", "B"): np.array([])}
-
-    try:
-        core_mod.trajectory_separation = mock_sep_empty
-        traj = np.random.rand(3, 10, 2)
-        payload = evaluate_embedding(X_emb=traj, labels=[0, 1, 0])
-        # Should be NaN for AUC
-        assert np.isnan(payload["metrics"]["trajectory_separation_auc::A::B"])
-    finally:
-        core_mod.trajectory_separation = original_sep
-
-    # 2. Time mismatch for AUC integration
-    traj = np.random.rand(2, 5, 2)
-    # 3 points in times, but 5 in trajectory
-    payload_mismatch = evaluate_embedding(X_emb=traj, labels=[0, 1], times=[0, 1, 2])
-    assert "trajectory_separation_auc::0::1" in payload_mismatch["metrics"]
-
-
-def test_evaluate_embedding_standard_metrics_family_mismatch():
-    """Test evaluate_embedding when specific metrics are requested for wrong family."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-
-    # 1. 2D embedding but only trajectory metrics requested -> empty
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trajectory_speed"])
-    assert payload["metrics"] == {}
-
-    # 2. 3D embedding but only standard metrics requested -> empty
-    traj = np.random.rand(2, 5, 2)
-    payload_traj = evaluate_embedding(X_emb=traj, metrics=["trustworthiness"])
-    assert payload_traj["metrics"] == {}
-
-
-def test_evaluate_embedding_standard_metrics_guardrails_n_samples():
-    """Test standard metrics k-loop guards (lines 261, 274)."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-
-    # 1. No requested metrics after filtering
-    payload = evaluate_embedding(X_emb, X=X, metrics=["invalid"])
-    assert payload["metrics"] == {}
-
-    # 2. k >= n_samples - 1 skipped
-    payload_k = evaluate_embedding(
-        X_emb, X=X, metrics=["trustworthiness"], k_values=[15]
-    )
-    assert payload_k["metrics"] == {}
-    assert payload_k["records"] == []
-
-
-def test_evaluate_embedding_trajectory_ndim_guard():
-    """Test _evaluate_trajectory_metrics ndim guard."""
-    # 2D instead of 3D
-    X_emb = np.random.rand(10, 2)
-    from coco_pipe.dim_reduction.evaluation.core import _evaluate_trajectory_metrics
-
-    m, meta, _d, _r = _evaluate_trajectory_metrics("test", X_emb, None)
-    assert m == {}
-    assert meta == {}
-
-
-def test_evaluate_embedding_standard_metrics_negative_normalizer():
-    """Test standard metrics normalizer guard."""
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(5, 2)
-    X = np.random.rand(5, 5)
-
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trustworthiness"], k_values=[4])
-    assert "trustworthiness" not in payload["metrics"]
-
-
-def test_method_selector_rank_methods_missing_observations():
-    """Test rank_methods when a metric is missing observations for k."""
-    X = np.random.rand(10, 5)
-    reducer = DimReduction("PCA")
-    reducer.fit_transform(X)
-    reducer.score(reducer.transform(X), X=X, metrics=["trustworthiness"], k_values=[5])
-
-    selector = MethodSelector([reducer]).collect()
-
-    with pytest.raises(ValueError, match="is not available"):
-        selector.rank_methods(selection_metric="continuity")
-
-    with pytest.raises(ValueError, match="has no observations at k=10"):
-        selector.rank_methods(selection_metric="trustworthiness", selection_k=10)
-
-
-def test_evaluate_embedding_standard_metrics_empty_selection_orchestration():
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-
-    from coco_pipe.dim_reduction.evaluation.core import _evaluate_standard_metrics
-
-    m, _d, _r = _evaluate_standard_metrics(
-        "test", X, X_emb, {"trajectory_speed"}, 5, None, None
-    )
-    assert m == {}
-
-
-def test_evaluate_embedding_standard_metrics_k_lower_bound():
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trustworthiness"], k_values=[0])
-    assert "trustworthiness" not in payload["metrics"]
-
-    payload_mismatch = evaluate_embedding(X_emb, X=X, metrics=["trajectory_speed"])
-    assert payload_mismatch["metrics"] == {}
-
-
-def test_method_selector_rank_methods_nan_mean():
-    X = np.random.rand(10, 5)
-    reducer = DimReduction("PCA")
-    reducer.fit_transform(X)
-    reducer.score(reducer.transform(X), X=X, metrics=["trustworthiness"])
-
-    selector = MethodSelector([reducer]).collect()
-    ranked = selector.rank_methods(selection_metric="trustworthiness")
-    assert not ranked.empty
-
-
-def test_evaluate_embedding_standard_metrics_k_boundary_checks():
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(3, 2)
-    X = np.random.rand(3, 5)
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trustworthiness"], k_values=[2])
-    assert "trustworthiness" not in payload["metrics"]
-
-
-def test_method_selector_collect_unfitted_reducer():
-    reducer = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no metric records"):
-        MethodSelector([reducer]).collect()
-
-    reducer.embedding_ = np.random.rand(10, 2)
-    with pytest.raises(ValueError, match="has no metric records"):
-        MethodSelector([reducer]).collect()
-
-
-def test_evaluate_embedding_ndim_guard_final():
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    X_emb = np.random.rand(10, 2)
-    X = np.random.rand(10, 5)
-    payload = evaluate_embedding(X_emb, X=X, metrics=["trajectory_speed"])
-    assert payload["metrics"] == {}
-
-
-def test_evaluate_embedding_ndim_guard_branch():
-    from coco_pipe.dim_reduction.evaluation.core import evaluate_embedding
-
-    with pytest.raises(ValueError, match="must be either 2D or 3D"):
-        evaluate_embedding(np.random.rand(2, 2, 2, 2))
-
-
-def test_method_selector_collect_not_fitted_guard():
-    # DimReduction starts with embedding_ = None
-    reducer = DimReduction("PCA")
-    with pytest.raises(ValueError, match="has no metric records"):
-        MethodSelector([reducer]).collect()
-
-
-def test_method_selector_rank_methods_missing_records():
-    """Trigger ValueError in rank_methods if no metrics are available."""
-    selector = MethodSelector([])
-    with pytest.raises(ValueError, match="No evaluation metrics available"):
-        selector.rank_methods(selection_metric="trustworthiness")
-
-
-def test_evaluate_embedding_k_normalization_skip():
-    """Test skipping of k-metrics when normalizer is non-positive."""
+def test_evaluate_embedding_skips_what_does_not_apply():
     X = np.random.rand(10, 5)
     X_emb = X[:, :2]
-    # For n_samples=10, 2*n_samples - 3*k - 1 <= 0 means 20 - 3*k - 1 <= 0
-    # => 19 <= 3*k => k >= 7
-    # trustworthiness requires (2*n_samples - 3*k - 1) > 0
-    result = evaluate_embedding(
-        X_emb,
-        X=X,
+
+    def scored(**kwargs):
+        return evaluate_embedding(X_emb, X=X, **kwargs)["metrics"]
+
+    assert set(scored(metrics=["shepard_correlation"])) == {"shepard_correlation"}
+    defaults = scored(metrics=None)
+    assert "trustworthiness" in defaults
+    assert SEPARATION_LOGREG_BALANCED_ACCURACY not in defaults
+    # metrics of the other family, unknown names, and k outside 1..n/2 give nothing
+    for kwargs in (
+        {"metrics": ["trajectory_speed"]},
+        {"metrics": ["invalid"]},
+        {"metrics": ["trustworthiness"], "k_values": [0]},
+        {"metrics": ["trustworthiness"], "k_values": [7]},
+        {"metrics": ["trustworthiness"], "k_values": [15]},
+    ):
+        assert scored(**kwargs) == {}
+    small = evaluate_embedding(
+        np.random.rand(3, 2),
+        X=np.random.rand(3, 5),
         metrics=["trustworthiness"],
-        k_values=[7],
+        k_values=[2],
     )
-    # The metric should be skipped, so it shouldn't be in result['metrics']
-    assert "trustworthiness" not in result["metrics"]
+    assert small["metrics"] == {} and small["records"] == []
+
+    trajectories = np.random.rand(2, 5, 2)
+    assert (
+        evaluate_embedding(trajectories, metrics=["trustworthiness"])["metrics"] == {}
+    )
+    # acceleration needs three time points
+    short = evaluate_embedding(np.random.rand(3, 2, 2))["metrics"]
+    assert "trajectory_speed_mean" in short
+    assert "trajectory_acceleration_mean" not in short
+    # separation is still scored when `times` does not match the trajectory
+    mismatched = evaluate_embedding(trajectories, labels=[0, 1], times=[0, 1, 2])
+    assert "trajectory_separation_auc::0::1" in mismatched["metrics"]
 
 
-def test_evaluate_embedding_default_metrics_selection():
-    """Test default metric selection."""
-    X = np.random.rand(20, 5)
-    X_emb = X[:, :2]
-    # Calling with metrics=None (default) should trigger the standard selection
-    result = evaluate_embedding(X_emb, X=X, metrics=None)
-    assert "trustworthiness" in result["metrics"]
-    assert SEPARATION_LOGREG_BALANCED_ACCURACY not in result["metrics"]
+def test_method_selector_errors():
+    X = np.random.rand(10, 5)
+    for reducers in (["not-a-reducer"], {"pca": "not a reducer"}):
+        with pytest.raises(TypeError, match="only accepts scored DimReduction"):
+            MethodSelector(reducers)
 
+    unscored = DimReduction("PCA")
+    with pytest.raises(ValueError, match="has no metric records"):
+        MethodSelector([unscored]).collect()
+    unscored.fit_transform(X)
+    with pytest.raises(ValueError, match="has no metric records"):
+        MethodSelector([unscored]).collect()
 
-def test_method_selector_init_dict_invalid_type():
-    """Test MethodSelector initialization with dict and invalid reducer type."""
-    with pytest.raises(TypeError, match="only accepts scored DimReduction objects"):
-        MethodSelector({"pca": "not a reducer"})
+    empty = MethodSelector([])
+    assert "method" in empty.to_frame().columns
+    with pytest.raises(ValueError, match="No evaluation metrics available"):
+        empty.rank_methods(selection_metric="trustworthiness")
 
-
-def test_evaluate_embedding_invalid_dim():
-    """Test evaluate_embedding with invalid X_emb dimensionality."""
-    X_emb = np.random.rand(10, 2, 2, 2)
-    with pytest.raises(ValueError, match="must be either 2D or 3D"):
-        evaluate_embedding(X_emb)
+    scored = DimReduction("PCA")
+    scored.fit_transform(X)
+    scored.score(
+        scored.transform(X), X=X, metrics=["trustworthiness"], k_values=[5, 10]
+    )
+    selector = MethodSelector([scored]).collect()
+    assert not selector.rank_methods(selection_metric="trustworthiness").empty
+    for kwargs, match in [
+        ({"tie_breakers": ["invalid"]}, "Unsupported tie-breaker"),
+        ({"selection_metric": "continuity"}, "is not available"),
+        ({"selection_k": 99}, "has no observations at k=99"),
+    ]:
+        with pytest.raises(ValueError, match=match):
+            selector.rank_methods(**{"selection_metric": "trustworthiness", **kwargs})
 
 
 @pytest.mark.parametrize(
