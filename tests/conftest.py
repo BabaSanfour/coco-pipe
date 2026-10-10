@@ -59,10 +59,18 @@ def _sandbox_runtime_env():
 
 @pytest.fixture
 def write_bids_epochs():
-    """Return a function that saves a two-epoch file under a BIDS root."""
+    """Return a function that saves a two-epoch file under a BIDS root.
+
+    Skips with mne-bids 0.20, which cannot read saved FIF epochs (#1679).
+    """
     import mne
+    import mne_bids
     import numpy as np
     from mne_bids import BIDSPath
+    from packaging.version import Version
+
+    if Version(mne_bids.__version__) < Version("0.21.dev0"):
+        pytest.skip("reading saved FIF epochs needs mne-bids from main (#1679)")
 
     def write(
         root,
