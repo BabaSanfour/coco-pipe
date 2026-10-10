@@ -272,14 +272,6 @@ def _scalar_metrics(frame: pd.DataFrame, context: str) -> pd.DataFrame:
         data = frame.copy()
     return require_non_empty(data, context)
 
-    methods = frame["Method"].dropna().unique().tolist()
-    if len(methods) > 1:
-        raise ValueError(
-            f"{context} requires a single method selection. "
-            f"Filter with method=... Found: {methods}"
-        )
-    return frame
-
 
 def select_rows(
     df: pd.DataFrame,
