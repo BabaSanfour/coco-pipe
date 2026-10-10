@@ -296,7 +296,8 @@ def write_run_summary(
 
     Status is ``SUCCESS`` when a primary result succeeded and nothing failed,
     ``PARTIAL`` when there is any success, else ``FAILED`` — matching the
-    dim-reduction run-status contract.
+    dim-reduction run-status contract. Without ``primary_mask`` every
+    successful unit counts as primary.
     """
     frame = pd.DataFrame(list(records))
     if "status" in frame:
@@ -304,7 +305,7 @@ def write_run_summary(
     else:
         n_success = 0
     n_failed = len(list(failures))
-    primary_success = False
+    primary_success = n_success > 0
     if primary_mask is not None and not frame.empty:
         primary_success = bool(primary_mask(frame).fillna(False).any())
 

@@ -185,7 +185,7 @@ def test_read_sweep_gives_the_table_and_loads_units_on_demand(tmp_path):
 
     sweep = read_sweep(tmp_path / "sweep")
 
-    assert sweep.status == "PARTIAL"  # no primary mask was given to call it a success
+    assert sweep.status == "SUCCESS"  # without a primary mask any success counts
     assert sweep.results["output_dir"].tolist() == [str(u.output_dir) for u in units]
     assert sweep.results["accuracy_mean"].notna().all()
     one = sweep.results.iloc[[1]]
