@@ -28,6 +28,7 @@ from typing import Any
 
 import numpy as np
 
+from ...utils import montage_name
 from ._channels import normalize_channel_names
 
 # BENDR SCALE reference, from the published dn3 pretraining config (TUEG):
@@ -327,7 +328,9 @@ def _make_fill(
         info = mne.create_info(augmented_names, sfreq=float(sfreq), ch_types="eeg")
         # standard_1020 uses mixed-case labels (Fp1/Fz/Cz/...); match
         # case-insensitively so positions resolve for the spline interpolation.
-        info.set_montage("standard_1020", match_case=False, on_missing="warn")
+        info.set_montage(
+            montage_name("standard_1020"), match_case=False, on_missing="warn"
+        )
         epochs = mne.EpochsArray(padded, info, verbose="error")
         epochs.info["bads"] = list(missing)
         epochs.interpolate_bads(reset_bads=True, verbose="error")

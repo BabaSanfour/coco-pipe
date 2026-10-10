@@ -8,6 +8,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 import pandas as pd
 
+from ..utils import montage_name
 from .theme import ColorKind
 
 if TYPE_CHECKING:
@@ -439,7 +440,7 @@ def info_from_montage(
             "info_from_montage requires 'mne'. Install the neuroviz extra."
         ) from exc
 
-    montage_obj = mne.channels.make_standard_montage(montage)
+    montage_obj = mne.channels.make_standard_montage(montage_name(montage))
     montage_names = set(montage_obj.ch_names)
     kept = [str(name) for name in names if str(name) in montage_names]
     info = mne.create_info(kept, sfreq=sfreq, ch_types="eeg")

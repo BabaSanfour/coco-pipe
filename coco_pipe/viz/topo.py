@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 
+from ..utils import montage_name
 from ._utils import info_from_montage
 from .base import plot_topomap
 
@@ -32,7 +33,8 @@ def standard_montage_channels(montage: str = "standard_1020") -> frozenset[str]:
     import mne
 
     return frozenset(
-        name.lower() for name in mne.channels.make_standard_montage(montage).ch_names
+        name.lower()
+        for name in mne.channels.make_standard_montage(montage_name(montage)).ch_names
     )
 
 

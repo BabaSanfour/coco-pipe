@@ -10,6 +10,7 @@ import pandas as pd
 from matplotlib.collections import LineCollection
 from matplotlib.colors import TwoSlopeNorm
 
+from ..utils import montage_name
 from ._utils import _coerce_series, coerce_sensor_layout, finalize_axes
 from .theme import DIVERGING, QUALITATIVE, SEQUENTIAL, coco_theme, figure_size
 
@@ -1727,7 +1728,7 @@ def plot_roi_sensors(
     ch_names = list(np.asarray(container.coords["channel"]).astype(str))
     info = mne.create_info(ch_names=ch_names, sfreq=160, ch_types="eeg")
     info.set_montage(
-        mne.channels.make_standard_montage(montage)
+        mne.channels.make_standard_montage(montage_name(montage))
         if isinstance(montage, str)
         else montage
     )

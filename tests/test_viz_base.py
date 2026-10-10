@@ -736,10 +736,11 @@ def test_plot_roi_sensors_highlights_regions():
 def test_coerce_sensor_layout_from_info_dataframe_and_array():
     import mne
 
+    from coco_pipe.utils import montage_name
     from coco_pipe.viz._utils import coerce_sensor_layout
 
     info = mne.create_info(["Fz", "Cz", "Pz"], sfreq=100, ch_types="eeg")
-    info.set_montage(mne.channels.make_standard_montage("standard_1005"))
+    info.set_montage(mne.channels.make_standard_montage(montage_name("standard_1005")))
     layout = coerce_sensor_layout(info=info, names=["Cz", "Pz"])
     assert set(layout.names) == {"Cz", "Pz"}
     assert layout.positions.shape == (2, 2)

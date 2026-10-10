@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ...utils import montage_name
 from .._specs import SignalMetadata
 from . import _montages
 from ._base import BackendBase
@@ -241,7 +242,7 @@ class BrainDecodeBackend(BackendBase):
             kw.setdefault("sfreq", sfreq)
             info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
             try:
-                info.set_montage("standard_1020", on_missing="warn")
+                info.set_montage(montage_name("standard_1020"), on_missing="warn")
             except Exception as exc:
                 warnings.warn(
                     f"Could not assign the standard_1020 montage for "
@@ -410,7 +411,9 @@ class BrainDecodeBackend(BackendBase):
         info = mne.create_info(names, sfreq=metadata.pretrained_sfreq, ch_types="eeg")
         # Positions are unused by EEGPT (channels are identified by name via
         # chans_id); resolve them best-effort and stay quiet on misses.
-        info.set_montage("standard_1020", match_case=False, on_missing="ignore")
+        info.set_montage(
+            montage_name("standard_1020"), match_case=False, on_missing="ignore"
+        )
         model = EEGPT(
             n_chans=len(names),
             n_times=n_times,

@@ -1,0 +1,1 @@
+Montage names reach MNE through `coco_pipe.utils.montage_name`, so MNE 1.13, which renamed `standard_1020` / `standard_1005` to `colin27_1020` / `colin27_1005`, no longer raises a deprecation warning. Passing `"standard_1020"` keeps working.

@@ -13,6 +13,7 @@ from coco_pipe.decoding._specs import SignalMetadata
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
+from coco_pipe.utils import montage_name
 
 pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
@@ -57,7 +58,7 @@ def offline(monkeypatch, tmp_path):
 
     # EEGPT reads its weights file itself: give it a randomly initialised one.
     info = mne.create_info(list(DEFAULT_CHANNELS), 250.0, "eeg")
-    info.set_montage("standard_1020")
+    info.set_montage(montage_name("standard_1020"))
     eegpt = bm.EEGPT(
         chs_info=info["chs"],
         n_chans=len(DEFAULT_CHANNELS),
