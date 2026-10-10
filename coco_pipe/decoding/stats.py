@@ -800,6 +800,13 @@ def _run_permutation_loop(
             inferential_unit=inferential_unit,
             time_axis=time_axis,
         )
+        # A failed draw cannot be dropped: the null would no longer be the
+        # permutation distribution.
+        failure = p_res.raw.get(model)
+        if isinstance(failure, dict) and failure.get("status") == "failed":
+            raise RuntimeError(
+                f"Model {model!r} failed on permuted labels: {failure['error']}"
+            )
         p_preds = p_res.get_predictions()
         p_preds = p_preds[p_preds["Model"] == model]
         p_agg = aggregate_predictions_for_inference(

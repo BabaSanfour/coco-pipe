@@ -162,6 +162,41 @@ def test_permutation_assessment_needs_one_label_per_unit():
         experiment.run(X, y, groups=GROUPS, sample_metadata=metadata)
 
 
+def test_permutation_on_small_grouped_data_with_one_class_test_folds():
+    # 18 subjects, one sample per class; shuffled labels leave some of the
+    # four-sample test folds with a single class (issue #21)
+    groups = np.repeat(np.arange(18), 2)
+    y = np.tile([0, 1], 18)
+    X = np.random.default_rng(0).normal(size=(36, 3))
+    X[:, 0] += y
+    cv = CVConfig(strategy="group_kfold", n_splits=9)
+    result = _experiment(
+        {"lr": LogisticRegressionConfig()},
+        _assessment(method="permutation", n_permutations=10),
+        cv=cv,
+    ).run(X, y, groups=groups)
+    assert 0 < result.get_statistical_assessment()["PValue"].iloc[0] <= 1
+
+    auc = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["roc_auc"],
+        chance=ChanceAssessmentConfig(method="permutation", n_permutations=10),
+    )
+    experiment = Experiment(
+        ExperimentConfig(
+            task="classification",
+            models={"lr": LogisticRegressionConfig()},
+            metrics=["roc_auc"],
+            cv=cv,
+            statistical_assessment=auc,
+            n_jobs=1,
+            verbose=False,
+        )
+    )
+    with pytest.raises(RuntimeError, match="need both classes"):
+        experiment.run(X, y, groups=groups)
+
+
 def test_permutation_assessment_inputs():
     X, y = _grouped_data()
     # neither groups nor metadata: every permutation reruns without them

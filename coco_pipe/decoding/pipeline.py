@@ -126,6 +126,28 @@ def _unit_records(
             if not model_stats.empty:
                 record["p_value"] = float(model_stats.iloc[0]["PValue"])
         records.append(stamp_primary_metric(record, metrics))
+
+    # A model that failed is missing from summary(); report it, not drop it.
+    succeeded = {r["model"] for r in records}
+    for model_name, res in result.raw.items():
+        if model_name in succeeded:
+            continue
+        error_msg = (
+            res.get("error", "unknown error") if isinstance(res, dict) else str(res)
+        )
+        records.append(
+            stamp_primary_metric(
+                {
+                    **dict(context),
+                    "model": model_name,
+                    "status": "failed",
+                    "reason": error_msg,
+                    "output_dir": str(output_dir),
+                },
+                metrics,
+            )
+        )
+
     return records
 
 
