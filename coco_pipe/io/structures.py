@@ -1288,10 +1288,12 @@ class DataContainer:
             )
 
         grouped = self.data.drop_vars(self.data.coords).groupby(group)
+        # Float data keeps its precision (float32 embeddings stay float32).
+        dtype = self.X.dtype if np.issubdtype(self.X.dtype, np.floating) else np.float64
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             results = [
-                _AGGREGATE_STATS[stat](grouped, cell_counts).astype(np.float64)
+                _AGGREGATE_STATS[stat](grouped, cell_counts).astype(dtype)
                 for stat in stats
             ]
         results = [
@@ -1552,7 +1554,7 @@ class DataContainer:
                             "share the same grouped observation ids."
                         )
 
-                combined_parts.append(np.asarray(grouped.X, dtype=np.float64))
+                combined_parts.append(np.asarray(grouped.X))
                 combined_feature_names.extend(prefixed_names)
 
                 failures = grouped.meta.get("aggregate_failures", [])

@@ -445,7 +445,13 @@ def load_embedding_derivatives(
 
     rows: list[np.ndarray] = []
     ids: list[str] = []
-    metadata_rows: list[dict[str, Any]] = []
+    file_records: list[dict[str, Any]] = []
+    window_columns: dict[str, list[np.ndarray]] = {
+        "window_index": [],
+        "window_start": [],
+        "window_stop": [],
+    }
+    counts: list[int] = []
     artifact_metadata: dict[str, dict[str, Any]] = {}
     obs_shape: tuple[int, ...] | None = None
     loaded_token_axes: tuple[str, ...] | None = None
@@ -492,27 +498,30 @@ def load_embedding_derivatives(
                     f"Embedding shapes differ: expected {obs_shape}, "
                     f"got {values.shape[1:]} in {path}."
                 )
-            for idx, row in enumerate(values):
-                rows.append(row)
-                position = None if is_recording else int(payload["window_index"][idx])
-                ids.append(embedding_observation_id(metadata, path, position))
-                obs_meta = dict(metadata)
-                obs_meta["artifact_path"] = str(path)
-                obs_meta["representation"] = representation
-                if not is_recording:
-                    obs_meta.update(
-                        {
-                            "window_index": int(payload["window_index"][idx]),
-                            "window_start": int(payload["window_start"][idx]),
-                            "window_stop": int(payload["window_stop"][idx]),
-                        }
-                    )
-                metadata_rows.append(obs_meta)
+            # NpzFile re-reads an array from the archive on every access.
+            rows.append(values)
+            counts.append(len(values))
+            file_records.append(
+                {
+                    **metadata,
+                    "artifact_path": str(path),
+                    "representation": representation,
+                }
+            )
+            if is_recording:
+                ids.append(embedding_observation_id(metadata, path))
+            else:
+                for name, column in window_columns.items():
+                    column.append(np.asarray(payload[name], dtype=int))
+                ids.extend(
+                    embedding_observation_id(metadata, path, int(position))
+                    for position in window_columns["window_index"][-1]
+                )
 
-    X = np.stack(rows) if is_token else np.vstack(rows)
+    X = np.concatenate(rows)
     model_keys = {
         str(row.get("model_key", "")).strip().lower()
-        for row in metadata_rows
+        for row in file_records
         if str(row.get("model_key", "")).strip()
     }
     if model_key is not None and model_keys != {model_key.strip().lower()}:
@@ -539,11 +548,16 @@ def load_embedding_derivatives(
             dtype=object,
         )
     }
-    metadata_frame = pd.DataFrame(metadata_rows)
+    file_frame = pd.DataFrame(file_records)
+    metadata_frame = file_frame.loc[np.repeat(file_frame.index, counts)]
+    if not is_recording:
+        metadata_frame = metadata_frame.assign(
+            **{name: np.concatenate(column) for name, column in window_columns.items()}
+        )
     for column in metadata_frame.columns:
-        values = metadata_frame[column]
+        values = file_frame[column] if column in file_frame else metadata_frame[column]
         if values.map(lambda value: not isinstance(value, (list, dict))).all():
-            coords[column] = values.to_numpy(dtype=object)
+            coords[column] = metadata_frame[column].to_numpy(dtype=object)
     dims = loaded_token_axes if is_token else ("obs", "feature")
     if dims is None:
         raise RuntimeError("Token axes were not initialized.")

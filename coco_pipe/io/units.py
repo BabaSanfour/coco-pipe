@@ -37,6 +37,7 @@ The supported modes are:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import numpy as np
@@ -69,7 +70,7 @@ def iter_analysis_units(
     analysis_mode: str,
     input_mode: str,
     descriptor_families: list[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> Iterator[dict[str, Any]]:
     """Enumerate analysis units from *container* according to *analysis_mode*.
 
     Each returned dict has the keys:
@@ -122,8 +123,10 @@ def iter_analysis_units(
 
     Returns
     -------
-    list of dict
+    iterator of dict
         One entry per analysis unit in the order they should be processed.
+        The arguments are checked when this is called; each unit's container
+        is built only when the iterator reaches it.
 
     Raises
     ------
@@ -133,34 +136,24 @@ def iter_analysis_units(
     RuntimeError
         When no features match in sensor mode.
     """
-    units: list[dict[str, Any]] = []
+    units: list[tuple[dict[str, Any], Callable[[], DataContainer]]] = []
 
     def _add_unit(
         u_type: str,
         u_name: str,
         u_key: str,
         u_family: str | None,
-        u_container: DataContainer,
+        u_container: Callable[[], DataContainer],
         u_subfamily: str | None = None,
     ) -> None:
-        u_container.meta = {
-            **dict(u_container.meta),
+        info = {
             "unit_type": u_type,
             "unit_name": u_name,
             "unit_key": u_key,
             "family": u_family,
             "subfamily": u_subfamily,
         }
-        units.append(
-            {
-                "unit_type": u_type,
-                "unit_name": u_name,
-                "unit_key": u_key,
-                "family": u_family,
-                "subfamily": u_subfamily,
-                "container": u_container,
-            }
-        )
+        units.append((info, u_container))
 
     if input_mode == "descriptors" and container.dims != ("obs", "feature"):
         raise ValueError(
@@ -168,8 +161,8 @@ def iter_analysis_units(
         )
 
     if analysis_mode == "flat":
-        _add_unit("global", "all", "all", None, container)
-        return units
+        _add_unit("global", "all", "all", None, lambda: container)
+        return _build(units)
 
     if input_mode == "descriptors":
         schema = container.feature_schema()
@@ -207,7 +200,7 @@ def iter_analysis_units(
                     unit_name,
                     unit_key,
                     family,
-                    container.isel(feature=indices),
+                    lambda: container.isel(feature=indices),
                     u_subfamily=subfamily,
                 )
 
@@ -225,7 +218,7 @@ def iter_analysis_units(
                 raise RuntimeError(
                     "No descriptor features matched the requested families."
                 )
-            return units
+            return _build(units)
 
         if analysis_mode == "family":
             for family in wanted_families:
@@ -236,7 +229,7 @@ def iter_analysis_units(
                     str(family),
                     families == str(family),
                 )
-            return units
+            return _build(units)
 
         if analysis_mode in {"subfamily", "sensor_within_subfamily"}:
             subfamilies = _schema_values("subfamily")
@@ -267,7 +260,7 @@ def iter_analysis_units(
                             subfamily_mask & (channels == sensor),
                             subfamily=subfamily,
                         )
-            return units
+            return _build(units)
 
         if analysis_mode in {"descriptor", "descriptor_sensor"}:
             descriptors = _schema_values("descriptor")
@@ -296,7 +289,7 @@ def iter_analysis_units(
                             family,
                             descriptor_mask & (channels == sensor),
                         )
-            return units
+            return _build(units)
 
         if analysis_mode in {"feature", "feature_within_family"}:
             measures = _schema_values("measure")
@@ -320,7 +313,7 @@ def iter_analysis_units(
                             str(family),
                             current_family & (measures == measure),
                         )
-            return units
+            return _build(units)
 
         if analysis_mode == "sensor_within_family":
             channels = _schema_values("channel")
@@ -334,7 +327,7 @@ def iter_analysis_units(
                         str(family),
                         current_family & (channels == sensor),
                     )
-            return units
+            return _build(units)
 
         raise ValueError(f"Unknown analysis_mode '{analysis_mode}'.")
 
@@ -347,10 +340,19 @@ def iter_analysis_units(
                 str(channel_name),
                 str(channel_name),
                 None,
-                container.isel(channel=idx).flatten(preserve="obs"),
+                lambda idx=idx: container.isel(channel=idx).flatten(preserve="obs"),
             )
-        return units
+        return _build(units)
 
     raise ValueError(
         f"analysis_mode='{analysis_mode}' is only supported for descriptor inputs."
     )
+
+
+def _build(
+    units: list[tuple[dict[str, Any], Callable[[], DataContainer]]],
+) -> Iterator[dict[str, Any]]:
+    for info, make_container in units:
+        unit_container = make_container()
+        unit_container.meta = {**dict(unit_container.meta), **info}
+        yield {**info, "container": unit_container}

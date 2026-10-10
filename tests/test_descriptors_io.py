@@ -203,7 +203,7 @@ def test_flat_loader_units_do_not_recreate_pruned_sensor_feature_pairs(tmp_path)
         "descriptor",
         "descriptor_sensor",
     ):
-        units = iter_analysis_units(container, mode, "descriptors")
+        units = list(iter_analysis_units(container, mode, "descriptors"))
         assert units
         assert all(np.isfinite(unit["container"].X).all() for unit in units)
 

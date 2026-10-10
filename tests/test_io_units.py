@@ -43,8 +43,8 @@ def _sparse_flat_descriptor_container():
     ],
 )
 def test_flat_descriptor_units_use_only_existing_atomic_columns(mode, expected_keys):
-    units = iter_analysis_units(
-        _sparse_flat_descriptor_container(), mode, "descriptors"
+    units = list(
+        iter_analysis_units(_sparse_flat_descriptor_container(), mode, "descriptors")
     )
 
     assert {unit["unit_key"] for unit in units} == expected_keys
@@ -53,11 +53,13 @@ def test_flat_descriptor_units_use_only_existing_atomic_columns(mode, expected_k
 
 
 def test_flat_descriptor_units_respect_family_filter():
-    units = iter_analysis_units(
-        _sparse_flat_descriptor_container(),
-        "sensor",
-        "descriptors",
-        descriptor_families=["band"],
+    units = list(
+        iter_analysis_units(
+            _sparse_flat_descriptor_container(),
+            "sensor",
+            "descriptors",
+            descriptor_families=["band"],
+        )
     )
 
     assert [unit["unit_key"] for unit in units] == ["Fz"]
@@ -81,14 +83,14 @@ def test_iter_analysis_units_raw_sensor():
         dims=["obs", "channel", "time"],
         coords={"channel": ["C1", "C2", "C3"]},
     )
-    units = iter_analysis_units(dc, "sensor", "raw")
+    units = list(iter_analysis_units(dc, "sensor", "raw"))
     assert len(units) == 3
     assert units[0]["unit_name"] == "C1"
 
 
 def test_iter_analysis_units_flat():
     dc = DataContainer(np.zeros((2,)), dims=["obs"])
-    units = iter_analysis_units(dc, "flat", "raw")
+    units = list(iter_analysis_units(dc, "flat", "raw"))
     assert len(units) == 1
     assert units[0]["unit_name"] == "all"
 
