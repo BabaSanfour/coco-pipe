@@ -44,6 +44,9 @@ class _ParametricFitBatch:
     periodic_psds : np.ndarray | None
         Periodic-only PSDs aligned to ``(n_obs, n_channels, n_freqs)`` when
         corrected spectral outputs request them.
+    peak_freqs : np.ndarray | None
+        Object array aligned to ``(n_obs, n_channels)`` holding each fit's
+        peak centre frequencies, filled with ``periodic_psds``.
     meta : dict
         Lightweight fit metadata propagated into downstream descriptor blocks.
     """
@@ -52,6 +55,7 @@ class _ParametricFitBatch:
     metrics: dict[str, np.ndarray]
     errors: list[tuple[int, int, str, str]] = field(default_factory=list)
     periodic_psds: np.ndarray | None = None
+    peak_freqs: np.ndarray | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -60,7 +64,7 @@ def fit_single_spectrum(
     spectrum: np.ndarray,
     config: ParametricDescriptorConfig,
     need_periodic_psd: bool = False,
-) -> tuple[dict[str, float], np.ndarray | None]:
+) -> tuple[dict[str, float], np.ndarray | None, np.ndarray]:
     """
     Fit one specparam model to one PSD spectrum.
 
@@ -77,9 +81,9 @@ def fit_single_spectrum(
 
     Returns
     -------
-    tuple[dict[str, float], np.ndarray | None]
-        Scalar fit metrics and, when requested, the periodic-only PSD on the
-        same frequency grid.
+    tuple[dict[str, float], np.ndarray | None, np.ndarray]
+        Scalar fit metrics, the periodic-only PSD on the same frequency grid
+        when requested, and the centre frequencies of the fitted peaks.
 
     Raises
     ------
@@ -123,6 +127,7 @@ def fit_single_spectrum(
     )
 
     if periodic.size == 0 or np.all(np.isnan(periodic)):
+        peak_freqs = np.empty(0)
         peak_count = 0.0
         dominant_freq = np.nan
         dominant_power = np.nan
@@ -134,6 +139,7 @@ def fit_single_spectrum(
         peak_count = float(periodic.shape[0])
         power = np.asarray(periodic[:, 1], dtype=float)
         valid_power = np.isfinite(power)
+        peak_freqs = periodic[valid_power & np.isfinite(periodic[:, 0]), 0]
         if np.any(valid_power):
             valid_indices = np.flatnonzero(valid_power)
             dominant_idx = int(valid_indices[np.nanargmax(power[valid_power])])
@@ -183,19 +189,23 @@ def fit_single_spectrum(
             None,
         )
 
-    return {
-        "offset": offset,
-        "knee": knee,
-        "exponent": exponent,
-        "fit_error": error,
-        "r_squared": r_squared,
-        "peak_count": peak_count,
-        "peak_freq_dom": dominant_freq,
-        "peak_power_dom": dominant_power,
-        "peak_bandwidth_dom": dominant_bandwidth,
-        "alpha_peak_freq": alpha_peak_freq,
-        "alpha_peak_power": alpha_peak_power,
-    }, periodic_psd
+    return (
+        {
+            "offset": offset,
+            "knee": knee,
+            "exponent": exponent,
+            "fit_error": error,
+            "r_squared": r_squared,
+            "peak_count": peak_count,
+            "peak_freq_dom": dominant_freq,
+            "peak_power_dom": dominant_power,
+            "peak_bandwidth_dom": dominant_bandwidth,
+            "alpha_peak_freq": alpha_peak_freq,
+            "alpha_peak_power": alpha_peak_power,
+        },
+        periodic_psd,
+        peak_freqs,
+    )
 
 
 def fit_parametric_batch(
@@ -266,6 +276,7 @@ def fit_parametric_batch(
     periodic_psds = (
         np.full(local_psds.shape, np.nan, dtype=float) if need_periodic_psd else None
     )
+    peak_freqs = np.empty(local_psds.shape[:2], dtype=object)
 
     def fit_one(
         obs_rel: int,
@@ -275,20 +286,22 @@ def fit_parametric_batch(
         int,
         dict[str, float] | None,
         np.ndarray | None,
+        np.ndarray | None,
         dict[str, str] | None,
     ]:
         try:
-            metrics, periodic = fit_single_spectrum(
+            metrics, periodic, peaks = fit_single_spectrum(
                 local_freqs,
                 local_psds[obs_rel, unit_idx],
                 config,
                 need_periodic_psd=need_periodic_psd,
             )
-            return obs_rel, unit_idx, metrics, periodic, None
+            return obs_rel, unit_idx, metrics, periodic, peaks, None
         except Exception as exc:  # pragma: no cover - exercised via callers
             return (
                 obs_rel,
                 unit_idx,
+                None,
                 None,
                 None,
                 {
@@ -317,7 +330,8 @@ def fit_parametric_batch(
         ]
 
     errors: list[tuple[int, int, str, str]] = []
-    for obs_rel, unit_idx, metrics, periodic, error in fit_results:
+    for obs_rel, unit_idx, metrics, periodic, peaks, error in fit_results:
+        peak_freqs[obs_rel, unit_idx] = np.empty(0) if peaks is None else peaks
         if metrics is not None:
             for metric_name in metric_names:
                 metric_arrays[metric_name][obs_rel, unit_idx] = metrics[metric_name]
@@ -338,6 +352,7 @@ def fit_parametric_batch(
         metrics=metric_arrays,
         errors=errors,
         periodic_psds=periodic_psds,
+        peak_freqs=peak_freqs if need_periodic_psd else None,
         meta={
             "backend": config.backend,
             "freq_range": list(config.freq_range),

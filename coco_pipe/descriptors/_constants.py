@@ -24,7 +24,6 @@ __all__ = [
     "CLASSIFICATION_COLUMNS",
     "COMPLEXITY_SUBFAMILY",
     "CONSTANT_COLUMNS",
-    "DEFAULT_RATIO_PREFIXES",
     "DESCRIPTOR_SCOPE_RE",
     "FAILURE_FAMILY_ALIASES",
     "FAMILY_QC_COLUMNS",
@@ -57,7 +56,6 @@ AGG_STAT_PREFIXES: frozenset[str] = frozenset(
 BAND_SUBFAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
     ("corr_log_abs", "corr_log_abs"),
     ("corr_rel", "corr_rel"),
-    ("corr_ratio", "corr_ratio"),
     ("corr_abs", "corr_abs"),
     ("log_abs", "log_abs"),
     ("ratio", "ratio"),
@@ -160,12 +158,3 @@ FAMILY_QC_COLUMNS: list[str] = [
     "failure_rate",
 ]
 """Output schema of :func:`~coco_pipe.descriptors.qc.aggregate_family_qc`."""
-
-# -------------------------------------------------------------------------- #
-# Tables
-# -------------------------------------------------------------------------- #
-DEFAULT_RATIO_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("band_abs_", "agg_band_ratio_"),
-    ("band_corr_abs_", "agg_band_corr_ratio_"),
-)
-"""Default ``(input_prefix, output_prefix)`` pairs for band-ratio columns."""

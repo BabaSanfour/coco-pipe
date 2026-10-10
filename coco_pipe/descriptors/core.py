@@ -599,7 +599,6 @@ class DescriptorPipeline:
             "corrected_absolute_power",
             "corrected_log_absolute_power",
             "corrected_relative_power",
-            "corrected_ratios",
         }
         if any(
             output in corrected_outputs for output in self.config.families.bands.outputs

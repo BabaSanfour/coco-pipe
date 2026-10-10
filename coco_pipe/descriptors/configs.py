@@ -53,7 +53,6 @@ _BAND_OUTPUTS = (
     "corrected_absolute_power",
     "corrected_log_absolute_power",
     "corrected_relative_power",
-    "corrected_ratios",
 )
 _PARAM_OUTPUTS = ("aperiodic", "fit_quality", "peak_summary")
 _COMPLEXITY_MEASURES = (
@@ -123,9 +122,10 @@ class BandDescriptorConfig(_StrictConfigModel):
         Mapping from band name to ``(low, high)`` boundaries.
     outputs : list of {"absolute_power", "log_absolute_power", \
 "relative_power", "ratios", "corrected_absolute_power", \
-"corrected_log_absolute_power", "corrected_relative_power", \
-"corrected_ratios"}
-        Band descriptors to emit.
+"corrected_log_absolute_power", "corrected_relative_power"}
+        Band descriptors to emit. Corrected outputs use the periodic power of
+        the parametric fit and are ``NaN`` for a band with no fitted peak
+        centred inside it. Ratios use uncorrected band power only.
     ratio_pairs : list of tuple of str, default=[]
         Explicit numerator and denominator band names for ratio outputs.
     min_denominator_power : float, default=0.0
@@ -157,7 +157,6 @@ class BandDescriptorConfig(_StrictConfigModel):
             "corrected_absolute_power",
             "corrected_log_absolute_power",
             "corrected_relative_power",
-            "corrected_ratios",
         ]
     ] = Field(default_factory=lambda: ["absolute_power"])
     ratio_pairs: list[tuple[str, str]] = Field(default_factory=list)
@@ -200,9 +199,7 @@ class BandDescriptorConfig(_StrictConfigModel):
                     f"'{name}' must stay within the configured "
                     f"[{self.fmin}, {self.fmax}] range."
                 )
-        if (
-            "ratios" in self.outputs or "corrected_ratios" in self.outputs
-        ) and not self.ratio_pairs:
+        if "ratios" in self.outputs and not self.ratio_pairs:
             raise ValueError("Band ratios require explicit ratio_pairs.")
         return self
 

@@ -605,7 +605,6 @@ def test_descriptor_subfamily_derivation():
     assert descriptor_subfamily("band", "corr_log_abs_gamma") == "corr_log_abs"
     assert descriptor_subfamily("band", "abs_delta") == "abs"
     assert descriptor_subfamily("band", "agg_ratio_theta_beta") == "ratio"
-    assert descriptor_subfamily("band", "agg_corr_ratio_theta_beta") == "corr_ratio"
     # param: aperiodic / peaks / fit_quality
     assert descriptor_subfamily("param", "offset") == "aperiodic"
     assert descriptor_subfamily("param", "median_alpha_peak_freq") == "peaks"

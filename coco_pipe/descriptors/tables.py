@@ -31,8 +31,6 @@ import pandas as pd
 from coco_pipe.io.quality import QCResult
 from coco_pipe.io.structures import DataContainer
 
-from ._constants import DEFAULT_RATIO_PREFIXES
-
 __all__ = [
     "add_aggregated_band_ratios",
     "build_descriptor_tables",
@@ -91,15 +89,15 @@ def add_aggregated_band_ratios(
     base_features_df: pd.DataFrame,
     ratio_pairs: Sequence[tuple[str, str]],
     floor: float = 0.0,
-    prefixes: Sequence[tuple[str, str]] = DEFAULT_RATIO_PREFIXES,
 ) -> pd.DataFrame:
     """Compute band-ratio columns from aggregated mean band-power features.
 
-    For each ``(numerator, denominator)`` band pair and each ``(input_prefix,
-    output_prefix)`` in *prefixes*, divide every matching
-    ``{input_prefix}{numerator}_{suffix}`` column by its
-    ``{input_prefix}{denominator}_{suffix}`` counterpart. Denominators at or
-    below *floor* yield ``NaN`` instead of an unstable division.
+    For each ``(numerator, denominator)`` band pair, divide every matching
+    ``band_abs_{numerator}_{suffix}`` column by its
+    ``band_abs_{denominator}_{suffix}`` counterpart into
+    ``agg_band_ratio_{numerator}_{denominator}_{suffix}``. Denominators at or
+    below *floor* yield ``NaN`` instead of an unstable division. Ratios use
+    uncorrected band power only: a ratio of periodic powers mixes two peaks.
 
     Returns
     -------
@@ -109,23 +107,22 @@ def add_aggregated_band_ratios(
     """
     columns: dict[str, np.ndarray] = {}
     for numerator, denominator in ratio_pairs:
-        for in_prefix, out_prefix in prefixes:
-            for column in base_features_df.columns:
-                head = f"{in_prefix}{numerator}_"
-                if not str(column).startswith(head):
-                    continue
-                suffix = str(column)[len(head) :]
-                den_col = f"{in_prefix}{denominator}_{suffix}"
-                if den_col not in base_features_df.columns:
-                    continue
-                num_vals = base_features_df[column].to_numpy(dtype=float)
-                den_vals = base_features_df[den_col].to_numpy(dtype=float)
-                columns[f"{out_prefix}{numerator}_{denominator}_{suffix}"] = np.divide(
-                    num_vals,
-                    den_vals,
-                    out=np.full_like(num_vals, np.nan),
-                    where=den_vals > floor,
-                )
+        head = f"band_abs_{numerator}_"
+        for column in base_features_df.columns:
+            if not str(column).startswith(head):
+                continue
+            suffix = str(column)[len(head) :]
+            den_col = f"band_abs_{denominator}_{suffix}"
+            if den_col not in base_features_df.columns:
+                continue
+            num_vals = base_features_df[column].to_numpy(dtype=float)
+            den_vals = base_features_df[den_col].to_numpy(dtype=float)
+            columns[f"agg_band_ratio_{numerator}_{denominator}_{suffix}"] = np.divide(
+                num_vals,
+                den_vals,
+                out=np.full_like(num_vals, np.nan),
+                where=den_vals > floor,
+            )
     return pd.DataFrame(columns, index=base_features_df.index)
 
 
@@ -138,7 +135,6 @@ def build_descriptor_tables(
     aggregation_groups: Sequence[Mapping[str, Any]] | None = None,
     ratio_pairs: Sequence[tuple[str, str]] | None = None,
     ratio_floor: float = 0.0,
-    ratio_prefixes: Sequence[tuple[str, str]] = DEFAULT_RATIO_PREFIXES,
     min_count: int = 1,
     on_insufficient: str = "raise",
 ) -> dict[str, Any]:
@@ -165,7 +161,7 @@ def build_descriptor_tables(
         (each ``{"stats": ..., <selectors>}``). Defaults to ``[{"stats":
         "mean"}]`` (mean of every feature). This is where median / IQR / etc.
         subject-level stats are requested.
-    ratio_pairs, ratio_floor, ratio_prefixes
+    ratio_pairs, ratio_floor
         When *ratio_pairs* is given, band ratios from the aggregated mean
         features are appended via :func:`add_aggregated_band_ratios`.
     min_count, on_insufficient
@@ -248,7 +244,6 @@ def build_descriptor_tables(
             base_agg_features,
             ratio_pairs,
             floor=ratio_floor,
-            prefixes=ratio_prefixes,
         )
         if not ratio_df.empty:
             agg_features = pd.concat([agg_features, ratio_df], axis=1)

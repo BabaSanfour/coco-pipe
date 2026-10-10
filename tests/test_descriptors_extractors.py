@@ -99,26 +99,36 @@ def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
     assert np.isnan(values["param_alpha_peak_freq_ch-Cz"]).all()
 
 
-def test_corrected_band_power_keeps_only_the_periodic_part(signals):
+def test_corrected_band_power_is_measured_only_where_a_peak_was_fitted(signals):
     values, failures = _extract(
         signals,
         {
             "bands": {
                 "enabled": True,
-                "outputs": ["corrected_absolute_power", "corrected_relative_power"],
+                "outputs": [
+                    "corrected_absolute_power",
+                    "corrected_log_absolute_power",
+                    "corrected_relative_power",
+                ],
                 "bands": BANDS,
             },
-            "parametric": {"enabled": True, "outputs": ["aperiodic"]},
+            "parametric": {"enabled": True, "outputs": ["peak_summary"]},
         },
     )
 
+    # "no peak" is a result, not a failure
     assert not failures
     assert (values["band_corr_abs_alpha_ch-Fz"] > 0).all()
     assert (values["band_corr_abs_beta_ch-Cz"] > 0).all()
     assert (values["band_corr_rel_alpha_ch-Fz"] > 0.9).all()
-    # a band with no rhythm keeps no periodic power
-    np.testing.assert_allclose(values["band_corr_abs_alpha_ch-Cz"], 0.0, atol=1e-6)
-    np.testing.assert_allclose(values["band_corr_abs_beta_ch-Fz"], 0.0, atol=1e-6)
+    # BANDS["alpha"] matches the band behind alpha_peak_freq
+    for channel in CHANNELS:
+        no_peak = np.isnan(values[f"param_alpha_peak_freq_ch-{channel}"])
+        for output in ("abs", "log_abs", "rel"):
+            column = values[f"band_corr_{output}_alpha_ch-{channel}"]
+            np.testing.assert_array_equal(np.isnan(column), no_peak)
+    assert np.isnan(values["band_corr_abs_alpha_ch-Cz"]).all()
+    assert np.isnan(values["band_corr_log_abs_beta_ch-Fz"]).all()
 
 
 def test_simple_complexity_measures_match_their_definition():
