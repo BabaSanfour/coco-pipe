@@ -150,6 +150,16 @@ def test_stochastic_reducers_repeat_with_a_seed():
     np.testing.assert_allclose(first, second)
 
 
+def test_trimap_keeps_separated_clusters_apart():
+    # annoy-based TriMap returned only the query as neighbour on Apple silicon
+    # and mixed these clusters (trustworthiness 0.74); shapes alone missed it
+    from sklearn.manifold import trustworthiness
+
+    blobs, _ = make_blobs(n_samples=300, n_features=20, centers=3, random_state=0)
+    embedding = reducers.TrimapReducer(random_state=0).fit_transform(blobs)
+    assert trustworthiness(blobs, embedding, n_neighbors=10) > 0.9
+
+
 # --- linear ---------------------------------------------------------------------
 
 

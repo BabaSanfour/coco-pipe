@@ -576,18 +576,23 @@ class TrimapReducer(BaseReducer):
     n_random : int, default=5
         Number of random triplets per sample.
     **kwargs : dict
-        Additional keyword arguments forwarded to `trimap.TRIMAP` after
-        signature filtering.
+        Additional keyword arguments forwarded to `trimap.TorchTRIMAP` after
+        signature filtering (e.g. ``device``, default ``"cpu"``, or
+        ``knn_backend``).
 
     Attributes
     ----------
     embedding_ : np.ndarray or None
         Learned training-set embedding after `fit` or `fit_transform`.
-    model : trimap.TRIMAP or None
+    model : trimap.TorchTRIMAP or None
         Fitted TriMap estimator after `fit` or `fit_transform`.
 
     Notes
     -----
+    Uses TriMap's PyTorch implementation, which finds neighbours with torch
+    or faiss. The default ``trimap.TRIMAP`` relies on annoy, whose search
+    returns only the query point on Apple silicon.
+
     `transform` is not supported because TriMap does not provide an
     out-of-sample projection API.
 
@@ -650,7 +655,7 @@ class TrimapReducer(BaseReducer):
         n_random : int, default=5
             Number of random triplets.
         **kwargs : dict
-            Additional keyword arguments forwarded to `TRIMAP` after filtering.
+            Additional keyword arguments forwarded to `TorchTRIMAP` after filtering.
         """
         super().__init__(n_components=n_components, **kwargs)
         self.n_inliers = n_inliers
@@ -682,20 +687,22 @@ class TrimapReducer(BaseReducer):
             If `trimap` is installed but fails during initialization.
         """
         trimap_cls = import_optional_dependency(
-            lambda: __import__("trimap", fromlist=["TRIMAP"]).TRIMAP,
+            lambda: __import__("trimap", fromlist=["TorchTRIMAP"]).TorchTRIMAP,
             feature="TrimapReducer",
             dependency="trimap",
             install_hint="pip install coco-pipe[neighbor]",
         )
 
+        # CPU by default: reproducible under random_state, unlike MPS
         self.model = self._build_estimator(
             trimap_cls,
+            params={"device": "cpu", **self.params},
             component_param="n_dims",
             n_inliers=self.n_inliers,
             n_outliers=self.n_outliers,
             n_random=self.n_random,
         )
-        self.embedding_ = self.model.fit_transform(X)
+        self.embedding_ = self.model.fit_transform(X).detach().cpu().numpy()
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:

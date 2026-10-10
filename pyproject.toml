@@ -104,7 +104,7 @@ dask = [
 
 neighbor = [
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
@@ -199,7 +199,7 @@ dim-red = [
   "dask[array]",
   "dask-ml",
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
@@ -218,7 +218,7 @@ full = [
   "dask[array]",
   "dask-ml",
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
