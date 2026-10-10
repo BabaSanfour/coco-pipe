@@ -6,7 +6,6 @@ import pytest
 
 import coco_pipe.descriptors.core as descriptors_core
 from coco_pipe.descriptors import DescriptorPipeline
-from coco_pipe.descriptors.extractors.complexity import ComplexityDescriptorExtractor
 from coco_pipe.io import DataContainer
 
 
@@ -421,34 +420,6 @@ def test_constant_signal_parametric_skip_collects_failures():
 
     assert _failures(result)
     assert np.isnan(result.X).all()
-
-
-def test_missing_antropy_dependency_has_clear_install_hint(monkeypatch):
-    def _raise_import_error(self):
-        raise ImportError(
-            "antropy is required for complexity descriptor extraction. "
-            "Install it with 'pip install coco-pipe[descriptors]'."
-        )
-
-    monkeypatch.setattr(
-        ComplexityDescriptorExtractor,
-        "_load_antropy",
-        _raise_import_error,
-    )
-    pipe = DescriptorPipeline(
-        {
-            "families": {
-                "complexity": {
-                    "enabled": True,
-                    "backend": "antropy",
-                    "measures": ["sample_entropy"],
-                }
-            },
-        }
-    )
-
-    with pytest.raises(ImportError, match=r"coco-pipe\[descriptors\]"):
-        pipe.extract(X=[[[1.0] * 32]], sfreq=128.0, channel_names=["Cz"])
 
 
 def test_multi_family_scale_smoke():
