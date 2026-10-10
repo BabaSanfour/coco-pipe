@@ -38,9 +38,6 @@ if TYPE_CHECKING:
         DMDReducer as DMDReducer,
     )
     from .dim_reduction import (
-        IVISReducer as IVISReducer,
-    )
-    from .dim_reduction import (
         PacmapReducer as PacmapReducer,
     )
     from .dim_reduction import (
@@ -93,7 +90,6 @@ _LAZY_DIM_REDUCTION_EXPORTS = {
     "PHATEReducer",
     "DMDReducer",
     "TRCAReducer",
-    "IVISReducer",
     "TopologicalAEReducer",
     "DaskPCAReducer",
     "DaskTruncatedSVDReducer",

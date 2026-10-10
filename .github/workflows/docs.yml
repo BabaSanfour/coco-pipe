@@ -2,7 +2,7 @@ name: Docs
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - "docs/**"
       - "coco_pipe/**"
@@ -62,7 +62,7 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
 

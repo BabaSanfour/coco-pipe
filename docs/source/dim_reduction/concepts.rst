@@ -168,7 +168,7 @@ target different reducer classes and computational budgets. See
 7. Lazy Optional Dependencies
 ==============================
 
-Heavy libraries (``torch``, ``umap-learn``, ``dask``, ``pydmd``, ``ivis``…)
+Heavy libraries (``torch``, ``umap-learn``, ``dask``, ``pydmd``…)
 are imported inside reducer methods, not at package import. ``import
 coco_pipe.dim_reduction`` is safe even if you only have the base scientific
 Python stack. See :ref:`dim-reduction-dependencies` for which extras unlock

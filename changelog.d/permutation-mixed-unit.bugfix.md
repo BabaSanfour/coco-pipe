@@ -1,1 +1,0 @@
-A permutation assessment whose inference unit holds more than one class now raises a clear error. Each unit used to take the label of its first sample, which could leave every permutation with a single class and fail later with an unrelated KeyError.

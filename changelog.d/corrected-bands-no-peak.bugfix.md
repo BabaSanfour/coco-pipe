@@ -1,1 +1,0 @@
-Corrected band outputs (`corrected_absolute_power`, `corrected_log_absolute_power`, `corrected_relative_power`) are `NaN` for a band with no fitted specparam peak centred inside it. They used to report the tail of a neighbouring peak, or zero (log `-15.7`) when the fit had no peak at all.

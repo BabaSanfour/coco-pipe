@@ -46,6 +46,14 @@ coco-pipe integrates with many widely used scientific Python libraries, includin
 ### With pip
 
 ```bash
+pip install coco-pipe
+```
+
+Optional modules come as extras, for example `pip install "coco-pipe[full]"` for all of them.
+
+### From source
+
+```bash
 git clone https://github.com/BabaSanfour/coco-pipe.git
 cd coco-pipe
 pip install -e .

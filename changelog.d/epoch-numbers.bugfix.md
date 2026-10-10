@@ -1,1 +1,0 @@
-`BIDSDataset` numbers each epoch by its position in its recording (new `epoch` coordinate), so an observation ID no longer depends on which events are selected. Embedding observation IDs use the stored window number and no longer include the condition, so they match the IDs of the loader and of descriptors; `FoundationEmbeddingExtractor.extract` takes a `window_index`.

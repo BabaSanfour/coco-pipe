@@ -9,7 +9,7 @@ full interface, see the :doc:`api_reference`.
 Installation
 ============
 
-``coco-pipe`` targets Python 3.10+. Install the core package from PyPI:
+``coco-pipe`` targets Python 3.11+. Install the core package from PyPI:
 
 .. code-block:: bash
 

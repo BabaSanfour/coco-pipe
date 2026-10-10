@@ -942,7 +942,6 @@ class ParametricUMAPReducer(BaseReducer):
     UMAPReducer : Non-parametric UMAP with graph-based transform support.
     TSNEReducer : Nonlinear neighborhood-preserving visualization method.
     PHATEReducer : Diffusion-based embedding for continuous trajectories.
-    IVISReducer : Neural metric-learning-based embedding.
 
     Examples
     --------

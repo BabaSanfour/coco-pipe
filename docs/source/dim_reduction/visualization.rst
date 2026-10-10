@@ -120,7 +120,7 @@ Reducers with ``has_loss_history=True`` expose
    plot_loss_history(reducer.quality_metadata_["loss_history"])
 
 Currently this covers ``UMAP``, ``ParametricUMAP``, ``PaCMAP``, ``TriMap``,
-``IVIS``, and ``TopologicalAE``.
+and ``TopologicalAE``.
 
 ---
 

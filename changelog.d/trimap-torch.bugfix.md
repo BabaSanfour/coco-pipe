@@ -1,1 +1,0 @@
-`TrimapReducer` runs TriMap's PyTorch implementation (`trimap.TorchTRIMAP`, trimap 1.2 or newer) on the CPU by default. The default `trimap.TRIMAP` finds neighbours with annoy, whose search returns only the query point on Apple silicon, so those embeddings mixed clusters. `random_state` now reaches TriMap, and `device` / `knn_backend` can be passed through.

@@ -6,7 +6,7 @@ Dimensionality Reduction
 
 The ``coco_pipe.dim_reduction`` module provides a unified, reproducible framework
 for dimensionality reduction across linear, manifold, neighbor-graph,
-spatiotemporal, neural, and topological reducers. It is designed around a
+spatiotemporal, and topological reducers. It is designed around a
 **single manager class**, **explicit prep-and-score boundaries**, and a
 **post-hoc comparison layer** so the same workflow scales from a one-off PCA
 to multi-method comparison and trajectory analysis.
@@ -22,8 +22,8 @@ to multi-method comparison and trajectory analysis.
 
 .. rubric:: Key Features
 
-- 15+ reducers across six families (linear, manifold, neighbor, spatiotemporal,
-  neural, topology), exposed through a single
+- 15+ reducers across five families (linear, manifold, neighbor, spatiotemporal,
+  topology), exposed through a single
   :class:`~coco_pipe.dim_reduction.DimReduction` interface.
 - Strict pydantic configs per reducer with early validation of unknown fields.
 - A pure evaluator (``evaluation.core.evaluate_embedding``) shared by manager

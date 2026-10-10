@@ -353,9 +353,12 @@ We are happy to provide guidance for first-time contributors.
 
 ## Releases
 
-Releases are managed by maintainers through GitHub Actions.
+Releases are made by maintainers. Contributors do not need to perform any release-related actions.
 
-Contributors do not need to perform any release-related actions.
+1. Set the new version in `pyproject.toml` and in `docs/source/conf.py`.
+2. Run `towncrier build --version <X>`. It writes the fragments of `changelog.d/` into `CHANGELOG.md` and deletes them.
+3. Merge these changes into `main` through a pull request.
+4. Publish a GitHub release with the tag `v<X>` on `main`. The `Release` workflow checks that the tag matches the version, builds the package and uploads it to PyPI.
 
 ---
 

@@ -1,1 +1,0 @@
-BENDR embeddings are now the mean of its contextualized time tokens. They used to be the output at the start token, which BENDR's pretraining never trained, so every window got nearly the same embedding (one effective dimension on real EEG; 14 now). `validate_real_checkpoints` embeds several different windows and reports a model whose embeddings barely change as `"degenerate"`.
