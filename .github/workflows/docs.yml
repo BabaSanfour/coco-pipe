@@ -8,6 +8,8 @@ on:
       - "coco_pipe/**"
       - "examples/**"
       - "README.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -16,6 +18,8 @@ on:
       - "coco_pipe/**"
       - "examples/**"
       - "README.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -37,7 +41,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip

@@ -258,7 +258,7 @@ Added support for REVE foundation-model embeddings.
 
 The CI workflow automatically validates changelog fragments.
 
-For very small maintenance changes (e.g., typo fixes or comment-only updates), maintainers may choose to skip changelog requirements.
+For very small maintenance changes (e.g., typo fixes or comment-only updates), maintainers may choose to skip changelog requirements by adding the `no-changelog` label to the pull request.
 
 ---
 
