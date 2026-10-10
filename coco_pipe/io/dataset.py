@@ -345,9 +345,9 @@ class EmbeddingDataset(BaseDataset):
         Directory searched for embedding files, or a single file.
     pattern : str, default=r'\*.pkl'
         Glob pattern to match files (e.g., ``*.npy``, ``sub-*_emb.pkl``).
-    dims : tuple of str, default=('obs', 'feature')
-        Dimension labels for the data arrays (excluding the observation dimension if
-        implicit). Typically ('feature',) or ('layer', 'feature').
+    dims : tuple of str, default=('feature',)
+        Dimension labels of one observation; ``obs`` is added in front.
+        Typically ('feature',) or ('layer', 'feature').
     coords : dict, optional
         Dictionary of coordinates for dimensions. E.g., {'layer': ['L1', 'L2']}.
     reader : callable, optional
@@ -370,7 +370,7 @@ class EmbeddingDataset(BaseDataset):
         self,
         path: str | Path,
         pattern: str = "*.pkl",
-        dims: tuple[str, ...] = ("obs", "feature"),
+        dims: tuple[str, ...] = ("feature",),
         coords: dict[str, list | np.ndarray] | None = None,
         reader: Any | None = None,
         id_fn: Any | None = None,

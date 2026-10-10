@@ -98,7 +98,7 @@ class EmbeddingConfig(BaseDatasetConfig):
 
     mode: Literal["embedding"] = "embedding"
     pattern: str = "*.pkl"
-    dims: tuple[str, ...] = ("obs", "feature")
+    dims: tuple[str, ...] = ("feature",)
     coords: dict[str, list | Any] | None = None
 
 

@@ -66,7 +66,7 @@ def load_data(
     subject_key: str | None = None,
     # --- Embedding Arguments ---
     pattern: str = "*.pkl",
-    dims: tuple[str, ...] = ("obs", "feature"),
+    dims: tuple[str, ...] = ("feature",),
     coords: dict[str, list | np.ndarray] | None = None,
     reader: Any | None = None,
     id_fn: Any | None = None,
@@ -162,8 +162,8 @@ def load_data(
     --------------------------------------
     pattern : str, default=r'\\*.pkl'
         Glob pattern to match files.
-    dims : tuple of str, default=('obs', 'feature')
-        Dimension labels for the data arrays.
+    dims : tuple of str, default=('feature',)
+        Dimension labels of one observation; ``obs`` is added in front.
     coords : dict, optional
         Dictionary of coordinates for dimensions.
     reader : callable, optional
