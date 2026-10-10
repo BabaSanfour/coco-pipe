@@ -1360,8 +1360,9 @@ def _correct_p_values(
     """
     Apply multiple-comparison correction across temporal coordinates.
 
-    Supported methods include standard corrections (Bonferroni, FDR) and
-    permutation-based Max-Stat (recommended for cluster-based temporal data).
+    The methods are those ``ChanceAssessmentConfig.temporal_correction``
+    allows: "fdr_bh" (Benjamini-Hochberg), "max_stat" (against the maximum of
+    the null over coordinates) and "none".
 
     Parameters
     ----------
@@ -1383,12 +1384,8 @@ def _correct_p_values(
     """
     if method == "none" or observed.size == 1:
         return p_values
-    if method == "bonferroni":
-        return np.minimum(1.0, p_values * len(p_values))
     if method == "fdr_bh":
         return false_discovery_control(p_values, method="bh")
-    if method == "fdr_by":
-        return false_discovery_control(p_values, method="by")
     if method == "max_stat":
         if greater_is_better:
             max_null = np.nanmax(null, axis=1)

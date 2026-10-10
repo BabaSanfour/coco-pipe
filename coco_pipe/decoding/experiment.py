@@ -422,8 +422,6 @@ class Experiment:
             est_cls = get_estimator_cls(spec.name)
             if hasattr(config, "params"):
                 params = config.params
-            elif isinstance(config, dict):
-                params = config.get("params", {})
             else:
                 params = config.model_dump(exclude={"method", "kind"})
             try:
@@ -452,16 +450,7 @@ class Experiment:
             )
             est_cls = get_estimator_cls(method)
 
-            if hasattr(config, "model_dump"):
-                params = config.model_dump(exclude={"kind", "wrapper", "base"})
-            elif isinstance(config, dict):
-                params = {
-                    k: v
-                    for k, v in config.items()
-                    if k not in {"kind", "wrapper", "base"}
-                }
-            else:
-                params = {}
+            params = config.model_dump(exclude={"kind", "wrapper", "base"})
 
             params["base_estimator"] = self._prepare_estimator(
                 f"{model_name}_base", _get_val(config, "base")
@@ -476,12 +465,7 @@ class Experiment:
         # Fallback for other registry-based estimators
         method = _get_val(config, "method")
         est_cls = get_estimator_cls(method)
-        if hasattr(config, "model_dump"):
-            params = config.model_dump(exclude={"method", "kind"})
-        elif isinstance(config, dict):
-            params = {k: v for k, v in config.items() if k not in {"method", "kind"}}
-        else:
-            params = {}
+        params = config.model_dump(exclude={"method", "kind"})
 
         if "base_estimator" in params:
             params["base_estimator"] = self._prepare_estimator(
