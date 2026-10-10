@@ -9,81 +9,51 @@ from coco_pipe.io.config import (
 )
 
 
-def test_tabular_config_defaults():
-    """Test TabularConfig defaults."""
-    cfg = TabularConfig(path="dummy.csv")
-    assert cfg.mode == "tabular"
-    assert cfg.sep == "\t"
-    assert cfg.header == 0
-    assert cfg.clean is False
-    assert isinstance(cfg.clean_kwargs, dict)
-    assert isinstance(cfg.select_kwargs, dict)
+def test_configs_mirror_their_loaders():
+    tabular = TabularConfig(path="dummy.csv")
+    assert (tabular.sep, tabular.header, tabular.clean) == ("\t", 0, False)
+
+    bids = BIDSConfig(path="/root")
+    assert (bids.datatype, bids.loading_mode) == ("eeg", "epochs")
+    assert (bids.tmin, bids.tmax, bids.baseline) == (-0.2, 0.5, None)
+    assert (bids.dtype, bids.n_jobs) == ("float32", 1)
+    bids = BIDSConfig(
+        path="/root",
+        task="rest",
+        session=["01", "02"],
+        runs=["01"],
+        event_id={"go": 1},
+        baseline=(None, 0.0),
+    )
+    assert bids.session == ["01", "02"]
+    assert bids.event_id == {"go": 1}
+    assert bids.baseline == (None, 0.0)
+
+    embedding = EmbeddingConfig(path="/emb", dims=("layer", "unit"), pattern="*.npy")
+    assert (embedding.dims, embedding.pattern) == (("layer", "unit"), "*.npy")
+    assert EmbeddingConfig(path="/emb").pattern == "*.pkl"
 
 
-def test_tabular_config_validation():
-    """Test validation errors for TabularConfig."""
-    # Missing path
+def test_dataset_config_picks_the_config_by_mode():
+    tabular = DatasetConfig(dataset={"mode": "tabular", "path": "d.csv", "sep": ","})
+    assert isinstance(tabular.dataset, TabularConfig)
+    assert tabular.dataset.sep == ","
+    bids = DatasetConfig(dataset={"mode": "bids", "path": "/bids", "task": "rest"})
+    assert isinstance(bids.dataset, BIDSConfig)
+    embedding = DatasetConfig(dataset={"mode": "embedding", "path": "/emb"})
+    assert isinstance(embedding.dataset, EmbeddingConfig)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        TabularConfig,
+        lambda: TabularConfig(path="data.csv", clean_kwargs="not_a_dict"),
+        lambda: BIDSConfig(path="/root", n_jobs=0),
+        lambda: DatasetConfig(dataset={"mode": "unknown", "path": "path"}),
+        lambda: DatasetConfig(dataset={"path": "path"}),
+    ],
+)
+def test_configs_reject_invalid_values(build):
     with pytest.raises(ValidationError):
-        TabularConfig()
-
-    # Invalid types
-    with pytest.raises(ValidationError):
-        TabularConfig(path="data.csv", clean_kwargs="not_a_dict")
-
-
-def test_bids_config_defaults():
-    """Test BIDSConfig defaults."""
-    cfg = BIDSConfig(path="/bids_root")
-    assert cfg.mode == "bids"
-    assert cfg.datatype == "eeg"
-    assert cfg.loading_mode == "epochs"
-    assert cfg.subjects is None
-
-
-def test_bids_config_explicit():
-    """Test BIDSConfig explicit values."""
-    cfg = BIDSConfig(path="/root", task="rest", session=["01", "02"], window_length=2.5)
-    assert cfg.task == "rest"
-    assert cfg.session == ["01", "02"]
-    assert cfg.window_length == 2.5
-
-
-def test_embedding_config_defaults():
-    """Test EmbeddingConfig defaults."""
-    cfg = EmbeddingConfig(path="/emb")
-    assert cfg.mode == "embedding"
-    assert cfg.pattern == "*.pkl"
-    assert cfg.dims == ("obs", "feature")
-
-
-def test_embedding_config_pattern_logic():
-    """Test logic around pattern/dimensions."""
-    cfg = EmbeddingConfig(path="/emb", dims=("layer", "unit"), pattern="*.npy")
-    assert cfg.dims == ("layer", "unit")
-    assert cfg.pattern == "*.npy"
-
-
-def test_dataset_config_discriminator():
-    """Test polymorphic deserialization via DatasetConfig."""
-    # 1. Tabular
-    raw_tab = {"dataset": {"mode": "tabular", "path": "dat.csv", "sep": ","}}
-    cfg_tab = DatasetConfig(**raw_tab)
-    assert isinstance(cfg_tab.dataset, TabularConfig)
-    assert cfg_tab.dataset.sep == ","
-
-    # 2. BIDS
-    raw_bids = {"dataset": {"mode": "bids", "path": "/bids", "task": "rest"}}
-    cfg_bids = DatasetConfig(**raw_bids)
-    assert isinstance(cfg_bids.dataset, BIDSConfig)
-    assert cfg_bids.dataset.task == "rest"
-
-    # 3. Embedding
-    raw_emb = {"dataset": {"mode": "embedding", "path": "/emb"}}
-    cfg_emb = DatasetConfig(**raw_emb)
-    assert isinstance(cfg_emb.dataset, EmbeddingConfig)
-
-
-def test_dataset_config_invalid_mode():
-    """Test invalid mode in discriminator."""
-    with pytest.raises(ValidationError):
-        DatasetConfig(**{"dataset": {"mode": "unknown", "path": "path"}})
+        build()

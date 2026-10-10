@@ -1,0 +1,51 @@
+/* coco-pipe documentation theme tweaks (pydata-sphinx-theme) */
+
+/* --- Landing-page intro lede ------------------------------------------- */
+.bd-article-container p:first-of-type {
+  color: var(--pst-color-text-muted);
+}
+
+/* --- Grid cards -------------------------------------------------------- */
+.bd-content .sd-card {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.6rem;
+  transition: transform 0.15s ease, box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.bd-content .sd-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  border-color: var(--pst-color-primary);
+}
+
+.bd-content .sd-card .sd-card-title {
+  font-weight: 600;
+  color: var(--pst-color-primary);
+}
+
+/* --- Tables: readable, full-width, zebra ------------------------------- */
+.bd-content table.docutils {
+  width: 100%;
+  display: table;
+}
+
+.bd-content table.docutils td,
+.bd-content table.docutils th {
+  vertical-align: top;
+}
+
+/* --- Code blocks ------------------------------------------------------- */
+.bd-content div.highlight {
+  border-radius: 0.4rem;
+}
+
+/* --- Section spacing so long merged guides breathe -------------------- */
+.bd-article-container section > section {
+  margin-top: 1.4rem;
+}
+
+/* --- Admonitions: slightly softer ------------------------------------- */
+.bd-content .admonition {
+  border-radius: 0.4rem;
+}

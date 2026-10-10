@@ -1,0 +1,1 @@
+Fine-tuning now trains with AdamW. The training loop never set an optimizer, so every fine-tune ran skorch's default, plain SGD, whatever the config said. `TrainerConfig` gains `lr` and `weight_decay`, and the `optimizer` field of `NeuralFineTuneConfig`, which was ignored apart from its `lr`, is removed.

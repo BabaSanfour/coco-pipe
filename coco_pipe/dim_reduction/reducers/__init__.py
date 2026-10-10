@@ -3,31 +3,9 @@ from .linear import IncrementalPCAReducer, PCAReducer
 from .manifold import IsomapReducer, LLEReducer, MDSReducer, SpectralEmbeddingReducer
 from .neighbor import TSNEReducer
 
-# Define Core exports
-__all__ = [
-    "BaseReducer",
-    "PCAReducer",
-    "IncrementalPCAReducer",
-    "IsomapReducer",
-    "LLEReducer",
-    "MDSReducer",
-    "SpectralEmbeddingReducer",
-    "TSNEReducer",
-    # Optional Reducers (Lazy)
-    "DaskPCAReducer",
-    "DaskTruncatedSVDReducer",
-    "UMAPReducer",
-    "ParametricUMAPReducer",
-    "PacmapReducer",
-    "TrimapReducer",
-    "PHATEReducer",
-    "DMDReducer",
-    "TRCAReducer",
-    "IVISReducer",
-    "TopologicalAEReducer",
-]
-
-# Map optional class names to their module paths
+# Map optional class names to their module paths. These reducers pull in heavy
+# or optional third-party dependencies, so they are resolved lazily through the
+# module-level ``__getattr__`` below (PEP 562) rather than imported eagerly.
 _OPTIONAL_REDUCERS = {
     "DaskPCAReducer": ".linear",
     "DaskTruncatedSVDReducer": ".linear",
@@ -41,6 +19,21 @@ _OPTIONAL_REDUCERS = {
     "IVISReducer": ".neural",
     "TopologicalAEReducer": ".topology",
 }
+
+# Eagerly imported reducers plus the lazily resolved optional ones. The optional
+# names are spread in from ``_OPTIONAL_REDUCERS`` so they remain part of the
+# public surface (and ``import *``) without being statically undefined.
+__all__ = [
+    "BaseReducer",
+    "IncrementalPCAReducer",
+    "IsomapReducer",
+    "LLEReducer",
+    "MDSReducer",
+    "PCAReducer",
+    "SpectralEmbeddingReducer",
+    "TSNEReducer",
+    *sorted(_OPTIONAL_REDUCERS),
+]
 
 
 def __getattr__(name):

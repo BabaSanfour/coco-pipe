@@ -22,15 +22,10 @@ def test_band_ratios_require_pairs():
         )
 
 
-def test_corrected_band_ratios_require_pairs():
-    with pytest.raises(ValidationError, match="ratio_pairs"):
+def test_corrected_ratios_are_not_offered():
+    with pytest.raises(ValidationError, match="corrected_ratios"):
         DescriptorConfig(
-            families={
-                "bands": {
-                    "enabled": True,
-                    "outputs": ["corrected_absolute_power", "corrected_ratios"],
-                }
-            }
+            families={"bands": {"enabled": True, "outputs": ["corrected_ratios"]}}
         )
 
 

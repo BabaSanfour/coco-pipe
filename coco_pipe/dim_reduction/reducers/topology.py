@@ -15,23 +15,23 @@ TopologicalAEReducer
 
 References
 ----------
-.. [1] Moor, M., Horn, M., Rieck, B., and Borgwardt, K. (2020).
+[1] Moor, M., Horn, M., Rieck, B., and Borgwardt, K. (2020).
        "Topological Autoencoders". Proceedings of the 37th International
        Conference on Machine Learning.
-.. [2] Gudhi documentation:
+[2] Gudhi documentation:
        https://gudhi.inria.fr/python/latest/
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
 from ...utils import import_optional_dependency
 from .base import ArrayLike, BaseReducer
 
-__all__ = ["TopologicalSignatureDistance", "TopologicalAEReducer"]
+__all__ = ["TopologicalAEReducer", "TopologicalSignatureDistance"]
 
 _SKORCH_ALLOWED_PARAMS = {"callbacks", "dataset", "optimizer", "train_split"}
 
@@ -91,7 +91,7 @@ def _resolve_device(device: str) -> str:
         if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             return "mps"
     except Exception:
-        pass
+        pass  # Fallback to CPU on any backend probing error
     return "cpu"
 
 
@@ -238,7 +238,10 @@ class TopologicalSignatureDistance:
 
 def _build_topology_training_classes():
     """
-    Build PyTorch module classes used during topology autoencoder training.
+    Return the PyTorch module classes used during topology autoencoder training.
+
+    They live in a module that imports torch at its top, so that a fitted
+    reducer can be pickled; it is only imported here, when torch is needed.
 
     Returns
     -------
@@ -246,58 +249,9 @@ def _build_topology_training_classes():
         Tuple `(torch_module, autoencoder_cls, criterion_cls)`.
     """
     torch = _load_torch()
-    nn = _load_torch_nn()
+    from ._topology_nn import TopologicalAE, TopologicalLossCriterion
 
-    class _TopologicalAE(nn.Module):
-        def __init__(
-            self,
-            input_dim: int = 10,
-            latent_dim: int = 2,
-            hidden_dims: Optional[list[int]] = None,
-        ):
-            super().__init__()
-
-            if hidden_dims is None:
-                hidden_dims = [128, 64]
-
-            encoder_layers = []
-            in_dim = input_dim
-            for hidden_dim in hidden_dims:
-                encoder_layers.append(nn.Linear(in_dim, hidden_dim))
-                encoder_layers.append(nn.ReLU())
-                in_dim = hidden_dim
-            encoder_layers.append(nn.Linear(in_dim, latent_dim))
-            self.encoder = nn.Sequential(*encoder_layers)
-
-            decoder_layers = []
-            in_dim = latent_dim
-            for hidden_dim in hidden_dims[::-1]:
-                decoder_layers.append(nn.Linear(in_dim, hidden_dim))
-                decoder_layers.append(nn.ReLU())
-                in_dim = hidden_dim
-            decoder_layers.append(nn.Linear(in_dim, input_dim))
-            self.decoder = nn.Sequential(*decoder_layers)
-
-        def forward(self, x):
-            z = self.encoder(x)
-            recon = self.decoder(z)
-            return z, recon
-
-    class _TopologicalLossCriterion(nn.Module):
-        def __init__(self, lam: float = 0.0):
-            super().__init__()
-            self.lam = lam
-            self.mse = nn.MSELoss()
-            self.topo_loss = TopologicalSignatureDistance()
-
-        def forward(self, y_pred, y_true):
-            z, recon = y_pred
-            loss = self.mse(recon, y_true)
-            if self.lam > 0:
-                loss += self.lam * self.topo_loss(y_true, z)
-            return loss
-
-    return torch, _TopologicalAE, _TopologicalLossCriterion
+    return torch, TopologicalAE, TopologicalLossCriterion
 
 
 class TopologicalAEReducer(BaseReducer):
@@ -393,7 +347,7 @@ class TopologicalAEReducer(BaseReducer):
     def __init__(
         self,
         n_components: int = 2,
-        hidden_dims: Optional[list[int]] = None,
+        hidden_dims: list[int] | None = None,
         lam: float = 0.0,
         lr: float = 1e-3,
         batch_size: int = 64,
@@ -437,9 +391,7 @@ class TopologicalAEReducer(BaseReducer):
         self.verbose = verbose
         self.input_dim_ = None
 
-    def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
-    ) -> "TopologicalAEReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "TopologicalAEReducer":
         """
         Fit the topology autoencoder on the input data.
 
@@ -506,7 +458,7 @@ class TopologicalAEReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Latent embedding produced by the encoder.
         """
         self._require_fitted()
@@ -534,7 +486,7 @@ class TopologicalAEReducer(BaseReducer):
             return []
         return list(self.model.history_[:, "train_loss"])
 
-    def get_pytorch_module(self) -> Optional[Any]:
+    def get_pytorch_module(self) -> Any | None:
         """
         Return the fitted underlying PyTorch module.
 

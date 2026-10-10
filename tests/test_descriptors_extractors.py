@@ -1,936 +1,231 @@
-"""
-Comprehensive Test Suite for Descriptor Extractors
-==================================================
-
-Unified tests for Spectral, Parametric, and Complexity descriptor extractors.
-"""
+"""Band, parametric and complexity descriptors computed on real signals."""
 
 import sys
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from scipy.stats import kurtosis as scipy_kurtosis
+from scipy.stats import kurtosis
 
-import coco_pipe.descriptors.extractors._parametric_fit as param_fit_module
-from coco_pipe.descriptors.configs import (
-    BandDescriptorConfig,
-    ComplexityDescriptorConfig,
-    ParametricDescriptorConfig,
-)
-from coco_pipe.descriptors.extractors._parametric_fit import _ParametricFitBatch
-from coco_pipe.descriptors.extractors._psd import compute_psd
-from coco_pipe.descriptors.extractors.base import (
-    _DescriptorBlock,
-    make_failure_record,
-)
-from coco_pipe.descriptors.extractors.complexity import ComplexityDescriptorExtractor
-from coco_pipe.descriptors.extractors.parametric import ParametricDescriptorExtractor
-from coco_pipe.descriptors.extractors.spectral import BandDescriptorExtractor
+from coco_pipe.descriptors import DescriptorPipeline
 
-# --- Fixtures ---
+SFREQ = 250.0
+CHANNELS = ["Fz", "Cz", "Pz"]
+BANDS = {"alpha": (8.0, 13.0), "beta": (15.0, 30.0)}
 
 
-@pytest.fixture
-def signal_data():
-    """Standard signal data: (n_obs, n_channels, n_times)."""
+@pytest.fixture(scope="module")
+def signals():
+    """1/f noise with a 10 Hz rhythm on Fz and a 20 Hz rhythm on Cz."""
     rng = np.random.default_rng(42)
-    sfreq = 250.0
-    t = np.arange(0, 2, 1 / sfreq)
-    n_obs, n_chans = 5, 3
-
-    freqs = np.fft.rfftfreq(len(t), 1 / sfreq)
-    weights = 1 / (freqs + 1.0)
-
-    X = np.zeros((n_obs, n_chans, len(t)))
-    for o in range(n_obs):
-        for c in range(n_chans):
-            white = rng.standard_normal(len(t))
-            X[o, c, :] = np.fft.irfft(np.fft.rfft(white) * weights, n=len(t))
-
-    X[:, 0, :] += 2.0 * np.sin(2 * np.pi * 10 * t)
-    X[:, 1, :] += 1.5 * np.sin(2 * np.pi * 20 * t)
-
-    return X, sfreq, ["Fz", "Cz", "Pz"]
+    t = np.arange(0, 4, 1 / SFREQ)
+    weights = 1 / (np.fft.rfftfreq(t.size, 1 / SFREQ) + 1.0)
+    noise = np.fft.rfft(rng.standard_normal((5, len(CHANNELS), t.size)))
+    X = np.fft.irfft(noise * weights, n=t.size)
+    X[:, 0] += 2.0 * np.sin(2 * np.pi * 10 * t)
+    X[:, 1] += 1.5 * np.sin(2 * np.pi * 20 * t)
+    return X
 
 
-@pytest.fixture
-def psd_data(signal_data):
-    """Standard PSD data: (n_obs, n_channels, n_freqs)."""
-    X, sfreq, _ = signal_data
-    psds, freqs = compute_psd(
-        X, sfreq=sfreq, method="welch", fmin=1.0, fmax=45.0, n_jobs=1
+def _extract(X, families, channels=CHANNELS, sfreq=SFREQ, **config):
+    result = DescriptorPipeline({"families": families, **config}).extract(
+        X=X, sfreq=sfreq, channel_names=channels
     )
-    return psds, freqs
+    return dict(zip(result.coords["feature"], result.X.T, strict=True)), result.meta[
+        "failures"
+    ]
 
 
-@pytest.fixture
-def mock_fit_batch(psd_data):
-    """A mock ParametricFitBatch for testing corrected bands."""
-    psds, freqs = psd_data
-    n_obs, n_chans, n_freqs = psds.shape
+def test_band_powers_follow_the_injected_rhythms(signals):
+    outputs = ["absolute_power", "log_absolute_power", "relative_power", "ratios"]
+    bands = {"enabled": True, "outputs": outputs, "bands": BANDS}
+    values, failures = _extract(
+        signals, {"bands": {**bands, "ratio_pairs": [("alpha", "beta")]}}
+    )
 
-    periodic_psds = np.zeros_like(psds)
-    # Add a "peak" at 10Hz (approx index)
-    f_idx = np.argmin(np.abs(freqs - 10.0))
-    periodic_psds[:, :, f_idx] = 1.0
+    assert not failures
+    assert len(values) == 4 * len(CHANNELS) * len(BANDS) - len(CHANNELS)
+    assert (values["band_abs_alpha_ch-Fz"] > 100 * values["band_abs_alpha_ch-Pz"]).all()
+    assert (values["band_rel_beta_ch-Cz"] > 0.9).all()
+    np.testing.assert_allclose(
+        values["band_log_abs_alpha_ch-Fz"],
+        np.log10(values["band_abs_alpha_ch-Fz"]),
+        rtol=1e-5,
+    )
+    np.testing.assert_allclose(
+        values["band_ratio_alpha_beta_ch-Fz"],
+        values["band_abs_alpha_ch-Fz"] / values["band_abs_beta_ch-Fz"],
+        rtol=1e-4,
+    )
 
-    metrics = {
-        "offset": np.zeros((n_obs, n_chans)),
-        "exponent": np.ones((n_obs, n_chans)) * 1.5,
+
+def test_relative_power_of_a_flat_channel_is_nan_and_logged(signals):
+    X = signals.copy()
+    X[:, 2] = 0.0
+    bands = {"enabled": True, "outputs": ["relative_power"], "bands": BANDS}
+    values, failures = _extract(X, {"bands": bands})
+
+    assert np.isnan(values["band_rel_alpha_ch-Pz"]).all()
+    assert np.isfinite(values["band_rel_alpha_ch-Fz"]).all()
+    assert {failure["channel_name"] for failure in failures} == {"Pz"}
+
+
+def test_ratios_below_the_denominator_floor_are_nan(signals):
+    bands = {
+        "enabled": True,
+        "outputs": ["ratios"],
+        "bands": BANDS,
+        "ratio_pairs": [("alpha", "beta")],
+        "min_denominator_power": 1e6,
     }
+    values, failures = _extract(signals, {"bands": bands})
 
-    return _ParametricFitBatch(
-        freqs=freqs,
-        metrics=metrics,
-        errors=[],
-        periodic_psds=periodic_psds,
+    assert all(np.isnan(column).all() for column in values.values())
+    assert {failure["exception_type"] for failure in failures} == {"NumericalIssue"}
+
+
+def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
+    values, failures = _extract(
+        signals,
+        {"parametric": {"enabled": True, "outputs": ["aperiodic", "peak_summary"]}},
     )
 
-
-# --- 1. Base Interfaces and Utilities ---
-
-
-def test_descriptor_block_structure():
-    """Verify _DescriptorBlock simple data container."""
-    X = np.zeros((5, 10))
-    names = [f"desc_{i}" for i in range(10)]
-
-    block = _DescriptorBlock(family="test", X=X, descriptor_names=names)
-    assert block.X.shape == (5, 10)
-    assert block.descriptor_names == names
+    assert not failures
+    for channel in CHANNELS:
+        assert (values[f"param_exponent_ch-{channel}"] > 0).all()
+    np.testing.assert_allclose(values["param_peak_freq_dom_ch-Fz"], 10.0, atol=0.5)
+    np.testing.assert_allclose(values["param_alpha_peak_freq_ch-Fz"], 10.0, atol=0.5)
+    np.testing.assert_allclose(values["param_peak_freq_dom_ch-Cz"], 20.0, atol=0.5)
+    # Cz has no peak in the alpha band
+    assert np.isnan(values["param_alpha_peak_freq_ch-Cz"]).all()
 
 
-def test_make_failure_record_schema():
-    """Check fixed schema for failure records."""
-    rec = make_failure_record(
-        family="spectral",
-        obs_index=5,
-        exception_type="ValueError",
-        message="test error",
-        channel_index=2,
-        channel_name="Cz",
-    )
-    assert rec["obs_index"] == 5
-    assert rec["family"] == "spectral"
-    assert rec["exception_type"] == "ValueError"
-    assert rec["message"] == "test error"
-    assert rec["channel_index"] == 2
-    assert rec["channel_name"] == "Cz"
-
-
-# --- 2. Spectral (Band) Extractor ---
-
-
-class TestBandExtractor:
-    def test_basic_extraction(self, psd_data, signal_data):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        config = BandDescriptorConfig(
-            enabled=True,
-            outputs=["absolute_power", "relative_power"],
-            bands={"alpha": (8, 12), "beta": (15, 30)},
-        )
-        extractor = BandDescriptorExtractor(config)
-
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-        )
-        assert block.family == "bands"
-        # 2 bands * 2 outputs * 3 channels = 12 columns
-        assert block.X.shape == (psds.shape[0], 12)
-        assert "band_abs_alpha_ch-Fz" in block.descriptor_names
-        assert "band_rel_beta_ch-Pz" in block.descriptor_names
-
-    def test_corrected_outputs(self, psd_data, signal_data, mock_fit_batch):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        config = BandDescriptorConfig(
-            enabled=True,
-            outputs=["corrected_absolute_power", "corrected_ratios"],
-            bands={"alpha": (8, 12), "beta": (13, 30)},
-            ratio_pairs=[("alpha", "beta")],
-        )
-        extractor = BandDescriptorExtractor(config)
-
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            channel_names=ch_names,
-            ids=None,
-            fit_batch=mock_fit_batch,
-            runtime=MagicMock(),
-        )
-        assert block.X.shape == (psds.shape[0], 9)
-        assert "band_corr_abs_alpha_ch-Fz" in block.descriptor_names
-        assert "band_corr_ratio_alpha_beta_ch-Pz" in block.descriptor_names
-
-    def test_missing_fit_batch_raises(self, psd_data, signal_data):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        config = BandDescriptorConfig(
-            enabled=True,
-            outputs=["corrected_absolute_power"],
-        )
-        extractor = BandDescriptorExtractor(config)
-
-        with pytest.raises(ValueError, match="require a supplied parametric fit_batch"):
-            extractor.extract_psd(
-                psds,
-                freqs,
-                channel_names=ch_names,
-                ids=None,
-                runtime=MagicMock(),
-            )
-
-    def test_band_resolution_error(self, psd_data, signal_data):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        config = BandDescriptorConfig(
-            enabled=True,
-            fmax=250.0,
-            bands={"ultra": (100, 200)},
-            outputs=["absolute_power"],
-        )
-        extractor = BandDescriptorExtractor(config)
-
-        runtime = MagicMock()
-        runtime.on_error = "collect"
-
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            channel_names=ch_names,
-            ids=None,
-            runtime=runtime,
-        )
-        assert len(block.failures) > 0
-        assert block.failures[0]["exception_type"] == "BandResolutionError"
-
-    def test_spectral_capabilities_and_requests(self):
-        config = BandDescriptorConfig(enabled=True)
-        extractor = BandDescriptorExtractor(config)
-        assert extractor.capabilities["requires_sfreq"] is True
-
-        # corrected without fit_config raises
-        config_corr = BandDescriptorConfig(
-            enabled=True, outputs=["corrected_absolute_power"]
-        )
-        extractor_corr = BandDescriptorExtractor(config_corr, fit_config=None)
-        with pytest.raises(ValueError, match="Corrected band outputs require"):
-            extractor_corr.psd_request()
-
-    def test_spectral_extract_psd_edge_cases(self, signal_data):
-        from unittest.mock import MagicMock
-
-        X, sfreq, ch_names = signal_data
-
-        # explicit log output coverage
-        config = BandDescriptorConfig(
-            enabled=True,
-            outputs=["log_absolute_power", "corrected_log_absolute_power"],
-        )
-        extractor = BandDescriptorExtractor(config)
-        psds = np.ones((1, 3, 10))
-        freqs = np.linspace(1, 45, 10)
-        fit_batch = _ParametricFitBatch(
-            freqs=freqs,
-            metrics={},
-            periodic_psds=np.ones((1, 3, 10)),
-            errors=[],
-            meta={},
-        )
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            ch_names,
-            None,
-            MagicMock(),
-            fit_batch=fit_batch,
-        )
-        assert "band_log_abs_delta_ch-Fz" in block.descriptor_names
-        assert "band_corr_log_abs_delta_ch-Fz" in block.descriptor_names
-
-        config_rel = BandDescriptorConfig(
-            enabled=True,
-            outputs=["relative_power"],
-            fmin=100.0,
-            fmax=200.0,
-            bands={"high": (120, 150)},
-        )
-        extractor_rel = BandDescriptorExtractor(config_rel)
-        block_rel = extractor_rel.extract_psd(psds, freqs, ch_names, None, MagicMock())
-        assert np.isnan(block_rel.X).all()
-
-        fit_batch = _ParametricFitBatch(
-            freqs=np.array([1, 10, 20]),  # Must be non-empty and non-None
-            metrics={},
-            periodic_psds=np.zeros((1, 3, 3)),
-            errors=[(0, 0, "FakeError", "Fit failed")],
-            meta={},
-        )
-        config_corr = BandDescriptorConfig(
-            enabled=True, outputs=["corrected_relative_power"]
-        )
-        extractor_corr = BandDescriptorExtractor(config_corr)
-        block_corr = extractor_corr.extract_psd(
-            psds, freqs, ch_names, None, MagicMock(), fit_batch=fit_batch
-        )
-        assert len(block_corr.failures) > 0
-        assert "FakeError" in block_corr.failures[0]["exception_type"]
-
-    def test_spectral_standalone_extract(self, signal_data):
-        from unittest.mock import MagicMock
-
-        X, sfreq, ch_names = signal_data
-        config = BandDescriptorConfig(enabled=True, outputs=["absolute_power"])
-        extractor = BandDescriptorExtractor(config)
-        block = extractor.extract(X, sfreq, ch_names, None, MagicMock())
-        assert block.X.shape == (5, 15)
-
-    def test_spectral_empty_output_block(self):
-        # Empty output when no families enabled or no outputs requested
-        config = BandDescriptorConfig(enabled=True, outputs=[])
-        extractor = BandDescriptorExtractor(config)
-        psds = np.ones((2, 2, 10))
-        freqs = np.linspace(1, 45, 10)
-        block = extractor.extract_psd(psds, freqs, ["ch1", "ch2"], None, MagicMock())
-        assert block.X.shape == (2, 0)
-
-    def test_spectral_standalone_extract_raises_for_corrected(self, signal_data):
-        from unittest.mock import MagicMock
-
-        X, sfreq, ch_names = signal_data
-        config = BandDescriptorConfig(
-            enabled=True, outputs=["corrected_absolute_power"]
-        )
-        extractor = BandDescriptorExtractor(config)
-        with pytest.raises(
-            ValueError, match="Corrected band outputs are only available"
-        ):
-            extractor.extract(X, sfreq, ch_names, None, MagicMock())
-
-    def test_ratio_denominator_floor_turns_near_zero_ratios_into_nan(self):
-        from unittest.mock import MagicMock
-
-        freqs = np.array([9.0, 10.0, 20.0, 21.0], dtype=float)
-        psds = np.zeros((1, 1, freqs.size), dtype=float)
-        psds[0, 0, :2] = 1.0
-        psds[0, 0, 2:] = 1e-14
-
-        config = BandDescriptorConfig(
-            enabled=True,
-            outputs=["ratios"],
-            bands={"alpha": (8.0, 12.0), "beta": (19.0, 22.0)},
-            ratio_pairs=[("alpha", "beta")],
-            min_denominator_power=1e-12,
-        )
-        extractor = BandDescriptorExtractor(config)
-
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            channel_names=["Fz"],
-            ids=np.array(["obs-0"], dtype=object),
-            runtime=MagicMock(),
-        )
-
-        assert block.descriptor_names == ["band_ratio_alpha_beta_ch-Fz"]
-        assert np.isnan(block.X[0, 0])
-        assert len(block.failures) == 1
-        assert "NumericalIssue" in block.failures[0]["exception_type"]
-
-
-# --- 3. Parametric Extractor ---
-
-
-class TestParametricExtractor:
-    def test_standalone_extract(self, signal_data):
-        """Verify real specparam-based extraction."""
-        X, sfreq, ch_names = signal_data
-        config = ParametricDescriptorConfig(
-            enabled=True,
-            outputs=["aperiodic"],
-            psd_method="welch",
-            freq_range=(1.0, 45.0),
-        )
-        extractor = ParametricDescriptorExtractor(config)
-
-        block = extractor.extract(
-            X,
-            sfreq=sfreq,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-        assert "param_exponent_ch-Fz" in block.descriptor_names
-        assert block.X.shape == (X.shape[0], 6)
-        exponent_idx = block.descriptor_names.index("param_exponent_ch-Fz")
-        offset_idx = block.descriptor_names.index("param_offset_ch-Fz")
-        assert np.all(block.X[:, exponent_idx] > 0)
-        assert np.all(np.isfinite(block.X[:, offset_idx]))
-
-    def test_extract_psd_requires_fit_batch(self, psd_data, signal_data):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        extractor = ParametricDescriptorExtractor(ParametricDescriptorConfig())
-
-        with pytest.raises(ValueError, match="requires a supplied fit_batch"):
-            extractor.extract_psd(
-                psds,
-                freqs,
-                channel_names=ch_names,
-                ids=None,
-                runtime=MagicMock(),
-                obs_offset=0,
-            )
-
-    def test_peak_summary_emits_extended_peak_metrics(self, psd_data, signal_data):
-        psds, freqs = psd_data
-        _, _, ch_names = signal_data
-        n_obs, n_chans, _ = psds.shape
-        extractor = ParametricDescriptorExtractor(
-            ParametricDescriptorConfig(enabled=True, outputs=["peak_summary"])
-        )
-        fit_batch = _ParametricFitBatch(
-            freqs=freqs,
-            metrics={
-                "peak_count": np.full((n_obs, n_chans), 2.0),
-                "peak_freq_dom": np.full((n_obs, n_chans), 10.0),
-                "peak_power_dom": np.full((n_obs, n_chans), 0.5),
-                "peak_bandwidth_dom": np.full((n_obs, n_chans), 2.0),
-                "alpha_peak_freq": np.full((n_obs, n_chans), 10.0),
-                "alpha_peak_power": np.full((n_obs, n_chans), 0.5),
+def test_corrected_band_power_is_measured_only_where_a_peak_was_fitted(signals):
+    values, failures = _extract(
+        signals,
+        {
+            "bands": {
+                "enabled": True,
+                "outputs": [
+                    "corrected_absolute_power",
+                    "corrected_log_absolute_power",
+                    "corrected_relative_power",
+                ],
+                "bands": BANDS,
             },
-            errors=[],
-            periodic_psds=None,
-        )
-
-        block = extractor.extract_psd(
-            psds,
-            freqs,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            fit_batch=fit_batch,
-            obs_offset=0,
-        )
-
-        assert block.X.shape == (n_obs, 18)
-        assert "param_peak_bandwidth_dom_ch-Fz" in block.descriptor_names
-        assert "param_alpha_peak_freq_ch-Fz" in block.descriptor_names
-        assert "param_alpha_peak_power_ch-Fz" in block.descriptor_names
-
-    def test_fit_single_spectrum_reads_dominant_and_alpha_peak_metrics(
-        self, monkeypatch
-    ):
-        class _FakeResultsModel:
-            def get_component(self, name):
-                raise AssertionError("Periodic PSD reconstruction is not used here.")
-
-        class _FakeResults:
-            has_model = True
-            model = _FakeResultsModel()
-
-            def get_params(self, name):
-                if name == "aperiodic":
-                    return np.array([0.1, 1.5], dtype=float)
-                if name == "periodic":
-                    return np.array(
-                        [
-                            [6.0, 0.2, 1.0],
-                            [10.0, 0.7, 2.5],
-                            [20.0, 0.5, 3.0],
-                        ],
-                        dtype=float,
-                    )
-                raise KeyError(name)
-
-            def get_metrics(self, *names):
-                if names == ("error",):
-                    return np.array([0.05], dtype=float)
-                if names == ("gof", "rsquared"):
-                    return np.array([0.98], dtype=float)
-                raise KeyError(names)
-
-        class _FakeSpectralModel:
-            def __init__(self, **kwargs):
-                self.results = _FakeResults()
-
-            def fit(self, freqs, spectrum, freq_range):
-                return None
-
-        monkeypatch.setattr(
-            param_fit_module,
-            "import_optional_dependency",
-            lambda *args, **kwargs: _FakeSpectralModel,
-        )
-
-        metrics, periodic_psd = param_fit_module.fit_single_spectrum(
-            freqs=np.array([1.0, 10.0, 20.0], dtype=float),
-            spectrum=np.array([1.0, 2.0, 1.5], dtype=float),
-            config=ParametricDescriptorConfig(enabled=True, outputs=["peak_summary"]),
-            need_periodic_psd=False,
-        )
-
-        assert periodic_psd is None
-        assert metrics["peak_count"] == 3.0
-        assert metrics["peak_freq_dom"] == pytest.approx(10.0)
-        assert metrics["peak_power_dom"] == pytest.approx(0.7)
-        assert metrics["peak_bandwidth_dom"] == pytest.approx(2.5)
-        assert metrics["alpha_peak_freq"] == pytest.approx(10.0)
-        assert metrics["alpha_peak_power"] == pytest.approx(0.7)
-
-    def test_fit_single_spectrum_returns_nan_for_missing_alpha_peak(self, monkeypatch):
-        class _FakeResultsModel:
-            def get_component(self, name):
-                raise AssertionError("Periodic PSD reconstruction is not used here.")
-
-        class _FakeResults:
-            has_model = True
-            model = _FakeResultsModel()
-
-            def get_params(self, name):
-                if name == "aperiodic":
-                    return np.array([0.2, 1.1], dtype=float)
-                if name == "periodic":
-                    return np.array([[20.0, 0.5, 3.0]], dtype=float)
-                raise KeyError(name)
-
-            def get_metrics(self, *names):
-                if names == ("error",):
-                    return np.array([0.02], dtype=float)
-                if names == ("gof", "rsquared"):
-                    return np.array([0.99], dtype=float)
-                raise KeyError(names)
-
-        class _FakeSpectralModel:
-            def __init__(self, **kwargs):
-                self.results = _FakeResults()
-
-            def fit(self, freqs, spectrum, freq_range):
-                return None
-
-        monkeypatch.setattr(
-            param_fit_module,
-            "import_optional_dependency",
-            lambda *args, **kwargs: _FakeSpectralModel,
-        )
-
-        metrics, periodic_psd = param_fit_module.fit_single_spectrum(
-            freqs=np.array([1.0, 10.0, 20.0], dtype=float),
-            spectrum=np.array([1.0, 2.0, 1.5], dtype=float),
-            config=ParametricDescriptorConfig(enabled=True, outputs=["peak_summary"]),
-            need_periodic_psd=False,
-        )
-
-        assert periodic_psd is None
-        assert metrics["peak_count"] == 1.0
-        assert np.isnan(metrics["alpha_peak_freq"])
-        assert np.isnan(metrics["alpha_peak_power"])
-
-
-# --- 4. Complexity Extractor ---
-
-
-class TestComplexityExtractor:
-    def test_backend_dispatch_antropy(self, signal_data):
-        X, sfreq, ch_names = signal_data
-        config = ComplexityDescriptorConfig(
-            enabled=True, backend="antropy", measures=["spectral_entropy"]
-        )
-        extractor = ComplexityDescriptorExtractor(config)
-
-        block = extractor.extract(
-            X,
-            sfreq=sfreq,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-        assert "complexity_spectral_entropy_ch-Fz" in block.descriptor_names
-        assert not np.isnan(block.X).any()
-
-    def test_backend_dispatch_neurokit2(self, signal_data):
-        X, sfreq, ch_names = signal_data
-        config = ComplexityDescriptorConfig(
-            enabled=True, backend="neurokit2", measures=["perm_entropy"]
-        )
-        extractor = ComplexityDescriptorExtractor(config)
-
-        block = extractor.extract(
-            X,
-            sfreq=sfreq,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-        assert "complexity_perm_entropy_ch-Fz" in block.descriptor_names
-        # Check that it's finite
-        assert not np.isnan(block.X).any()
-
-    def test_mixed_execution_strategy(self, signal_data):
-        """Verify execution paths for combined complexity measures."""
-        X, sfreq, ch_names = signal_data
-        config = ComplexityDescriptorConfig(
-            enabled=True,
-            backend="antropy",
-            measures=["spectral_entropy", "sample_entropy"],
-        )
-        extractor = ComplexityDescriptorExtractor(config)
-
-        block = extractor.extract(
-            X,
-            sfreq=sfreq,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-
-        # 2 measures * 3 channels = 6 columns
-        assert block.X.shape == (X.shape[0], 6)
-        assert "complexity_spectral_entropy_ch-Fz" in block.descriptor_names
-        assert "complexity_sample_entropy_ch-Pz" in block.descriptor_names
-
-    def test_complexity_collect_nonfinite_numerical_issue(self, signal_data):
-        from unittest.mock import patch
-
-        from coco_pipe.descriptors.configs import DescriptorRuntimeConfig
-
-        X, sfreq, ch_names = signal_data
-        config = ComplexityDescriptorConfig(
-            enabled=True,
-            measures=["sample_entropy"],
-        )
-        extractor = ComplexityDescriptorExtractor(config)
-        # Mock backend result to include inf
-        with patch.object(
-            extractor,
-            "_load_antropy",
-            return_value=MagicMock(sample_entropy=lambda x, **kwargs: np.inf),
-        ):
-            block = extractor.extract(
-                X,
-                sfreq=sfreq,
-                channel_names=ch_names,
-                ids=None,
-                runtime=DescriptorRuntimeConfig(on_error="collect"),
-            )
-            assert np.isnan(block.X).all()
-            assert any(f["exception_type"] == "NumericalIssue" for f in block.failures)
-
-    def test_complexity_raise_on_error(self, signal_data):
-        from unittest.mock import patch
-
-        from coco_pipe.descriptors.configs import DescriptorRuntimeConfig
-
-        X, sfreq, ch_names = signal_data
-        config = ComplexityDescriptorConfig(
-            enabled=True,
-            measures=["sample_entropy"],
-        )
-        extractor = ComplexityDescriptorExtractor(config)
-        with patch.object(
-            extractor,
-            "_load_antropy",
-            return_value=MagicMock(sample_entropy=lambda x, **kwargs: np.inf),
-        ):
-            with pytest.raises(ValueError, match="produced a non-finite result"):
-                extractor.extract(
-                    X,
-                    sfreq=sfreq,
-                    channel_names=ch_names,
-                    ids=None,
-                    runtime=DescriptorRuntimeConfig(on_error="raise"),
-                )
-
-    def test_easy_batch_complexity_measures_emit_expected_columns(self, signal_data):
-        X, sfreq, ch_names = signal_data
-        measures = [
-            "approx_entropy",
-            "svd_entropy",
-            "petrosian_fd",
-            "katz_fd",
-            "higuchi_fd",
-            "zero_crossings",
-            "kurtosis",
-            "rms",
-        ]
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="antropy",
-                measures=measures,
-            )
-        )
-
-        block = extractor.extract(
-            X,
-            sfreq=sfreq,
-            channel_names=ch_names,
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-
-        assert block.X.shape == (X.shape[0], len(measures) * len(ch_names))
-        for measure in measures:
-            assert f"complexity_{measure}_ch-Fz" in block.descriptor_names
-
-    def test_zero_crossings_matches_manual_count(self):
-        X = np.array([[[-1.0, 1.0, -2.0, 3.0, -4.0]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=["zero_crossings"],
-            )
-        )
-
-        block = extractor.extract(
-            X,
-            sfreq=250.0,
-            channel_names=["Fz"],
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-
-        assert block.descriptor_names == ["complexity_zero_crossings_ch-Fz"]
-        assert block.X[0, 0] == pytest.approx(4.0)
-
-    def test_rms_matches_manual_calculation(self):
-        X = np.array([[[1.0, -1.0, 1.0, -1.0]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=["rms"],
-            )
-        )
-
-        block = extractor.extract(
-            X,
-            sfreq=250.0,
-            channel_names=["Fz"],
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-
-        assert block.descriptor_names == ["complexity_rms_ch-Fz"]
-        assert block.X[0, 0] == pytest.approx(1.0)
-
-    def test_kurtosis_matches_scipy_definition(self):
-        signal = np.array([1.0, 2.0, 2.5, 4.0, 8.0], dtype=float)
-        X = signal.reshape(1, 1, -1)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=["kurtosis"],
-            )
-        )
-
-        block = extractor.extract(
-            X,
-            sfreq=250.0,
-            channel_names=["Fz"],
-            ids=None,
-            runtime=MagicMock(),
-            obs_offset=0,
-        )
-
-        assert block.descriptor_names == ["complexity_kurtosis_ch-Fz"]
-        assert block.X[0, 0] == pytest.approx(
-            scipy_kurtosis(signal, fisher=True, bias=False)
-        )
-
-    @pytest.mark.parametrize(
-        ("measure", "backend_attr", "backend_result", "expected"),
-        [
-            ("shannon_entropy", "entropy_shannon", (1.25, {"base": 2}), 1.25),
-            ("fuzzy_entropy", "entropy_fuzzy", (0.75, {"Tolerance": 0.2}), 0.75),
-            (
-                "dispersion_entropy",
-                "entropy_dispersion",
-                (0.5, {"dimension": 3}),
-                0.5,
-            ),
-            ("hurst_exponent", "fractal_hurst", np.array([0.62]), 0.62),
-        ],
+            "parametric": {"enabled": True, "outputs": ["peak_summary"]},
+        },
     )
-    def test_medium_batch_neurokit_measures_are_wired(
-        self,
-        measure,
-        backend_attr,
-        backend_result,
-        expected,
-    ):
-        from unittest.mock import patch
 
-        X = np.array([[[0.1, 0.2, 0.4, 0.8, 0.3, 0.1]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=[measure],
-            )
+    # "no peak" is a result, not a failure
+    assert not failures
+    assert (values["band_corr_abs_alpha_ch-Fz"] > 0).all()
+    assert (values["band_corr_abs_beta_ch-Cz"] > 0).all()
+    assert (values["band_corr_rel_alpha_ch-Fz"] > 0.9).all()
+    # BANDS["alpha"] matches the band behind alpha_peak_freq
+    for channel in CHANNELS:
+        no_peak = np.isnan(values[f"param_alpha_peak_freq_ch-{channel}"])
+        for output in ("abs", "log_abs", "rel"):
+            column = values[f"band_corr_{output}_alpha_ch-{channel}"]
+            np.testing.assert_array_equal(np.isnan(column), no_peak)
+    assert np.isnan(values["band_corr_abs_alpha_ch-Cz"]).all()
+    assert np.isnan(values["band_corr_log_abs_beta_ch-Fz"]).all()
+
+
+def test_simple_complexity_measures_match_their_definition():
+    signal = np.array([1.0, -2.0, 2.5, -4.0, 8.0])
+    values, _ = _extract(
+        signal.reshape(1, 1, -1),
+        {
+            "complexity": {
+                "enabled": True,
+                "measures": ["zero_crossings", "rms", "kurtosis"],
+            }
+        },
+        channels=["Fz"],
+    )
+
+    assert values["complexity_zero_crossings_ch-Fz"][0] == 4
+    assert values["complexity_rms_ch-Fz"][0] == pytest.approx(
+        np.sqrt(np.mean(signal**2))
+    )
+    assert values["complexity_kurtosis_ch-Fz"][0] == pytest.approx(
+        kurtosis(signal, fisher=True, bias=False)
+    )
+
+
+def test_auto_backend_computes_every_measure_and_separates_order_from_noise():
+    measures = [
+        "sample_entropy",
+        "spectral_entropy",
+        "approx_entropy",
+        "svd_entropy",
+        "petrosian_fd",
+        "katz_fd",
+        "higuchi_fd",
+        "hjorth_mobility",
+        "hjorth_complexity",
+        "fuzzy_entropy",
+        "shannon_entropy",
+        "dispersion_entropy",
+        "hurst_exponent",
+    ]
+    t = np.arange(512) / 128.0
+    noise = np.random.default_rng(0).standard_normal(t.size)
+    X = np.stack([np.sin(2 * np.pi * 5 * t), noise])[None]
+
+    values, failures = _extract(
+        X,
+        {"complexity": {"enabled": True, "backend": "auto", "measures": measures}},
+        channels=["sine", "noise"],
+        sfreq=128.0,
+    )
+
+    assert not failures
+    assert all(np.isfinite(column).all() for column in values.values())
+    for measure in ("sample_entropy", "spectral_entropy", "svd_entropy"):
+        assert (
+            values[f"complexity_{measure}_ch-sine"]
+            < values[f"complexity_{measure}_ch-noise"]
         )
-        fake_nk = MagicMock()
-        setattr(
-            fake_nk,
-            backend_attr,
-            lambda signal, _result=backend_result, **kwargs: _result,
+
+
+@pytest.mark.parametrize(
+    ("backend", "measure"),
+    [("antropy", "fuzzy_entropy"), ("neurokit2", "katz_fd")],
+)
+def test_backends_reject_measures_they_do_not_provide(signals, backend, measure):
+    with pytest.raises(ValueError, match=f"not supported by backend '{backend}'"):
+        _extract(
+            signals,
+            {
+                "complexity": {
+                    "enabled": True,
+                    "backend": backend,
+                    "measures": [measure],
+                }
+            },
         )
 
-        with patch.object(extractor, "_load_neurokit", return_value=fake_nk):
-            block = extractor.extract(
-                X,
-                sfreq=250.0,
-                channel_names=["Fz"],
-                ids=None,
-                runtime=MagicMock(),
-                obs_offset=0,
-            )
 
-        assert block.descriptor_names == [f"complexity_{measure}_ch-Fz"]
-        assert block.X[0, 0] == pytest.approx(expected)
-
-    def test_antropy_backend_rejects_medium_batch_measures(self):
-        X = np.array([[[0.1, 0.2, 0.4, 0.8, 0.3, 0.1]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="antropy",
-                measures=["fuzzy_entropy"],
-            )
+@pytest.mark.parametrize(
+    ("module", "backend", "measure"),
+    [
+        ("antropy", "antropy", "sample_entropy"),
+        ("neurokit2", "neurokit2", "fuzzy_entropy"),
+    ],
+)
+def test_missing_backend_names_the_install_extra(
+    monkeypatch, signals, module, backend, measure
+):
+    monkeypatch.setitem(sys.modules, module, None)
+    with pytest.raises(ImportError, match=r"coco-pipe\[descriptors\]"):
+        _extract(
+            signals,
+            {
+                "complexity": {
+                    "enabled": True,
+                    "backend": backend,
+                    "measures": [measure],
+                }
+            },
         )
-
-        with pytest.raises(ValueError, match="not supported by backend 'antropy'"):
-            extractor.extract(
-                X,
-                sfreq=250.0,
-                channel_names=["Fz"],
-                ids=None,
-                runtime=MagicMock(),
-                obs_offset=0,
-            )
-
-    def test_auto_backend_mixes_antropy_and_neurokit_measures(self):
-        from unittest.mock import patch
-
-        X = np.array([[[0.1, 0.2, 0.4, 0.8, 0.3, 0.1]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="auto",
-                measures=["sample_entropy", "fuzzy_entropy"],
-            )
-        )
-        fake_ant = MagicMock(sample_entropy=lambda signal, **kwargs: 0.25)
-        fake_nk = MagicMock(entropy_fuzzy=lambda signal, **kwargs: (0.75, {}))
-
-        with (
-            patch.object(extractor, "_load_antropy", return_value=fake_ant),
-            patch.object(extractor, "_load_neurokit", return_value=fake_nk),
-        ):
-            block = extractor.extract(
-                X,
-                sfreq=250.0,
-                channel_names=["Fz"],
-                ids=None,
-                runtime=MagicMock(),
-                obs_offset=0,
-            )
-
-        assert "complexity_sample_entropy_ch-Fz" in block.descriptor_names
-        assert "complexity_fuzzy_entropy_ch-Fz" in block.descriptor_names
-        assert block.meta["measure_backends"] == {
-            "sample_entropy": "antropy",
-            "fuzzy_entropy": "neurokit2",
-        }
-
-    def test_medium_batch_neurokit_collects_nonfinite_values(self):
-        from unittest.mock import patch
-
-        from coco_pipe.descriptors.configs import DescriptorRuntimeConfig
-
-        X = np.array([[[0.1, 0.2, 0.4, 0.8, 0.3, 0.1]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=["fuzzy_entropy"],
-            )
-        )
-        fake_nk = MagicMock(entropy_fuzzy=lambda signal, **kwargs: (np.inf, {}))
-
-        with patch.object(extractor, "_load_neurokit", return_value=fake_nk):
-            block = extractor.extract(
-                X,
-                sfreq=250.0,
-                channel_names=["Fz"],
-                ids=None,
-                runtime=DescriptorRuntimeConfig(on_error="collect"),
-                obs_offset=0,
-            )
-
-        assert np.isnan(block.X[0, 0])
-        assert any(f["exception_type"] == "NumericalIssue" for f in block.failures)
-
-    def test_medium_batch_neurokit_raises_on_nonfinite_values(self):
-        from unittest.mock import patch
-
-        from coco_pipe.descriptors.configs import DescriptorRuntimeConfig
-
-        X = np.array([[[0.1, 0.2, 0.4, 0.8, 0.3, 0.1]]], dtype=float)
-        extractor = ComplexityDescriptorExtractor(
-            ComplexityDescriptorConfig(
-                enabled=True,
-                backend="neurokit2",
-                measures=["fuzzy_entropy"],
-            )
-        )
-        fake_nk = MagicMock(entropy_fuzzy=lambda signal, **kwargs: (np.inf, {}))
-
-        with patch.object(extractor, "_load_neurokit", return_value=fake_nk):
-            with pytest.raises(ValueError, match="produced a non-finite result"):
-                extractor.extract(
-                    X,
-                    sfreq=250.0,
-                    channel_names=["Fz"],
-                    ids=None,
-                    runtime=DescriptorRuntimeConfig(on_error="raise"),
-                    obs_offset=0,
-                )
-
-
-# --- 5. Lazy Loading and Dependency Guards ---
-
-
-def test_lazy_loading_failure_antropy(monkeypatch):
-    """Verify informative error when antropy is missing."""
-    monkeypatch.setitem(sys.modules, "antropy", None)
-    config = ComplexityDescriptorConfig(enabled=True, backend="antropy")
-    extractor = ComplexityDescriptorExtractor(config)
-
-    with pytest.raises(ImportError, match="antropy"):
-        extractor._load_antropy()
-
-
-def test_lazy_loading_failure_neurokit2(monkeypatch):
-    monkeypatch.setitem(sys.modules, "neurokit2", None)
-    config = ComplexityDescriptorConfig(enabled=True, backend="neurokit2")
-    extractor = ComplexityDescriptorExtractor(config)
-
-    with pytest.raises(ImportError, match="neurokit"):
-        extractor._load_neurokit()

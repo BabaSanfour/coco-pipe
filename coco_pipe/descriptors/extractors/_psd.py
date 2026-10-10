@@ -1,9 +1,8 @@
 """
 Shared PSD computation for PSD-consuming descriptor paths.
 
-This module holds the reusable PSD step used by the descriptors planner and by
-PSD-consuming extractors when they need a standalone spectral input. It does
-not define descriptor semantics. It only:
+This module holds the PSD step the descriptors planner shares between
+PSD-consuming extractors. It does not define descriptor semantics. It only:
 
 - prepare a writable runtime environment for MNE-backed PSD helpers
 - lazily import the MNE PSD functions used by descriptors

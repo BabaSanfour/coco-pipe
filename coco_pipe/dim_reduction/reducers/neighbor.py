@@ -22,22 +22,22 @@ ParametricUMAPReducer
 
 References
 ----------
-.. [1] van der Maaten, L., and Hinton, G. (2008). "Visualizing data using
+[1] van der Maaten, L., and Hinton, G. (2008). "Visualizing data using
        t-SNE". Journal of Machine Learning Research, 9, 2579-2605.
-.. [2] McInnes, L., Healy, J., and Melville, J. (2018). "UMAP: Uniform
+[2] McInnes, L., Healy, J., and Melville, J. (2018). "UMAP: Uniform
        Manifold Approximation and Projection for Dimension Reduction". arXiv.
-.. [3] Wang, Y., et al. (2021). "PaCMAP: Pairwise Controlled Manifold
+[3] Wang, Y., et al. (2021). "PaCMAP: Pairwise Controlled Manifold
        Approximation". Journal of Machine Learning Research, 22(201), 1-47.
-.. [4] Amid, E., and Warmuth, M. K. (2019). "TriMap: Large-scale
+[4] Amid, E., and Warmuth, M. K. (2019). "TriMap: Large-scale
        Dimensionality Reduction Using Triplets". arXiv.
-.. [5] Moon, K. R., et al. (2019). "Visualizing structure and transitions in
+[5] Moon, K. R., et al. (2019). "Visualizing structure and transitions in
        high-dimensional biological data". Nature Biotechnology, 37, 1482-1492.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
         Sina Esmaeili (sina.esmaeili@umontreal.ca)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from sklearn.manifold import TSNE
@@ -46,12 +46,12 @@ from ...utils import import_optional_dependency
 from .base import ArrayLike, BaseReducer
 
 __all__ = [
-    "TSNEReducer",
-    "UMAPReducer",
-    "PacmapReducer",
-    "TrimapReducer",
     "PHATEReducer",
+    "PacmapReducer",
     "ParametricUMAPReducer",
+    "TSNEReducer",
+    "TrimapReducer",
+    "UMAPReducer",
 ]
 
 
@@ -144,7 +144,7 @@ class TSNEReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
         self.embedding_ = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TSNEReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "TSNEReducer":
         """
         Fit t-SNE on the input data.
 
@@ -192,7 +192,7 @@ class TSNEReducer(BaseReducer):
             "TSNEReducer cannot transform new data. Use fit_transform()."
         )
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit t-SNE and return the embedding coordinates.
 
@@ -205,7 +205,7 @@ class TSNEReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Embedded coordinates produced by t-SNE.
         """
         self.fit(X, y=y)
@@ -293,7 +293,7 @@ class UMAPReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "UMAPReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "UMAPReducer":
         """
         Fit UMAP on the input data.
 
@@ -340,7 +340,7 @@ class UMAPReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding coordinates.
 
         Raises
@@ -476,7 +476,7 @@ class PacmapReducer(BaseReducer):
         self.init = init
         self.embedding_ = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PacmapReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "PacmapReducer":
         """
         Fit PaCMAP on the input data.
 
@@ -538,7 +538,7 @@ class PacmapReducer(BaseReducer):
             "PacmapReducer cannot transform new data. Use fit_transform()."
         )
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit PaCMAP and return the embedding coordinates.
 
@@ -551,7 +551,7 @@ class PacmapReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Embedded coordinates produced by PaCMAP.
         """
         self.fit(X, y=y)
@@ -576,18 +576,23 @@ class TrimapReducer(BaseReducer):
     n_random : int, default=5
         Number of random triplets per sample.
     **kwargs : dict
-        Additional keyword arguments forwarded to `trimap.TRIMAP` after
-        signature filtering.
+        Additional keyword arguments forwarded to `trimap.TorchTRIMAP` after
+        signature filtering (e.g. ``device``, default ``"cpu"``, or
+        ``knn_backend``).
 
     Attributes
     ----------
     embedding_ : np.ndarray or None
         Learned training-set embedding after `fit` or `fit_transform`.
-    model : trimap.TRIMAP or None
+    model : trimap.TorchTRIMAP or None
         Fitted TriMap estimator after `fit` or `fit_transform`.
 
     Notes
     -----
+    Uses TriMap's PyTorch implementation, which finds neighbours with torch
+    or faiss. The default ``trimap.TRIMAP`` relies on annoy, whose search
+    returns only the query point on Apple silicon.
+
     `transform` is not supported because TriMap does not provide an
     out-of-sample projection API.
 
@@ -650,7 +655,7 @@ class TrimapReducer(BaseReducer):
         n_random : int, default=5
             Number of random triplets.
         **kwargs : dict
-            Additional keyword arguments forwarded to `TRIMAP` after filtering.
+            Additional keyword arguments forwarded to `TorchTRIMAP` after filtering.
         """
         super().__init__(n_components=n_components, **kwargs)
         self.n_inliers = n_inliers
@@ -658,7 +663,7 @@ class TrimapReducer(BaseReducer):
         self.n_random = n_random
         self.embedding_ = None
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "TrimapReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "TrimapReducer":
         """
         Fit TriMap on the input data.
 
@@ -682,20 +687,22 @@ class TrimapReducer(BaseReducer):
             If `trimap` is installed but fails during initialization.
         """
         trimap_cls = import_optional_dependency(
-            lambda: __import__("trimap", fromlist=["TRIMAP"]).TRIMAP,
+            lambda: __import__("trimap", fromlist=["TorchTRIMAP"]).TorchTRIMAP,
             feature="TrimapReducer",
             dependency="trimap",
             install_hint="pip install coco-pipe[neighbor]",
         )
 
+        # CPU by default: reproducible under random_state, unlike MPS
         self.model = self._build_estimator(
             trimap_cls,
+            params={"device": "cpu", **self.params},
             component_param="n_dims",
             n_inliers=self.n_inliers,
             n_outliers=self.n_outliers,
             n_random=self.n_random,
         )
-        self.embedding_ = self.model.fit_transform(X)
+        self.embedding_ = self.model.fit_transform(X).detach().cpu().numpy()
         return self
 
     def transform(self, X: ArrayLike) -> np.ndarray:
@@ -717,7 +724,7 @@ class TrimapReducer(BaseReducer):
             "TrimapReducer cannot transform new data. Use fit_transform()."
         )
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit TriMap and return the embedding coordinates.
 
@@ -730,7 +737,7 @@ class TrimapReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Embedded coordinates produced by TriMap.
         """
         self.fit(X, y=y)
@@ -835,7 +842,7 @@ class PHATEReducer(BaseReducer):
         self.decay = decay
         self.t = t
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "PHATEReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "PHATEReducer":
         """
         Fit PHATE on the input data.
 
@@ -885,7 +892,7 @@ class PHATEReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding coordinates.
 
         Raises
@@ -974,7 +981,7 @@ class ParametricUMAPReducer(BaseReducer):
         n_neighbors: int = 15,
         min_dist: float = 0.1,
         metric: str = "euclidean",
-        n_epochs: Optional[int] = None,
+        n_epochs: int | None = None,
         batch_size: int = 1000,
         verbose: bool = False,
         **kwargs,
@@ -1010,9 +1017,7 @@ class ParametricUMAPReducer(BaseReducer):
         self.batch_size = batch_size
         self.verbose = verbose
 
-    def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
-    ) -> "ParametricUMAPReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "ParametricUMAPReducer":
         """
         Fit Parametric UMAP on the input data.
 
@@ -1069,7 +1074,7 @@ class ParametricUMAPReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding coordinates.
 
         Raises

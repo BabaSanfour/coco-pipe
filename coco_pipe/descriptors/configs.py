@@ -27,13 +27,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
-    "DescriptorInputConfig",
     "BandDescriptorConfig",
-    "ParametricDescriptorConfig",
     "ComplexityDescriptorConfig",
-    "DescriptorFamiliesConfig",
-    "DescriptorRuntimeConfig",
     "DescriptorConfig",
+    "DescriptorFamiliesConfig",
+    "DescriptorInputConfig",
+    "DescriptorRuntimeConfig",
+    "ParametricDescriptorConfig",
 ]
 
 
@@ -53,7 +53,6 @@ _BAND_OUTPUTS = (
     "corrected_absolute_power",
     "corrected_log_absolute_power",
     "corrected_relative_power",
-    "corrected_ratios",
 )
 _PARAM_OUTPUTS = ("aperiodic", "fit_quality", "peak_summary")
 _COMPLEXITY_MEASURES = (
@@ -123,9 +122,10 @@ class BandDescriptorConfig(_StrictConfigModel):
         Mapping from band name to ``(low, high)`` boundaries.
     outputs : list of {"absolute_power", "log_absolute_power", \
 "relative_power", "ratios", "corrected_absolute_power", \
-"corrected_log_absolute_power", "corrected_relative_power", \
-"corrected_ratios"}
-        Band descriptors to emit.
+"corrected_log_absolute_power", "corrected_relative_power"}
+        Band descriptors to emit. Corrected outputs use the periodic power of
+        the parametric fit and are ``NaN`` for a band with no fitted peak
+        centred inside it. Ratios use uncorrected band power only.
     ratio_pairs : list of tuple of str, default=[]
         Explicit numerator and denominator band names for ratio outputs.
     min_denominator_power : float, default=0.0
@@ -157,7 +157,6 @@ class BandDescriptorConfig(_StrictConfigModel):
             "corrected_absolute_power",
             "corrected_log_absolute_power",
             "corrected_relative_power",
-            "corrected_ratios",
         ]
     ] = Field(default_factory=lambda: ["absolute_power"])
     ratio_pairs: list[tuple[str, str]] = Field(default_factory=list)
@@ -188,7 +187,7 @@ class BandDescriptorConfig(_StrictConfigModel):
         return [tuple(pair) for pair in value]
 
     @model_validator(mode="after")
-    def _validate_model(self) -> "BandDescriptorConfig":
+    def _validate_model(self) -> BandDescriptorConfig:
         if self.fmin >= self.fmax:
             raise ValueError("Band descriptor config requires fmin < fmax.")
         for name, (low, high) in self.bands.items():
@@ -200,9 +199,7 @@ class BandDescriptorConfig(_StrictConfigModel):
                     f"'{name}' must stay within the configured "
                     f"[{self.fmin}, {self.fmax}] range."
                 )
-        if (
-            "ratios" in self.outputs or "corrected_ratios" in self.outputs
-        ) and not self.ratio_pairs:
+        if "ratios" in self.outputs and not self.ratio_pairs:
             raise ValueError("Band ratios require explicit ratio_pairs.")
         return self
 
@@ -259,7 +256,7 @@ class ParametricDescriptorConfig(_StrictConfigModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_model(self) -> "ParametricDescriptorConfig":
+    def _validate_model(self) -> ParametricDescriptorConfig:
         if self.freq_range[0] >= self.freq_range[1]:
             raise ValueError("Parametric freq_range requires low < high.")
         if self.peak_width_limits[0] >= self.peak_width_limits[1]:

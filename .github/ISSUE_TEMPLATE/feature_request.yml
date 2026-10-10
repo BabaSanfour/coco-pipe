@@ -1,0 +1,62 @@
+name: Feature Request
+description: Suggest a new feature, enhancement, or analysis module.
+title: "[FEATURE] "
+labels:
+  - enhancement
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve coco-pipe.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the proposed feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: Describe how you think the feature should work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternatives you have considered.
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Related Module
+      options:
+        - io
+        - descriptors
+        - dim_reduction
+        - decoding
+        - viz
+        - report
+        - documentation
+        - infrastructure
+        - other
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Papers, repositories, or links that motivate this feature.

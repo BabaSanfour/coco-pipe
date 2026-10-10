@@ -1,0 +1,1 @@
+`import coco_pipe` works with a plain install: statsmodels was imported at load time but declared only in extras. coco-pipe no longer uses statsmodels; FDR correction uses `scipy.stats.false_discovery_control`, and `compare_models(correction=...)` accepts `"fdr_bh"` or `"none"`.

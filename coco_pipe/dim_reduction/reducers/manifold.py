@@ -2,9 +2,9 @@
 Nonlinear manifold-learning reducers.
 
 This module provides wrappers around scikit-learn manifold-learning estimators.
-These reducers follow the shared `BaseReducer` contract so they can be used
-with `DimReduction`, reporting, and visualization utilities while preserving a
-consistent reducer API.
+These reducers follow the shared `~coco_pipe.dim_reduction.reducers.base.BaseReducer`
+contract so they can be used with `~coco_pipe.dim_reduction.DimReduction`, reporting,
+and visualization utilities while preserving a consistent reducer API.
 
 Classes
 -------
@@ -20,21 +20,19 @@ SpectralEmbeddingReducer
 
 References
 ----------
-.. [1] Tenenbaum, J. B., de Silva, V., and Langford, J. C. (2000).
+[1] Tenenbaum, J. B., de Silva, V., and Langford, J. C. (2000).
        "A global geometric framework for nonlinear dimensionality reduction".
        Science, 290(5500), 2319-2323.
-.. [2] Roweis, S. T., and Saul, L. K. (2000). "Nonlinear dimensionality
+[2] Roweis, S. T., and Saul, L. K. (2000). "Nonlinear dimensionality
        reduction by locally linear embedding". Science, 290(5500), 2323-2326.
-.. [3] Borg, I., and Groenen, P. J. F. (2005). Modern multidimensional scaling:
+[3] Borg, I., and Groenen, P. J. F. (2005). Modern multidimensional scaling:
        Theory and applications. Springer.
-.. [4] Belkin, M., and Niyogi, P. (2003). "Laplacian eigenmaps for
+[4] Belkin, M., and Niyogi, P. (2003). "Laplacian eigenmaps for
        dimensionality reduction and data representation". Neural Computation,
        15(6), 1373-1396.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
-
-from typing import Optional
 
 import numpy as np
 from sklearn.manifold import MDS, Isomap, LocallyLinearEmbedding, SpectralEmbedding
@@ -126,7 +124,7 @@ class IsomapReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "IsomapReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "IsomapReducer":
         """
         Fit Isomap on the input data.
 
@@ -167,7 +165,7 @@ class IsomapReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding coordinates.
 
         Raises
@@ -179,7 +177,7 @@ class IsomapReducer(BaseReducer):
         return self.model.transform(X)
 
     @property
-    def reconstruction_error_(self) -> Optional[float]:
+    def reconstruction_error_(self) -> float | None:
         """
         Return the Isomap reconstruction error.
 
@@ -275,7 +273,7 @@ class LLEReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "LLEReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "LLEReducer":
         """
         Fit LLE on the input data.
 
@@ -320,7 +318,7 @@ class LLEReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Low-dimensional embedding coordinates.
 
         Raises
@@ -434,7 +432,7 @@ class MDSReducer(BaseReducer):
         """
         super().__init__(n_components=n_components, **kwargs)
 
-    def fit(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> "MDSReducer":
+    def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "MDSReducer":
         """
         Fit MDS on the input data.
 
@@ -480,7 +478,7 @@ class MDSReducer(BaseReducer):
         """
         raise NotImplementedError("MDS cannot transform new data. Use fit_transform().")
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit MDS and return the embedding coordinates.
 
@@ -493,7 +491,7 @@ class MDSReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Embedded coordinates produced by MDS.
 
         Examples
@@ -611,7 +609,7 @@ class SpectralEmbeddingReducer(BaseReducer):
         super().__init__(n_components=n_components, **kwargs)
 
     def fit(
-        self, X: ArrayLike, y: Optional[ArrayLike] = None
+        self, X: ArrayLike, y: ArrayLike | None = None
     ) -> "SpectralEmbeddingReducer":
         """
         Fit Spectral Embedding on the input data.
@@ -662,7 +660,7 @@ class SpectralEmbeddingReducer(BaseReducer):
             "Use fit_transform()."
         )
 
-    def fit_transform(self, X: ArrayLike, y: Optional[ArrayLike] = None) -> np.ndarray:
+    def fit_transform(self, X: ArrayLike, y: ArrayLike | None = None) -> np.ndarray:
         """
         Fit Spectral Embedding and return the embedding coordinates.
 
@@ -675,7 +673,7 @@ class SpectralEmbeddingReducer(BaseReducer):
 
         Returns
         -------
-        np.ndarray of shape (n_samples, n_components)
+        np.ndarray of shape (n_samples, n_dims)
             Embedded coordinates produced by Spectral Embedding.
 
         Examples

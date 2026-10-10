@@ -32,6 +32,7 @@ import numpy as np
 from scipy.stats import kurtosis as scipy_kurtosis
 
 from ...utils import import_optional_dependency
+from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import ComplexityDescriptorConfig
 from .base import BaseDescriptorExtractor, _DescriptorBlock, make_failure_record
 
@@ -114,7 +115,6 @@ class ComplexityDescriptorExtractor(BaseDescriptorExtractor):
 
     def __init__(self, config: ComplexityDescriptorConfig):
         super().__init__(config)
-        self.config = config
 
     @property
     def capabilities(self) -> dict[str, Any]:
@@ -508,7 +508,7 @@ class ComplexityDescriptorExtractor(BaseDescriptorExtractor):
         for measure in self.config.measures:
             feature, names = self._finalize_descriptor(
                 metric_arrays[measure],
-                family_prefix="complexity",
+                family_prefix=KNOWN_FAMILY_TOKENS[2],
                 metric_name=measure,
                 channel_names=channel_names,
             )

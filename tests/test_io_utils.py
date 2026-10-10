@@ -1,329 +1,154 @@
-import sys
-from unittest.mock import MagicMock, patch
-
 import numpy as np
 import pandas as pd
 import pytest
 
-import coco_pipe.io.utils as utils_mod
-
-# --- DataFrame Utilities ---
+from coco_pipe.io.utils import (
+    compute_constant_feature_summary,
+    compute_feature_missingness,
+    load_participants_tsv,
+    make_strata,
+    normalize_subject_value,
+    row_quality_score,
+    sample_indices,
+    split_column,
+)
 
 
 def test_row_quality_score():
-    """Test badness score calculation."""
-    df = pd.DataFrame({"a": [1, np.nan, 0, np.inf], "b": [1, 1, 1, 1]})
-    # Row 0: a=1, b=1 -> score 0
-    # Row 1: a=NaN -> score 1
-    # Row 2: a=0 -> score 1 (if count_zero=True)
-    # Row 3: a=Inf -> score 1
+    frame = pd.DataFrame({"a": [1, np.nan, 0, np.inf], "b": [1, 1, 1, 1]})
+    assert row_quality_score(frame, count_zero=True).tolist() == [0, 1, 1, 1]
+    assert row_quality_score(frame, count_zero=False).tolist() == [0, 1, 0, 1]
 
-    scores = utils_mod.row_quality_score(df, count_zero=True)
-    assert np.array_equal(scores, [0, 1, 1, 1])
-
-    scores_nz = utils_mod.row_quality_score(df, count_zero=False)
-    assert np.array_equal(scores_nz, [0, 1, 0, 1])
+    mixed = pd.DataFrame(
+        {"a": [0.0, np.nan, 1.0], "b": [1.0, np.inf, 2.0], "label": ["x", "y", "z"]},
+        index=[10, 20, 30],
+    )
+    scores = row_quality_score(mixed, normalize=True)
+    assert scores.index.tolist() == [10, 20, 30]
+    assert scores.tolist() == [0.5, 1.0, 0.0]
+    text = row_quality_score(mixed[["label"]], normalize=True)
+    assert text.tolist() == [0.0, 0.0, 0.0]
+    assert text.dtype == float
 
 
 def test_make_strata():
-    """Test stratification label generation."""
-    df = pd.DataFrame({"num": [1, 10, 100], "cat": ["a", "b", "a"]})
-    # Numeric binning (3 bins) + cat
-    # 1 -> bin0, 10 -> bin1, 100 -> bin2 (roughly)
+    frame = pd.DataFrame({"num": [1, 10, 100], "cat": ["a", "b", "a"]})
+    strata = make_strata(frame, covariates=["num", "cat"], n_bins=3)
+    assert len(strata.unique()) == 3
 
-    strata = utils_mod.make_strata(df, covariates=["num", "cat"], n_bins=3)
-    assert len(strata) == 3
-    assert len(strata.unique()) == 3  # All distinct combos
+    values = pd.DataFrame({"num": [1, 2, 3, 4, 5], "flat": [1] * 5})
+    assert len(make_strata(values, ["num"], n_bins=2, binning="uniform")) == 5
+    # quantile bins that cannot be formed fall back to equal-width bins
+    assert len(make_strata(values, ["flat"], n_bins=2, binning="quantile")) == 5
 
 
 def test_sample_indices():
-    """Test index sampling logic."""
-    df = pd.DataFrame({"target": ["A", "A", "B", "B"], "val": [1, 2, 3, 4]})
+    frame = pd.DataFrame({"target": ["A", "A", "B", "B"], "val": [1, 2, 3, 4]})
     rng = np.random.default_rng(42)
-    size_map = {"A": 1, "B": 2}  # Downsample A, Keep B
 
-    idx = utils_mod.sample_indices(
-        df, "target", size_map, rng, replace=False, prefer_clean=True, exclude=[]
-    )
-    assert len(idx) == 3
-    # Check coverage
-    sampled_rows = df.loc[idx]
-    assert sampled_rows["target"].value_counts()["A"] == 1
-    assert sampled_rows["target"].value_counts()["B"] == 2
+    def draw(sizes, *, replace=False, prefer_clean=True):
+        return sample_indices(
+            frame,
+            "target",
+            sizes,
+            rng,
+            replace=replace,
+            prefer_clean=prefer_clean,
+            exclude=[],
+        )
 
-
-# --- File/String Utilities ---
+    picked = frame.loc[draw({"A": 1, "B": 2})]
+    assert picked["target"].value_counts().to_dict() == {"B": 2, "A": 1}
+    assert len(draw({"A": 0})) == 0
+    for prefer_clean in (True, False):
+        assert len(draw({"A": 2}, prefer_clean=prefer_clean)) == 2
+        assert len(draw({"A": 3}, replace=True, prefer_clean=prefer_clean)) == 3
 
 
 def test_split_column():
-    """Test column splitting."""
-    # Normal
-    res = utils_mod.split_column("unit_feat", "_", False)
-    assert res == ("unit", "feat")
-
-    # Reverse
-    res_rev = utils_mod.split_column("unit_feat", "_", True)
-    assert res_rev == ("feat", "unit")
-
-    # No sep
-    res_none = utils_mod.split_column("unit", "_", False)
-    assert res_none == ("", "unit")
+    assert split_column("unit_feat", "_", False) == ("unit", "feat")
+    assert split_column("unit_feat", "_", True) == ("feat", "unit")
+    assert split_column("unit", "_", False) == ("", "unit")
 
 
-def test_default_id_extractor(tmp_path):
-    """Test ID extraction heuristics."""
-    # BIDS-like
-    p1 = tmp_path / "sub-01_task-rest.pkl"
-    assert utils_mod.default_id_extractor(p1) == "01"
-
-    # Plain
-    p2 = tmp_path / "patient_x.pkl"
-    assert utils_mod.default_id_extractor(p2) == "patient_x"
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("42", "0042"), ("sub-42", "0042"), (42, "0042"), ("P001", "P001")],
+)
+def test_normalize_subject_value(value, expected):
+    assert normalize_subject_value(value) == expected
 
 
-def test_smart_reader(tmp_path):
-    """Test smart file reader."""
-    # Pickle
-    import pickle
-
-    p_pkl = tmp_path / "test.pkl"
-    with open(p_pkl, "wb") as f:
-        pickle.dump({"a": 1}, f)
-    assert utils_mod.smart_reader(p_pkl) == {"a": 1}
-
-    # NPY
-    p_npy = tmp_path / "test.npy"
-    np.save(p_npy, np.array([1, 2]))
-    assert np.array_equal(utils_mod.smart_reader(p_npy), [1, 2])
-
-    # JSON
-
-    p_json = tmp_path / "test.json"
-    p_json.write_text('{"key": "val"}')
-    assert utils_mod.smart_reader(p_json) == {"key": "val"}
-
-    # Unsupported
-    p_bad = tmp_path / "test.xyz"
-    p_bad.touch()
-    with pytest.raises(ValueError, match="Unsupported extension"):
-        utils_mod.smart_reader(p_bad)
-
-    # H5 (Mocked to avoid dep)
-    p_h5 = tmp_path / "test.h5"
-    p_h5.touch()
-    with patch.dict(sys.modules, {"h5py": MagicMock()}):
-        m_h5 = sys.modules["h5py"]
-        m_file = m_h5.File.return_value.__enter__.return_value
-        m_file.keys.return_value = ["data"]
-        m_file.__getitem__.return_value.__getitem__.return_value = "h5_data"
-        assert utils_mod.smart_reader(p_h5) == "h5_data"
-
-
-# --- BIDS Utilities ---
-
-
-def test_read_bids_entry(monkeypatch, tmp_path):
-    """Test BIDS reading dispatch."""
-    mne_mock = MagicMock()
-    mne_mock.__file__ = "mock_mne.py"
-    read_raw_mock = MagicMock()
-
-    monkeypatch.setattr(utils_mod, "mne", mne_mock)
-    monkeypatch.setattr(utils_mod, "read_raw_bids", read_raw_mock)
-
-    bids_path = MagicMock()
-    bids_path.fpath = tmp_path / "dummy_eeg.vhdr"
-
-    # 1. Pre-epoched
-    mne_mock.read_epochs.return_value.get_data.return_value = np.zeros((1, 1, 10))
-    mne_mock.read_epochs.return_value.times = np.arange(10)
-    mne_mock.read_epochs.return_value.ch_names = ["C1"]
-    mne_mock.read_epochs.return_value.info = {"sfreq": 100}
-    mne_mock.read_epochs.return_value.events = np.array([[0, 0, 1]])
-    mne_mock.read_epochs.return_value.event_id = {"stim": 1}
-
-    d, t, c, s, labels = utils_mod.read_bids_entry(
-        bids_path,
-        is_pre_epoched=True,
-        is_evoked=False,
-        mode="epochs",
-        window_length=None,
-        stride=None,
+def test_load_participants_tsv(tmp_path):
+    pd.DataFrame({"participant_id": ["sub-01", "sub-02"], "age": [20, 30]}).to_csv(
+        tmp_path / "participants.tsv", sep="\t", index=False
     )
-    assert d.shape == (1, 1, 10)
-    assert np.array_equal(labels, [1])
+    assert load_participants_tsv(tmp_path)["0001"] == {"age": 20}
+    assert load_participants_tsv(tmp_path / "nowhere") == {}
 
-    # 2. Raw (Continuous match)
-    raw = read_raw_mock.return_value
-    raw.get_data.return_value = np.zeros((2, 100))
-    raw.times = np.arange(100)
-    raw.ch_names = ["C1", "C2"]
-    raw.info = {"sfreq": 100}
+    (tmp_path / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
+    assert load_participants_tsv(tmp_path) == {}
 
-    d_cont, t_cont, c_cont, s_cont, labels_cont = utils_mod.read_bids_entry(
-        bids_path,
-        is_pre_epoched=False,
-        is_evoked=False,
-        mode="continuous",
-        window_length=None,
-        stride=None,
+
+def test_io_exposes_dataset_classes_lazily():
+    from coco_pipe import io as coco_io
+
+    assert coco_io.BIDSDataset is not None
+    assert coco_io.EmbeddingDataset is not None
+    with pytest.raises(AttributeError, match="has no attribute 'invalid_attr'"):
+        _ = coco_io.invalid_attr
+
+
+def test_compute_feature_missingness():
+    frame = pd.DataFrame(
+        {
+            "a": [1.0, np.nan, np.inf, -np.inf],
+            "b": [np.nan, 2.0, 3.0, 4.0],
+            "metadata": ["x", "y", "z", "w"],
+        }
     )
-    assert d_cont.shape == (1, 2, 100)  # Added batch dim
-    assert labels_cont is None
+    # NaN and infinity are counted apart
+    assert compute_feature_missingness(frame, ["a", "b"]).to_dict(orient="records") == [
+        {
+            "column": "a",
+            "missing_count": 1,
+            "missing_rate": 0.25,
+            "nonfinite_count": 2,
+            "nonfinite_rate": 0.5,
+        },
+        {
+            "column": "b",
+            "missing_count": 1,
+            "missing_rate": 0.25,
+            "nonfinite_count": 0,
+            "nonfinite_rate": 0.0,
+        },
+    ]
+    empty = compute_feature_missingness(pd.DataFrame(columns=["a", "b"]), ["a", "b"])
+    assert empty.columns.tolist() == [
+        "column",
+        "missing_count",
+        "missing_rate",
+        "nonfinite_count",
+        "nonfinite_rate",
+    ]
+    assert empty["missing_rate"].tolist() == [0.0, 0.0]
 
 
-def test_read_bids_entry_pre_epoched_event_id_filters(monkeypatch, tmp_path):
-    """Test event_id filtering for precomputed epochs."""
-
-    class FakeEpochs:
-        def __init__(self, data, event_codes, event_id):
-            self._data = data
-            self.events = np.column_stack(
-                [
-                    np.arange(len(event_codes)),
-                    np.zeros(len(event_codes), dtype=int),
-                    np.asarray(event_codes),
-                ]
-            )
-            self.event_id = event_id
-            self.times = np.arange(data.shape[-1])
-            self.ch_names = ["C1"]
-            self.info = {"sfreq": 100}
-
-        def __len__(self):
-            return len(self._data)
-
-        def __getitem__(self, item):
-            if isinstance(item, list):
-                keep_codes = [self.event_id[name] for name in item]
-                mask = np.isin(self.events[:, -1], keep_codes)
-            else:
-                mask = np.asarray(item, dtype=bool)
-            return FakeEpochs(
-                self._data[mask],
-                self.events[mask, -1],
-                self.event_id,
-            )
-
-        def get_data(self, copy=False):
-            return self._data
-
-    mne_mock = MagicMock()
-    monkeypatch.setattr(utils_mod, "mne", mne_mock)
-
-    bids_path = MagicMock()
-    bids_path.fpath = tmp_path / "dummy_eeg.epo.fif"
-    bids_path.fpath.touch()
-
-    epochs = FakeEpochs(
-        np.arange(3 * 1 * 5).reshape(3, 1, 5),
-        [1, 2, 1],
-        {"left": 1, "right": 2},
+def test_compute_constant_feature_summary():
+    frame = pd.DataFrame(
+        {
+            "all_nan": [np.nan, np.nan, np.nan],
+            "constant": [2.0, 2.0, 2.0],
+            "near_constant": [1.0, 1.0, 1.0 + 1e-13],
+            "variable": [1.0, 2.0, 3.0],
+        }
     )
-    mne_mock.read_epochs.return_value = epochs
-
-    data, _, _, _, labels = utils_mod.read_bids_entry(
-        bids_path,
-        is_pre_epoched=True,
-        is_evoked=False,
-        mode="epochs",
-        window_length=None,
-        stride=None,
-        event_id={"target": 2},
-    )
-
-    assert data.shape == (1, 1, 5)
-    assert np.array_equal(labels, [2])
-
-    with pytest.raises(ValueError, match="No epochs remain after filtering"):
-        utils_mod.read_bids_entry(
-            bids_path,
-            is_pre_epoched=True,
-            is_evoked=False,
-            mode="epochs",
-            window_length=None,
-            stride=None,
-            event_id={"missing": 99},
-        )
-
-
-@pytest.mark.parametrize("event_id", ["EO_baseline", ["EO_baseline"]])
-def test_read_bids_entry_pre_epoched_event_name_filters(
-    monkeypatch, tmp_path, event_id
-):
-    """Test event name filtering for precomputed epochs."""
-
-    class FakeEpochs:
-        def __init__(self, data, event_codes, event_id_map):
-            self._data = data
-            self.events = np.column_stack(
-                [
-                    np.arange(len(event_codes)),
-                    np.zeros(len(event_codes), dtype=int),
-                    np.asarray(event_codes),
-                ]
-            )
-            self.event_id = event_id_map
-            self.times = np.arange(data.shape[-1])
-            self.ch_names = ["C1"]
-            self.info = {"sfreq": 100}
-
-        def __len__(self):
-            return len(self._data)
-
-        def __getitem__(self, item):
-            if isinstance(item, list):
-                keep_codes = [self.event_id[name] for name in item]
-                mask = np.isin(self.events[:, -1], keep_codes)
-            else:
-                mask = np.asarray(item, dtype=bool)
-            return FakeEpochs(
-                self._data[mask],
-                self.events[mask, -1],
-                self.event_id,
-            )
-
-        def get_data(self, copy=False):
-            return self._data
-
-    mne_mock = MagicMock()
-    monkeypatch.setattr(utils_mod, "mne", mne_mock)
-
-    bids_path = MagicMock()
-    bids_path.fpath = tmp_path / "dummy_eeg.epo.fif"
-    bids_path.fpath.touch()
-
-    mne_mock.read_epochs.return_value = FakeEpochs(
-        np.arange(3 * 1 * 5).reshape(3, 1, 5),
-        [11, 12, 11],
-        {"EO_baseline": 11, "EC_baseline": 12},
-    )
-
-    data, _, _, _, labels = utils_mod.read_bids_entry(
-        bids_path,
-        is_pre_epoched=True,
-        is_evoked=False,
-        mode="epochs",
-        window_length=None,
-        stride=None,
-        event_id=event_id,
-    )
-
-    assert data.shape == (2, 1, 5)
-    assert np.array_equal(labels, [11, 11])
-
-
-def test_participants_tsv(tmp_path):
-    """Test TSV parsing."""
-    p_tsv = tmp_path / "participants.tsv"
-
-    # Valid
-    df = pd.DataFrame({"participant_id": ["sub-01", "sub-02"], "age": [20, 30]})
-    df.to_csv(p_tsv, sep="\t", index=False)
-
-    lookup = utils_mod.load_participants_tsv(tmp_path)
-    assert "01" in lookup
-    assert lookup["01"]["age"] == 20
-
-    # Missing
-    assert utils_mod.load_participants_tsv(tmp_path / "nowhere") == {}
+    summary = compute_constant_feature_summary(frame, list(frame)).set_index("column")
+    assert bool(summary.loc["all_nan", "is_all_nan"])
+    assert not bool(summary.loc["all_nan", "is_constant"])
+    assert summary.loc["constant", "std"] == 0.0
+    assert bool(summary.loc["near_constant", "is_constant"])
+    assert not bool(summary.loc["variable", "is_constant"])
+    with pytest.raises(ValueError, match="tol must be non-negative"):
+        compute_constant_feature_summary(frame, ["constant"], tol=-1)

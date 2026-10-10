@@ -1,0 +1,89 @@
+        <!-- Sidebar (Sticky) -->
+        <aside id="sidebar"
+            class="fixed inset-y-0 left-0 z-40 w-72 bg-white dark:bg-gray-900 border-r dark:border-gray-800 transform -translate-x-full md:translate-x-0 md:sticky md:top-24 md:h-[calc(100vh-6rem)] md:w-auto md:bg-transparent transition-transform duration-200 flex flex-col">
+
+            <div class="p-4 border-b dark:border-gray-800 md:hidden bg-gray-50 dark:bg-gray-900 flex justify-between">
+                <span class="font-bold">Navigation</span>
+                <button data-action="sidebar-close"
+                    aria-label="Close navigation" class="rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Search & Filter -->
+            <div
+                class="p-4 space-y-3 sticky top-0 bg-gray-50/95 dark:bg-gray-900/95 backdrop-blur z-10 border-b dark:border-gray-800 rounded-t-lg">
+                <div class="relative">
+                    <input type="text" id="search-input" placeholder="Search sections..."
+                        class="w-full pl-9 pr-3 py-2 text-sm bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-md focus:ring-2 focus:ring-brand-500 focus:outline-none shadow-sm">
+                    <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                </div>
+                <div class="flex gap-2 text-xs overflow-x-auto pb-1 no-scrollbar">
+                    <button
+                        class="filter-btn px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 transition whitespace-nowrap active-filter"
+                        data-filter="all">All</button>
+                    <button
+                        class="filter-btn inline-flex items-center gap-1.5 px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 transition whitespace-nowrap"
+                        data-filter="warn"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Warnings</button>
+                    <button
+                        class="filter-btn inline-flex items-center gap-1.5 px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 transition whitespace-nowrap"
+                        data-filter="fail"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>Failures</button>
+                </div>
+                <label class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <input id="hide-filtered-sections" type="checkbox"
+                        class="rounded border-gray-300 text-brand-600 focus:ring-brand-500">
+                    Hide non-matching sections
+                </label>
+            </div>
+
+            <!-- TOC List -->
+            <nav class="flex-1 overflow-y-auto sidebar-scroll p-2 space-y-0.5" id="toc-list">
+                {% for item in toc %}
+                <a href="#{{ item.id }}"
+                    class="toc-link block px-3 py-2 text-sm text-gray-600 dark:text-gray-400 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition flex justify-between items-center group border-l-2 border-transparent"
+                    data-title="{{ item.title | lower }}" data-status="{{ item.status | lower }}">
+                    <span class="flex items-center truncate">
+                        {% if item.icon %}<span class="mr-2 opacity-70 group-hover:opacity-100 w-4 text-center">{{
+                            item.icon | safe }}</span>{% endif %}
+                        {{ item.title }}
+                    </span>
+                    {% if item.status == 'WARN' %}
+                    <span class="w-2 h-2 rounded-full bg-yellow-400" title="Warning"></span>
+                    {% elif item.status == 'FAIL' %}
+                    <span class="w-2 h-2 rounded-full bg-red-500" title="Critical"></span>
+                    {% endif %}
+                </a>
+                {% endfor %}
+            </nav>
+
+            <!-- Findings Summary (Mini) -->
+            <div class="p-4 border-t dark:border-gray-800 text-xs text-gray-500">
+                <div class="flex justify-between mb-1"><span>Total Sections:</span> <span
+                        class="font-mono text-gray-700 dark:text-gray-300">{{ toc|length }}</span></div>
+                {% set warns = toc | selectattr('status', 'equalto', 'WARN') | list | length %}
+                {% set fails = toc | selectattr('status', 'equalto', 'FAIL') | list | length %}
+                {% if warns > 0 or fails > 0 %}
+                <div class="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-100 dark:border-red-800/50">
+                    <div class="font-bold text-red-700 dark:text-red-400">Attention Needed</div>
+                    <div class="flex gap-3 mt-1">
+                        {% if fails > 0 %}<span class="flex items-center gap-1 text-red-600 font-bold"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>{{ fails }}</span>{%
+                        endif %}
+                        {% if warns > 0 %}<span class="flex items-center gap-1 text-yellow-600 font-bold"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>{{ warns
+                            }}</span>{% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <div class="mt-2 text-green-600 flex items-center"><svg class="w-3 h-3 mr-1" fill="none"
+                        viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-width="3" d="M5 13l4 4L19 7" />
+                    </svg> All Checks Passed</div>
+                {% endif %}
+            </div>
+        </aside>
