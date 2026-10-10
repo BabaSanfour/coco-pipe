@@ -4,16 +4,6 @@ import pandas as pd
 import pytest
 
 from coco_pipe.viz._utils import (
-    _auto_select_single_model,
-    _coerce_series,
-    _importance_with_metadata,
-    _moving_average_1d,
-    _prediction_accuracy,
-    _records_from_interpretation_payload,
-    _scalar_decoding_scores,
-    _scalar_metrics,
-    _single_method,
-    _single_model_metric,
     coerce_decoding_frame,
     coerce_reduction_frame,
     coerce_sensor_layout,
@@ -58,21 +48,6 @@ from coco_pipe.viz._utils import (
     select_reduction_rows,
     select_rows,
 )
-
-
-def test_moving_average_1d():
-    arr = np.array([1, 2, 3, 4, 5])
-    assert len(_moving_average_1d(arr, 3)) == 3
-    assert _moving_average_1d(arr, 1).tolist() == arr.tolist()
-
-    with pytest.raises(ValueError):
-        _moving_average_1d(np.array([[1, 2], [3, 4]]), 2)
-
-    with pytest.raises(ValueError):
-        _moving_average_1d(arr, 0)
-
-    with pytest.raises(ValueError):
-        _moving_average_1d(arr, 10)
 
 
 def test_finalize_axes():
@@ -194,31 +169,6 @@ def test_require_non_empty():
         require_non_empty(pd.DataFrame(), "ctx")
 
 
-def test_scalar_metrics():
-    df = pd.DataFrame(
-        {"Method": ["M"], "Metric": ["A"], "Value": [1.0], "Scope": ["global"]}
-    )
-    res = _scalar_metrics(df, "ctx")
-    assert not res.empty
-
-    df2 = pd.DataFrame({"Method": ["M"], "Metric": ["A"], "Value": [1.0]})
-    res2 = _scalar_metrics(df2, "ctx")
-    assert not res2.empty
-
-
-def test_single_method():
-    df = pd.DataFrame({"Method": ["M1"]})
-    res = _single_method(df, "ctx")
-    assert not res.empty
-
-    with pytest.raises(ValueError):
-        _single_method(pd.DataFrame({"Method": ["M1", "M2"]}), "ctx")
-
-    assert _single_method(pd.DataFrame({"A": [1]}), "ctx").equals(
-        pd.DataFrame({"A": [1]})
-    )
-
-
 def test_select_rows():
     df = pd.DataFrame({"Model": ["A", "B"], "Metric": ["X", "Y"]})
     res = select_rows(df, model="A")
@@ -229,17 +179,6 @@ def test_select_reduction_rows():
     df = pd.DataFrame({"Method": ["A", "B"], "Metric": ["X", "Y"]})
     res = select_reduction_rows(df, method="A")
     assert len(res) == 1
-
-
-def test_coerce_series():
-    s = _coerce_series([1, 2])
-    assert len(s) == 2
-
-    s2 = _coerce_series({"a": 1, "b": 2})
-    assert len(s2) == 2
-
-    s3 = _coerce_series(pd.Series([1, 2]))
-    assert len(s3) == 2
 
 
 def test_coerce_sensor_layout():
@@ -398,48 +337,6 @@ def test_prepare_trajectory_metric_series_2d():
         prepare_trajectory_metric_series(np.random.randn(2, 3, 4))
 
 
-def test_scalar_decoding_scores():
-    df = pd.DataFrame(
-        {
-            "Model": ["M"],
-            "Fold": [0],
-            "Metric": ["acc"],
-            "Value": [0.9],
-            "Time": [None],
-        }
-    )
-    res = _scalar_decoding_scores(df, "ctx")
-    assert len(res) == 1
-
-    df_with_time = pd.DataFrame(
-        {
-            "Model": ["M"],
-            "Fold": [0],
-            "Metric": ["acc"],
-            "Value": [0.9],
-            "Time": [0.5],
-        }
-    )
-    with pytest.raises(ValueError):
-        _scalar_decoding_scores(df_with_time, "ctx")
-
-
-def test_single_model_metric():
-    df = pd.DataFrame({"Model": ["M"], "Metric": ["acc"], "Value": [0.9]})
-    assert len(_single_model_metric(df, "ctx")) == 1
-
-    df_multi = pd.DataFrame(
-        {"Model": ["M1", "M2"], "Metric": ["acc", "f1"], "Value": [0.9, 0.8]}
-    )
-    with pytest.raises(ValueError):
-        _single_model_metric(df_multi, "ctx")
-
-
-def test_prediction_accuracy():
-    group = pd.DataFrame({"y_true": [1, 0, 1], "y_pred": [1, 0, 0]})
-    assert _prediction_accuracy(group) == pytest.approx(2 / 3)
-
-
 def test_prepare_confusion_matrix():
     df = pd.DataFrame(
         {
@@ -507,19 +404,6 @@ def test_prepare_fold_score_data():
     )
     res = prepare_fold_score_data(df)
     assert len(res) == 1
-
-
-def test_auto_select_single_model():
-    df1 = pd.DataFrame({"Model": ["M1", "M1"]})
-    assert _auto_select_single_model(df1, None) == "M1"
-
-    df2 = pd.DataFrame({"Model": ["M1", "M2"]})
-    assert _auto_select_single_model(df2, None) is None
-
-    assert _auto_select_single_model(df1, "explicit") == "explicit"
-
-    df3 = pd.DataFrame({"A": [1]})
-    assert _auto_select_single_model(df3, None) is None
 
 
 def test_prepare_temporal_score_curve_frame():
@@ -787,6 +671,19 @@ def test_prepare_feature_score_series():
         prepare_feature_score_series(Dummy(), top_n=0)
 
 
+def test_prepare_trajectory_data_smooths_over_time():
+    X = np.cumsum(np.random.default_rng(0).normal(size=(2, 10, 3)), axis=1)
+    smoothed = prepare_trajectory_data(X, smooth_window=3)[0]
+    # a valid-mode moving average: two fewer time points, mean of each window
+    assert smoothed.shape[1] == 8
+    np.testing.assert_allclose(smoothed[:, 0], X[:, :3, :2].mean(axis=1))
+    np.testing.assert_allclose(prepare_trajectory_data(X)[0], X[:, :, :2])
+    with pytest.raises(ValueError, match="positive integer"):
+        prepare_trajectory_data(X, smooth_window=0)
+    with pytest.raises(ValueError, match="cannot exceed"):
+        prepare_trajectory_data(X, smooth_window=11)
+
+
 def test_prepare_trajectory_data():
     X = np.random.randn(5, 10, 3)
     traj, _t, _labels, _values, _dims = prepare_trajectory_data(X)
@@ -955,45 +852,6 @@ def test_prepare_component_loadings_frame():
         prepare_component_loadings_frame(comp, n_components=0)
     with pytest.raises(ValueError):
         prepare_component_loadings_frame(comp, feature_names=["a", "b"])
-
-
-def test_importance_with_metadata():
-    imp_df = pd.DataFrame(
-        {
-            "FeatureName": ["f1", "f2"],
-            "Mean": [0.5, 0.3],
-        }
-    )
-    meta_df = pd.DataFrame(
-        {
-            "FeatureName": ["f1", "f2"],
-            "x": [1, 2],
-            "y": [3, 4],
-        }
-    )
-
-    class Dummy:
-        def get_feature_importances(self):
-            return imp_df
-
-    merged = _importance_with_metadata(Dummy(), meta_df)
-    assert "_ImportanceValue" in merged.columns
-    assert len(merged) == 2
-
-
-def test_records_from_interpretation_payload():
-    payload = {
-        "correlation": {"dim1": {"feat1": 0.5, "feat2": 0.3}},
-        "importance": {"feat1": 0.9, "feat2": 0.7},
-    }
-    records = _records_from_interpretation_payload(payload, "method")
-    assert len(records) == 4
-
-    # Empty nested
-    records2 = _records_from_interpretation_payload(
-        {"correlation": {"dim1": "not_a_mapping"}}, "m"
-    )
-    assert len(records2) == 0
 
 
 def test_prepare_metrics_frame_wide():

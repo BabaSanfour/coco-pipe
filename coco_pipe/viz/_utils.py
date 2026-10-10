@@ -272,11 +272,6 @@ def _scalar_metrics(frame: pd.DataFrame, context: str) -> pd.DataFrame:
         data = frame.copy()
     return require_non_empty(data, context)
 
-
-def _single_method(frame: pd.DataFrame, context: str) -> pd.DataFrame:
-    """Require exactly one method for single-panel plots."""
-    if "Method" not in frame.columns:
-        return frame
     methods = frame["Method"].dropna().unique().tolist()
     if len(methods) > 1:
         raise ValueError(
