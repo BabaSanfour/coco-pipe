@@ -227,6 +227,7 @@ def test_transform_captures_native_tokens_before_biot_and_bendr_pooling(
                 self.encoder = torch.nn.Module()
                 self.encoder.transformer = _FixedTokens(values)
             else:
+                self.encoder = torch.nn.Identity()
                 self.contextualizer = _FixedTokens(values)
 
         def forward(self, x, return_features=False):
@@ -262,7 +263,10 @@ def test_transform_captures_native_tokens_before_biot_and_bendr_pooling(
         np.zeros((4, n_ch, 400), dtype=np.float32), return_tokens=True
     )
 
-    expected_pooled = native.mean(dim=1) if model_key == "biot" else native[:, :, 0]
+    # BENDR pools its time tokens; the start token at index 0 is left out.
+    expected_pooled = (
+        native.mean(dim=1) if model_key == "biot" else native[:, :, 1:].mean(dim=2)
+    )
     np.testing.assert_array_equal(tokens, native.numpy())
     np.testing.assert_array_equal(pooled, expected_pooled.numpy())
     assert adapter.get_token_output_metadata() == expected_metadata

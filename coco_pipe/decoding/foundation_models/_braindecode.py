@@ -476,6 +476,12 @@ class BrainDecodeBackend(BackendBase):
 
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
+        if model_key == "bendr":
+            # BENDR's own features are the output at the start token, which
+            # pretraining never trained (Kostas et al. 2021), so they barely
+            # vary between inputs. Return the contextualized time tokens instead.
+            context = model.contextualizer(model.encoder(tensor))
+            return context[:, :, 1:].transpose(1, 2)
         if model_key != "luna":
             out = model(tensor, return_features=True)
             return out["features"] if isinstance(out, dict) else out

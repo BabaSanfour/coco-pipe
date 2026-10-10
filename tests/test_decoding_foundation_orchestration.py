@@ -507,7 +507,13 @@ def test_real_foundation_checkpoints():
     assert records
     assert all(
         record["status"]
-        in {"verified", "authentication_required", "failed", "unsupported"}
+        in {
+            "verified",
+            "degenerate",
+            "authentication_required",
+            "failed",
+            "unsupported",
+        }
         for record in records
     )
     assert all(
