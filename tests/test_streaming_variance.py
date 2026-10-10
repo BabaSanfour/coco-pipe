@@ -66,27 +66,28 @@ def test_streamed_report_matches_dense_statistics_and_seeded_nulls(pure_labels):
         assert _ok_metrics(streamed)[metric] == pytest.approx(expected, abs=1e-10)
 
 
-def test_participation_ratio_guard_skips_only_rank_metrics():
+def test_participation_ratio_is_estimated_above_the_gram_limit():
     rng = np.random.default_rng(2)
-    subjects = np.repeat(np.arange(4), 5)
-    labels = np.repeat(np.arange(4) % 2, 5)
-    report = streamed_variance_decomposition_report(
-        _Batches(rng.normal(size=(20, 4))),
-        subjects,
-        labels,
-        n_null_permutations=2,
-        probe_n_splits=6,
-        participation_ratio_max_gram_bytes=8,
-    )
+    features = rng.normal(size=(200, 40)) * np.linspace(0.2, 2.0, 40)
+    subjects = np.repeat(np.arange(10), 20)
+    labels = np.tile([0, 1], 100)
 
-    rank = report[report.metric.str.startswith("variance_participation_ratio")]
-    assert set(rank.status) == {"skipped"}
-    assert rank.reason.str.contains("128 bytes").all()
-    assert set(report.loc[report.status == "ok", "metric"]) >= {
-        "total_sample_variance",
-        "between_subject_eta2",
-        "label_fraction",
-    }
+    def rank_rows(limit):
+        report = streamed_variance_decomposition_report(
+            _Batches(features),
+            subjects,
+            labels,
+            n_null_permutations=2,
+            probe_n_splits=5,
+            participation_ratio_max_gram_bytes=limit,
+        )
+        return report[report.metric.str.startswith("variance_participation_ratio")]
+
+    exact, estimated = rank_rows(10**9), rank_rows(8)
+    assert set(exact.status) == {"ok"}
+    assert set(estimated.status) == {"estimated"}
+    assert estimated.reason.str.contains("12800-byte").all()
+    np.testing.assert_allclose(estimated.value, exact.value, rtol=0.05)
 
 
 def test_streamed_subject_probe_is_deterministic_and_detects_separation(monkeypatch):

@@ -148,6 +148,42 @@ def _initial_statistics(
     return result
 
 
+def _estimate_gram_frobenius_squared(
+    source: FeatureBatchSource,
+    *,
+    mean: np.ndarray,
+    n_observations: int,
+    n_features: int,
+    n_probes: int = 256,
+) -> tuple[float, float]:
+    """Estimate ``||Xc.T @ Xc||_F ** 2`` without forming the feature Gram matrix.
+
+    Hutchinson's estimator: for Rademacher probes ``z``,
+    ``E ||Xc.T @ (Xc @ z)|| ** 2`` is the squared Frobenius norm. Two passes over
+    the batches; memory is ``(n_observations + n_features) * n_probes`` floats.
+    Returns the estimate and its standard error.
+    """
+    probes = np.random.default_rng(0).choice([-1.0, 1.0], size=(n_features, n_probes))
+    projected = np.empty((n_observations, n_probes))
+    for rows, batch in _validated_batches(
+        source,
+        n_observations=n_observations,
+        n_features=n_features,
+        require_coverage=True,
+    ):
+        projected[rows] = (np.asarray(batch, dtype=np.float64) - mean) @ probes
+    back = np.zeros((n_features, n_probes))
+    for rows, batch in _validated_batches(
+        source,
+        n_observations=n_observations,
+        n_features=n_features,
+        require_coverage=False,
+    ):
+        back += (np.asarray(batch, dtype=np.float64) - mean).T @ projected[rows]
+    per_probe = np.square(back).sum(axis=0)
+    return float(per_probe.mean()), float(per_probe.std(ddof=1) / np.sqrt(n_probes))
+
+
 def _accumulate_centered_gram(
     source: FeatureBatchSource,
     *,
@@ -742,26 +778,34 @@ def streamed_variance_decomposition_report(
     }
     pr_reason = None
     if raw["gram"] is None:
+        trace = float(raw_centered_ss.sum())
+        trace_squared, standard_error = _estimate_gram_frobenius_squared(
+            feature_batches,
+            mean=np.asarray(raw["sum"]) / len(groups),
+            n_observations=len(groups),
+            n_features=raw["n_features"],
+        )
+        # PR scales as 1 / trace_squared, so their relative errors match.
         pr_reason = (
-            "Exact participation ratio was skipped because its float64 feature Gram "
-            f"matrix requires {raw['gram_bytes']} bytes, exceeding the configured "
-            f"limit of {participation_ratio_max_gram_bytes} bytes."
+            "Estimated: the exact participation ratio needs a "
+            f"{raw['gram_bytes']}-byte feature Gram matrix, above the "
+            f"{participation_ratio_max_gram_bytes}-byte limit. Hutchinson estimate "
+            "from 256 probes, relative standard error "
+            f"{standard_error / max(trace_squared, np.finfo(float).tiny):.1%}."
         )
     else:
         centered_gram = np.asarray(raw["gram"])
         trace = float(np.trace(centered_gram))
         trace_squared = float(np.square(centered_gram).sum())
-        covariance_trace_squared = trace_squared / (len(groups) - 1) ** 2
-        participation_ratio = (
-            0.0
-            if covariance_trace_squared <= np.finfo(float).eps
-            else trace**2 / trace_squared
-        )
-        maximum_rank = max(min(len(groups) - 1, raw["n_features"]), 1)
-        values["variance_participation_ratio"] = participation_ratio
-        values["variance_participation_ratio_fraction"] = (
-            participation_ratio / maximum_rank
-        )
+    covariance_trace_squared = trace_squared / (len(groups) - 1) ** 2
+    participation_ratio = (
+        0.0
+        if covariance_trace_squared <= np.finfo(float).eps
+        else trace**2 / trace_squared
+    )
+    maximum_rank = max(min(len(groups) - 1, raw["n_features"]), 1)
+    values["variance_participation_ratio"] = participation_ratio
+    values["variance_participation_ratio_fraction"] = participation_ratio / maximum_rank
 
     _, _, pure_labels = _subject_labels(groups, y)
     omega_errors: list[str] = []
@@ -848,19 +892,9 @@ def streamed_variance_decomposition_report(
         for metric, value in values.items()
     ]
     if pr_reason is not None:
-        rows.extend(
-            {
-                **common,
-                "metric": metric,
-                "value": None,
-                "status": "skipped",
-                "reason": pr_reason,
-            }
-            for metric in (
-                "variance_participation_ratio",
-                "variance_participation_ratio_fraction",
-            )
-        )
+        for row in rows:
+            if row["metric"].startswith("variance_participation_ratio"):
+                row.update(status="estimated", reason=pr_reason)
     if probe_score is None:
         rows.append(
             {
