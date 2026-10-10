@@ -27,7 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=8)
-def standard_montage_channels(montage: str = "standard_1020") -> frozenset[str]:
+def standard_montage_channels(montage: str = "colin27_1020") -> frozenset[str]:
     """Return the lower-cased channel names of a standard MNE *montage*."""
     import mne
 
@@ -40,7 +40,7 @@ def feature_names_are_channels(
     feature_names: Sequence[str] | None,
     channels: Sequence[str] | None = None,
     *,
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
 ) -> bool:
     """Return ``True`` when every feature name is a known montage channel.
 
@@ -71,7 +71,7 @@ def plot_topomap_from_channel_values(
     unit: str | None = None,
     bad_channels: list[str] | None = None,
     *,
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
 ) -> plt.Figure | None:
     """Topomap plotting without a raw object (uses standard montage).
 

@@ -266,6 +266,32 @@ class SimpleSplit(BaseCrossValidator):
         return f"SimpleSplit(test_size={self.test_size}, shuffle={self.shuffle})"
 
 
+def resolve_effective_n_splits(
+    config: CVConfig,
+    y: Sequence[Any] | None = None,
+    groups: Sequence[Any] | None = None,
+) -> int:
+    """Number of folds :func:`get_cv_splitter` uses for these labels and groups.
+
+    Grouped strategies lower ``n_splits`` when a class has fewer groups than
+    requested (``auto_reduce_n_splits``); every other strategy keeps it.
+    """
+    strat = config.strategy.lower()
+    if (
+        getattr(config, "auto_reduce_n_splits", True)
+        and groups is not None
+        and strat in GROUP_CV_STRATEGIES
+        and strat not in {"leave_one_group_out", "leave_p_out"}
+    ):
+        return safe_group_n_splits(
+            y if y is not None else np.zeros(len(groups), dtype=int),
+            groups,
+            requested=config.n_splits,
+            stratified=strat == "stratified_group_kfold",
+        )
+    return config.n_splits
+
+
 def get_cv_splitter(
     config: CVConfig,
     groups: Sequence[Any] | None = None,
@@ -330,19 +356,7 @@ def get_cv_splitter(
         )
 
     common_kwargs = {}
-    effective_n_splits = config.n_splits
-    if (
-        getattr(config, "auto_reduce_n_splits", True)
-        and groups is not None
-        and strat in GROUP_CV_STRATEGIES
-        and strat not in {"leave_one_group_out", "leave_p_out"}
-    ):
-        effective_n_splits = safe_group_n_splits(
-            y if y is not None else np.zeros(len(groups), dtype=int),
-            groups,
-            requested=config.n_splits,
-            stratified=strat == "stratified_group_kfold",
-        )
+    effective_n_splits = resolve_effective_n_splits(config, y=y, groups=groups)
     if strat not in ["leave_one_group_out", "leave_p_out", "split", "timeseries"]:
         common_kwargs["n_splits"] = effective_n_splits
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from coco_pipe.utils import stable_hash
@@ -73,25 +75,85 @@ def config_hash(config: Mapping[str, Any]) -> str:
     return stable_hash(config, length=16)
 
 
+def data_digest(*values: Any) -> str:
+    """Short SHA-256 over array-likes: dtype, shape and contents (``None`` allowed).
+
+    The decoding runner uses it for a unit's input-data fingerprint (part of the
+    resume hash) and for the sample-set signature paired comparisons must share.
+    """
+    digest = hashlib.sha256()
+    for value in values:
+        if value is None:
+            digest.update(b"<none>\x1e")
+            continue
+        array = np.ascontiguousarray(np.asarray(value))
+        digest.update(f"{array.dtype.str}{array.shape}".encode())
+        if array.dtype.kind in "OUS":
+            digest.update("\x1f".join(map(str, array.ravel().tolist())).encode())
+        else:
+            digest.update(array.tobytes())
+        digest.update(b"\x1e")
+    return digest.hexdigest()[:16]
+
+
+RUN_MANIFEST_FILENAME = "run_manifest.json"
+
+
+def make_serializable(obj: Any) -> Any:
+    """Recursively convert NumPy types to JSON-safe Python primitives."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.int64, np.int32, np.int16, np.integer)):
+        return int(obj)
+    if isinstance(obj, (np.float64, np.float32, np.floating)):
+        return float(obj)
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    if isinstance(obj, Path):
+        return str(obj)
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj
+
+
+def write_run_manifest(output_dir: str | Path, manifest: Mapping[str, Any]) -> Path:
+    """Write a unit's manifest in one step, so it is never seen half-written."""
+    path = Path(output_dir) / RUN_MANIFEST_FILENAME
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(make_serializable(dict(manifest)), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
+
+
+def read_run_manifest(output_dir: str | Path) -> dict[str, Any] | None:
+    """Return a unit's manifest, or None if the unit has not finished."""
+    path = Path(output_dir) / RUN_MANIFEST_FILENAME
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def completed_for_config(
     output_dir: str | Path,
     config: Mapping[str, Any],
 ) -> bool:
     """Return whether ``output_dir`` contains a successful matching run."""
-    output = Path(output_dir)
-    if not (output / "_SUCCESS").exists():
+    manifest = read_run_manifest(output_dir)
+    if manifest is None or manifest.get("status") != "success":
         return False
-    manifest_path = output / "run_manifest.json"
-    if not manifest_path.exists():
-        raise RuntimeError(
-            f"Completed output has no run manifest and cannot be resumed: {output}"
-        )
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     expected = config_hash(config)
     actual = manifest.get("config_hash")
     if actual != expected:
         raise RuntimeError(
-            f"Config hash mismatch for completed output {output}: "
+            "Config hash mismatch (config or input data changed) for completed "
+            f"output {output_dir}: "
             f"existing={actual}, requested={expected}. Use overwrite to replace it."
         )
     return True
@@ -105,18 +167,12 @@ def load_completed_result_records(
 ) -> list[dict[str, Any]]:
     """Rehydrate aggregate rows for a safely resumed experiment."""
     output = Path(output_dir)
-    summary_path = output / "summary.csv"
-    if not summary_path.exists():
-        raise RuntimeError(f"Completed output has no summary table: {output}")
-    summary = pd.read_csv(summary_path)
-    if "Model" not in summary.columns:
-        raise RuntimeError(f"Completed summary has no Model column: {summary_path}")
-    statistical_path = output / "statistical_assessment.csv"
-    statistical = (
-        pd.read_csv(statistical_path) if statistical_path.exists() else pd.DataFrame()
-    )
+    manifest = read_run_manifest(output)
+    if manifest is None or "summary" not in manifest:
+        raise RuntimeError(f"Completed output has no summary to resume from: {output}")
+    statistical = pd.DataFrame(manifest.get("statistical_assessment", []))
     records = []
-    for source_row in summary.to_dict("records"):
+    for source_row in manifest["summary"]:
         row = dict(source_row)
         model = row.pop("Model")
         p_value = None

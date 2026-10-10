@@ -1,0 +1,1 @@
+`EmbeddingDataset`, `EmbeddingConfig` and `load_data` default `dims` to `("feature",)`; the old `("obs", "feature")` default, with `obs` added again in front, made a default load of an `(n_obs, n_features)` file fail.

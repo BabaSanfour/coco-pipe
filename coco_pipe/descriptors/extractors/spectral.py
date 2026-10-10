@@ -23,11 +23,11 @@ reuses them for all requested outputs:
 - corrected absolute power
 - corrected log absolute power
 - corrected relative power
-- corrected band ratios
 
-Corrected outputs are derived from periodic-only PSDs produced by a shared
-parametric fit batch. They are therefore only available through the shared
-planner path or an explicit ``fit_batch`` passed to :meth:`extract_psd`.
+Corrected outputs are derived from the periodic-only PSDs of the parametric
+fit batch that `DescriptorPipeline` shares between families. A band counts as
+periodic only where the fit placed a peak centre inside it; elsewhere every
+corrected output of that band is ``NaN`` (not measured), not zero.
 
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
@@ -41,7 +41,6 @@ import numpy as np
 from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import BandDescriptorConfig
 from ._parametric_fit import _ParametricFitBatch
-from ._psd import compute_psd
 from .base import BasePSDDescriptorExtractor, _DescriptorBlock, make_failure_record
 
 
@@ -73,18 +72,14 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
     sensor-level naming is applied afterward through
     :meth:`BaseDescriptorExtractor._finalize_descriptor`.
 
-    When the pipeline provides a precomputed PSD batch through
-    :meth:`extract_psd`, the extractor reuses that shared spectral input
-    instead of computing its own PSD. Corrected spectral outputs additionally
-    require a shared parametric fit batch and are therefore only available
-    through the shared planner path or an explicit `fit_batch`.
+    `DescriptorPipeline` passes the shared PSD batch to :meth:`extract_psd`,
+    and the shared parametric fit batch when corrected outputs are requested.
     """
 
     family_name = "bands"
 
-    def __init__(self, config: BandDescriptorConfig, fit_config=None):
+    def __init__(self, config: BandDescriptorConfig, fit_config):
         super().__init__(config)
-        self.config = config
         self.fit_config = fit_config
 
     @property
@@ -124,10 +119,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         families.
         """
         if self.needs_parametric_fit():
-            if self.fit_config is None:
-                raise ValueError(
-                    "Corrected band outputs require parametric fit settings."
-                )
             fit_low, fit_high = self.fit_config.freq_range
             return {
                 "method": self.config.psd_method,
@@ -148,7 +139,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                 "corrected_absolute_power",
                 "corrected_log_absolute_power",
                 "corrected_relative_power",
-                "corrected_ratios",
             }
             for output in self.config.outputs
         )
@@ -203,9 +193,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         ------
         ValueError
             If a configured band has no overlap with the computed PSD range and
-            runtime error handling is configured to raise. Also raised when
-            corrected outputs are requested without a supplied parametric
-            ``fit_batch``.
+            runtime error handling is configured to raise.
 
         Notes
         -----
@@ -224,7 +212,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         """
         channel_names = channel_names or [f"ch-{idx}" for idx in range(psds.shape[1])]
         eps = np.finfo(float).eps
-        corrected_failed_pairs: set[tuple[int, int]] = set()
 
         freq_mask = (freqs >= self.config.fmin) & (freqs <= self.config.fmax)
         local_freqs = freqs[freq_mask]
@@ -237,8 +224,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
             else:
                 total_power = np.trapezoid(local_psds, local_freqs, axis=-1)
 
-        band_power: dict[str, np.ndarray] = {}
-        missing_bands: set[str] = set()
         failures: list[dict[str, Any]] = []
         descriptor_names: list[str] = []
         chunk_features: list[np.ndarray] = []
@@ -247,9 +232,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
             spectra: np.ndarray,
             band_freqs: np.ndarray,
             band_label_prefix: str,
-        ) -> tuple[dict[str, np.ndarray], set[str]]:
+        ) -> dict[str, np.ndarray]:
             computed_band_power: dict[str, np.ndarray] = {}
-            computed_missing_bands: set[str] = set()
             range_label = (
                 "computed PSD range"
                 if band_label_prefix == "Raw"
@@ -264,7 +248,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     )
                     if runtime.on_error == "raise":
                         raise ValueError(message)
-                    computed_missing_bands.add(band_name)
                     computed_band_power[band_name] = np.full(
                         spectra.shape[:-1],
                         np.nan,
@@ -290,20 +273,16 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     band_freqs[mask],
                     axis=-1,
                 )
-            return computed_band_power, computed_missing_bands
+            return computed_band_power
 
         def append_band_outputs(
             band_power_dict: dict[str, np.ndarray],
             total_power_array: np.ndarray | None,
-            missing_band_names: set[str],
             output_prefix: str | None,
             enabled_absolute_output: str,
             enabled_log_output: str,
             enabled_relative_output: str,
-            enabled_ratio_output: str,
             relative_message_prefix: str,
-            ratio_message_prefix: str,
-            failed_pairs_to_skip: set[tuple[int, int]] | None = None,
         ) -> None:
             metric_prefix = [] if output_prefix is None else [output_prefix]
             denominator_floor = self.config.min_denominator_power
@@ -339,31 +318,26 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                         out=np.full_like(values, np.nan, dtype=float),
                         where=total_power_array > denominator_floor,
                     )
-                    if band_name not in missing_band_names:
-                        for obs_rel, ch_idx in np.argwhere(~np.isfinite(relative)):
-                            if (
-                                failed_pairs_to_skip
-                                and (
-                                    int(obs_rel),
-                                    int(ch_idx),
-                                )
-                                in failed_pairs_to_skip
-                            ):
-                                continue
-                            failures.append(
-                                make_failure_record(
-                                    family=self.family_name,
-                                    obs_index=obs_offset + int(obs_rel),
-                                    obs_id=None if ids is None else ids[obs_rel],
-                                    channel_index=int(ch_idx),
-                                    channel_name=channel_names[ch_idx],
-                                    exception_type="NumericalIssue",
-                                    message=(
-                                        f"{relative_message_prefix} for band "
-                                        f"'{band_name}' became non-finite."
-                                    ),
-                                )
+                    undefined = (
+                        np.isfinite(values)
+                        & np.isfinite(total_power_array)
+                        & ~np.isfinite(relative)
+                    )
+                    for obs_rel, ch_idx in np.argwhere(undefined):
+                        failures.append(
+                            make_failure_record(
+                                family=self.family_name,
+                                obs_index=obs_offset + int(obs_rel),
+                                obs_id=None if ids is None else ids[obs_rel],
+                                channel_index=int(ch_idx),
+                                channel_name=channel_names[ch_idx],
+                                exception_type="NumericalIssue",
+                                message=(
+                                    f"{relative_message_prefix} for band "
+                                    f"'{band_name}' became non-finite."
+                                ),
                             )
+                        )
                     feature, names = self._finalize_descriptor(
                         relative,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
@@ -373,7 +347,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     chunk_features.append(feature)
                     descriptor_names.extend(names)
 
-            if enabled_ratio_output in self.config.outputs:
+            # a ratio of periodic powers is not offered: it mixes two peaks
+            if output_prefix is None and "ratios" in self.config.outputs:
                 for numerator, denominator in self.config.ratio_pairs:
                     ratio = np.divide(
                         band_power_dict[numerator],
@@ -385,35 +360,27 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                         ),
                         where=band_power_dict[denominator] > denominator_floor,
                     )
-                    if (
-                        numerator not in missing_band_names
-                        and denominator not in missing_band_names
-                    ):
-                        for obs_rel, ch_idx in np.argwhere(~np.isfinite(ratio)):
-                            if (
-                                failed_pairs_to_skip
-                                and (
-                                    int(obs_rel),
-                                    int(ch_idx),
-                                )
-                                in failed_pairs_to_skip
-                            ):
-                                continue
-                            failures.append(
-                                make_failure_record(
-                                    family=self.family_name,
-                                    obs_index=obs_offset + int(obs_rel),
-                                    obs_id=None if ids is None else ids[obs_rel],
-                                    channel_index=int(ch_idx),
-                                    channel_name=channel_names[ch_idx],
-                                    exception_type="NumericalIssue",
-                                    message=(
-                                        f"{ratio_message_prefix} "
-                                        f"'{numerator}/{denominator}' "
-                                        "became non-finite."
-                                    ),
-                                )
+                    undefined = (
+                        np.isfinite(band_power_dict[numerator])
+                        & np.isfinite(band_power_dict[denominator])
+                        & ~np.isfinite(ratio)
+                    )
+                    for obs_rel, ch_idx in np.argwhere(undefined):
+                        failures.append(
+                            make_failure_record(
+                                family=self.family_name,
+                                obs_index=obs_offset + int(obs_rel),
+                                obs_id=None if ids is None else ids[obs_rel],
+                                channel_index=int(ch_idx),
+                                channel_name=channel_names[ch_idx],
+                                exception_type="NumericalIssue",
+                                message=(
+                                    "Band ratio "
+                                    f"'{numerator}/{denominator}' "
+                                    "became non-finite."
+                                ),
                             )
+                        )
                     feature, names = self._finalize_descriptor(
                         ratio,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],
@@ -425,21 +392,13 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                     chunk_features.append(feature)
                     descriptor_names.extend(names)
 
-        band_power, missing_bands = integrate_band_power(local_psds, local_freqs, "Raw")
+        band_power = integrate_band_power(local_psds, local_freqs, "Raw")
 
         corrected_band_power: dict[str, np.ndarray] = {}
-        corrected_missing_bands: set[str] = set()
         corrected_total_power = None
         corrected_outputs_requested = self.needs_parametric_fit()
         if corrected_outputs_requested:
-            if fit_batch is None:
-                raise ValueError(
-                    "Corrected band outputs require a supplied parametric "
-                    "fit_batch in extract_psd()."
-                )
-
             for obs_rel, ch_idx, exception_type, message in fit_batch.errors:
-                corrected_failed_pairs.add((obs_rel, ch_idx))
                 failures.append(
                     make_failure_record(
                         family=self.family_name,
@@ -472,36 +431,41 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                         axis=-1,
                     )
 
-            corrected_band_power, corrected_missing_bands = integrate_band_power(
+            corrected_band_power = integrate_band_power(
                 corrected_psds,
                 corrected_freqs,
                 "Corrected",
             )
+            # without a fitted peak in a band, its periodic power is not measured
+            for band_name, (low, high) in self.config.bands.items():
+                has_peak = np.array(
+                    [
+                        [np.any((peaks >= low) & (peaks <= high)) for peaks in row]
+                        for row in fit_batch.peak_freqs
+                    ],
+                    dtype=bool,
+                ).reshape(psds.shape[:-1])
+                corrected_band_power[band_name] = np.where(
+                    has_peak, corrected_band_power[band_name], np.nan
+                )
 
         append_band_outputs(
             band_power,
             total_power,
-            missing_bands,
             None,
             "absolute_power",
             "log_absolute_power",
             "relative_power",
-            "ratios",
             "Relative power",
-            "Band ratio",
         )
         append_band_outputs(
             corrected_band_power,
             corrected_total_power,
-            corrected_missing_bands,
             "corr",
             "corrected_absolute_power",
             "corrected_log_absolute_power",
             "corrected_relative_power",
-            "corrected_ratios",
             "Corrected relative power",
-            "Corrected band ratio",
-            corrected_failed_pairs,
         )
 
         if chunk_features:
@@ -525,68 +489,4 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                 ],
             },
             failures=failures,
-        )
-
-    def extract(
-        self,
-        X: np.ndarray,
-        sfreq: float | None,
-        channel_names: list[str] | None,
-        ids: np.ndarray | None,
-        runtime,
-        obs_offset: int = 0,
-    ) -> _DescriptorBlock:
-        """Extract band descriptors from segmented multi-channel data.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            Input array with shape ``(n_obs, n_channels, n_times)``. Each row
-            already represents one observation segment produced upstream.
-        sfreq : float, optional
-            Sampling frequency in Hertz.
-        channel_names : list of str, optional
-            Explicit channel labels aligned with axis 1 of ``X``.
-        ids : np.ndarray, optional
-            Observation identifiers aligned with axis 0 of ``X``.
-        runtime : DescriptorRuntimeConfig
-            Runtime execution controls shared across descriptor families.
-        obs_offset : int, default=0
-            Global observation offset added to any collected failure records.
-
-        Returns
-        -------
-        _DescriptorBlock
-            Spectral-family descriptor block aligned with the input
-            observation axis.
-
-        Notes
-        -----
-        This is the standalone extraction path for raw spectral outputs. It
-        computes a PSD for the provided batch and then delegates to
-        :meth:`extract_psd`. Corrected spectral outputs are not supported
-        here because they depend on an explicit shared parametric fit batch.
-        When the family is executed through `DescriptorPipeline`, the shared
-        planner provides that batch automatically.
-        """
-        if self.needs_parametric_fit():
-            raise ValueError(
-                "Corrected band outputs are only available through "
-                "DescriptorPipeline or extract_psd(..., fit_batch=...)."
-            )
-        psds, freqs = compute_psd(
-            X,
-            sfreq=sfreq,
-            method=self.config.psd_method,
-            fmin=self.config.fmin,
-            fmax=self.config.fmax,
-            n_jobs=None,
-        )
-        return self.extract_psd(
-            psds,
-            freqs,
-            channel_names=channel_names,
-            ids=ids,
-            runtime=runtime,
-            obs_offset=obs_offset,
         )

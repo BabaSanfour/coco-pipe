@@ -1,13 +1,14 @@
 # Transforms
 
 `coco_pipe.transforms` contains reusable scikit-learn-compatible data
-transformers. The current transform family removes or normalizes stable subject
-structure in frozen embeddings and token representations.
+transformers for subject structure in vectors, token representations, and
+temporal trajectories.
 
 ```{toctree}
 :maxdepth: 2
 
 subject_alignment
+temporal_alignment
 ```
 
 The public registry exposes four methods:
@@ -19,5 +20,12 @@ The public registry exposes four methods:
 | `ea_coral` | `EuclideanAlign` | `(observation, feature)` | Center and whiten every subject |
 | `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter subject covariance matrices and project to tangent space |
 
-See [Subject alignment](subject_alignment.md) for fit scope, leakage rules,
-configuration, diagnostics, and method-specific assumptions.
+Temporal trajectories also support participant-specific PCA plus orthogonal
+Procrustes alignment:
+
+| Class | Input | Main operation |
+|---|---|---|
+| `TemporalProcrustesAlignment` | `(observation, feature, time)` | Rotate each participant's PCA trajectories toward a training template |
+
+See [Subject alignment](subject_alignment.md) for the vector/token methods and
+[Temporal trajectory alignment](temporal_alignment.md) for temporal decoding.

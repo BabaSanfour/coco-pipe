@@ -1691,7 +1691,7 @@ def plot_roi_sensors(
     container: Any,
     rois: Mapping[str, Sequence[str]],
     palette: Sequence[Any] | None = None,
-    montage: str | Any = "standard_1005",
+    montage: str | Any = "colin27_1005",
     figsize: tuple[float, float] | None = None,
     axes_kws: dict | None = None,
 ) -> tuple[plt.Figure, np.ndarray]:
@@ -1708,7 +1708,7 @@ def plot_roi_sensors(
         default colorblind palette.
     montage
         The MNE montage to use for plotting sensors. Can be a string name of a
-        standard montage (e.g. 'standard_1005') or an mne.channels.DigMontage object.
+        standard montage (e.g. 'colin27_1005') or an mne.channels.DigMontage object.
     figsize
         Figure size. If None, automatically scaled based on the number of ROIs.
     axes_kws

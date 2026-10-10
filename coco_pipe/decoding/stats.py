@@ -33,26 +33,13 @@ def benjamini_hochberg(
     *,
     alpha: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Correct a family of p-values with the Benjamini-Hochberg procedure."""
+    """Benjamini-Hochberg adjusted p-values and rejections; NaN stays NaN."""
     values = np.asarray(p_values, dtype=float)
-    adjusted = np.full(values.shape, np.nan, dtype=float)
-    rejected = np.zeros(values.shape, dtype=bool)
+    adjusted = np.full(values.shape, np.nan)
     valid = np.isfinite(values)
-    if not valid.any():
-        return adjusted, rejected
-    raw = values[valid]
-    order = np.argsort(raw)
-    ranked = raw[order]
-    n = len(ranked)
-    corrected_ranked = np.minimum.accumulate((ranked * n / np.arange(1, n + 1))[::-1])[
-        ::-1
-    ]
-    corrected_ranked = np.clip(corrected_ranked, 0.0, 1.0)
-    corrected = np.empty(n, dtype=float)
-    corrected[order] = corrected_ranked
-    adjusted[valid] = corrected
-    rejected[valid] = corrected <= alpha
-    return adjusted, rejected
+    if valid.any():
+        adjusted[valid] = false_discovery_control(values[valid], method="bh")
+    return adjusted, adjusted <= alpha
 
 
 def correct_sweep_pvalues(
@@ -76,11 +63,11 @@ def correct_sweep_pvalues(
     out["significant_fdr"] = False
     present = [column for column in family_columns if column in out.columns]
     groups = (
-        [(None, out.index)]
+        [out.index]
         if not present
-        else out.groupby(present, dropna=False).groups.items()
+        else [frame.index for _, frame in out.groupby(present, dropna=False)]
     )
-    for _, indices in groups:
+    for indices in groups:
         index = list(indices)
         adjusted, rejected = benjamini_hochberg(
             out.loc[index, p_column].to_numpy(dtype=float),
@@ -92,6 +79,25 @@ def correct_sweep_pvalues(
 
 
 TEMPORAL_COLUMNS = ["Time", "TrainTime", "TestTime"]
+
+
+def _coordinate_groups(
+    frame: pd.DataFrame, columns: list[str]
+) -> dict[tuple, np.ndarray]:
+    """Split `frame` by coordinate columns once, as tuple-keyed row positions.
+
+    Two details are handled here rather than at each call site: `groupby` on a
+    one-element list yields scalar keys today and tuple keys in a future pandas,
+    and the returned positions must be positional (`.iloc`) rather than index
+    labels, because a bootstrap resample repeats index labels.
+    """
+    if not columns:
+        return {(): np.arange(len(frame))}
+    by = columns[0] if len(columns) == 1 else columns
+    return {
+        key if isinstance(key, tuple) else (key,): positions
+        for key, positions in frame.groupby(by, sort=False).indices.items()
+    }
 
 
 def aggregate_predictions_for_inference(
@@ -390,6 +396,24 @@ def run_statistical_assessment(
     """
     stats_config = experiment_config.statistical_assessment
     unit = inferential_unit
+    # A unit set in the config takes precedence over the one run() was given.
+    if stats_config.unit_of_inference == "sample":
+        unit = "sample"
+    elif stats_config.unit_of_inference in {"group_mean", "group_majority"}:
+        unit = "group"
+        stats_config = stats_config.model_copy(
+            update={
+                "custom_aggregation": stats_config.unit_of_inference.removeprefix(
+                    "group_"
+                )
+            }
+        )
+    elif stats_config.unit_of_inference == "custom":
+        if not stats_config.custom_unit_column:
+            raise ValueError(
+                "unit_of_inference='custom' requires custom_unit_column to be set."
+            )
+        unit = "custom"
     metrics = experiment_config.get_all_evaluation_metrics()
     if stats_config.metrics:
         metrics = [m for m in metrics if m in stats_config.metrics]
@@ -718,18 +742,20 @@ def _run_permutation_loop(
     from coco_pipe.decoding import Experiment
 
     rng = np.random.default_rng(config.random_state)
+    # run() capitalises metadata columns, so they are matched ignoring case.
+    columns = {
+        str(column).casefold(): column
+        for column in (sample_metadata.columns if sample_metadata is not None else [])
+    }
+    target_col = config.custom_unit_column if unit == "custom" else unit
     if unit == "sample":
         unit_values = np.arange(len(y))
-    elif sample_metadata is not None and unit in sample_metadata.columns:
-        unit_values = sample_metadata[unit].to_numpy()
     elif groups is not None and unit in {"Group", "group"}:
         unit_values = np.asarray(groups)
+    elif str(target_col).casefold() in columns:
+        unit_values = sample_metadata[columns[str(target_col).casefold()]].to_numpy()
     else:
-        target_col = config.custom_unit_column if unit == "custom" else unit
-        if sample_metadata is not None and target_col in sample_metadata.columns:
-            unit_values = sample_metadata[target_col].to_numpy()
-        else:
-            raise ValueError(f"Could not resolve unit values for '{unit}'.")
+        raise ValueError(f"Could not resolve unit values for '{unit}'.")
     unique_units, unit_map_idx = np.unique(unit_values, return_inverse=True)
     n_unique = len(unique_units)
 
@@ -738,6 +764,12 @@ def _run_permutation_loop(
         mask = unit_values == u
         u_y = y[mask]
         if experiment_config.task == "classification":
+            if np.unique(u_y).size > 1:
+                raise ValueError(
+                    f"The label varies within inference unit {u!r}; a permutation "
+                    "test swaps whole units, so each unit needs one label. Use a "
+                    "unit inside which the target is constant."
+                )
             unit_labels_orig.append(u_y[0])
         else:
             unit_labels_orig.append(np.mean(u_y))
@@ -769,7 +801,7 @@ def _run_permutation_loop(
                 inferential_unit=inferential_unit,
                 time_axis=time_axis,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # With small grouped data a permuted label assignment can produce
             # a single-class CV fold, making fold-level metrics undefined.
             # This is expected under permutation; record NaN for this draw
@@ -878,6 +910,51 @@ def _build_permutation_rows(
     return rows
 
 
+def _require_same_samples(merged: pd.DataFrame, n_a: int, n_b: int) -> None:
+    """Refuse a paired test unless every row of both runs pairs with matching labels."""
+    if not len(merged) == n_a == n_b:
+        raise ValueError(
+            "A paired comparison needs both runs scored on exactly the same samples: "
+            f"run A has {n_a} prediction rows, run B has {n_b}, {len(merged)} pair up."
+        )
+    if "y_true_A" in merged and not merged["y_true_A"].equals(merged["y_true_B"]):
+        raise ValueError("Paired runs disagree on y_true for the same SampleID.")
+
+
+def paired_prediction_test(
+    predictions_a: pd.DataFrame,
+    predictions_b: pd.DataFrame,
+    *,
+    metric: str,
+    unit: str = "group",
+    n_permutations: int = 1000,
+    random_state: int | None = None,
+) -> pd.DataFrame:
+    """Paired permutation test between two runs' out-of-fold predictions.
+
+    Each frame holds one model's predictions (``get_predictions()`` filtered to
+    that model, or its ``predictions.csv``). Rows are paired by ``SampleID`` and
+    ``y_true``; the runs may have used different folds. Raises ``ValueError``
+    unless both runs scored exactly the same samples. Model predictions are
+    swapped within *unit* (default: the CV group), so significance reflects the
+    number of independent units rather than rows.
+    """
+    from ._diagnostics import scalar_prediction_frame
+
+    frame_a = scalar_prediction_frame(predictions_a)
+    frame_b = scalar_prediction_frame(predictions_b)
+    keys = ["SampleID", "y_true"]
+    merged = frame_a.merge(frame_b, on=keys, suffixes=("_A", "_B"))
+    _require_same_samples(merged, len(frame_a), len(frame_b))
+    return assess_paired_comparison(
+        merged,
+        metric=metric,
+        unit=unit,
+        n_permutations=n_permutations,
+        random_state=random_state,
+    )
+
+
 def run_paired_permutation_assessment(
     results_a: ExperimentResult,
     results_b: ExperimentResult,
@@ -936,19 +1013,42 @@ def run_paired_permutation_assessment(
     preds_a = preds_a[preds_a["Model"] == model]
     preds_b = preds_b[preds_b["Model"] == model]
 
-    merge_cols = ["SampleID", "Fold"]
+    # Pair by sample, not by fold: each run's prediction is out-of-fold, and two
+    # runs over the same samples can still draw different folds (e.g. different
+    # row order), which would silently drop pairs from a fold-keyed join.
+    merge_cols = ["SampleID"]
     temporal_cols = [c for c in TEMPORAL_COLUMNS if c in preds_a]
     merge_cols.extend(temporal_cols)
 
-    unit_col = (
-        config.unit_of_inference if config.unit_of_inference != "sample" else "SampleID"
-    )
-    if unit_col in preds_a and unit_col not in merge_cols:
+    # `unit_of_inference` names a *concept* (sample/group/custom), not a literal
+    # predictions column, so it must be resolved before use. "group_mean" and
+    # "group_majority" both mean "swap by CV group" here — the aggregation mode
+    # they also encode elsewhere is irrelevant to this permutation, which swaps
+    # whole units rather than aggregating rows.
+    if config.unit_of_inference == "sample" or config.unit_of_inference is None:
+        unit_col = "SampleID"
+    elif config.unit_of_inference == "custom":
+        if not config.custom_unit_column:
+            raise ValueError(
+                "unit_of_inference='custom' requires custom_unit_column to be set."
+            )
+        unit_col = config.custom_unit_column
+    elif config.unit_of_inference in {"group_mean", "group_majority"}:
+        unit_col = "Group"
+    else:
+        unit_col = config.unit_of_inference
+    if unit_col not in preds_a.columns:
+        raise ValueError(
+            f"unit_of_inference resolved to column {unit_col!r}, which is not "
+            f"present in the predictions ({sorted(preds_a.columns)})."
+        )
+    if unit_col not in merge_cols:
         merge_cols.append(unit_col)
 
     merged = pd.merge(preds_a, preds_b, on=merge_cols, suffixes=("_A", "_B"))
     if merged.empty:
         raise ValueError("Could not align predictions for paired test.")
+    _require_same_samples(merged, len(preds_a), len(preds_b))
 
     def get_diff(group: pd.DataFrame) -> float:
         s_a = score_frame(
@@ -968,12 +1068,16 @@ def run_paired_permutation_assessment(
     obs_scores_dummy = _score_by_coordinates(preds_a, metric)
     score_keys = list(obs_scores_dummy.keys())
 
+    # Split once into per-coordinate (e.g. per-timepoint) row groups via a
+    # single native groupby, instead of re-scanning the whole merged frame
+    # with a boolean mask for every (permutation, coordinate) pair below —
+    # that loop is O(n_permutations * n_coordinates^2 * n_rows) otherwise,
+    # dominated by repeated full-frame comparisons.
+    group_indices = _coordinate_groups(merged, temporal_cols)
+
     observed_diff_array = np.zeros(len(score_keys))
     for idx, key in enumerate(score_keys):
-        m = np.ones(len(merged), dtype=bool)
-        for i, c in enumerate(temporal_cols):
-            m &= merged[c] == key[i]
-        observed_diff_array[idx] = get_diff(merged[m])
+        observed_diff_array[idx] = get_diff(merged.iloc[group_indices[key]])
 
     boot_results = _bootstrap_scores_paired(
         merged,
@@ -981,7 +1085,7 @@ def run_paired_permutation_assessment(
         score_keys=score_keys,
         temporal_cols=temporal_cols,
         unit_col=unit_col,
-        n_bootstraps=1000,
+        n_bootstraps=getattr(config, "n_bootstraps", 1000),
         random_state=config.random_state,
     )
 
@@ -1010,12 +1114,12 @@ def run_paired_permutation_assessment(
                 perm_merged.loc[mask, c_a] = merged.loc[mask, c_b]
                 perm_merged.loc[mask, c_b] = a_vals
 
+        # Swapping only rewrites the "_A"/"_B" columns in place on a copy of
+        # `merged`, so row membership per coordinate is unchanged and the
+        # groupby done once above still applies.
         p_diffs = np.empty(len(score_keys))
         for idx, key in enumerate(score_keys):
-            m = np.ones(len(perm_merged), dtype=bool)
-            for j, c in enumerate(temporal_cols):
-                m &= perm_merged[c] == key[j]
-            p_diffs[idx] = get_diff(perm_merged[m])
+            p_diffs[idx] = get_diff(perm_merged.iloc[group_indices[key]])
         return p_diffs
 
     seeds = perm_rng.integers(0, 2**32, size=n_perm)
@@ -1089,19 +1193,20 @@ def _score_by_coordinates(
         "zero_one_loss",
         "hamming_loss",
     }:
-        y_true_mat = frame.pivot(
-            index="InferentialUnitID", columns=temporal_cols, values="y_true"
+        # A mean per coordinate, so a unit drawn twice by the bootstrap
+        # counts twice.
+        hits = frame["y_true"].to_numpy() == frame["y_pred"].to_numpy()
+        if metric != "accuracy":
+            hits = ~hits
+        means = (
+            pd.Series(hits, index=frame.index, dtype=float)
+            .groupby([frame[col] for col in temporal_cols], dropna=False)
+            .mean()
         )
-        y_pred_mat = frame.pivot(
-            index="InferentialUnitID", columns=temporal_cols, values="y_pred"
-        )
-
-        if metric == "accuracy":
-            scores_array = (y_true_mat.values == y_pred_mat.values).mean(axis=0)
-        else:
-            scores_array = (y_true_mat.values != y_pred_mat.values).mean(axis=0)
-
-        return dict(zip(y_true_mat.columns, scores_array, strict=False))
+        return {
+            key if isinstance(key, tuple) else (key,): float(value)
+            for key, value in means.items()
+        }
 
     scores = {}
     for key, group in frame.groupby(temporal_cols, dropna=False):
@@ -1126,11 +1231,19 @@ def _bootstrap_engine(
     """
     rng = np.random.default_rng(random_state)
     n_units = len(units)
+    # Each resample takes its rows from one table by position. Concatenating a
+    # frame per sampled unit, n_bootstraps times, dominated the whole assessment.
+    table = pd.concat([unit_map[u] for u in units])
+    stops = np.cumsum([len(unit_map[u]) for u in units])
+    positions = {
+        u: np.arange(stop - len(unit_map[u]), stop)
+        for u, stop in zip(units, stops, strict=True)
+    }
     results = []
     for _ in range(n_bootstraps):
         boot_units = rng.choice(units, size=n_units, replace=True)
-        boot_frame = pd.concat([unit_map[u] for u in boot_units])
-        results.append(score_func(boot_frame))
+        rows = np.concatenate([positions[u] for u in boot_units])
+        results.append(score_func(table.iloc[rows]))
     return np.array(results)
 
 
@@ -1185,12 +1298,14 @@ def _bootstrap_scores_paired(
         return s_a - s_b
 
     def score_func(df: pd.DataFrame) -> np.ndarray:
+        # One groupby per resample instead of a full-frame boolean scan per
+        # coordinate: the latter is O(n_coordinates^2 * n_rows) per bootstrap
+        # and dominates the whole assessment at typical temporal resolutions.
+        groups = _coordinate_groups(df, temporal_cols)
         res = np.empty(len(score_keys))
         for idx, key in enumerate(score_keys):
-            m = np.ones(len(df), dtype=bool)
-            for j, c in enumerate(temporal_cols):
-                m &= df[c] == key[j]
-            res[idx] = get_diff(df[m])
+            positions = groups.get(key)
+            res[idx] = np.nan if positions is None else get_diff(df.iloc[positions])
         return res
 
     return _bootstrap_engine(
@@ -1246,8 +1361,9 @@ def _correct_p_values(
     """
     Apply multiple-comparison correction across temporal coordinates.
 
-    Supported methods include standard corrections (Bonferroni, FDR) and
-    permutation-based Max-Stat (recommended for cluster-based temporal data).
+    The methods are those ``ChanceAssessmentConfig.temporal_correction``
+    allows: "fdr_bh" (Benjamini-Hochberg), "max_stat" (against the maximum of
+    the null over coordinates) and "none".
 
     Parameters
     ----------
@@ -1269,12 +1385,8 @@ def _correct_p_values(
     """
     if method == "none" or observed.size == 1:
         return p_values
-    if method == "bonferroni":
-        return np.minimum(1.0, p_values * len(p_values))
     if method == "fdr_bh":
         return false_discovery_control(p_values, method="bh")
-    if method == "fdr_by":
-        return false_discovery_control(p_values, method="by")
     if method == "max_stat":
         if greater_is_better:
             max_null = np.nanmax(null, axis=1)
@@ -1534,15 +1646,27 @@ def _assess_paired_comparison_internal(
     """Internal core for paired comparison on a single coordinate."""
     from ._diagnostics import paired_unit_indices, score_frame
 
-    frame_a = merged.copy()
-    for col in merged.columns:
-        if col.endswith("_A"):
-            frame_a[col[:-2]] = merged[col]
+    paired_cols = [col for col in merged.columns if col.endswith(("_A", "_B"))]
 
-    frame_b = merged.copy()
-    for col in merged.columns:
-        if col.endswith("_B"):
-            frame_b[col[:-2]] = merged[col]
+    def _prediction_frame(suffix: str) -> pd.DataFrame:
+        suffixed_cols = [col for col in merged.columns if col.endswith(suffix)]
+        base_cols = [col.removesuffix(suffix) for col in suffixed_cols]
+        drop_cols = list(dict.fromkeys(base_cols + paired_cols))
+        return pd.concat(
+            [
+                merged.drop(columns=drop_cols, errors="ignore"),
+                merged[suffixed_cols].rename(
+                    columns=dict(zip(suffixed_cols, base_cols, strict=True))
+                ),
+            ],
+            axis=1,
+        ).copy()
+
+    # Assemble the model-specific columns in one operation. Repeated column
+    # assignment fragments wide probability frames and makes every subsequent
+    # permutation copy unnecessarily expensive.
+    frame_a = _prediction_frame("_A")
+    frame_b = _prediction_frame("_B")
 
     score_a = score_frame(frame_a, metric)
     score_b = score_frame(frame_b, metric)
@@ -1552,27 +1676,29 @@ def _assess_paired_comparison_internal(
     n_units = len(u_indices)
     rng = np.random.default_rng(random_state)
 
+    # Swap whole units with one row mask per permutation (vectorised; a per-unit
+    # iloc loop is O(n_units) pandas writes per permutation).
+    unit_of_row = np.full(len(merged), -1)
+    for unit_idx, rows in enumerate(u_indices):
+        unit_of_row[rows] = unit_idx
+    covered = unit_of_row >= 0
+    swap_cols = ["y_pred"]
+    if "y_score" in frame_a.columns:
+        swap_cols.append("y_score")
+    swap_cols.extend(c for c in frame_a.columns if c.startswith("y_proba_"))
+    values_a = {col: frame_a[col].to_numpy() for col in swap_cols}
+    values_b = {col: frame_b[col].to_numpy() for col in swap_cols}
+
     null_diffs = np.zeros(n_permutations)
     for i in range(n_permutations):
         swaps = rng.choice([True, False], size=n_units)
+        mask = np.zeros(len(merged), dtype=bool)
+        mask[covered] = swaps[unit_of_row[covered]]
         perm_a = frame_a.copy()
         perm_b = frame_b.copy()
-
-        for unit_idx, should_swap in enumerate(swaps):
-            if should_swap:
-                idx = u_indices[unit_idx]
-                swap_cols = ["y_pred"]
-                if "y_score" in frame_a.columns:
-                    swap_cols.append("y_score")
-                swap_cols.extend(
-                    [c for c in frame_a.columns if c.startswith("y_proba_")]
-                )
-                for col in swap_cols:
-                    temp = perm_a.iloc[idx, perm_a.columns.get_loc(col)].copy()
-                    perm_a.iloc[idx, perm_a.columns.get_loc(col)] = perm_b.iloc[
-                        idx, perm_b.columns.get_loc(col)
-                    ]
-                    perm_b.iloc[idx, perm_b.columns.get_loc(col)] = temp
+        for col in swap_cols:
+            perm_a[col] = np.where(mask, values_b[col], values_a[col])
+            perm_b[col] = np.where(mask, values_a[col], values_b[col])
 
         null_diffs[i] = score_frame(perm_a, metric) - score_frame(perm_b, metric)
 
@@ -1703,9 +1829,8 @@ def apply_multiple_comparison_correction(
     --------------------
     When testing multiple hypotheses (e.g., across many timepoints or models),
     the probability of a Type I error (false positive) increases. This
-    utility applies standard corrections like Bonferroni (strict) or False
-    Discovery Rate (FDR; Benjamini-Hochberg) to control the family-wise error
-    rate or the expected proportion of false discoveries.
+    utility controls the expected proportion of false discoveries with the
+    Benjamini-Hochberg False Discovery Rate (FDR) procedure.
 
     Parameters
     ----------
@@ -1714,7 +1839,7 @@ def apply_multiple_comparison_correction(
     p_col : str, default='PValue'
         Name of the column containing raw p-values.
     method : str, default='fdr_bh'
-        Correction method (e.g., 'fdr_bh', 'bonferroni').
+        ``"fdr_bh"`` (Benjamini-Hochberg) or ``"none"``.
     alpha : float, default=0.05
         Significance level.
 
@@ -1726,21 +1851,15 @@ def apply_multiple_comparison_correction(
     Examples
     --------
     >>> # corrected = apply_multiple_comparison_correction(results_df, method='fdr_bh')
-
-    See Also
-    --------
-    statsmodels.stats.multitest.multipletests : Underlying implementation.
     """
-    from statsmodels.stats.multitest import multipletests
-
-    if df.empty or len(df) < 2 or not method:
+    if method not in ("fdr_bh", "none"):
+        raise ValueError(f"Unknown correction {method!r}; use 'fdr_bh' or 'none'.")
+    if df.empty or len(df) < 2 or method == "none":
         if "Significant" not in df.columns and not df.empty:
             df["Significant"] = df[p_col] < alpha
         return df
 
-    reject, corrected, _, _ = multipletests(
-        df[p_col].to_numpy(), alpha=alpha, method=method
-    )
+    corrected, reject = benjamini_hochberg(df[p_col], alpha=alpha)
 
     df = df.copy()
     df["PValueCorrected"] = corrected

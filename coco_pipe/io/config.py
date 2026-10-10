@@ -72,7 +72,7 @@ class BIDSConfig(BaseDatasetConfig):
     suffix: str | None = None
     loading_mode: str = Field(
         "epochs",
-        description="Loading strategy: 'epochs', 'continuous', 'load_existing'.",
+        description="Loading strategy: 'epochs' or 'load_existing'.",
     )
     target_col: str | None = Field(
         None, description="Metadata coordinate to expose as target `y`."
@@ -85,8 +85,12 @@ class BIDSConfig(BaseDatasetConfig):
     tmin: float = -0.2
     tmax: float = 0.5
     baseline: tuple[float | None, float | None] | None = None
-    drop_short_epochs: bool = True
     units: str | None = Field(None, description="Units to load EEG data in.")
+    dtype: str = Field("float32", description="Data type of the returned array.")
+    n_jobs: int = Field(1, ge=1, description="Threads reading recordings at once.")
+    description: str | None = Field(
+        None, description="`desc` entity of the files to load."
+    )
 
 
 class EmbeddingConfig(BaseDatasetConfig):
@@ -94,11 +98,8 @@ class EmbeddingConfig(BaseDatasetConfig):
 
     mode: Literal["embedding"] = "embedding"
     pattern: str = "*.pkl"
-    dims: tuple[str, ...] = ("obs", "feature")
+    dims: tuple[str, ...] = ("feature",)
     coords: dict[str, list | Any] | None = None
-    task: str | None = None
-    run: str | None = None
-    processing: str | None = None
 
 
 class DatasetConfig(BaseModel):

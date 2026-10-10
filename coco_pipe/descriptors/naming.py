@@ -54,7 +54,7 @@ def descriptor_subfamily(family: str | None, measure: str) -> str:
     but coarser than ``measure``:
 
     - **band** → ``log_abs`` / ``rel`` / ``corr_log_abs`` / ``corr_rel`` /
-      ``abs`` / ``corr_abs`` / ``ratio`` / ``corr_ratio`` (band name stripped)
+      ``abs`` / ``corr_abs`` / ``ratio`` (band name stripped)
     - **param** → ``aperiodic`` / ``peaks`` / ``fit_quality``
     - **complexity** → ``entropy`` / ``fractal_complexity`` / ``signal_dynamics``
 

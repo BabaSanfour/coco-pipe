@@ -7,6 +7,7 @@ Main executor for decoding experiments.
 from __future__ import annotations
 
 import atexit
+import itertools
 import logging
 import time
 from collections import defaultdict
@@ -47,6 +48,27 @@ from .registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_dict_grid(grid: dict[str, list], params: dict[str, Any]) -> dict[str, list]:
+    """Turn keys such as ``lora__r`` into candidates for the dict parameter.
+
+    Scikit-learn can only search over whole parameters, so the values given for
+    the fields of one dict parameter are combined into a list of full dicts.
+    """
+    merged, fields = {}, {}
+    for key, values in grid.items():
+        name, _, field = key.partition("__")
+        if field and isinstance(params.get(name), dict):
+            fields.setdefault(name, {})[field] = values
+        else:
+            merged[key] = values
+    for name, choices in fields.items():
+        merged[name] = [
+            {**params[name], **dict(zip(choices, combination, strict=True))}
+            for combination in itertools.product(*choices.values())
+        ]
+    return merged
 
 
 class Experiment:
@@ -188,6 +210,12 @@ class Experiment:
             k in {"tabular_2d", "embedding_2d", "tabular", "embeddings"}
             for k in spec.input_kinds
         )
+        # Temporal (sliding/generalizing) models already got erasure/reducer/feature
+        # selection applied one level down: `full_est` above recursively built the
+        # base estimator's own Pipeline via this same method (see the `"temporal"`
+        # branch of `_instantiate_model`), where `allow_prep` was True. So a
+        # `not allow_prep` here just means "already handled inside the wrapped base
+        # estimator, not applicable to the outer wrapper" — not "unsupported".
 
         if self.config.erasure.enabled and allow_prep:
             from coco_pipe.transforms.subject_alignment import make_subject_transform
@@ -201,7 +229,9 @@ class Experiment:
                     ),
                 )
             )
-        elif self.config.erasure.enabled and not allow_prep:
+        elif (
+            self.config.erasure.enabled and not allow_prep and spec.family != "temporal"
+        ):
             raise ValueError(
                 "Fold-local erasure is only valid for classical 2-D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
@@ -230,7 +260,9 @@ class Experiment:
                         ),
                     )
                 )
-        elif self.config.reducer.enabled and not allow_prep:
+        elif (
+            self.config.reducer.enabled and not allow_prep and spec.family != "temporal"
+        ):
             raise ValueError(
                 f"Fold-local reduction is only valid for classical 2D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
@@ -240,7 +272,11 @@ class Experiment:
             fs_step = self._create_fs_step(full_est)
             if fs_step:
                 steps.append(fs_step)
-        elif self.config.feature_selection.enabled and not allow_prep:
+        elif (
+            self.config.feature_selection.enabled
+            and not allow_prep
+            and spec.family != "temporal"
+        ):
             raise ValueError(
                 f"Feature selection is only valid for classical 2D tabular "
                 f"inputs. Model '{model_name}' uses {spec.input_kinds} data."
@@ -289,6 +325,7 @@ class Experiment:
         self._inject_seed(self.config.tuning, seed + 2)
         self._inject_seed(self.config.calibration, seed + 3)
         self._inject_seed(self.config.reducer, seed + 4)
+        self._inject_seed(self.config.temporal_alignment, seed + 4)
 
         # 2. Model seeds
         model_names = sorted(self.config.models.keys())
@@ -353,9 +390,6 @@ class Experiment:
                 if hasattr(trainer, "model_dump")
                 else dict(trainer or {})
             )
-            optimizer = dict(_get_val(config, "optimizer", {}))
-            if "lr" in optimizer:
-                trainer_payload["lr"] = optimizer["lr"]
             device_cfg = _get_val(config, "device")
             device = _get_val(device_cfg, "device", "auto")
             lora = _get_val(config, "lora")
@@ -388,8 +422,6 @@ class Experiment:
             est_cls = get_estimator_cls(spec.name)
             if hasattr(config, "params"):
                 params = config.params
-            elif isinstance(config, dict):
-                params = config.get("params", {})
             else:
                 params = config.model_dump(exclude={"method", "kind"})
             try:
@@ -418,16 +450,7 @@ class Experiment:
             )
             est_cls = get_estimator_cls(method)
 
-            if hasattr(config, "model_dump"):
-                params = config.model_dump(exclude={"kind", "wrapper", "base"})
-            elif isinstance(config, dict):
-                params = {
-                    k: v
-                    for k, v in config.items()
-                    if k not in {"kind", "wrapper", "base"}
-                }
-            else:
-                params = {}
+            params = config.model_dump(exclude={"kind", "wrapper", "base"})
 
             params["base_estimator"] = self._prepare_estimator(
                 f"{model_name}_base", _get_val(config, "base")
@@ -442,12 +465,7 @@ class Experiment:
         # Fallback for other registry-based estimators
         method = _get_val(config, "method")
         est_cls = get_estimator_cls(method)
-        if hasattr(config, "model_dump"):
-            params = config.model_dump(exclude={"method", "kind"})
-        elif isinstance(config, dict):
-            params = {k: v for k, v in config.items() if k not in {"method", "kind"}}
-        else:
-            params = {}
+        params = config.model_dump(exclude={"method", "kind"})
 
         if "base_estimator" in params:
             params["base_estimator"] = self._prepare_estimator(
@@ -493,7 +511,9 @@ class Experiment:
         """Wrap an estimator with hyperparameter search (GridSearch/RandomSearch)."""
         from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 
-        grid = self.config.grids[name]
+        grid = _merge_dict_grid(
+            self.config.grids[name], estimator.named_steps["clf"].get_params(deep=False)
+        )
         mapped = {k if "__" in k else f"clf__{k}": v for k, v in grid.items()}
         valid = estimator.get_params(deep=True)
         invals = [k for k in mapped if k not in valid]
@@ -668,6 +688,21 @@ class Experiment:
         # 5. Input Rank Capability Guard
         rank = "3d_temporal" if X.ndim == 3 else "2d"
 
+        if self.config.temporal_alignment.enabled:
+            if X.ndim != 3:
+                raise ValueError(
+                    "Temporal alignment requires a 3-D "
+                    "(observation, feature, time) input."
+                )
+            if groups is None:
+                raise ValueError("Temporal alignment requires participant groups.")
+            if self.config.temporal_alignment.n_components > X.shape[1]:
+                raise ValueError(
+                    "temporal_alignment.n_components exceeds the input feature "
+                    "count: "
+                    f"{self.config.temporal_alignment.n_components} > {X.shape[1]}."
+                )
+
         # 6. Group Validation: Early check before entering model loop
         if groups is None:
             from ._constants import GROUP_CV_STRATEGIES
@@ -695,10 +730,20 @@ class Experiment:
                 raise ValueError(f"Model '{name}' doesn't support rank '{rank}'.")
         if self.config.feature_selection.enabled:
             sel = get_selector_capabilities(self.config.feature_selection.method)
-            if rank not in sel.input_ranks:
-                raise ValueError(
-                    f"FS method '{sel.method}' doesn't support rank '{rank}'."
-                )
+            for name, spec in self._model_specs.items():
+                # Temporal (sliding/generalizing) models apply feature selection
+                # one level down, inside the per-timepoint base-classifier
+                # pipeline built by `_prepare_estimator`'s "temporal" branch -
+                # exactly like `reducer`/`erasure` already do. What the selector
+                # actually sees there is always a 2-D per-timepoint slice, never
+                # the raw 3-D temporal array, so that is what its capability
+                # must be checked against, not the raw input rank.
+                effective_rank = "2d" if spec.family == "temporal" else rank
+                if effective_rank not in sel.input_ranks:
+                    raise ValueError(
+                        f"FS method '{sel.method}' doesn't support rank "
+                        f"'{effective_rank}' (required by model '{name}')."
+                    )
         if self.config.task == "classification" and type_of_target(y) == "continuous":
             raise ValueError("Task is 'classification' but target is 'continuous'.")
 
@@ -767,7 +812,12 @@ class Experiment:
                 y,
                 groups,
                 self._sample_ids,
-                self._sample_metadata,
+                # Each permutation re-runs run() with this metadata; without
+                # Subject/Session (no groups or metadata given) it must not be
+                # passed, or run() rejects it as incomplete.
+                self._sample_metadata
+                if {"Subject", "Session"} <= set(self._sample_metadata.columns)
+                else None,
                 self._feature_names,
                 self._time_axis,
                 self._observation_level,
@@ -828,6 +878,7 @@ class Experiment:
                 feature_selection_config=self.config.feature_selection,
                 calibration_config=self.config.calibration,
                 spec=spec,
+                temporal_alignment_config=self.config.temporal_alignment,
                 tuning_config=self.config.tuning,
                 feature_names=self._feature_names,
                 search_enabled=(
@@ -837,6 +888,7 @@ class Experiment:
                 ),
                 force_serial=(n_jobs == 1),
                 sample_weight=sample_weight,
+                score_by_group=self.config.cv.score_by_group,
             )
             for train_idx, test_idx in splits
         )

@@ -109,13 +109,6 @@ makes the partition invariant to feature units and prevents high-variance
 coordinates from dominating solely because of scale. Constant features become
 zero and are reported in `n_constant_features`.
 
-`DataContainer.zscore(dim="obs")` is not used internally for two reasons:
-
-1. the report accepts both arrays and containers and should apply one identical
-   numerical path after input adaptation;
-2. the container method divides by `std + eps`, while the diagnostic needs to
-   identify constant features explicitly and set only those features to zero.
-
 Use `feature_scaling="none"` when the embedding's native feature variances have
 a scientific meaning. The selected policy is repeated in the
 `feature_scaling` output column.

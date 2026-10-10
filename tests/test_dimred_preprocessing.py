@@ -35,3 +35,16 @@ def test_flip_pc_scores_for_consistency():
     np.testing.assert_allclose(result.loc["PC1"].values, [1, 2, 3])
     # PC2 flipped
     np.testing.assert_allclose(result.loc["PC2"].values, [1, 2, 3])
+
+
+def test_flip_leaves_scores_alone_when_the_window_holds_no_samples():
+    import numpy as np
+    import pandas as pd
+
+    from coco_pipe.dim_reduction.preprocessing import flip_pc_scores_for_consistency
+
+    scores = pd.DataFrame(np.zeros((2, 3)))
+    out = flip_pc_scores_for_consistency(
+        scores, np.array([0, 1, 2]), flip_window_ms=(5, 6)
+    )
+    assert out.equals(scores)

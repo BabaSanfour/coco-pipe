@@ -331,13 +331,10 @@ def compute_row_outlier_scores(
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)
     mad = pd.DataFrame(deviations).median(axis=0, skipna=True).to_numpy(dtype=float)
-    scaled_mad = 1.4826 * mad
+    mean_ad = pd.DataFrame(deviations).mean(axis=0, skipna=True).to_numpy(dtype=float)
+    scale = np.where(mad == 0, 1.2533 * mean_ad, 1.4826 * mad)
     with np.errstate(divide="ignore", invalid="ignore"):
-        robust_z = np.where(
-            scaled_mad == 0,
-            np.where(deviations == 0, 0.0, np.inf),
-            deviations / scaled_mad,
-        )
+        robust_z = np.where(scale == 0, 0.0, deviations / scale)
 
     finite_values = np.isfinite(values)
     outlier_flags = finite_values & (robust_z > z_threshold)
@@ -1032,10 +1029,7 @@ def _get_subject_ids(
             )
         return [str(subject) for subject in subjects]
     if container.ids is not None:
-        ids = np.asarray(container.ids)
-        if ids.ndim != 1 or len(ids) != container.X.shape[0]:
-            raise ValueError("container.ids must align with observations.")
-        return [str(identifier) for identifier in ids]
+        return [str(identifier) for identifier in container.ids]
     return [str(index) for index in range(container.X.shape[0])]
 
 
@@ -1047,8 +1041,6 @@ def _container_to_feature_df(
     names = list(container.coords.get("feature", []))
     if not names:
         names = [f"f{index}" for index in range(container.X.shape[1])]
-    if len(names) != container.X.shape[1]:
-        raise ValueError("Feature coordinates must align with the feature axis.")
     frame = pd.DataFrame(container.X, columns=names)
     if feature_cols is None:
         return frame
@@ -1073,25 +1065,7 @@ def _filter_observations(
     container: DataContainer,
     keep_mask: np.ndarray,
 ) -> DataContainer:
-    from .structures import DataContainer
-
     keep_mask = np.asarray(keep_mask, dtype=bool)
-    if keep_mask.shape != (container.X.shape[0],):
-        raise ValueError("keep_mask must align with observations.")
-    coords = {}
-    for name, values in (container.coords or {}).items():
-        array = np.asarray(values)
-        if array.ndim == 1 and len(array) == container.X.shape[0]:
-            coords[name] = array[keep_mask]
-        else:
-            coords[name] = values
-    y = None if container.y is None else np.asarray(container.y)[keep_mask]
-    ids = None if container.ids is None else np.asarray(container.ids)[keep_mask]
-    return DataContainer(
-        X=container.X[keep_mask],
-        dims=container.dims,
-        coords=coords,
-        y=y,
-        ids=ids,
-        meta=_clean_filter_meta(copy.deepcopy(container.meta)),
-    )
+    filtered = container.isel(**{container.dims[0]: keep_mask})
+    filtered.meta = _clean_filter_meta(copy.deepcopy(filtered.meta))
+    return filtered

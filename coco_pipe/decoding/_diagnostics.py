@@ -130,41 +130,16 @@ def score_rows(
     return [{"Model": model, "Fold": fold_idx, "Metric": metric, "Value": score}]
 
 
-def prediction_rows(
+def prediction_frame(
     model: str,
     fold_idx: int,
     preds: dict[str, Any],
     time_axis: Sequence[Any] | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Expand raw predictions from a results dictionary into tidy data rows.
+) -> pd.DataFrame:
+    """Return one fold's raw predictions as a tidy table.
 
-    This function is the primary engine for converting raw estimator outputs
-    into analyzable DataFrames. It automatically handles the expansion of
-    standard, sliding (temporal), and generalizing (train-time x test-time)
-    predictions into a flat, tabular format while aligning metadata.
-
-    Parameters
-    ----------
-    model : str
-        Name of the estimator.
-    fold_idx : int
-        The cross-validation fold index.
-    preds : Dict[str, Any]
-        Raw predictions dictionary containing 'y_true', 'y_pred',
-        and optionally 'y_proba', 'sample_id', and 'sample_metadata'.
-    time_axis : Sequence[Any], optional
-        Scientific time points for coordinate mapping. Default is None.
-
-    Returns
-    -------
-    list[Dict[str, Any]]
-        A list of "tidy" records (list of dictionaries).
-
-    Examples
-    --------
-    >>> preds = {"y_true": [0], "y_pred": [0], "sample_id": ["s1"]}
-    >>> # result = prediction_rows("svc", 0, preds)
+    Standard, sliding (temporal) and generalizing (train-time x test-time)
+    predictions are expanded to one row per sample, or per sample and time.
     """
     y_true = np.asarray(preds["y_true"])
     y_pred = np.asarray(preds["y_pred"])
@@ -260,7 +235,46 @@ def prediction_rows(
         else:  # Temporal scores are less common but supported
             df["y_score"] = y_score.ravel()
 
-    return df.to_dict(orient="records")
+    return df
+
+
+def prediction_rows(
+    model: str,
+    fold_idx: int,
+    preds: dict[str, Any],
+    time_axis: Sequence[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Expand raw predictions from a results dictionary into tidy data rows.
+
+    This function is the primary engine for converting raw estimator outputs
+    into analyzable DataFrames. It automatically handles the expansion of
+    standard, sliding (temporal), and generalizing (train-time x test-time)
+    predictions into a flat, tabular format while aligning metadata.
+
+    Parameters
+    ----------
+    model : str
+        Name of the estimator.
+    fold_idx : int
+        The cross-validation fold index.
+    preds : Dict[str, Any]
+        Raw predictions dictionary containing 'y_true', 'y_pred',
+        and optionally 'y_proba', 'sample_id', and 'sample_metadata'.
+    time_axis : Sequence[Any], optional
+        Scientific time points for coordinate mapping. Default is None.
+
+    Returns
+    -------
+    list[Dict[str, Any]]
+        A list of "tidy" records (list of dictionaries).
+
+    Examples
+    --------
+    >>> preds = {"y_true": [0], "y_pred": [0], "sample_id": ["s1"]}
+    >>> # result = prediction_rows("svc", 0, preds)
+    """
+    return prediction_frame(model, fold_idx, preds, time_axis).to_dict(orient="records")
 
 
 def row_value(values: np.ndarray, row_idx: int) -> Any:
@@ -419,15 +433,21 @@ def _get_unit_blocks(df: pd.DataFrame, unit: str, suffix: str = "") -> list[np.n
 def _resolve_unit_values(df: pd.DataFrame, unit: str, suffix: str = "") -> np.ndarray:
     """Extract the column identifying individual units with fallback logic."""
     valid_units = {"sample", "epoch", "group", "subject", "session", "site"}
-    if unit not in valid_units:
-        raise ValueError(f"unit must be one of {valid_units}, got '{unit}'.")
-
     if unit in {"sample", "epoch"}:
         col = "SampleID"
     elif unit == "group":
         col = f"Group{suffix}"
-    else:
+    elif unit in valid_units:
         col = f"{unit.capitalize()}{suffix}"
+    else:
+        # Custom inference units are stored in result metadata as their source
+        # column name (for example ``group_id``). Model comparisons suffix
+        # columns from each prediction frame during the paired merge.
+        col = f"{unit}{suffix}"
+
+    if col not in df:
+        normalized = {str(column).casefold(): column for column in df.columns}
+        col = normalized.get(str(col).casefold(), col)
 
     if col not in df or df[col].isna().all():
         raise ValueError(f"unit='{unit}' requires a non-empty '{col}' column.")

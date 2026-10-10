@@ -1,8 +1,11 @@
+import numpy as np
 import pandas as pd
 import pytest
 
+from coco_pipe.decoding import ExperimentResult, stamp_primary_metric
 from coco_pipe.report.core import Report, Section
 from coco_pipe.report.decoding_sweep import (
+    add_paired_prediction_tests,
     add_scientific_overview,
     build_classical_taxonomy_sections,
     build_comparison_section,
@@ -22,6 +25,7 @@ from coco_pipe.report.decoding_sweep import (
     summary_collection,
 )
 from coco_pipe.report.elements import InteractiveTableElement
+from coco_pipe.report.tables import make_cv_signature, signature_compatibility
 from tests.fixtures.synthetic_result import make_synthetic_result
 
 
@@ -336,17 +340,24 @@ def test_flat_section_builds_from_persisted_results(tmp_path):
     frame_rows = []
     for unit in ("Fz", "Cz"):
         output_dir = tmp_path / unit
-        make_synthetic_result(n_models=2, n_times=1).save(output_dir / "result.joblib")
-        frame_rows.append(
-            {
-                "status": "success",
-                "scope": "EO",
-                "target": "adhd",
-                "analysis_mode": "sensor",
-                "unit_name": unit,
-                "output_dir": str(output_dir),
-            }
-        )
+        result = make_synthetic_result(n_models=2, n_times=1)
+        result.save(output_dir / "result.joblib")
+        # One row per model with its summary metrics, as a sweep records them.
+        for row in result.summary().reset_index().to_dict("records"):
+            frame_rows.append(
+                stamp_primary_metric(
+                    {
+                        "status": "success",
+                        "scope": "EO",
+                        "target": "adhd",
+                        "analysis_mode": "sensor",
+                        "unit_name": unit,
+                        "output_dir": str(output_dir),
+                        "model": row.pop("Model"),
+                        **row,
+                    }
+                )
+            )
 
     section = flat_section(
         pd.DataFrame(frame_rows),
@@ -517,7 +528,15 @@ def test_prepare_sweep_frame_defaults_scope_and_primary_metric():
     assert "primary_metric" in frame.columns
 
 
-def _head_to_head_frame():
+_SIGNATURE = {
+    "cv_strategy": "stratified_group_kfold",
+    "effective_n_splits": 5,
+    "cv_random_state": 42,
+    "cohort_signature": "same-samples",
+}
+
+
+def _head_to_head_frame(signature=_SIGNATURE):
     return pd.DataFrame(
         [
             {
@@ -528,6 +547,7 @@ def _head_to_head_frame():
                 "model": "logreg",
                 "primary_metric": 0.60,
                 "primary_metric_name": "balanced_accuracy",
+                **signature,
             },
             {
                 "comparison_family": "foundation_linear_probe",
@@ -537,6 +557,7 @@ def _head_to_head_frame():
                 "model_key": "labram",
                 "primary_metric": 0.70,
                 "primary_metric_name": "balanced_accuracy",
+                **signature,
             },
         ]
     )
@@ -561,6 +582,113 @@ def test_make_head_to_head_report_builds_sections():
     assert "Head-to-Head Comparison" in html
     assert "Head-to-Head Accuracy" in html
     assert "Paired Delta vs descriptor_flat_baseline" in html
+
+
+def test_head_to_head_without_signatures_reports_no_paired_delta():
+    # Rows that record no CV/cohort design are unverified, not compatible.
+    report = make_head_to_head_report(
+        _head_to_head_frame(signature={}),
+        baseline_family="descriptor_flat_baseline",
+        group_columns=("scope", "target"),
+        title="Head-to-Head",
+        asset_urls={"plotly": "", "tailwind": "", "pako": ""},
+    )
+    html = report.render()
+    assert "Paired Delta vs descriptor_flat_baseline" not in html
+    assert "Paired Comparisons Limited" in html
+
+
+def test_signature_compatibility_requires_every_field_on_every_row():
+    frame = _head_to_head_frame()
+    frame.loc[1, "cohort_signature"] = np.nan
+    compatibility = signature_compatibility(frame, ("scope", "target"))
+    assert not compatibility.loc[0, "paired_compatible"]
+    assert "cohort_signature missing" in compatibility.loc[0, "mismatched_fields"]
+
+    frame.loc[1, "cohort_signature"] = "other-samples"
+    compatibility = signature_compatibility(frame, ("scope", "target"))
+    assert not compatibility.loc[0, "paired_compatible"]
+    assert compatibility.loc[0, "mismatched_fields"] == "cohort_signature"
+
+    assert signature_compatibility(_head_to_head_frame(), ("scope", "target")).loc[
+        0, "paired_compatible"
+    ]
+
+
+def test_make_cv_signature_leaves_incomplete_rows_unsigned():
+    frame = pd.DataFrame(
+        {
+            "cv_strategy": ["stratified_group_kfold", np.nan],
+            "effective_n_splits": [5, np.nan],
+            "cv_random_state": [42, np.nan],
+        }
+    )
+    signature = make_cv_signature(frame)
+    assert signature.iloc[0] == "stratified_group_kfold | 5 | 42"
+    assert pd.isna(signature.iloc[1])
+
+
+def _write_predictions(output_dir, model, y_pred):
+    """Export a result holding only predictions, two folds over up to six samples."""
+    n = len(y_pred)
+    folds = np.array([0, 0, 1, 1, 0, 1])[:n]
+    predictions = [
+        {
+            "sample_index": np.flatnonzero(folds == fold),
+            "sample_id": np.array([f"s{i}" for i in np.flatnonzero(folds == fold)]),
+            "group": np.array(["g0", "g0", "g1", "g1", "g2", "g2"])[:n][folds == fold],
+            "y_true": np.array([0, 1, 0, 1, 0, 1])[:n][folds == fold],
+            "y_pred": np.asarray(y_pred)[folds == fold],
+        }
+        for fold in (0, 1)
+    ]
+    ExperimentResult({model: {"metrics": {}, "predictions": predictions}}).export(
+        output_dir
+    )
+
+
+def test_paired_deltas_carry_a_paired_permutation_p_value(tmp_path):
+    _write_predictions(tmp_path / "base", "logreg", [0, 0, 0, 0, 0, 0])
+    # The challenger's folds differ from the baseline's; pairing is by sample.
+    _write_predictions(tmp_path / "probe", "labram", [0, 1, 0, 1, 0, 1])
+    frame = _head_to_head_frame()
+    frame["output_dir"] = [str(tmp_path / "base"), str(tmp_path / "probe")]
+    frame.loc[1, "model"] = "labram"
+
+    delta = add_paired_prediction_tests(
+        paired_delta_vs_baseline(
+            enrich_head_to_head_frame(frame),
+            group_columns=("scope", "target"),
+            baseline_family="descriptor_flat_baseline",
+            compatible_lookup={("EO", "adhd"): True},
+        ),
+        n_permutations=50,
+    )
+
+    assert delta.loc[0, "paired_test_note"] == ""
+    assert 0 < delta.loc[0, "paired_p_value"] <= 1
+    assert delta.loc[0, "paired_p_value_fdr"] == pytest.approx(
+        delta.loc[0, "paired_p_value"]
+    )
+
+
+def test_paired_test_refuses_runs_scored_on_different_samples(tmp_path):
+    _write_predictions(tmp_path / "base", "logreg", [0] * 6)
+    _write_predictions(tmp_path / "probe", "labram", [0, 1, 0, 1, 0])
+    delta = pd.DataFrame(
+        [
+            {
+                "model": "labram",
+                "output_dir": str(tmp_path / "probe"),
+                "primary_metric_name": "balanced_accuracy",
+                "baseline_model": "logreg",
+                "baseline_output_dir": str(tmp_path / "base"),
+            }
+        ]
+    )
+    tested = add_paired_prediction_tests(delta, n_permutations=10)
+    assert pd.isna(tested.loc[0, "paired_p_value"])
+    assert "same samples" in tested.loc[0, "paired_test_note"]
 
 
 def test_make_head_to_head_report_handles_empty():

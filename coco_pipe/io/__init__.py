@@ -6,7 +6,6 @@ from ._constants import (
     DESCRIPTOR_ONLY_ANALYSIS_MODES,
 )
 from ._serialization import (
-    default_id_extractor,
     load_object,
     read_json,
     read_table,
@@ -52,7 +51,7 @@ from .quality import (
     run_qc,
 )
 from .structures import DataContainer
-from .transform import SklearnWrapper, SpatialWhitener
+from .transform import SklearnWrapper
 from .units import iter_analysis_units, split_unit_sensor
 from .utils import (
     compute_constant_feature_summary,
@@ -79,7 +78,6 @@ __all__ = [
     "EpochDropRecord",
     "QCResult",
     "SklearnWrapper",
-    "SpatialWhitener",
     "SubjectDropRecord",
     "TabularConfig",
     "combined_embedding_table_path",
@@ -87,7 +85,6 @@ __all__ = [
     "compute_feature_missingness",
     "compute_row_outlier_scores",
     "compute_subject_outlier_burden",
-    "default_id_extractor",
     "discover_embedding_derivatives",
     "drop_epoch_outliers",
     "drop_subject_outliers",

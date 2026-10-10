@@ -60,7 +60,13 @@ def make_cv_signature(frame: pd.DataFrame) -> pd.Series | None:
         if column in frame
     ]
     if cv_columns:
-        return frame[cv_columns].astype(str).agg(" | ".join, axis=1)
+        fields = frame[cv_columns]
+        # Whole floats (an int column upcast by NaN) render without ".0"; a row
+        # missing any field gets no signature rather than the string "nan | ...".
+        text = fields.map(
+            lambda v: str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+        )
+        return text.agg(" | ".join, axis=1).where(fields.notna().all(axis=1))
     return None
 
 
@@ -72,20 +78,40 @@ def signature_compatibility(
 ) -> pd.DataFrame:
     """Per-group CV/cohort-signature compatibility for paired comparisons.
 
-    Flags groups whose rows disagree on any signature field, so paired
-    comparisons only combine rows sharing a grouped-CV and cohort design.
+    A group is compatible only when every row records every signature field and
+    all rows agree on each. A missing field, or a frame without the column, marks
+    the group incompatible: an unknown design is never assumed to match.
     """
     groups = [column for column in group_columns if column in frame]
-    cv_cols = [column for column in signature_columns if column in frame]
-    if not groups or not cv_cols:
+    if not groups:
         return pd.DataFrame()
-    cv_counts = frame.groupby(groups, dropna=False)[cv_cols].nunique()
-    mismatch_mask = cv_counts > 1
-    compatibility = (~mismatch_mask.any(axis=1)).reset_index(name="paired_compatible")
-    compatibility["mismatched_fields"] = mismatch_mask.apply(
-        lambda row: ", ".join(mismatch_mask.columns[row]), axis=1
-    ).values
-    compatibility["n_rows"] = frame.groupby(groups, dropna=False).size().values
+    # ``cv_signature`` is derived from the cv_* fields checked below, so it is
+    # compared only when the frame already carries it.
+    signature = [
+        column
+        for column in signature_columns
+        if column != "cv_signature" or column in frame
+    ]
+    grouped = frame.reindex(columns=[*groups, *signature]).groupby(groups, dropna=False)
+    mismatch_mask = grouped[signature].nunique(dropna=True) > 1
+    missing_mask = (
+        grouped[signature].agg(lambda column: column.isna().any()).astype(bool)
+    )
+    compatibility = (~(mismatch_mask | missing_mask).any(axis=1)).reset_index(
+        name="paired_compatible"
+    )
+    compatibility["mismatched_fields"] = [
+        ", ".join(
+            [
+                *mismatch_mask.columns[mismatch],
+                *(f"{column} missing" for column in missing_mask.columns[missing]),
+            ]
+        )
+        for mismatch, missing in zip(
+            mismatch_mask.to_numpy(), missing_mask.to_numpy(), strict=True
+        )
+    ]
+    compatibility["n_rows"] = grouped.size().values
     return compatibility
 
 

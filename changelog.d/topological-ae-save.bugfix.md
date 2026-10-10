@@ -1,0 +1,1 @@
+A fitted `TopologicalAEReducer` can be saved and loaded: its PyTorch modules were classes defined inside a function, which pickle cannot find. They now live in a module that is imported only when the reducer is fitted, so torch stays optional.

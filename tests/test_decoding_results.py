@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -820,56 +821,22 @@ def test_result_save_default_path():
     path.unlink()
 
 
-def test_result_export_records_optional_accessor_failures(tmp_path, monkeypatch):
+def test_result_export_writes_the_result_and_its_manifest(tmp_path):
     X, y = _classification_data()
     result = Experiment(_config()).run(X, y)
 
-    def fail():
-        raise RuntimeError("optional table unavailable")
-
-    monkeypatch.setattr(result, "get_feature_scores", fail)
     written = result.export(tmp_path / "export", config={"run": "test"})
-    manifest = json.loads((tmp_path / "export" / "run_manifest.json").read_text())
-    assert "summary" in written
-    assert "feature_scores" in manifest["export_errors"]
-    assert (tmp_path / "export" / "_SUCCESS").exists()
 
-
-def test_result_export_formats(tmp_path):
-    X, y = _classification_data()
-    result = Experiment(_config()).run(X, y)
-
-    # Default: csv only (parquet is opt-in).
-    out = tmp_path / "csv_only"
-    result.export(out)
-    assert (out / "summary.csv").exists()
-    assert not (out / "summary.parquet").exists()
-
-    # Opt in to both formats.
-    out_both = tmp_path / "both"
-    written = result.export(out_both, formats=("csv", "parquet"))
-    assert (out_both / "summary.csv").exists()
-    assert (out_both / "summary.parquet").exists()
-    assert "summary_parquet" in written
-
-    with pytest.raises(ValueError, match="csv"):
-        result.export(tmp_path / "bad", formats=())
-
-
-def test_completed_result_records_restore_accuracy_p_value(tmp_path):
-    from coco_pipe.decoding.persistence import load_completed_result_records
-
-    pd.DataFrame([{"Model": "lr", "accuracy_mean": 0.75}]).to_csv(
-        tmp_path / "summary.csv",
-        index=False,
-    )
-    pd.DataFrame([{"Model": "lr", "Metric": "accuracy", "PValue": 0.025}]).to_csv(
-        tmp_path / "statistical_assessment.csv", index=False
-    )
-
-    records = load_completed_result_records(tmp_path, context={"scope": "EO"})
-
-    assert records[0]["p_value"] == 0.025
+    assert sorted(path.name for path in (tmp_path / "export").iterdir()) == [
+        "result.joblib",
+        "run_manifest.json",
+    ]
+    manifest = json.loads(Path(written["manifest"]).read_text())
+    assert manifest["status"] == "success"
+    assert manifest["config"] == {"run": "test"}
+    assert [row["Model"] for row in manifest["summary"]] == list(result.raw)
+    reloaded = ExperimentResult.load(written["result"])
+    pd.testing.assert_frame_equal(reloaded.get_predictions(), result.get_predictions())
 
 
 def test_redact_sensitive_nested_config():
@@ -911,6 +878,30 @@ def test_compare_models_all_pairs():
     res = ExperimentResult(raw)
     comp = res.compare_models(metric="accuracy", n_permutations=5)
     assert not comp.empty
+
+
+def test_compare_models_supports_custom_inferential_unit_column():
+    raw = {
+        model: {
+            "predictions": [
+                {
+                    "sample_index": [0, 1],
+                    "sample_id": ["s0", "s1"],
+                    "y_true": [0, 1],
+                    "y_pred": predictions,
+                    "sample_metadata": {"group_id": ["g0", "g1"]},
+                }
+            ]
+        }
+        for model, predictions in {"m1": [0, 1], "m2": [1, 1]}.items()
+    }
+    res = ExperimentResult(raw, meta={"inferential_unit": "group_id"})
+
+    comp = res.compare_models(metric="accuracy", n_permutations=5, random_state=0)
+
+    assert not comp.empty
+    assert comp.loc[0, "Unit"] == "group_id"
+    assert comp.loc[0, "NUnits"] == 2
 
 
 def test_get_feature_scores_with_pvalues():
@@ -1083,48 +1074,6 @@ def test_synthetic_result_accessor_columns():
         else:
             frame = getattr(result, accessor)()
         assert columns.issubset(frame.columns), accessor
-
-
-def test_result_export_errors(tmp_path):
-    from coco_pipe.decoding.result import ExperimentResult
-
-    res = ExperimentResult({})
-
-    # 1. Force summary to fail so we hit the RuntimeError
-    def bad_summary():
-        raise ValueError("Bad summary")
-
-    res.summary = bad_summary
-
-    import pytest
-
-    with pytest.raises(RuntimeError, match="required summary table"):
-        res.export(tmp_path)
-
-
-def test_result_export_parquet_error(tmp_path):
-    import pandas as pd
-
-    from coco_pipe.decoding.result import ExperimentResult
-
-    res = ExperimentResult(
-        {"model": {"metrics": {"accuracy": {"folds": [[1]], "mean": 1, "std": 0}}}}
-    )
-
-    # Mock to_parquet to fail
-    original_to_parquet = pd.DataFrame.to_parquet
-
-    def bad_to_parquet(self, *args, **kwargs):
-        raise OSError("Disk error")
-
-    pd.DataFrame.to_parquet = bad_to_parquet
-    try:
-        res.export(tmp_path)
-        assert "export_errors" in str(
-            tmp_path.joinpath("run_manifest.json").read_text()
-        )
-    finally:
-        pd.DataFrame.to_parquet = original_to_parquet
 
 
 def test_result_summary_error_skip():

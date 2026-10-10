@@ -145,12 +145,15 @@ def test_paired_unit_indices():
             "SampleID": [1, 1],
             "Group_A": [1, 2],
             "Group_B": [1, 2],
+            "group_id_A": ["g1", "g2"],
+            "group_id_B": ["g1", "g2"],
             "Subject_A": [1, 2],
             "Subject_B": [1, 2],
         }
     )
     assert len(paired_unit_indices(df, "group")) == 2
     assert len(paired_unit_indices(df, "subject")) == 2
+    assert len(paired_unit_indices(df, "group_id")) == 2
 
 
 def test_score_frame_all():

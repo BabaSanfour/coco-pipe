@@ -41,6 +41,7 @@ dependencies = [
   "matplotlib<3.13",
   "seaborn",
   "scipy>=1.11.0",
+  "xarray",
   "pyriemann>=0.7",
   "pyyaml",
   "pydantic",
@@ -49,6 +50,14 @@ dependencies = [
   "openpyxl",
   "joblib",
   "plotly",
+  # Report text is markdown; without this package the report silently falls
+  # back to escaped plain text (literal ** and backticks).
+  "markdown",
+  # mne-bids 0.20 only locks shared files with filelock>=3.20.4
+  # colin27_1020 / colin27_1005 montage names
+  "mne>=1.13",
+  "mne-bids>=0.20",
+  "filelock>=3.20.4",
 ]
 
 [project.optional-dependencies]
@@ -95,7 +104,7 @@ dask = [
 
 neighbor = [
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
@@ -125,7 +134,7 @@ torch = [
 ]
 
 braindecode = [
-  "braindecode>=1.5.0,<1.6",
+  "braindecode>=1.8.1",
 ]
 
 hf = [
@@ -141,7 +150,7 @@ peft = [
 foundation = [
   "torch",
   "skorch",
-  "braindecode>=1.4.0,<1.6",
+  "braindecode>=1.8.1",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -150,7 +159,6 @@ foundation = [
 
 decoding = [
   "skorch",
-  "statsmodels",
 ]
 
 quant = [
@@ -178,8 +186,6 @@ spatiotemporal = [
 ]
 
 eeg = [
-  "mne>=1.9.0",
-  "mne-bids>=0.10.0",
   "meegkit",
 ]
 
@@ -193,7 +199,7 @@ dim-red = [
   "dask[array]",
   "dask-ml",
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
@@ -206,14 +212,13 @@ dim-red = [
   "gudhi",
   "pydmd",
   "meegkit",
-  "statsmodels",
 ]
 
 full = [
   "dask[array]",
   "dask-ml",
   "umap-learn[plot]",
-  "trimap",
+  "trimap>=1.2",
   "phate",
   "pacmap",
   "faiss-cpu",
@@ -226,12 +231,10 @@ full = [
   "gudhi",
   "pydmd",
   "meegkit",
-  "mne>=1.9.0",
-  "mne-bids>=0.10.0",
   "specparam",
   "antropy",
   "neurokit2",
-  "braindecode>=1.4.0,<1.6",
+  "braindecode>=1.8.1",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -276,6 +279,7 @@ filterwarnings = [
   "ignore:.*uses channel names for positional encoding.*:UserWarning",
   "ignore:.*Variable epoch lengths detected.*:RuntimeWarning",
   "ignore:.*references three external CDN scripts.*:UserWarning",
+  "ignore:.*expects data filtered between.*:UserWarning",
   # (1) third-party noise --------------------------------------------------
   "ignore:.*groups parameter is ignored.*:UserWarning",
   "ignore:.*enable_nested_tensor.*:UserWarning",
@@ -289,6 +293,10 @@ filterwarnings = [
   "ignore:.*Precision loss occurred in moment calculation.*:RuntimeWarning",
   "ignore:.*invalid value encountered in divide.*:RuntimeWarning",
   "ignore:.*vert.*Use orientation.*",
+  "ignore:Montage name 'standard_10.* is deprecated:FutureWarning:braindecode",
+  "ignore:scipy.misc is deprecated:DeprecationWarning",
+  "ignore:invalid escape sequence:SyntaxWarning",
+  "ignore:A window was not provided:UserWarning",
 ]
 
 [tool.ruff]

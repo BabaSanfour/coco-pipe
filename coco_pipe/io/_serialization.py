@@ -113,15 +113,6 @@ def smart_reader(path: Path) -> Any:
         raise ValueError(f"Unsupported extension {suffix}, utilize custom reader.")
 
 
-def default_id_extractor(path: Path) -> str:
-    """Extract a subject ID from a filename, honouring a ``sub-`` token."""
-    parts = path.name.split("_")
-    for p in parts:
-        if p.startswith("sub-"):
-            return p.replace("sub-", "")
-    return path.stem
-
-
 def read_json(path: Path | str) -> Any:
     """Read and decode a UTF-8 JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))

@@ -461,3 +461,31 @@ def test_payload_replaces_nan_inside_plotly_trace():
     assert y[0] == 1.0
     assert y[1] is None
     assert y[2] == 3.0
+
+
+def test_plotly_element_keeps_2d_shape_of_binary_arrays():
+    """Plotly encodes heatmap ``z`` with a ``shape`` key; it must survive decoding."""
+    import plotly.graph_objects as go
+
+    z = np.arange(12, dtype=float).reshape(3, 4)
+    el = PlotlyElement(go.Figure(go.Heatmap(z=z)))
+    registry = {}
+    el.collect_payload(registry)
+
+    decoded = registry[el.registry_id]["data"][0]["z"]
+    assert np.asarray(decoded).shape == (3, 4)
+    assert np.allclose(decoded, z)
+
+
+def test_plotly_element_container_grows_to_figure_height():
+    import plotly.graph_objects as go
+
+    tall = go.Figure()
+    tall.update_layout(height=1200)
+    assert 'style="height: 1200px;"' in PlotlyElement(tall, height="500px").render()
+
+    # The requested height stays a minimum when the figure is shorter or unset.
+    short = go.Figure()
+    short.update_layout(height=300)
+    assert 'style="height: 500px;"' in PlotlyElement(short, height="500px").render()
+    assert 'style="height: 500px;"' in PlotlyElement(go.Figure()).render()

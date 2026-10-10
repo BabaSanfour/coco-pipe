@@ -61,7 +61,7 @@ Common transformations return new containers (nothing mutates in place):
 
    sub = container.select(feature=["alpha", "beta"])   # label-based selection
    sub = container.isel(obs=slice(0, 10))              # positional selection
-   z = container.zscore(dim="obs")                      # normalize
+   array = container.to_xarray()                        # labelled xarray.DataArray
    pooled = container.aggregate_groups("subject", how="mean")
    flat = container.flatten()                           # collapse to 2D (obs, feature)
 

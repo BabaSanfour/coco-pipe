@@ -25,6 +25,7 @@ from .configs import (
     QuantizationConfig,
     ReducerConfig,
     StatisticalAssessmentConfig,
+    TemporalAlignmentConfig,
     TemporalDecoderConfig,
     TrainerConfig,
     TuningConfig,
@@ -35,6 +36,7 @@ from .persistence import (
     completed_for_config,
     config_hash,
     load_completed_result_records,
+    read_run_manifest,
     redact_sensitive,
     resolve_primary_metric_name,
     stamp_primary_metric,
@@ -42,12 +44,14 @@ from .persistence import (
 )
 from .pipeline import (
     DecodingUnit,
+    Sweep,
     allocate_inner_jobs,
     allocate_outer_inner,
     build_leaderboard,
     execute_decoding_sweep,
     execute_decoding_sweep_streaming,
     load_sweep_records,
+    read_sweep,
     run_decoding_unit,
     write_run_summary,
 )
@@ -67,6 +71,7 @@ from .stats import (
     benjamini_hochberg,
     binomial_accuracy_test,
     correct_sweep_pvalues,
+    paired_prediction_test,
     run_statistical_assessment,
 )
 from .targets import prepare_target, safe_group_n_splits
@@ -94,6 +99,8 @@ __all__ = [
     "ReducerConfig",
     "SignalMetadata",
     "StatisticalAssessmentConfig",
+    "Sweep",
+    "TemporalAlignmentConfig",
     "TemporalDecoderConfig",
     "TrainerConfig",
     "TuningConfig",
@@ -119,7 +126,10 @@ __all__ = [
     "list_foundation_models",
     "load_completed_result_records",
     "load_sweep_records",
+    "paired_prediction_test",
     "prepare_target",
+    "read_run_manifest",
+    "read_sweep",
     "redact_sensitive",
     # Model Discovery & Metadata
     "register_estimator",

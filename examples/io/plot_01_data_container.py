@@ -120,8 +120,8 @@ print(f"Aggregated by Condition (A, B): {agg_cond.shape}\nIDs={agg_cond.ids}")
 # %%
 # 5. Advanced Selection
 # ---------------------
-# The ``select()`` method is very powerful. It supports wildcards, fuzzy matching,
-# mathematical operators, and even custom callables.
+# The ``select()`` method is very powerful. It supports wildcards,
+# case-insensitive matching, mathematical operators, and even custom callables.
 #
 # **Wildcard Epoch Selection**
 
@@ -132,7 +132,7 @@ print(f"Selected IDs:\n{subset_epochs.ids}")
 # %%
 # **Case-Insensitive Selection**
 
-subset_fuzzy = container_eeg.select(channel=["fz"], ignore_case=True, fuzzy=False)
+subset_fuzzy = container_eeg.select(channel=["fz"], ignore_case=True)
 print(f"Case-Insensitive 'fz' -> {subset_fuzzy.coords['channel']}")
 
 # %%
@@ -169,16 +169,17 @@ subset_strat = container_eeg.select(ids=lambda x: first_n_per_subject(x, n=2))
 print(f"First 2 epochs per subject:\n{subset_strat.ids}")
 
 # %%
-# 6. Data Scaling and Normalization
-# ---------------------------------
-# The container provides built-in methods for data normalization. These operations
-# return a new container with the normalized data.
+# 6. Working with xarray
+# ----------------------
+# ``to_xarray`` returns the data as a labelled :class:`xarray.DataArray`, with
+# every coordinate attached to its dimension, for anything xarray can do.
 
 # Z-score normalization (mean=0, std=1) across the time dimension
-zscored_eeg = container_eeg.zscore(dim="time")
+eeg = container_eeg.to_xarray()
+zscored_eeg = (eeg - eeg.mean("time")) / eeg.std("time")
 print(
-    f"Z-scored EEG Data:\nMean: {np.mean(zscored_eeg.X):.3f},"
-    f"\nStd: {np.std(zscored_eeg.X):.3f}"
+    f"Z-scored EEG Data:\nMean: {float(zscored_eeg.mean()):.3f},"
+    f"\nStd: {float(zscored_eeg.std()):.3f}"
 )
 
 

@@ -1,4 +1,7 @@
+import warnings
+
 import numpy as np
+import pandas as pd
 import pytest
 
 from coco_pipe.dim_reduction.artifacts import (
@@ -224,6 +227,41 @@ def testprepare_eval_inputs(dummy_container):
         prepare_eval_inputs(dummy_container, np.array(["missing_id"]), eval_spec)
 
 
+def test_prepare_eval_inputs_does_not_fragment_wide_containers():
+    n_samples = 50
+    n_coord_columns = 150
+    ids = np.arange(n_samples).astype(str)
+    coords = {
+        "target": ["A" if i % 2 == 0 else "B" for i in range(n_samples)],
+        "group": [f"G{i // 10}" for i in range(n_samples)],
+    }
+    for col_idx in range(n_coord_columns):
+        coords[f"meta_{col_idx}"] = np.arange(n_samples)
+    container = DataContainer(
+        X=np.random.rand(n_samples, 5),
+        coords=coords,
+        ids=ids,
+        meta={},
+        dims=("observation", "feature"),
+    )
+    eval_spec = {
+        "name": "test",
+        "target_col": "target",
+        "group_col": "group",
+        "filters": [],
+        "label_map": {},
+    }
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        prepare_eval_inputs(container, ids, eval_spec)
+
+    assert not any(
+        issubclass(item.category, pd.errors.PerformanceWarning)
+        for item in caught_warnings
+    )
+
+
 def test_valid_component_sweep(dummy_container):
     assert valid_n_components_for_container(dummy_container, 2) is True
     assert (
@@ -321,6 +359,84 @@ def test_build_fit_request_identity_tracks_container_and_unit(
     assert baseline != fit_id(changed, "alpha_Fz")
     assert baseline != fit_id(dummy_container, "alpha_Cz")
     assert baseline != fit_id(dummy_container, "alpha_Fz", "log_abs")
+
+
+def test_build_fit_request_tracks_and_applies_reducer_params(
+    tmp_path, dummy_container, monkeypatch
+):
+    captured = {}
+
+    class DummyReduction:
+        def __init__(self, method, n_components, params=None):
+            captured.update(method=method, n_components=n_components, params=params)
+
+        def fit_transform(self, container):
+            return container.with_features(
+                np.zeros((len(container.X), 2)),
+                names=["component_1", "component_2"],
+                new_dim_name="component",
+            )
+
+        def score(self, embedding, X=None):
+            return {"metrics": {}}
+
+        def get_metrics(self):
+            return {}
+
+        def get_summary(self):
+            return {"diagnostics": {}}
+
+        def get_components(self):
+            raise RuntimeError("not available")
+
+        reducer = object()
+
+    monkeypatch.setattr("coco_pipe.dim_reduction.pipeline.DimReduction", DummyReduction)
+    request = build_fit_request(
+        container=dummy_container,
+        scope="condition",
+        condition="EO",
+        unit_spec={
+            "unit_type": "all",
+            "unit_name": "all",
+            "unit_key": "all",
+            "container": dummy_container,
+        },
+        reducer="UMAP",
+        reducer_params={"n_jobs": 1},
+        n_components=2,
+        input_signature={
+            "input_mode": "descriptors",
+            "representation": "epoch",
+            "analysis_mode": "flat",
+        },
+        output_root=tmp_path,
+    )
+
+    assert request["fit_payload"]["reducer_params"] == {"n_jobs": 1}
+    run_fit(**request)
+    assert captured["params"] == {"n_jobs": 1}
+
+    default_request = build_fit_request(
+        container=dummy_container,
+        scope="condition",
+        condition="EO",
+        unit_spec={
+            "unit_type": "all",
+            "unit_name": "all",
+            "unit_key": "all",
+            "container": dummy_container,
+        },
+        reducer="UMAP",
+        n_components=2,
+        input_signature={
+            "input_mode": "descriptors",
+            "representation": "epoch",
+            "analysis_mode": "flat",
+        },
+        output_root=tmp_path,
+    )
+    assert default_request["fit_payload"]["fit_id"] == request["fit_payload"]["fit_id"]
 
 
 def test_build_eval_request(tmp_path, dummy_container):

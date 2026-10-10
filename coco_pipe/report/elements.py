@@ -199,6 +199,22 @@ class PlotlyElement(Element):
         self.height = height
         self.registry_id = None
 
+    def _container_height(self) -> str:
+        """Container height, grown to the figure's own ``layout.height``.
+
+        A fixed container shorter than the figure clips it: faceted grids lose
+        their lower rows under the next element. The requested ``height`` is
+        kept as a minimum; only an explicit, larger figure height overrides it.
+        """
+        try:
+            figure_height = self.figure.layout.height
+        except AttributeError:
+            return self.height
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*px\s*", str(self.height))
+        if not isinstance(figure_height, int | float) or match is None:
+            return self.height
+        return f"{max(float(match.group(1)), float(figure_height)):g}px"
+
     def collect_payload(self, registry: dict[str, Any]) -> None:
         """Extract figure data and store in registry."""
         if self.registry_id is None:
@@ -216,11 +232,10 @@ class PlotlyElement(Element):
         if isinstance(obj, dict):
             # Check for Plotly binary format
             if "dtype" in obj and "bdata" in obj and len(obj) <= 3:
-                # Identify keys like 'shape'? Usually just dtype/bdata.
-                # Decode!
+                # Plotly encodes N-D arrays (heatmap/surface ``z``) with an
+                # extra ``shape`` key ("rows, cols"); without restoring it the
+                # array arrives flat and a heatmap renders as a single row.
                 try:
-                    import base64
-
                     dtype = obj["dtype"]
                     bdata = obj["bdata"]
 
@@ -228,6 +243,11 @@ class PlotlyElement(Element):
                     # common: 'f4' (float32), 'f8' (float64), 'i4' (int32), 'u4'...
                     decoded = base64.b64decode(bdata)
                     arr = np.frombuffer(decoded, dtype=dtype)
+                    shape = obj.get("shape")
+                    if shape is not None:
+                        if isinstance(shape, str):
+                            shape = [int(dim) for dim in shape.split(",")]
+                        arr = arr.reshape(shape)
                     return arr.tolist()
                 except Exception as exc:
                     logger.debug("Failed to decode Plotly binary array: %s", exc)
@@ -248,7 +268,7 @@ class PlotlyElement(Element):
             <div class="lazy-plot w-full rounded shadow-sm border border-gray-100
                         bg-gray-50 flex items-center justify-center text-gray-400
                         animate-pulse"
-                 style="height: {self.height};"
+                 style="height: {self._container_height()};"
                  data-id="{self.registry_id}">
                  <span class="sr-only">Loading Plot...</span>
             </div>
@@ -266,7 +286,7 @@ class PlotlyElement(Element):
             <div class="lazy-plot w-full rounded shadow-sm border border-gray-100
                         bg-gray-50 flex items-center justify-center text-gray-400
                         animate-pulse"
-                 style="height: {self.height};"
+                 style="height: {self._container_height()};"
                  data-figure="{safe_json}">
                  <span class="sr-only">Loading Plot...</span>
             </div>

@@ -672,6 +672,43 @@ class TrainerConfig(BaseModel):
     early_stopping_patience: int | None = Field(None, ge=1)
     batch_size: int = Field(32, ge=1)
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
+    lr: float = Field(1e-3, gt=0, description="AdamW learning rate.")
+    weight_decay: float = Field(0.01, ge=0, description="AdamW weight decay.")
+    lr_warmup_epochs: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Epochs of linear learning-rate warmup, followed by a cosine decay to "
+            "the last epoch. 0 keeps the learning rate constant."
+        ),
+    )
+    accumulate_grad_batches: int = Field(
+        1,
+        ge=1,
+        description=(
+            "Batches whose gradients are averaged before each optimizer step, for "
+            "an effective batch size of batch_size times this."
+        ),
+    )
+    focal_gamma: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Focusing strength of the focal loss used for classification. None "
+            "uses cross-entropy."
+        ),
+    )
+    probe_epochs: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Epochs spent training the head alone, with everything else frozen, "
+            "before the training that train_mode describes. 0 skips this phase."
+        ),
+    )
+    probe_lr: float | None = Field(
+        None, gt=0, description="Learning rate of the probe phase. Defaults to lr."
+    )
 
 
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
@@ -691,7 +728,6 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     n_outputs: int | None = Field(None, ge=1)
     input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
-    optimizer: dict[str, Any] = Field(default_factory=lambda: {"name": "adamw"})
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
@@ -812,6 +848,14 @@ class CVConfig(BaseModel):
     group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
     )
+    score_by_group: bool = Field(
+        False,
+        description=(
+            "Score each fold on one prediction per group: the test predictions of "
+            "a group are averaged before the metrics are computed. Predictions are "
+            "stored per sample either way."
+        ),
+    )
     auto_reduce_n_splits: bool = Field(
         True,
         description=(
@@ -920,6 +964,92 @@ class ErasureConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemporalAlignmentConfig(BaseModel):
+    """Fold-level alignment for 3-D participant trajectories."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["procrustes"] = "procrustes"
+    n_components: int = Field(30, ge=1)
+    adaptation: Literal["transductive", "calibration"] = Field(
+        "transductive",
+        description=(
+            "How an unseen participant's mapping is estimated. 'transductive' "
+            "uses their whole (unlabeled) transform batch; 'calibration' "
+            "cross-fits two halves so no trial informs its own mapping."
+        ),
+    )
+    rotate: bool = Field(
+        True,
+        description=(
+            "Apply the Procrustes rotation onto the shared template. False keeps "
+            "the per-participant PCA but skips the rotation — the control that "
+            "isolates the rotation's contribution."
+        ),
+    )
+    use_shared_basis: bool = Field(
+        False,
+        description=(
+            "Project every participant through the pooled training template "
+            "directly, ignoring per-participant identity and `rotate` entirely. "
+            "The continuous analogue of a single spatial filter shared by "
+            "everyone (as opposed to ReducerConfig's PCA, which is fold-local "
+            "but refit independently at every sliding-window latency)."
+        ),
+    )
+    augment: tuple[Literal["envelope", "velocity", "scalar", "trajectory"], ...] = (
+        Field(
+            (),
+            description=(
+                "Extra channels concatenated onto the raw scores. Per-component "
+                "(n_components channels each): 'envelope' (Hilbert amplitude), "
+                "'velocity' (index-based first derivative), 'scalar' (peak "
+                "amplitude, peak latency, mean power, and signed AUC, broadcast as "
+                "constant channels across time). 'trajectory' instead reduces the "
+                "joint path through the full embedded space via coco_pipe's own "
+                "trajectory-geometry metrics (speed, acceleration, jerk, "
+                "curvature, path length, displacement, distance-from-center, "
+                "turning angle, tortuosity, AUC-speed) - a fixed ~10 channels "
+                "regardless of n_components."
+            ),
+        )
+    )
+    augment_only: bool = Field(
+        False,
+        description=(
+            "Drop the raw per-component scores entirely, keeping only what "
+            "augment requests (e.g. just the ~10 'trajectory' channels, "
+            "independent of n_components). Requires a non-empty augment."
+        ),
+    )
+    trajectory_metrics: (
+        tuple[
+            Literal[
+                "speed",
+                "acceleration",
+                "jerk",
+                "curvature",
+                "path_length",
+                "displacement",
+                "distance_from_center",
+                "turning_angle",
+                "tortuosity",
+                "auc_speed",
+            ],
+            ...,
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "Restrict the 'trajectory' augment to a chosen subset of its ~10 "
+            "metrics by name. None (default) computes and returns all of them."
+        ),
+    )
+    random_state: int | None = 42
+
+
 class CalibrationConfig(BaseModel):
     """Probability calibration settings for classification estimators."""
 
@@ -975,6 +1105,22 @@ class StatisticalAssessmentConfig(BaseModel):
     random_state: int | None = 42
     metrics: list[str] | None = Field(
         None, description="Subset of experiment metrics to run assessment for."
+    )
+    n_jobs: int = Field(
+        1,
+        description=(
+            "Parallel workers for the permutation loops (chance and paired). "
+            "Each permutation is independent and re-scores already-cached "
+            "predictions, so this parallelizes cheaply."
+        ),
+    )
+    n_bootstraps: int = Field(
+        1000,
+        ge=1,
+        description=(
+            "Resamples used for the paired comparison's confidence interval. "
+            "Independent of `chance.n_permutations`, which sets the p-value."
+        ),
     )
 
     chance: ChanceAssessmentConfig = Field(default_factory=ChanceAssessmentConfig)
@@ -1058,7 +1204,8 @@ class ExperimentConfig(BaseModel):
     # Map of Friendly Name -> Polymorphic Config Object
     models: dict[str, ModelConfigType]
 
-    # Map of Friendly Name -> Parameter Grid (Search Space)
+    # Map of Friendly Name -> Parameter Grid (Search Space). A field of a dict
+    # parameter is addressed as "<parameter>__<field>", e.g. "lora__r".
     grids: dict[str, dict[str, list[Any]]] | None = None
 
     cv: CVConfig = Field(default_factory=CVConfig)
@@ -1067,6 +1214,9 @@ class ExperimentConfig(BaseModel):
         default_factory=FeatureSelectionConfig
     )
     erasure: ErasureConfig = Field(default_factory=ErasureConfig)
+    temporal_alignment: TemporalAlignmentConfig = Field(
+        default_factory=TemporalAlignmentConfig
+    )
     reducer: ReducerConfig = Field(default_factory=ReducerConfig)
     calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     statistical_assessment: StatisticalAssessmentConfig = Field(

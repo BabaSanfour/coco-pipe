@@ -3,6 +3,31 @@
             font-family: 'Inter', system-ui, sans-serif;
         }
 
+        /* Tailwind's preflight makes every <svg> a block element, which stacks
+           Plotly's modebar buttons into a column over the legend/colorbar.
+           Restore Plotly's own inline button row. */
+        .js-plotly-plot .modebar-btn svg {
+            display: inline;
+        }
+
+        /* Markdown tables inside text blocks (no typography plugin is loaded). */
+        .prose table {
+            border-collapse: collapse;
+            margin: 0.75em 0;
+        }
+
+        .prose th,
+        .prose td {
+            border: 1px solid #e5e7eb;
+            padding: 0.25em 0.6em;
+            text-align: left;
+        }
+
+        .prose th {
+            background: #f9fafb;
+            font-weight: 600;
+        }
+
         .sidebar-link.active {
             @apply bg-brand-50 text-brand-700 border-r-4 border-brand-500 dark:bg-brand-900/30 dark:text-brand-100;
         }

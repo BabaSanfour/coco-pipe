@@ -322,3 +322,11 @@ def test_interactive_base_edge_cases():
             group_labels=[0],
             palette=["invalid_color_test_xyz"],
         )
+
+
+def test_plot_heatmap_keeps_numeric_labels_numeric():
+    times = np.linspace(-0.2, 1.0, 7)
+    fig = plot_heatmap(np.random.rand(3, 7), x_labels=times, y_labels=["a", "b", "c"])
+    trace = fig.data[0]
+    assert np.allclose(trace.x, times)
+    assert list(trace.y) == ["a", "b", "c"]

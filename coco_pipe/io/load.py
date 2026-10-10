@@ -60,16 +60,14 @@ def load_data(
     tmin: float = -0.2,
     tmax: float = 0.5,
     baseline: tuple[float | None, float | None] | None = None,
-    drop_short_epochs: bool = True,
     units: str | None = None,
+    description: str | None = None,
     subject_metadata_df: Any | None = None,
     subject_key: str | None = None,
     # --- Embedding Arguments ---
     pattern: str = "*.pkl",
-    dims: tuple[str, ...] = ("obs", "feature"),
+    dims: tuple[str, ...] = ("feature",),
     coords: dict[str, list | np.ndarray] | None = None,
-    run: str | None = None,
-    processing: str | None = None,
     reader: Any | None = None,
     id_fn: Any | None = None,
     # --- Common Arguments ---
@@ -139,14 +137,13 @@ def load_data(
     datatype : str, default='eeg'
         Data type folder (e.g., 'eeg', 'meg', 'ieeg').
     suffix : str, optional
-        File suffix to load (e.g., 'eeg', 'epo', 'ave').
+        File suffix to load (e.g., 'eeg', 'epo').
     loading_mode : str, default='epochs'
         How to process the data. Renamed to ``loading_mode`` here (and in
         ``BIDSConfig``) to avoid colliding with this function's ``mode``
         argument; it is passed through as ``mode`` to ``BIDSDataset``.
 
         - 'epochs': Splices continuous data into fixed-length windows.
-        - 'continuous': Loads as single continuous segments.
         - 'load_existing': Loads pre-computed epochs.
     window_length : float, optional
         Window length in seconds (for 'epochs' mode).
@@ -158,13 +155,15 @@ def load_data(
         Column in `subject_metadata_df` containing the BIDS subject identifier.
     subjects : str or List[str], optional
         Specific subject IDs to load (without 'sub-').
+    description : str, optional
+        The ``desc`` entity of the files to load.
 
     Embedding Arguments (mode="embedding")
     --------------------------------------
     pattern : str, default=r'\\*.pkl'
         Glob pattern to match files.
-    dims : tuple of str, default=('obs', 'feature')
-        Dimension labels for the data arrays.
+    dims : tuple of str, default=('feature',)
+        Dimension labels of one observation; ``obs`` is added in front.
     coords : dict, optional
         Dictionary of coordinates for dimensions.
     reader : callable, optional
@@ -248,13 +247,11 @@ def load_data(
             tmin=tmin,
             tmax=tmax,
             baseline=baseline,
-            drop_short_epochs=drop_short_epochs,
             units=units,
+            description=description,
             pattern=pattern,
             dims=dims,
             coords=coords,
-            run=run,
-            processing=processing,
             subjects=subjects,
         )
 
@@ -298,8 +295,10 @@ def load_data(
             tmin=dataset_cfg.tmin,
             tmax=dataset_cfg.tmax,
             baseline=dataset_cfg.baseline,
-            drop_short_epochs=dataset_cfg.drop_short_epochs,
             units=dataset_cfg.units,
+            description=dataset_cfg.description,
+            dtype=dataset_cfg.dtype,
+            n_jobs=dataset_cfg.n_jobs,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
             subjects=dataset_cfg.subjects,
@@ -312,9 +311,6 @@ def load_data(
             pattern=dataset_cfg.pattern,
             dims=dataset_cfg.dims,
             coords=dataset_cfg.coords,
-            task=dataset_cfg.task,
-            run=dataset_cfg.run,
-            processing=dataset_cfg.processing,
             reader=reader,
             id_fn=id_fn,
             subjects=dataset_cfg.subjects,
@@ -362,13 +358,11 @@ def _build_config(
     tmin,
     tmax,
     baseline,
-    drop_short_epochs,
     units,
+    description,
     pattern,
     dims,
     coords,
-    run,
-    processing,
     subjects,
 ) -> TabularConfig | BIDSConfig | EmbeddingConfig:
     """Construct and validate the mode-appropriate config from raw kwargs."""
@@ -404,8 +398,8 @@ def _build_config(
             tmin=tmin,
             tmax=tmax,
             baseline=baseline,
-            drop_short_epochs=drop_short_epochs,
             units=units,
+            description=description,
         )
     if mode == "embedding":
         return EmbeddingConfig(
@@ -414,9 +408,6 @@ def _build_config(
             pattern=pattern,
             dims=dims,
             coords=coords,
-            task=task,
-            run=run,
-            processing=processing,
         )
     raise ValueError(
         f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."

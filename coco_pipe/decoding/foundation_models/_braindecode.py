@@ -31,7 +31,7 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "biot": ("BIOT", "braindecode.models"),
     "labram": ("Labram", "braindecode.models"),
     "eegpt": ("EEGPT", "braindecode.models"),
-    "signaljepa": ("SignalJEPA", "braindecode.models"),
+    "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
     "codebrain": ("CodeBrain", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
@@ -241,10 +241,10 @@ class BrainDecodeBackend(BackendBase):
             kw.setdefault("sfreq", sfreq)
             info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
             try:
-                info.set_montage("standard_1020", on_missing="warn")
+                info.set_montage("colin27_1020", on_missing="warn")
             except Exception as exc:
                 warnings.warn(
-                    f"Could not assign the standard_1020 montage for "
+                    f"Could not assign the colin27_1020 montage for "
                     f"{model_key} ({type(exc).__name__}: {exc}); channel "
                     "positions are unset, which can degrade montage-dependent "
                     "embeddings (e.g. LaBraM interpolation).",
@@ -268,6 +268,9 @@ class BrainDecodeBackend(BackendBase):
             # the rows matching the input ``chs_info`` by name (braindecode#991),
             # so any montage that is a subset of the pretraining set works.
             kw.setdefault("channel_embedding", "pretrain_aligned")
+            # braindecode builds a classification head either way, sized from
+            # the window length.
+            kw.setdefault("n_times", n_times)
         elif model_key == "biot":
             # Plain BIOT on the 16-channel TCP bipolar montage built by exact
             # subtraction (see channel_plan.adapter); never InterpolatedBIOT.
@@ -287,7 +290,8 @@ class BrainDecodeBackend(BackendBase):
             load_kwargs["filename"] = filename
         effective_outputs = (
             1
-            if model_key in {"cbramod", "luna", "eegpt"} and n_outputs is None
+            if model_key in {"cbramod", "luna", "eegpt", "signaljepa"}
+            and n_outputs is None
             else n_outputs
         )
         if effective_outputs is not None:
@@ -406,7 +410,7 @@ class BrainDecodeBackend(BackendBase):
         info = mne.create_info(names, sfreq=metadata.pretrained_sfreq, ch_types="eeg")
         # Positions are unused by EEGPT (channels are identified by name via
         # chans_id); resolve them best-effort and stay quiet on misses.
-        info.set_montage("standard_1020", match_case=False, on_missing="ignore")
+        info.set_montage("colin27_1020", match_case=False, on_missing="ignore")
         model = EEGPT(
             n_chans=len(names),
             n_times=n_times,
@@ -472,6 +476,12 @@ class BrainDecodeBackend(BackendBase):
 
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
+        if model_key == "bendr":
+            # BENDR's own features are the output at the start token, which
+            # pretraining never trained (Kostas et al. 2021), so they barely
+            # vary between inputs. Return the contextualized time tokens instead.
+            context = model.contextualizer(model.encoder(tensor))
+            return context[:, :, 1:].transpose(1, 2)
         if model_key != "luna":
             out = model(tensor, return_features=True)
             return out["features"] if isinstance(out, dict) else out
@@ -520,15 +530,19 @@ class BrainDecodeBackend(BackendBase):
             ):
                 module.train()
 
-    def _eval_batch_size(self) -> int:
-        """Batch size for inference, mirroring the batch size used at fit time.
+    def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
+        """Fit on the model's native montage, as ``transform``/``predict`` do."""
+        self._validate(X)
+        X = self._construct_channels(X)
+        return self._fit_with_skorch(X, y, **fit_params)
 
-        ``predict``/``transform`` otherwise run the whole fold through the
-        model in one forward pass, which OOMs on large test folds even though
-        training (via skorch) and ``predict_proba`` are already batched.
-        """
-        batch_size = getattr(self._net_, "batch_size", None)
-        return int(batch_size) if batch_size else 32
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Class probabilities on the model's native montage."""
+        self._validate(X)
+        X = self._construct_channels(X)
+        if self._net_ is None:
+            raise RuntimeError("Model must be fitted before predict_proba().")
+        return np.asarray(self._net_.predict_proba(X))
 
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False

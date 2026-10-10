@@ -750,12 +750,12 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         hub_repo="braindecode/signal-jepa",
         checkpoint_revision="51232ee0795a60e4378c17befe1e2ea5e94450c4",
         embedding_dim=64,
-        pretrained_sfreq=200.0,
+        pretrained_sfreq=128.0,
         expected_passband=(0.5, 40.0),
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         model_notes=(
-            "Pretrained at 200 Hz on a 62-channel layout, bandpass 0.5-40 Hz, "
+            "Pretrained at 128 Hz on a 62-channel layout, bandpass 0.5-40 Hz, "
             "input rescaled to microvolts. The backend loads with "
             "channel_embedding='pretrain_aligned': the pretrained per-channel "
             "embeddings are indexed by name, so any montage that is a subset "

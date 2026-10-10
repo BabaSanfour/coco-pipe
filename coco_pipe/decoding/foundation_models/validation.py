@@ -55,13 +55,42 @@ def _resolve_hf_token(token: str | None) -> str | None:
         return None
 
 
+REAL_MODEL_KEYS = (
+    "cbramod",
+    "labram",
+    "reve",
+    "luna",
+    "biot",
+    "eegpt",
+    "signaljepa",
+    "bendr",
+)
+
+
+DEGENERATE_SPREAD = 1e-4
+
+
+def _random_walk_windows(n_chans: int, n_times: int, n_windows: int = 8) -> np.ndarray:
+    """Return EEG-like windows of about 12 µV with different amplitudes."""
+    rng = np.random.default_rng(0)
+    x = np.cumsum(rng.normal(size=(n_windows, n_chans, n_times)), axis=-1)
+    x -= x.mean(axis=-1, keepdims=True)
+    x *= 12.0 / np.median(np.abs(x))
+    x *= np.linspace(0.5, 2.0, n_windows)[:, None, None]
+    return x.astype(np.float32)
+
+
 def validate_real_checkpoints(
-    model_keys: Sequence[str] = ("cbramod", "labram", "reve", "luna"),
+    model_keys: Sequence[str] = REAL_MODEL_KEYS,
     device: str = "cpu",
     token: str | None = None,
     ch_names: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Download each checkpoint and run one headless forward pass.
+    """Download each checkpoint and embed a few different windows.
+
+    A model whose embeddings barely change between windows is reported as
+    ``"degenerate"``: its relative spread (variance across windows over the
+    mean squared norm) is below ``DEGENERATE_SPREAD``.
 
     Parameters
     ----------
@@ -106,19 +135,28 @@ def validate_real_checkpoints(
                 backend_kwargs=backend_kwargs,
             )
             result = extractor.extract(
-                np.zeros((1, len(channels), n_times), dtype=np.float32),
+                _random_walk_windows(len(channels), n_times),
                 signal_metadata=SignalMetadata(
                     sfreq=spec.pretrained_sfreq,
                     ch_names=channels,
                 ),
             )
-            observed = int(result.window_embeddings.shape[1])
+            embeddings = result.window_embeddings
+            observed = int(embeddings.shape[1])
+            spread = float(
+                np.var(embeddings, axis=0).sum()
+                / np.mean(np.sum(embeddings**2, axis=1))
+            )
+            status = "verified"
+            if observed != spec.embedding_dim:
+                status = "dimension_mismatch"
+            elif spread < DEGENERATE_SPREAD:
+                status = "degenerate"
             records.append(
                 {
                     "model_key": model_key,
-                    "status": "verified"
-                    if observed == spec.embedding_dim
-                    else "dimension_mismatch",
+                    "status": status,
+                    "relative_spread": spread,
                     "expected_embedding_dim": spec.embedding_dim,
                     "observed_embedding_dim": observed,
                     "checkpoint": spec.hub_repo,
@@ -143,7 +181,7 @@ def validate_real_checkpoints(
 
 
 def validate_real_training(
-    model_keys: Sequence[str] = ("cbramod", "labram", "reve", "luna"),
+    model_keys: Sequence[str] = REAL_MODEL_KEYS,
     train_modes: Sequence[str] = ("linear_probe", "full", "lora"),
     device: str = "cpu",
     token: str | None = None,

@@ -177,10 +177,16 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
             "max_epochs": 2,
             "batch_size": 4,
             "validation_fraction": 0.25,
+            "lr": 3e-4,
+            "weight_decay": 0.05,
         },
         checkpoints={"save": "best", "output_dir": tmp_path},
     )
     fitted = clone(classifier).fit(X, y, groups=groups)
+    optimizer = fitted.backend_._net_.optimizer_
+    assert type(optimizer).__name__ == "AdamW"
+    assert optimizer.defaults["lr"] == 3e-4
+    assert optimizer.defaults["weight_decay"] == 0.05
     probabilities = fitted.predict_proba(X)
     assert probabilities.shape == (16, 2)
     np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-6)
@@ -205,6 +211,82 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
     assert not set(fitted.backend_._training_groups_) & set(
         fitted.backend_._validation_groups_
     )
+
+
+def _fit_fake_classifier(trainer):
+    import torch
+
+    X, y, groups = _data()
+    torch.manual_seed(0)
+    classifier = FoundationClassifier(
+        "cbramod",
+        backend="fake",
+        train_mode="full",
+        sfreq=200,
+        ch_names=["C3", "C4"],
+        trainer={"batch_size": 4, "validation_fraction": 0.25, **trainer},
+    )
+    return classifier.fit(X, y, groups=groups)
+
+
+def test_fine_tuning_options_reach_the_training_loop():
+    from coco_pipe.decoding.foundation_models import _training
+
+    fitted = _fit_fake_classifier(
+        {
+            "max_epochs": 4,
+            "lr": 1e-2,
+            "lr_warmup_epochs": 2,
+            "accumulate_grad_batches": 2,
+            "focal_gamma": 2.0,
+            "probe_epochs": 1,
+        }
+    )
+    net = fitted.backend_._net_
+
+    assert isinstance(net, _training.AccumulatingClassifier)
+    assert isinstance(net.criterion_, _training.FocalLoss)
+    assert net.criterion_.gamma == 2.0
+    # two warmup epochs up to the full rate, then the start of a cosine decay
+    assert net.history[:, "event_lr"] == pytest.approx(
+        [0.005, 0.01, 0.01, 0.00505], rel=1e-3
+    )
+    assert fitted.predict_proba(_data()[0]).shape == (16, 2)
+    # what the probe phase froze is trainable again afterwards
+    assert all(p.requires_grad for p in fitted.backend_._model.parameters())
+
+
+def test_probe_phase_trains_only_the_head():
+    # The main phase barely moves anything, so what differs is the probe phase.
+    main = {"max_epochs": 1, "lr": 1e-12}
+    plain = _fit_fake_classifier(main).backend_._model
+    probed = _fit_fake_classifier(
+        {**main, "probe_epochs": 3, "probe_lr": 0.1}
+    ).backend_._model
+
+    def weights(layer):
+        return layer.weight.detach().cpu().numpy()
+
+    np.testing.assert_allclose(
+        weights(probed.backbone), weights(plain.backbone), atol=1e-8
+    )
+    assert not np.allclose(weights(probed.head), weights(plain.head))
+
+
+def test_focal_loss_extends_cross_entropy():
+    import torch
+
+    from coco_pipe.decoding.foundation_models._training import FocalLoss
+
+    logits = torch.tensor([[2.0, -1.0], [0.1, 0.3], [-3.0, 3.0]])
+    target = torch.tensor([0, 0, 1])
+    weight = torch.tensor([1.0, 3.0])
+    cross_entropy = torch.nn.CrossEntropyLoss(weight=weight)(logits, target)
+    assert FocalLoss(gamma=0.0, weight=weight)(logits, target) == pytest.approx(
+        cross_entropy.item()
+    )
+    # well-classified samples count for less, so the loss is smaller
+    assert FocalLoss(gamma=2.0, weight=weight)(logits, target) < cross_entropy
 
 
 def test_release_memory_tears_down_fitted_classifier():
@@ -345,6 +427,52 @@ def test_experiment_dispatches_frozen_and_trainable_paths(tmp_path):
     assert set(result.summary().index) == {"frozen", "neural"}
 
 
+def test_grid_over_lora_and_trainer_fields():
+    from coco_pipe.decoding.configs import LoRAConfig, TuningConfig
+
+    rng = np.random.default_rng(4)
+    X = rng.normal(size=(48, 2, 20)).astype("float32")
+    y = np.repeat([0, 1], 24)
+    groups = np.array([f"p{index:02d}" for index in range(12) for _ in range(4)])
+    grouped = {"strategy": "stratified_group_kfold", "group_key": "subject"}
+    config = ExperimentConfig(
+        models={
+            "neural": NeuralFineTuneConfig(
+                model_key="cbramod",
+                backend="fake",
+                sfreq=200,
+                ch_names=["C3", "C4"],
+                lora=LoRAConfig(dropout=0.1),
+                trainer=TrainerConfig(max_epochs=1, batch_size=8),
+            )
+        },
+        grids={"neural": {"lora__r": [4, 8], "trainer__lr": [1e-3, 1e-2]}},
+        tuning=TuningConfig(enabled=True, cv=CVConfig(n_splits=2, **grouped), n_jobs=1),
+        cv=CVConfig(n_splits=2, **grouped),
+        metrics=["accuracy"],
+        n_jobs=1,
+    )
+    result = Experiment(config).run(
+        X,
+        y,
+        groups=groups,
+        sample_metadata={"subject": groups, "session": ["01"] * len(groups)},
+    )
+
+    search = result.get_search_results("neural")
+    tried = search[search["Fold"] == 0]["Params"].tolist()
+    assert sorted((p["clf__lora"]["r"], p["clf__trainer"]["lr"]) for p in tried) == [
+        (4, 1e-3),
+        (4, 1e-2),
+        (8, 1e-3),
+        (8, 1e-2),
+    ]
+    # fields outside the grid keep their configured value
+    assert {p["clf__lora"]["dropout"] for p in tried} == {0.1}
+    assert {p["clf__trainer"]["max_epochs"] for p in tried} == {1}
+    assert search["MeanTestScore"].notna().all()
+
+
 def test_gated_checkpoint_without_token_reports_authentication_required(
     monkeypatch,
 ):
@@ -379,14 +507,25 @@ def test_real_foundation_checkpoints():
     assert records
     assert all(
         record["status"]
-        in {"verified", "authentication_required", "failed", "unsupported"}
+        in {
+            "verified",
+            "degenerate",
+            "authentication_required",
+            "failed",
+            "unsupported",
+        }
         for record in records
     )
-    assert all(
-        record["status"] == "verified"
-        for record in records
-        if record["model_key"] != "reve"
-    )
+    # SignalJEPA's pretrained encoder collapses in braindecode itself (to report
+    # upstream); the check has to keep flagging it until that is fixed
+    known_degenerate = {"signaljepa"}
+    for record in records:
+        if record["model_key"] == "reve":
+            continue
+        expected = (
+            "degenerate" if record["model_key"] in known_degenerate else "verified"
+        )
+        assert record["status"] == expected, record
 
 
 @pytest.mark.real_checkpoints

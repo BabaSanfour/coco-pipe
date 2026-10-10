@@ -30,10 +30,15 @@ class PreparedBackend:
         """Convert values to float32 and resample to the model rate."""
         values = np.asarray(X, dtype=np.float32)
         if self.source_sfreq != self.target_sfreq:
-            from scipy.signal import resample
+            from mne.filter import resample
 
-            n_times = round(values.shape[-1] * self.target_sfreq / self.source_sfreq)
-            values = resample(values, n_times, axis=-1).astype(np.float32)
+            # mne.filter.resample only accepts float64.
+            values = resample(
+                np.asarray(values, dtype=np.float64),
+                up=self.target_sfreq,
+                down=self.source_sfreq,
+                axis=-1,
+            ).astype(np.float32)
         if (
             self.spec.pretrained_n_times is not None
             and values.shape[-1] != self.spec.pretrained_n_times

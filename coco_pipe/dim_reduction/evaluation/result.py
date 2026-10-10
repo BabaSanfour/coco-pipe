@@ -305,8 +305,17 @@ class TrajectoryResult:
             conditions=self.conditions[mask],
         )
 
+    #: Metrics describing a group of trials rather than a single trial. These
+    #: return one curve per condition, which is repeated across that
+    #: condition's trials so the long-format schema stays uniform.
+    _GROUP_LEVEL_KINEMATICS: ClassVar[frozenset[str]] = frozenset({"dispersion"})
+
     def get_kinematic_timecourses(self, metrics: Sequence[str]) -> pd.DataFrame:
         """Compute and return continuous kinematic timecourses.
+
+        Per-trial metrics yield one curve per trial. Group-level metrics
+        (``dispersion``) are only defined over a set of trials, so they are
+        computed per condition and repeated across that condition's trials.
 
         Returns
         -------
@@ -332,7 +341,21 @@ class TrajectoryResult:
                     f"Unknown metric {metric}. Available: {list(funcs.keys())}"
                 )
 
-            vals = funcs[metric](self.trajectories, self.times)
+            if metric in self._GROUP_LEVEL_KINEMATICS:
+                # One curve per condition, broadcast to that condition's trials.
+                per_trial_values = np.empty((n_trials, 0))
+                for cond in np.unique(self.conditions):
+                    mask = self.conditions == cond
+                    curve = np.atleast_1d(
+                        np.asarray(funcs[metric](self.trajectories[mask], self.times))
+                    )
+                    if per_trial_values.shape[1] == 0:
+                        per_trial_values = np.empty((n_trials, curve.shape[-1]))
+                    per_trial_values[mask] = curve
+                vals = per_trial_values
+            else:
+                vals = np.asarray(funcs[metric](self.trajectories, self.times))
+
             n_vals = vals.shape[1]
             time_offset = n_times - n_vals
 

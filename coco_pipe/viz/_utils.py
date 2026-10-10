@@ -273,19 +273,6 @@ def _scalar_metrics(frame: pd.DataFrame, context: str) -> pd.DataFrame:
     return require_non_empty(data, context)
 
 
-def _single_method(frame: pd.DataFrame, context: str) -> pd.DataFrame:
-    """Require exactly one method for single-panel plots."""
-    if "Method" not in frame.columns:
-        return frame
-    methods = frame["Method"].dropna().unique().tolist()
-    if len(methods) > 1:
-        raise ValueError(
-            f"{context} requires a single method selection. "
-            f"Filter with method=... Found: {methods}"
-        )
-    return frame
-
-
 def select_rows(
     df: pd.DataFrame,
     model: str | None = None,
@@ -421,7 +408,7 @@ def coerce_sensor_layout(
 
 def info_from_montage(
     names: Sequence[str],
-    montage: str = "standard_1020",
+    montage: str = "colin27_1020",
     sfreq: float = 100.0,
 ):
     """Build an EEG ``mne.Info`` from channel names using a standard montage.
@@ -436,7 +423,7 @@ def info_from_montage(
     names
         Channel names to place. Matched case-sensitively against the montage.
     montage
-        Name of a standard MNE montage (e.g. ``"standard_1020"``).
+        Name of a standard MNE montage (e.g. ``"colin27_1020"``).
     sfreq
         Nominal sampling frequency for the synthetic info; unused for layout.
 

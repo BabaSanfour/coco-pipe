@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn import config_context
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, is_classifier
 from sklearn.feature_selection import (
     SelectKBest,
     SequentialFeatureSelector,
@@ -88,11 +88,10 @@ def _release_foundation_memory(estimator: Any) -> None:
     gc.collect()
     try:
         import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:
-        pass
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
@@ -171,6 +170,56 @@ class _SafeSelectKBest(BaseEstimator):
         return self.selector_.get_support(indices=indices)
 
 
+def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict:
+    """Reduce the test predictions of a fold to one prediction per group.
+
+    Probabilities, decision scores and regression predictions are averaged
+    within a group. A pooled class is the one with the highest mean probability,
+    or the most predicted one when the model gives no probabilities.
+
+    Parameters
+    ----------
+    fold_data : dict
+        Per-sample ``group``, ``y_true``, ``y_pred`` and, when available,
+        ``y_proba`` and ``y_score``.
+    classes : np.ndarray or None
+        Sorted class labels, or None for regression.
+
+    Returns
+    -------
+    dict
+        The same keys, with one row per group.
+    """
+    if fold_data["group"] is None:
+        raise ValueError("score_by_group needs groups.")
+    groups, first, index = np.unique(
+        fold_data["group"], return_index=True, return_inverse=True
+    )
+    y_true = np.asarray(fold_data["y_true"])
+    if not np.array_equal(y_true[first][index], y_true):
+        raise ValueError("score_by_group needs one target value per group.")
+
+    def mean(values):
+        values = np.asarray(values, dtype=float)
+        total = np.zeros((len(groups), *values.shape[1:]))
+        np.add.at(total, index, values)
+        counts = np.bincount(index).reshape(-1, *[1] * (values.ndim - 1))
+        return total / counts
+
+    pooled = {"group": groups, "y_true": y_true[first]}
+    for key in ("y_proba", "y_score"):
+        if fold_data.get(key) is not None:
+            pooled[key] = mean(fold_data[key])
+    if classes is None:
+        pooled["y_pred"] = mean(fold_data["y_pred"])
+        return pooled
+    votes = pooled.get("y_proba")
+    if votes is None:
+        votes = mean(np.asarray(fold_data["y_pred"])[:, None] == classes[None, :])
+    pooled["y_pred"] = classes[votes.argmax(axis=1)]
+    return pooled
+
+
 def fit_and_score_fold(
     estimator: BaseEstimator,
     X: np.ndarray,
@@ -184,11 +233,13 @@ def fit_and_score_fold(
     feature_selection_config: Any,
     calibration_config: Any,
     spec: Any,
+    temporal_alignment_config: Any = None,
     tuning_config: Any = None,
     feature_names: list[str] | None = None,
     search_enabled: bool = False,
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
+    score_by_group: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -202,7 +253,7 @@ def fit_and_score_fold(
     estimator : BaseEstimator
         The un-fitted estimator instance (or pipeline) for this fold.
     X : np.ndarray
-        The full feature matrix of shape (n_samples, n_features).
+        The full 2-D feature matrix or 3-D temporal array.
     y : np.ndarray
         The full target vector of shape (n_samples,).
     groups : np.ndarray, optional
@@ -223,6 +274,9 @@ def fit_and_score_fold(
         Configuration for probability calibration (from CVConfig).
     spec : EstimatorSpec
         Hardened registry specification for the model.
+    temporal_alignment_config : Any, optional
+        Fold-level temporal alignment settings. When enabled, the training
+        template is fit on ``train_idx`` before the estimator is fitted.
     tuning_config : Any, optional
         Hyperparameter tuning settings.
     feature_names : list of str, optional
@@ -245,6 +299,35 @@ def fit_and_score_fold(
     sw_train = sample_weight[train_idx] if sample_weight is not None else None
     groups_train = groups[train_idx] if groups is not None else None
     test_groups = groups[test_idx] if groups is not None else None
+    alignment_time = 0.0
+    if getattr(temporal_alignment_config, "enabled", False):
+        if groups_train is None or test_groups is None:
+            raise ValueError("Temporal alignment requires participant groups.")
+        if getattr(temporal_alignment_config, "method", None) != "procrustes":
+            raise ValueError(
+                "Unknown temporal alignment method: "
+                f"{getattr(temporal_alignment_config, 'method', None)!r}."
+            )
+        from coco_pipe.transforms import TemporalProcrustesAlignment
+
+        alignment_start = time.perf_counter()
+        aligner = TemporalProcrustesAlignment(
+            n_components=temporal_alignment_config.n_components,
+            adaptation=temporal_alignment_config.adaptation,
+            rotate=getattr(temporal_alignment_config, "rotate", True),
+            use_shared_basis=getattr(
+                temporal_alignment_config, "use_shared_basis", False
+            ),
+            augment=getattr(temporal_alignment_config, "augment", ()),
+            augment_only=getattr(temporal_alignment_config, "augment_only", False),
+            trajectory_metrics=getattr(
+                temporal_alignment_config, "trajectory_metrics", None
+            ),
+            random_state=temporal_alignment_config.random_state,
+        )
+        X_train = aligner.fit_transform(X_train, groups=groups_train)
+        X_test = aligner.transform(X_test, groups=test_groups)
+        alignment_time = time.perf_counter() - alignment_start
     routing_pipeline = _wrapped_pipeline(estimator)
     _needs_group_routing = (
         test_groups is not None
@@ -348,6 +431,12 @@ def fit_and_score_fold(
 
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
+    scored = fold_data
+    if score_by_group:
+        scored = pool_by_group(
+            fold_data, np.unique(y[train_idx]) if is_classifier(estimator) else None
+        )
+        y_test, y_pred = scored["y_true"], scored["y_pred"]
     is_multiclass = type_of_target(y_test) == "multiclass"
     metric_specs = {m: get_metric_spec(m) for m in metrics}
 
@@ -358,12 +447,12 @@ def fit_and_score_fold(
             if m_spec.response_method == "predict":
                 y_est, is_p = y_pred, False
             elif m_spec.response_method == "proba":
-                y_est, is_p = fold_data.get("y_proba"), True
+                y_est, is_p = scored.get("y_proba"), True
             else:  # proba_or_score
-                y_est = fold_data.get("y_proba")
+                y_est = scored.get("y_proba")
                 is_p = True
                 if y_est is None:
-                    y_est, is_p = fold_data.get("y_score"), False
+                    y_est, is_p = scored.get("y_score"), False
 
             scores[name] = compute_metric_safe(
                 m_spec.scorer,
@@ -412,7 +501,8 @@ def fit_and_score_fold(
             "fit_time": fit_time,
             "predict_time": predict_time,
             "score_time": score_time,
-            "total_time": fit_time + predict_time + score_time,
+            "alignment_time": alignment_time,
+            "total_time": alignment_time + fit_time + predict_time + score_time,
             "warnings": captured_warnings,
         },
     }
@@ -783,6 +873,48 @@ def extract_metadata(
             ):
                 meta["feature_scores"] = fs_step.scores_
 
+        elif clf_step is not None and hasattr(clf_step, "estimators_"):
+            # Temporal (sliding/generalizing) wrapper: feature selection was
+            # pushed one level down into each per-timepoint base-classifier
+            # clone (see Experiment._prepare_estimator's "temporal" branch),
+            # so there is no single top-level "fs" step - there are up to
+            # n_times of them, one per `clf_step.estimators_[t]`. Aggregate
+            # into a per-feature selection frequency across every timepoint
+            # this fold fit, reusing the "selected_features" key so
+            # ExperimentResult.get_feature_stability()'s existing cross-fold
+            # averaging picks it up unchanged - the result is then a
+            # frequency across both folds and timepoints.
+            per_timepoint_masks = [
+                sub.named_steps["fs"].get_support()
+                for sub in clf_step.estimators_
+                if hasattr(sub, "named_steps") and "fs" in sub.named_steps
+            ]
+            if per_timepoint_masks:
+                per_timepoint_stack = np.vstack(per_timepoint_masks)
+                frequency = np.mean(per_timepoint_stack, axis=0)
+                n_feat = len(frequency)
+                actual_names = (
+                    feature_names
+                    if (feature_names and len(feature_names) == n_feat)
+                    else [f"feature_{i}" for i in range(n_feat)]
+                )
+                meta.update(
+                    {
+                        "feature_selection_method": feature_selection_config.method,
+                        "selected_features": frequency,
+                        # Raw (n_times, n_features) boolean mask, one row per
+                        # per-timepoint base-classifier clone in this fold -
+                        # preserved (not just the time-averaged "frequency"
+                        # above) so callers can recover exactly which
+                        # features were selected at one specific timepoint
+                        # (e.g. a peak-accuracy latency), not just the
+                        # across-time selection rate. See
+                        # ExperimentResult.get_selected_features_per_timepoint.
+                        "selected_features_per_timepoint": per_timepoint_stack,
+                        "feature_names": actual_names,
+                    }
+                )
+
         if clf_step is not None:
             estimator = clf_step
 
@@ -834,11 +966,11 @@ def compact_search_results(estimator: BaseEstimator) -> list[dict[str, Any]]:
     for idx, p in enumerate(params):
         row = {"candidate": idx, "params": dict(p)}
         if ranks is not None:
-            row["rank"] = int(ranks[idx])
+            row["rank_test_score"] = int(ranks[idx])
         if means is not None:
-            row["mean"] = float(means[idx])
+            row["mean_test_score"] = float(means[idx])
         if stds is not None:
-            row["std"] = float(stds[idx])
+            row["std_test_score"] = float(stds[idx])
         results.append(row)
 
     return results

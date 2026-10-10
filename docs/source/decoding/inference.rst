@@ -601,11 +601,11 @@ pairs with optional multiple-comparison correction:
    comparison = result.compare_models(
        metric="accuracy",
        unit="Subject",
-       correction="fdr_bh",       # or "bonferroni", "none"
+       correction="fdr_bh",       # or "none"
        n_permutations=5000,
    )
 
-   print(comparison[["ModelA", "ModelB", "Difference", "PValue", "CorrectedPValue"]])
+   print(comparison[["ModelA", "ModelB", "Difference", "PValue", "PValueCorrected"]])
 
 ---
 
