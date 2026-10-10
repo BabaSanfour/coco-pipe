@@ -1,0 +1,1 @@
+Removed the IVIS reducer (`IVISReducer`, `IVISConfig`, the `IVIS` method) and the `ivis` extra. ivis installs only from git, which PyPI does not accept as a dependency, and it needs annoy. Use `ParametricUMAP` for a reducer that transforms new samples.

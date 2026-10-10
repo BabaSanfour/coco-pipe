@@ -15,9 +15,9 @@ from coco_pipe.dim_reduction.reducers.base import BaseReducer
 X, _ = make_blobs(n_samples=60, n_features=8, centers=3, random_state=0)
 X = X.astype(np.float32)
 
-# Small settings so every backend runs in seconds. IVIS and ParametricUMAP run
-# on TensorFlow, which deadlocks here once pandas / pyarrow is imported; their
-# own libraries are replaced below.
+# Small settings so every backend runs in seconds. ParametricUMAP runs on
+# TensorFlow, which deadlocks here once pandas / pyarrow is imported; its own
+# library is replaced below.
 SETTINGS = {
     "IncrementalPCAReducer": {},
     "PCAReducer": {},
@@ -60,7 +60,7 @@ def _compute(values):
 
 def test_reducer_registry_covers_every_reducer():
     names = {name for name in reducers.__all__ if name != "BaseReducer"}
-    assert names == set(SETTINGS) | {"IVISReducer", "ParametricUMAPReducer"}
+    assert names == set(SETTINGS) | {"ParametricUMAPReducer"}
 
 
 @pytest.mark.parametrize("name", sorted(SETTINGS))
@@ -208,29 +208,7 @@ def test_dask_reducers_take_dask_arrays(name):
         getattr(reducers, name)(n_components=2).fit(X)
 
 
-# --- reducers on TensorFlow (their libraries replaced) ------------------------
-
-
-def test_ivis_reducer_wraps_ivis():
-    class Ivis:
-        def __init__(self, embedding_dims=2, k=15, epochs=100, batch_size=32):
-            self.embedding_dims = embedding_dims
-            self.loss_history_ = [0.1, 0.05]
-
-        def fit(self, X, Y=None):
-            return self
-
-        def transform(self, X):
-            return np.zeros((len(X), self.embedding_dims))
-
-    with patch(
-        "coco_pipe.dim_reduction.reducers.neural.import_optional_dependency",
-        return_value=Ivis,
-    ):
-        reducer = reducers.IVISReducer(n_components=2, k=5, unsupported_param=1)
-        assert reducer.fit(X).transform(X).shape == (60, 2)
-    assert reducer.model.embedding_dims == 2
-    assert reducer.get_diagnostics()["loss_history_"] == [0.1, 0.05]
+# --- reducer on TensorFlow (its library replaced) -----------------------------
 
 
 def test_parametric_umap_reducer_wraps_parametric_umap():

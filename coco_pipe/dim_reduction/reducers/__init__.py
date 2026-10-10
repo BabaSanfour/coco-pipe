@@ -16,7 +16,6 @@ _OPTIONAL_REDUCERS = {
     "PHATEReducer": ".neighbor",
     "DMDReducer": ".spatiotemporal",
     "TRCAReducer": ".spatiotemporal",
-    "IVISReducer": ".neural",
     "TopologicalAEReducer": ".topology",
 }
 

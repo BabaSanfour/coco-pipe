@@ -294,7 +294,6 @@ class TopologicalAEReducer(BaseReducer):
 
     See Also
     --------
-    IVISReducer : Neural reducer based on triplet loss.
     ParametricUMAPReducer : Neural graph-based reducer with transform support.
     PHATEReducer : Nonlinear diffusion-based reducer for smooth trajectories.
     PCAReducer : Linear baseline for tabular inputs.

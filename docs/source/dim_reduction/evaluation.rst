@@ -270,8 +270,7 @@ Backend             What it measures                            Reducer requirem
 ``perturbation``    Mean-squared shift in the embedding when    Any reducer with a
                     each feature is independently shuffled.     fitted ``transform``.
 ``gradient``        Encoder saliency: ``∂‖z‖ / ∂x`` averaged    Torch-based encoders
-                    over samples.                               (``IVIS``,
-                                                                ``ParametricUMAP``,
+                    over samples.                               (``ParametricUMAP``,
                                                                 ``TopologicalAE``).
 ==================  ==========================================  ========================
 
@@ -364,9 +363,9 @@ Requirements:
 
 - The reducer must expose ``get_pytorch_module()`` returning a module with an
   ``encoder`` submodule.
-- Currently supported: ``IVIS``, ``ParametricUMAP``, ``TopologicalAE``.
-- ``torch`` must be installed. Use the ``[topology]`` or ``[ivis]`` extras
-  depending on the reducer.
+- Currently supported: ``ParametricUMAP``, ``TopologicalAE``.
+- ``torch`` must be installed. Use the ``[topology]`` or ``[parametric-umap]``
+  extras depending on the reducer.
 
 ---
 

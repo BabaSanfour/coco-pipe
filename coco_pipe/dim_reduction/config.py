@@ -31,7 +31,6 @@ __all__ = [
     "DaskPCAConfig",
     "DaskTruncatedSVDConfig",
     "EvaluationConfig",
-    "IVISConfig",
     "IncrementalPCAConfig",
     "IsomapConfig",
     "LLEConfig",
@@ -86,8 +85,7 @@ _METHOD_REGISTRY = {
     # Spatiotemporal
     "DMD": ("coco_pipe.dim_reduction.reducers.spatiotemporal", "DMDReducer"),
     "TRCA": ("coco_pipe.dim_reduction.reducers.spatiotemporal", "TRCAReducer"),
-    # Neural / Topology
-    "IVIS": ("coco_pipe.dim_reduction.reducers.neural", "IVISReducer"),
+    # Topology
     "TopologicalAE": (
         "coco_pipe.dim_reduction.reducers.topology",
         "TopologicalAEReducer",
@@ -105,7 +103,6 @@ _OPTIONAL_METHODS = frozenset(
         "PHATE",
         "DMD",
         "TRCA",
-        "IVIS",
         "TopologicalAE",
     }
 )
@@ -452,18 +449,6 @@ class TopologicalAEConfig(BaseReducerConfig, StochasticReducerConfig):
     epochs: int = Field(50, description="Number of training epochs.")
     device: str = Field("auto", description="Device to use (cpu, cuda, mps, auto).")
     verbose: int = Field(0, description="Skorch verbosity level.")
-
-
-class IVISConfig(BaseReducerConfig, StochasticReducerConfig):
-    """Configuration for IVIS."""
-
-    method: Literal["IVIS"] = "IVIS"
-    k: int = Field(15, description="Number of neighbors.")
-    model: str = Field("szubert", description="Network architecture.")
-    n_epochs_without_progress: int = Field(15, description="Early stopping patience.")
-    supervise_metric: str = Field(
-        "softmax_cross_entropy", description="Metric for supervised training."
-    )
 
 
 class ParametricUMAPConfig(BaseReducerConfig, StochasticReducerConfig):

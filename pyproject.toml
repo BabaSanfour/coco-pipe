@@ -116,13 +116,6 @@ parametric-umap = [
   "keras",
 ]
 
-ivis = [
-  "annoy>=1.17.3",
-  "tensorflow",
-  "keras",
-  "ivis @ git+https://github.com/beringresearch/ivis.git",
-]
-
 topology = [
   "torch",
   "skorch",
@@ -205,8 +198,6 @@ dim-red = [
   "faiss-cpu",
   "tensorflow",
   "keras",
-  "annoy>=1.17.3",
-  "ivis @ git+https://github.com/beringresearch/ivis.git",
   "torch",
   "skorch",
   "gudhi",
@@ -224,8 +215,6 @@ full = [
   "faiss-cpu",
   "tensorflow",
   "keras",
-  "annoy>=1.17.3",
-  "ivis @ git+https://github.com/beringresearch/ivis.git",
   "torch",
   "skorch",
   "gudhi",
@@ -242,7 +231,7 @@ full = [
 ]
 
 all = [
-  "coco-pipe[test,docs,foundation,dask,neighbor,parametric-umap,ivis,topology,moabb,torcheeg,spatiotemporal,eeg,descriptors,dim-red]",
+  "coco-pipe[test,docs,foundation,dask,neighbor,parametric-umap,topology,moabb,torcheeg,spatiotemporal,eeg,descriptors,dim-red]",
 ]
 
 [project.urls]

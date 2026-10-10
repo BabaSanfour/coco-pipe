@@ -234,7 +234,6 @@ Extra                           Unlocks
 ``[neighbor]``                  Same as ``[dim-red]`` for the neighbor-graph family.
 ``[dask]``                      ``DaskPCA``, ``DaskTruncatedSVD``.
 ``[parametric-umap]``           ``ParametricUMAP``.
-``[ivis]``                      ``IVIS``.
 ``[topology]``                  ``TopologicalAE`` (pulls ``torch`` +
                                 ``torch-topological``).
 ``[spatiotemporal]``            ``DMD`` (``pydmd``), ``TRCA``.
@@ -248,7 +247,7 @@ Install with pip:
 
    pip install coco-pipe[dim-red]
    pip install coco-pipe[dask,topology]
-   pip install coco-pipe[neighbor,parametric-umap,ivis]
+   pip install coco-pipe[neighbor,parametric-umap]
 
 ---
 
@@ -260,7 +259,7 @@ Install with pip:
 - **You need fast non-linear dimensionality reduction** → ``[dim-red]``.
 - **Your data is on Dask arrays** → ``[dask]``.
 - **You want a parametric reducer for transferring to new samples** →
-  ``[parametric-umap]`` (preferred) or ``[ivis]``.
+  ``[parametric-umap]``.
 - **You want topology-regularized embeddings** → ``[topology]``.
 - **You're working with EEG topographic maps** → add ``[eeg]`` for MNE.
 
@@ -333,5 +332,5 @@ Quick exploration             ``pip install coco-pipe``
 Standard scientific work      ``pip install coco-pipe[dim-red,eeg]``
 Distributed / out-of-core     ``pip install coco-pipe[dim-red,dask]``
 Deep learning / parametric    ``pip install coco-pipe[dim-red,parametric-umap,topology]``
-Everything                    ``pip install coco-pipe[dim-red,dask,parametric-umap,ivis,topology,spatiotemporal,eeg]``
+Everything                    ``pip install coco-pipe[dim-red,dask,parametric-umap,topology,spatiotemporal,eeg]``
 ============================  =========================================================

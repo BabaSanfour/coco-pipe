@@ -86,11 +86,7 @@ name in the leftmost column.
      - ``TRCA``
      - Task-Related Component Analysis; SSVEP / evoked EEG.
      - ``[spatiotemporal]``
-   * - **Neural**
-     - ``IVIS``
-     - Siamese-network parametric reducer.
-     - ``[ivis]``
-   * -
+   * - **Topology**
      - ``TopologicalAE``
      - Autoencoder with topological regularization.
      - ``[topology]``
@@ -240,16 +236,10 @@ Optional filterbank for multi-band decomposition.
 
 ---
 
-6. Neural and Topological Reducers
-====================================
+6. Topological Reducers
+=========================
 
-6.1 IVIS
-----------
-
-Siamese-network parametric reducer. Supports semi-supervised mode via
-``supervise_metric``. Requires the ``[ivis]`` extra.
-
-6.2 TopologicalAE
+6.1 TopologicalAE
 -------------------
 
 Autoencoder with a topological-loss regularizer. Encoder size, regularization
@@ -285,7 +275,7 @@ Pragmatic decision tree:
   trajectory metrics from :ref:`dim-reduction-trajectories`).
 - **Large global structure**: ``Pacmap`` / ``Trimap`` (triplet methods).
 - **Need ``transform`` on new samples**: ``PCA``, ``IncrementalPCA``,
-  ``ParametricUMAP``, ``IVIS``, ``TopologicalAE`` — but **not** ``TSNE``,
+  ``ParametricUMAP``, ``TopologicalAE`` — but **not** ``TSNE``,
   ``UMAP`` (non-parametric), ``MDS``, ``PHATE``.
 
 Compare them objectively with :ref:`dim-reduction-evaluation`.
@@ -348,11 +338,6 @@ Compare them objectively with :ref:`dim-reduction-evaluation`.
      - ✓
      - ✓
      - ✗
-     - ✓
-   * - IVIS
-     - ✗
-     - ✗
-     - ✓
      - ✓
    * - TopologicalAE
      - ✗

@@ -129,7 +129,7 @@ Supported analyses:
 - ``"perturbation"`` — model-agnostic feature importance from per-feature
   shuffling. Requires a fitted reducer with ``transform``.
 - ``"gradient"`` — encoder saliency for supported torch-based reducers
-  (``IVIS``, ``ParametricUMAP``, ``TopologicalAE``).
+  (``ParametricUMAP``, ``TopologicalAE``).
 
 See :ref:`dim-reduction-interpretation` for the math and reducer requirements.
 
@@ -323,10 +323,7 @@ The full set of typed configs maps 1:1 with the registry in
    * -
      - ``TRCAConfig``
      - ``sfreq``, ``filterbank``
-   * - **Neural / Topology**
-     - ``IVISConfig``
-     - ``k``, ``model``, ``n_epochs_without_progress``
-   * -
+   * - **Topology**
      - ``TopologicalAEConfig``
      - ``hidden_dims``, ``lam``, ``lr``, ``batch_size``, ``epochs``, ``device``
 
