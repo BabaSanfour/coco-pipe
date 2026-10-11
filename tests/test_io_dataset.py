@@ -257,6 +257,32 @@ def test_bids_dataset_stacks_recordings_that_number_events_differently(
     assert container.y.tolist() == [left, 3 - left] * 2
     assert container.coords["bad_channels"].tolist() == ["", "", "C2", "C2"]
 
+    # codes passed in `event_id` are kept, whatever each file and the order of
+    # the events say
+    for codes in ({"left": 3, "right": 10}, {"left": 2, "right": 1}):
+        container = _load_epochs(tmp_path, event_id=codes)
+        assert container.meta["event_id"] == codes
+        assert container.y.tolist() == [codes["left"], codes["right"]] * 2
+
+    # only the names that were found are listed
+    container = _load_epochs(tmp_path, event_id={"up": 4, "right": 10})
+    assert container.meta["event_id"] == {"right": 10}
+    assert container.y.tolist() == [10, 10]
+    assert container.coords["epoch"].tolist() == [1, 1]
+
+
+@pytest.mark.parametrize("event_id", [None, ["right", "left"]])
+def test_bids_dataset_numbers_events_without_codes(
+    tmp_path, write_bids_epochs, event_id
+):
+    write_bids_epochs(tmp_path, "01", event_id={"left": 5, "right": 7})
+
+    container = _load_epochs(tmp_path, event_id=event_id)
+
+    # numbered from 1 in the order the names appear in the recordings
+    assert container.meta["event_id"] == {"left": 1, "right": 2}
+    assert container.y.tolist() == [1, 2]
+
 
 def test_bids_dataset_raw_recordings(tmp_path):
     import mne
@@ -266,6 +292,9 @@ def test_bids_dataset_raw_recordings(tmp_path):
         np.zeros((2, 300)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
     )
     raw.set_meas_date(0)
+    raw.set_annotations(
+        mne.Annotations([0.5, 1.5, 2.5], 0.0, ["right", "left", "right"])
+    )
     for subject in ("01", "02"):
         write_raw_bids(
             raw,
@@ -288,6 +317,15 @@ def test_bids_dataset_raw_recordings(tmp_path):
         "sub-01_task-rest",
         "sub-02_task-rest",
     }
+
+    # epoched around events, with the codes passed in `event_id`
+    codes = {"left": 3, "right": 10}
+    container = BIDSDataset(
+        tmp_path, task="rest", datatype="meg", event_id=codes, tmin=0.0, tmax=0.2
+    ).load()
+    assert container.meta["event_id"] == codes
+    assert container.y.tolist() == [10, 3, 10] * 2
+    assert container.coords["time"][0] == 0.0
 
     with pytest.raises(RuntimeError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()

@@ -523,6 +523,9 @@ class BIDSDataset(BaseDataset):
         For raw recordings, the events to epoch around (see
         :func:`mne.events_from_annotations`), in place of fixed-length windows.
         For pre-computed epochs, the event names to keep.
+        The codes of a dict are the codes in ``y``, whatever codes the files
+        use. With a string, a list of names or None, the event names are
+        numbered from 1 in the order they first appear in the recordings.
     subject_metadata_df : DataFrame, optional
         Subject-level metadata to attach, in addition to ``participants.tsv``.
     subject_key : str, optional
@@ -702,9 +705,11 @@ class BIDSDataset(BaseDataset):
             A container with:
 
             - X: Data array of shape (N_obs, N_channels, N_time).
-            - y: The event code of each observation (codes in
-              ``meta["event_id"]``, the same for every recording), or
-              `target_col`.
+            - y: The event code of each observation, or `target_col`. The
+              codes are those of `event_id` when it is a dict, and otherwise
+              numbered from 1 in the order the event names first appear. They
+              are the same for every recording, and ``meta["event_id"]`` maps
+              each event name that was found to its code.
             - ids: Unique identifiers for each observation.
             - coords: 'channel', 'time', and one entry per observation for
               'obs', 'epoch', 'recording_id', 'bad_channels' (comma-separated,
@@ -756,6 +761,9 @@ class BIDSDataset(BaseDataset):
         stand_ins: list[mne.BaseEpochs] = []
         load_failures: list[dict[str, str]] = []
         skipped: list[str] = []
+        # Codes given in `event_id` are kept; both paths of `_read_epochs` keep
+        # only the names asked for, so given and automatic codes never mix.
+        given = self.event_id if isinstance(self.event_id, dict) else {}
         event_codes: dict[str, int] = {}
         # One log level for the whole load: MNE's per-call ``verbose`` sets a
         # process-wide level, which threads would reset under each other.
@@ -793,7 +801,7 @@ class BIDSDataset(BaseDataset):
                 # Recordings may number the same event differently and mark
                 # different bad channels; concatenate_epochs needs them equal.
                 for name in stand_in.event_id:
-                    event_codes.setdefault(name, len(event_codes) + 1)
+                    event_codes.setdefault(name, given.get(name, len(event_codes) + 1))
                 recode = {
                     code: event_codes[name] for name, code in stand_in.event_id.items()
                 }
