@@ -1,0 +1,1 @@
+`BIDSDataset` keeps the event codes of a dict passed as `event_id`: they are the codes in `y` and in `meta["event_id"]`. The events were renumbered from 1 in their order of appearance, so trials could carry another code than the one asked for.
