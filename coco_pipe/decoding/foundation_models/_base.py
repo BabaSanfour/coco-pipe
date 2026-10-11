@@ -428,6 +428,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
                 lr=lr,
                 batch_size=fit_params.get("batch_size", 32),
+                # skorch does not shuffle by default, and trials arrive ordered
+                # by condition and subject: batches of one class collapse the fit
+                iterator_train__shuffle=True,
                 callbacks=callbacks,
                 **net_kwargs,
             )

@@ -1,0 +1,1 @@
+Fine-tuning shuffles the training batches at every epoch. They were read in the order of the data, which is sorted by condition and subject, so a batch held one class and the fit could collapse to predicting a single class.
