@@ -6,6 +6,13 @@ The changelog is generated using Towncrier from the fragments stored in `changel
 
 <!-- towncrier release notes start -->
 
+## coco-pipe 0.0.3 (2026-10-11)
+
+### Bug fixes
+
+- `BIDSDataset` keeps the event codes of a dict passed as `event_id`: they are the codes in `y` and in `meta["event_id"]`. The events were renumbered from 1 in their order of appearance, so trials could carry another code than the one asked for.
+
+
 ## coco-pipe 0.0.2 (2026-10-10)
 
 ### Bug fixes

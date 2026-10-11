@@ -32,7 +32,7 @@ copyright = (
     f"2025-{_today.year}, coco-pipe developers. Last updated {_today.isoformat()}"
 )
 
-version = "0.0.2"
+version = "0.0.3"
 release = version
 
 
