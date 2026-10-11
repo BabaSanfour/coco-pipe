@@ -270,6 +270,8 @@ class FoundationModelSpec(EstimatorSpec):
     supports_channel_interpolation: bool = False
     # Input-signal expectations (so callers/guardrails can match preprocessing).
     expects_microvolts: bool = True
+    # Factor the backend applies to the microvolt input before the model.
+    input_scale: float = 1.0
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
@@ -668,10 +670,13 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         checkpoint_revision="584cdc415913739a05d84bf0c1cb3db397764507",
         preferred_backend="braindecode",
         dependency_extra="braindecode",
+        input_scale=0.01,
         paper_url="https://arxiv.org/abs/2412.07236",
         model_notes=(
             "Pretrained at 200 Hz. Time dimension must be divisible by "
-            "patch_size (default 200 samples = 1 s at 200 Hz)."
+            "patch_size (default 200 samples = 1 s at 200 Hz). Pretrained and "
+            "fine-tuned by its authors on signals in units of 100 µV: the "
+            "backend divides the microvolt input by 100."
         ),
     ),
     "biot": _fm_spec(
