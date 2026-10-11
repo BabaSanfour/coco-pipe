@@ -175,6 +175,23 @@ def test_cbramod_receives_its_input_in_units_of_100_microvolts(offline):
         assert np.abs(batch).max() == pytest.approx(np.abs(X).max() / 100)
 
 
+def test_volt_scale_input_is_rejected(offline):
+    backend, X = _load("cbramod", "full")
+    volts = X * 30e-6
+    y = np.array([0, 1, 0, 1])
+
+    for call in (
+        lambda: backend.fit(volts, y, max_epochs=1),
+        lambda: backend.transform(volts),
+        lambda: backend.predict(volts),
+        lambda: backend.predict_proba(volts),
+    ):
+        with pytest.raises(ValueError, match="expects EEG in microvolts"):
+            call()
+    # all-zero windows are not a units mistake
+    assert backend.transform(np.zeros_like(X)).shape[0] == 4
+
+
 def test_load_passes_the_pinned_checkpoint(offline):
     _load("cbramod")
     spec = get_estimator_spec("cbramod")

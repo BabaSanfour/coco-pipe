@@ -15,24 +15,6 @@ from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
 
 
-def test_warn_if_not_microvolts_fires_on_volts_scale():
-    from coco_pipe.decoding.foundation_models.extraction import _warn_if_not_microvolts
-
-    spec = SimpleNamespace(expects_microvolts=True, display_name="X", name="x")
-    volts = np.ones((2, 19, 100), dtype=np.float32) * 1e-4
-    with pytest.warns(UserWarning, match="microvolt"):
-        _warn_if_not_microvolts(volts, spec)
-
-
-def test_warn_if_not_microvolts_silent_on_microvolts_and_normalized(recwarn):
-    from coco_pipe.decoding.foundation_models.extraction import _warn_if_not_microvolts
-
-    spec = SimpleNamespace(expects_microvolts=True, display_name="X", name="x")
-    _warn_if_not_microvolts(np.ones((2, 19, 100), dtype=np.float32) * 30, spec)  # uV
-    _warn_if_not_microvolts(np.ones((2, 19, 100), dtype=np.float32) * 0.8, spec)  # norm
-    assert not [w for w in recwarn.list if "microvolt" in str(w.message)]
-
-
 class FakeFoundationModel:
     def bind_signal_metadata(self, metadata):
         self.metadata = metadata

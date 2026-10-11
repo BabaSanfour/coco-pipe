@@ -21,24 +21,6 @@ from ._prepare import prepare_backend
 if TYPE_CHECKING:
     from ...io import DataContainer
 
-_MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
-
-
-def _warn_if_not_microvolts(X: np.ndarray, spec) -> None:
-    """Warn once if a model expecting microvolts is fed volts-scale data."""
-    if not spec.expects_microvolts:
-        return
-    peak = float(np.max(np.abs(X))) if X.size else 0.0
-    # peak == 0 is empty/all-zero synthetic data, not a units mistake.
-    if 0.0 < peak < _MICROVOLT_MIN_PLAUSIBLE_PEAK:
-        warnings.warn(
-            f"{spec.display_name or spec.name} expects microvolt-scale EEG, but "
-            "the input peak amplitude is far below it — looks like volts. Convert "
-            "to microvolts (x1e6) before extraction; embeddings will otherwise be "
-            "unreliable.",
-            stacklevel=3,
-        )
-
 
 @dataclass(frozen=True)
 class CapabilityResult:
@@ -471,7 +453,6 @@ class FoundationEmbeddingExtractor:
             )
         model_input = prepared.adapt(X) if self.resample else X
         resampled = self.resample and prepared.source_sfreq != prepared.target_sfreq
-        _warn_if_not_microvolts(model_input, spec)
         if spec.expected_passband is not None:
             band = spec.expected_passband
             warnings.warn(
