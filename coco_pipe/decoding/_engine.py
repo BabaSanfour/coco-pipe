@@ -170,7 +170,9 @@ class _SafeSelectKBest(BaseEstimator):
         return self.selector_.get_support(indices=indices)
 
 
-def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict:
+def pool_by_group(
+    fold_data: dict[str, Any], classes: np.ndarray | None, by: np.ndarray
+) -> dict:
     """Reduce the test predictions of a fold to one prediction per group.
 
     Probabilities, decision scores and regression predictions are averaged
@@ -180,8 +182,8 @@ def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict
     Parameters
     ----------
     fold_data : dict
-        Per-sample ``group``, ``y_true``, ``y_pred`` and, when available,
-        ``y_proba`` and ``y_score``.
+        Per-sample ``y_true``, ``y_pred`` and, when available, ``y_proba``
+        and ``y_score``.
     classes : np.ndarray or None
         Sorted class labels, or None for regression.
 
@@ -190,14 +192,10 @@ def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict
     dict
         The same keys, with one row per group.
     """
-    if fold_data["group"] is None:
-        raise ValueError("score_by_group needs groups.")
-    groups, first, index = np.unique(
-        fold_data["group"], return_index=True, return_inverse=True
-    )
+    groups, first, index = np.unique(by, return_index=True, return_inverse=True)
     y_true = np.asarray(fold_data["y_true"])
     if not np.array_equal(y_true[first][index], y_true):
-        raise ValueError("score_by_group needs one target value per group.")
+        raise ValueError("score_by needs one target value per group.")
 
     def mean(values):
         values = np.asarray(values, dtype=float)
@@ -239,7 +237,7 @@ def fit_and_score_fold(
     search_enabled: bool = False,
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
-    score_by_group: bool = False,
+    score_by: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -432,9 +430,11 @@ def fit_and_score_fold(
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
     scored = fold_data
-    if score_by_group:
+    if score_by is not None:
         scored = pool_by_group(
-            fold_data, np.unique(y[train_idx]) if is_classifier(estimator) else None
+            fold_data,
+            np.unique(y[train_idx]) if is_classifier(estimator) else None,
+            by=sample_metadata[score_by][test_idx],
         )
         y_test, y_pred = scored["y_true"], scored["y_pred"]
     is_multiclass = type_of_target(y_test) == "multiclass"

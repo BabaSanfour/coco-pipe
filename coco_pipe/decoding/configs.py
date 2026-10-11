@@ -821,6 +821,9 @@ class CVConfig(BaseModel):
         Whether to use stratified sampling for strategy='split'.
     group_key : str, optional
         The column name in sample_metadata to use for group-aware strategies.
+    score_by : str, optional
+        The column name in sample_metadata to pool the test predictions by
+        before scoring, for example the recording of each epoch.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -848,12 +851,12 @@ class CVConfig(BaseModel):
     group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
     )
-    score_by_group: bool = Field(
-        False,
+    score_by: str | None = Field(
+        None,
         description=(
-            "Score each fold on one prediction per group: the test predictions of "
-            "a group are averaged before the metrics are computed. Predictions are "
-            "stored per sample either way."
+            "sample_metadata column to score by: the test predictions that share "
+            "a value are averaged before the metrics are computed. It does not "
+            "change the folds. Predictions are stored per sample either way."
         ),
     )
     auto_reduce_n_splits: bool = Field(

@@ -1,0 +1,1 @@
+`CVConfig.score_by` names the `sample_metadata` column to score by: the test predictions that share a value are averaged before the metrics are computed, for example one prediction per recording while the folds stay grouped by subject. It replaces `CVConfig.score_by_group`, which could only pool by the fold groups; set `score_by` to the group column for the same result.

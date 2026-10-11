@@ -890,7 +890,7 @@ class Experiment:
                 ),
                 force_serial=(n_jobs == 1),
                 sample_weight=sample_weight,
-                score_by_group=self.config.cv.score_by_group,
+                score_by=self.config.cv.score_by,
             )
             for train_idx, test_idx in splits
         )
@@ -1026,6 +1026,13 @@ class Experiment:
             if key not in meta.columns:
                 raise ValueError(f"group_key '{key}' not found in sample_metadata.")
             gv = meta[key].to_numpy()
+
+        score_by = self.config.cv.score_by
+        if score_by is not None and score_by not in meta.columns:
+            # metadata columns were capitalized above; keep the configured name too
+            if score_by.capitalize() not in meta.columns:
+                raise ValueError(f"score_by '{score_by}' not found in sample_metadata.")
+            meta[score_by] = meta[score_by.capitalize()]
 
         # Validation: Grouped strategies with only 1 group will fail in sklearn
         if has_grouped_cv:
