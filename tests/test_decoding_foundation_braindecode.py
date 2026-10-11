@@ -154,6 +154,27 @@ def test_fit_predict_and_reset_head(offline):
     assert backend.predict_proba(X).shape == (4, 3)
 
 
+def test_cbramod_receives_its_input_in_units_of_100_microvolts(offline):
+    backend, X = _load("cbramod", "full")
+    seen = []
+    backend._model.register_forward_pre_hook(
+        lambda _module, args: seen.append(args[0].detach().numpy())
+    )
+
+    backend.transform(X)
+    backend.predict(X)
+    backend.fit(
+        X, np.array([0, 1, 0, 1]), max_epochs=1, batch_size=4, validation_fraction=0.0
+    )
+    backend.predict_proba(X)
+
+    np.testing.assert_allclose(seen[0], X / 100, rtol=1e-6)
+    # embedding, prediction, training and probabilities all see that scale
+    assert len(seen) == 4
+    for batch in seen:
+        assert np.abs(batch).max() == pytest.approx(np.abs(X).max() / 100)
+
+
 def test_load_passes_the_pinned_checkpoint(offline):
     _load("cbramod")
     spec = get_estimator_spec("cbramod")

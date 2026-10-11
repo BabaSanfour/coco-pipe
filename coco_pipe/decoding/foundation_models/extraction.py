@@ -174,6 +174,7 @@ def check_capability(
         "checkpoint_filename": spec.checkpoint_filename,
         "requires_auth": spec.requires_auth,
         "expects_microvolts": spec.expects_microvolts,
+        "input_scale": spec.input_scale,
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
@@ -549,6 +550,7 @@ class FoundationEmbeddingExtractor:
             "recording_pooling": self.recording_pooling,
             "normalize_embeddings": self.normalize_embeddings,
             "expects_microvolts": bool(spec.expects_microvolts),
+            "input_scale": float(spec.input_scale),
             "expected_passband": (
                 list(spec.expected_passband)
                 if spec.expected_passband is not None

@@ -1,0 +1,1 @@
+CBraMod receives its input in units of 100 µV, the scale it was pretrained and fine-tuned on by its authors: the backend divides the microvolt input by 100, for embeddings and for fine-tuning. It was given plain microvolts, 100 times that scale. A model's scale is `input_scale` in its registry entry.
