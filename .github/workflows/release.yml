@@ -5,6 +5,10 @@ on:
     types: [published]
   push:
     branches: [main]
+  # Pull requests run the Package job only, so a packaging mistake is caught
+  # before it reaches main. Publishing still needs a published release.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -58,6 +62,20 @@ jobs:
             echo "the wheel declares a direct-URL dependency" >&2
             exit 1
           fi
+          # Every tracked file of the package must be in both archives. The
+          # test suite runs on an editable install, which reads the source
+          # tree and cannot see a file the package-data globs leave out.
+          git ls-files coco_pipe | sort > "$RUNNER_TEMP/tracked.txt"
+          unzip -Z1 dist/*.whl | sort > "$RUNNER_TEMP/wheel.txt"
+          tar -tzf dist/*.tar.gz | cut -d/ -f2- | sort > "$RUNNER_TEMP/sdist.txt"
+          for archive in wheel sdist; do
+            missing="$(comm -23 "$RUNNER_TEMP/tracked.txt" "$RUNNER_TEMP/$archive.txt")"
+            if [[ -n "$missing" ]]; then
+              echo "tracked files missing from the $archive:" >&2
+              echo "$missing" >&2
+              exit 1
+            fi
+          done
       - name: Validate installed wheel
         run: |
           set -euo pipefail
@@ -69,6 +87,26 @@ jobs:
           cd "$RUNNER_TEMP"
           "$wheel_test/bin/python" -c "import coco_pipe; print(coco_pipe.__file__)"
           "$wheel_test/bin/python" -m pip check
+          # Render a report from the installed wheel: it loads every bundled
+          # template, so a template missing from the wheel fails here.
+          "$wheel_test/bin/python" - <<'PY'
+          import pathlib
+
+          import plotly.graph_objects as go
+
+          import coco_pipe
+          from coco_pipe.report import PlotlyElement, Report, Section
+
+          assert "site-packages" in coco_pipe.__file__, coco_pipe.__file__
+          section = Section("Smoke test")
+          section.add_element(PlotlyElement(go.Figure(go.Scatter(x=[1, 2], y=[3, 4]))))
+          report = Report(title="Wheel smoke test")
+          report.add_section(section)
+          out = pathlib.Path("wheel-smoke-report.html")
+          report.save(out)
+          assert out.stat().st_size > 0
+          print(f"rendered {out.resolve()} ({out.stat().st_size} bytes)")
+          PY
       - name: Upload release distributions
         if: github.event_name == 'release'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coco-pipe"
-version = "0.0.1"
+version = "0.0.2"
 description = "A modular framework for scalable biosignal analysis with Machine Learning and Deep Learning"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -246,7 +246,9 @@ where = ["."]
 include = ["coco_pipe*"]
 
 [tool.setuptools.package-data]
-"coco_pipe.report.templates" = ["*.html"]
+# `**` is needed: the templates include each other from `partials/` and
+# `static/`, and a plain `*.html` does not descend into subdirectories.
+"coco_pipe.report" = ["templates/**/*.html"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

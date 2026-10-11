@@ -25,5 +25,5 @@ abstract: >
   coco-pipe is a modular framework for biosignal analytics,
   machine learning, deep learning, and foundation-model workflows.
 
-version: 0.0.1
+version: 0.0.2
 date-released: 2026-06-22

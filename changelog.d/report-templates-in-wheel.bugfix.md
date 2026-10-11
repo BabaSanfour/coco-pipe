@@ -1,0 +1,1 @@
+Reports render from a PyPI install again. The 0.0.1 wheel and sdist held only `base.html` and `section.html` of the report templates, so rendering any report raised `jinja2.exceptions.TemplateNotFound: 'static/tailwind_config.html'`; the templates under `partials/` and `static/` are now packaged. Installs from a source checkout were not affected.
