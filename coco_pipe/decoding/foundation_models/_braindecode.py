@@ -533,13 +533,13 @@ class BrainDecodeBackend(BackendBase):
     def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
         """Fit on the model's native montage, as ``transform``/``predict`` do."""
         self._validate(X)
-        X = self._construct_channels(X)
+        X = self._native_input(X)
         return self._fit_with_skorch(X, y, **fit_params)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Class probabilities on the model's native montage."""
         self._validate(X)
-        X = self._construct_channels(X)
+        X = self._native_input(X)
         if self._net_ is None:
             raise RuntimeError("Model must be fitted before predict_proba().")
         return np.asarray(self._net_.predict_proba(X))
@@ -560,7 +560,7 @@ class BrainDecodeBackend(BackendBase):
             Backbone feature vectors.
         """
         self._validate(X)
-        X = self._construct_channels(X)
+        X = self._native_input(X)
         batch_size = self._eval_batch_size()
         embedding_chunks = []
         token_chunks = []
@@ -670,16 +670,18 @@ class BrainDecodeBackend(BackendBase):
             )
         return metadata
 
-    def _construct_channels(self, X: np.ndarray) -> np.ndarray:
-        """Apply the faithful fixed-montage channel construction, if any.
+    def _native_input(self, X: np.ndarray) -> np.ndarray:
+        """Bring validated microvolt windows to the input the model was trained on.
 
-        Maps the validated source montage ``(n, n_source, t)`` to the model's
-        native layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT
-        name subset). A no-op when the model consumes channels as-is.
+        Maps the source montage ``(n, n_source, t)`` to the model's native
+        layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT name
+        subset), then applies the model's amplitude scale (CBraMod: units of
+        100 µV). A no-op when the model consumes microvolt channels as-is.
         """
-        if self._channel_adapter is None:
-            return X
-        return self._channel_adapter(X)
+        if self._channel_adapter is not None:
+            X = self._channel_adapter(X)
+        scale = self._metadata.input_scale
+        return X if scale == 1.0 else X * np.float32(scale)
 
     def checkpoint_components(self) -> dict:
         """BrainDecode keeps one model (LoRA-wrapped when applicable)."""
@@ -745,7 +747,7 @@ class BrainDecodeBackend(BackendBase):
             (regression).
         """
         self._validate(X)
-        X = self._construct_channels(X)
+        X = self._native_input(X)
         batch_size = self._eval_batch_size()
         is_regression = getattr(self, "_task", "classification") == "regression"
         chunks = []

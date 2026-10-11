@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from .._specs import FoundationModelSpec, SignalMetadata
 
 
+# Largest absolute value below which microvolt EEG is implausible.
+_MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
+
+
 class BackendBase(BaseEstimator, TransformerMixin, ABC):
     """Abstract base for direct foundation-model backend use.
 
@@ -517,6 +521,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
 
         sfreq mismatch → UserWarning (allows intentional mismatch for research).
         Channel count mismatch for fixed-channel models → ValueError.
+        Volt-scale input for a model that expects microvolts → ValueError.
         """
         meta = self.signal_metadata_
         if meta is None:
@@ -542,3 +547,13 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 f"{model_meta.display_name} expects {expected_n_chans} "
                 f"channels, got {X.shape[1]}."
             )
+        if model_meta.expects_microvolts and X.size:
+            peak = max(float(X.max()), -float(X.min()))
+            # peak == 0 is all-zero synthetic data, not a units mistake.
+            if 0.0 < peak < _MICROVOLT_MIN_PLAUSIBLE_PEAK:
+                raise ValueError(
+                    f"{model_meta.display_name} expects EEG in microvolts, but the "
+                    f"largest absolute value of the input is {peak:.3g}: this looks "
+                    "like volts. Load the data in microvolts, e.g. "
+                    "`epochs.get_data(units='uV')`."
+                )
