@@ -187,6 +187,9 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
     assert type(optimizer).__name__ == "AdamW"
     assert optimizer.defaults["lr"] == 3e-4
     assert optimizer.defaults["weight_decay"] == 0.05
+    net = fitted.backend_._net_
+    batches = net.get_iterator(net.get_dataset(X, y), training=True)
+    assert type(batches.sampler).__name__ == "RandomSampler"
     probabilities = fitted.predict_proba(X)
     assert probabilities.shape == (16, 2)
     np.testing.assert_allclose(probabilities.sum(axis=1), 1.0, atol=1e-6)
