@@ -5,3 +5,5 @@ Five foundation models now receive the input their authors trained them on. They
   - LUNA: each channel of a window z-scored, and resampling to 256 Hz instead of 200 Hz.
   - REVE: each channel of a window z-scored and clipped to ±15 when the backbone is frozen (embeddings, linear probe), as in pretraining; units of 100 µV when the backbone is trained, as in the authors' downstream code. The authors z-score with the statistics of a whole recording; the backend only sees a window. The REVE backend applied no input convention at all before.
   - EEGPT: average reference over the channels it keeps, millivolts, and resampling to 256 Hz instead of 250 Hz. The authors' own downstream code does not use one scale; this follows their pretraining data preparation.
+
+The eight foundation models are no longer pinned to a checkpoint revision: each load takes the latest revision of its Hugging Face repository (the pinned ones were the latest, apart from documentation commits on REVE). `backend_kwargs={"revision": ...}` still selects one.

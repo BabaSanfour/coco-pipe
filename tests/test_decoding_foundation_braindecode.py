@@ -215,10 +215,11 @@ def test_volt_scale_input_is_rejected(offline):
     assert backend.transform(np.zeros_like(X)).shape[0] == 4
 
 
-def test_load_passes_the_pinned_checkpoint(offline):
+def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     _load("cbramod")
-    spec = get_estimator_spec("cbramod")
-    assert offline[-1]["revision"] == spec.checkpoint_revision
+    assert offline[-1]["revision"] is None
+    _load("cbramod", revision="abc123")
+    assert offline[-1]["revision"] == "abc123"
 
 
 def test_labram_interpolates_missing_channels(offline):
