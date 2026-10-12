@@ -217,7 +217,7 @@ def test_volt_scale_input_is_rejected(offline):
 
 def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     _load("cbramod")
-    assert offline[-1]["revision"] is None
+    assert "revision" not in offline[-1]
     _load("cbramod", revision="abc123")
     assert offline[-1]["revision"] == "abc123"
 
