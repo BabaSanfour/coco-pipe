@@ -270,20 +270,15 @@ class FoundationModelSpec(EstimatorSpec):
     supports_channel_interpolation: bool = False
     # Input-signal expectations (so callers/guardrails can match preprocessing).
     expects_microvolts: bool = True
-    # What the backend does to the microvolt input before the model, in this
-    # order, so that the model sees what its authors trained it on.
-    # "average": subtract the mean over channels.
+    # What the backend applies to the microvolt input, in this order, so the
+    # model sees what its authors trained it on: reference ("average"), scale,
+    # normalisation of each channel of a window ("quantile95": divided by the
+    # 95th percentile of its absolute value; "zscore"), clip to ±input_clip.
+    # With a trained backbone, finetune_input_scale replaces the last three.
     input_reference: str | None = None
-    # Factor applied to the signal.
     input_scale: float = 1.0
-    # Per channel of each window: "quantile95" divides by the 95th percentile
-    # of the absolute value, "zscore" removes the mean and divides by the
-    # standard deviation.
     input_normalization: str | None = None
-    # Values are clipped to [-input_clip, input_clip].
     input_clip: float | None = None
-    # When the backbone is trained (full, lora, qlora), this factor replaces
-    # the scale, normalisation and clip above.
     finetune_input_scale: float | None = None
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
@@ -677,13 +672,10 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         finetune_input_scale=0.01,
         model_notes=(
             "Requires ch_names in SignalMetadata for positional encoding. "
-            "Pretrained by its authors on z-scored channels clipped to ±15, and "
-            "evaluated downstream on signals in units of 100 µV. The backend "
-            "z-scores each channel of a window and clips it when the backbone "
-            "is frozen (embeddings, linear probe), and divides the microvolt "
-            "input by 100 when the backbone is trained. The authors z-score "
-            "with the statistics of a whole recording; a window is the unit "
-            "the backend sees."
+            "Input as in the authors' pretraining when the backbone is frozen "
+            "(z-scored channels clipped to ±15; per window here, per recording "
+            "there) and as in their downstream code when it is trained "
+            "(units of 100 µV)."
         ),
     ),
     "cbramod": _fm_spec(
@@ -721,9 +713,8 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
             "(never InterpolatedBIOT, whose midpoint interpolation is physically "
             "wrong). Supported when the 16 lateral 10-20 electrodes are present; "
             "set backend_kwargs.fill_missing_channels=True to interpolate gaps. "
-            "Pretrained and fine-tuned by its authors on windows whose channels "
-            "are each divided by the 95th percentile of their absolute value: "
-            "the backend does the same to the bipolar channels."
+            "Each bipolar channel of a window is divided by the 95th percentile "
+            "of its absolute value, as in the authors' code."
         ),
     ),
     "labram": _fm_spec(
@@ -742,8 +733,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         model_notes=(
             "Requires 128 channels in LABRAM_CHANNEL_ORDER. "
             "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets. "
-            "Tokenized, pretrained and fine-tuned by its authors on signals in "
-            "units of 100 µV: the backend divides the microvolt input by 100."
+            "Input in units of 100 µV, as in the authors' code."
         ),
     ),
     "luna": _fm_spec(
@@ -762,8 +752,8 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         model_notes=(
             "Verified base variant: embed_dim=64, num_queries=4, depth=8; "
             "pooled latent width is 256. Supports variable channel sets. "
-            "Pretrained and fine-tuned by its authors at 256 Hz on windows "
-            "whose channels are each z-scored: the backend does the same."
+            "Input at 256 Hz with each channel of a window z-scored, as in the "
+            "authors' code."
         ),
     ),
     "eegpt": _fm_spec(
@@ -779,10 +769,8 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         input_scale=0.001,
         expected_reference="average",
         model_notes=(
-            "Pretrained by its authors at 256 Hz on average-referenced signals "
-            "in millivolts, with a 62-name channel-embedding vocabulary: the "
-            "backend re-references the channels it keeps to their average and "
-            "divides the microvolt input by 1000. "
+            "Pretrained at 256 Hz on average-referenced millivolts, with a "
+            "62-name channel-embedding vocabulary. "
             "EEGPT identifies channels by name (chans_id), so the backend builds "
             "it on the input montage (chan_proj_type='none') and loads the full "
             "name-indexed checkpoint; channels outside the 62-name vocabulary are "

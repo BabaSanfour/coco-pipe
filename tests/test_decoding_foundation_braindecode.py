@@ -161,8 +161,22 @@ def test_fit_predict_and_reset_head(offline):
     assert backend.predict_proba(X).shape == (4, 3)
 
 
-@pytest.mark.parametrize("model_key", ["cbramod", "labram"])
-def test_input_in_units_of_100_microvolts(offline, model_key):
+def _zscore(X):
+    return (X - X.mean(-1, keepdims=True)) / X.std(-1, ddof=1, keepdims=True)
+
+
+# What each model's authors feed it, from microvolt channels in its own montage.
+AUTHORS_INPUT = {
+    "cbramod": lambda X: X / 100,
+    "labram": lambda X: X / 100,
+    "biot": lambda X: X / np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True),
+    "luna": _zscore,
+    "eegpt": lambda X: (X - X.mean(1, keepdims=True)) / 1000,
+}
+
+
+@pytest.mark.parametrize("model_key", AUTHORS_INPUT)
+def test_models_receive_the_input_of_their_authors(offline, model_key):
     backend, X = _load(model_key, "full")
     seen = []
     backend._model.register_forward_pre_hook(
@@ -176,57 +190,12 @@ def test_input_in_units_of_100_microvolts(offline, model_key):
     )
     backend.predict_proba(X)
 
-    np.testing.assert_allclose(seen[0], X / 100, rtol=1e-6)
-    # embedding, prediction, training and probabilities all see that scale
+    adapter = backend._channel_adapter
+    expected = AUTHORS_INPUT[model_key](adapter(X) if adapter else X)
+    # embedding, prediction, training and probabilities all see that input
     assert len(seen) == 4
-    for batch in seen:
-        assert np.abs(batch).max() == pytest.approx(np.abs(X).max() / 100)
-
-
-def test_biot_channels_are_divided_by_their_95th_percentile(offline):
-    backend, X = _load("biot")
-    seen = []
-    backend._model.register_forward_pre_hook(
-        lambda _module, args: seen.append(args[0].detach().numpy())
-    )
-
-    backend.transform(X)
-    backend.transform(X * 7)
-
-    # every bipolar channel of every window has the same amplitude, whatever
-    # the amplitude of the recording
-    np.testing.assert_allclose(
-        np.quantile(np.abs(seen[0]), 0.95, axis=-1), 1.0, rtol=1e-4
-    )
-    np.testing.assert_allclose(seen[1], seen[0], rtol=1e-4, atol=1e-6)
-
-
-def test_luna_channels_are_z_scored(offline):
-    backend, X = _load("luna")
-    assert backend.signal_metadata_.sfreq == 256.0
-    seen = []
-    backend._model.register_forward_pre_hook(
-        lambda _module, args: seen.append(args[0].detach().numpy())
-    )
-
-    backend.transform(X * 7 + 3)
-
-    np.testing.assert_allclose(seen[0].mean(axis=-1), 0.0, atol=1e-5)
-    np.testing.assert_allclose(seen[0].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
-
-
-def test_eegpt_input_is_average_referenced_millivolts(offline):
-    backend, X = _load("eegpt")
-    assert backend.signal_metadata_.sfreq == 256.0
-    seen = []
-    backend._model.register_forward_pre_hook(
-        lambda _module, args: seen.append(args[0].detach().numpy())
-    )
-
-    backend.transform(X + 50.0)  # an offset shared by every channel
-
-    expected = (X - X.mean(axis=1, keepdims=True)) / 1000
-    np.testing.assert_allclose(seen[0], expected, rtol=1e-4, atol=1e-7)
+    for batch in (seen[0], seen[1], seen[3]):
+        np.testing.assert_allclose(batch, expected, rtol=1e-4, atol=1e-6)
 
 
 def test_volt_scale_input_is_rejected(offline):

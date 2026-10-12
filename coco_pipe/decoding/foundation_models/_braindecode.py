@@ -55,7 +55,6 @@ class BrainDecodeBackend(BackendBase):
     """
 
     _uses_interpolation: bool = False
-    _channel_adapter = None
     _channel_plan = None
 
     def __init__(
@@ -530,20 +529,6 @@ class BrainDecodeBackend(BackendBase):
             ):
                 module.train()
 
-    def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
-        """Fit on the model's native montage, as ``transform``/``predict`` do."""
-        self._validate(X)
-        X = self._native_input(X)
-        return self._fit_with_skorch(X, y, **fit_params)
-
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Class probabilities on the model's native montage."""
-        self._validate(X)
-        X = self._native_input(X)
-        if self._net_ is None:
-            raise RuntimeError("Model must be fitted before predict_proba().")
-        return np.asarray(self._net_.predict_proba(X))
-
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
@@ -669,18 +654,6 @@ class BrainDecodeBackend(BackendBase):
                 "native token representation."
             )
         return metadata
-
-    def _native_input(self, X: np.ndarray) -> np.ndarray:
-        """Bring validated microvolt windows to the input the model was trained on.
-
-        Maps the source montage ``(n, n_source, t)`` to the model's native
-        layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT name
-        subset), then applies the model's amplitude convention (see
-        ``BackendBase._native_amplitude``).
-        """
-        if self._channel_adapter is not None:
-            X = self._channel_adapter(X)
-        return self._native_amplitude(X)
 
     def checkpoint_components(self) -> dict:
         """BrainDecode keeps one model (LoRA-wrapped when applicable)."""
