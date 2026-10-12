@@ -675,8 +675,9 @@ class BrainDecodeBackend(BackendBase):
 
         Maps the source montage ``(n, n_source, t)`` to the model's native
         layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT name
-        subset), then applies the model's amplitude scale (CBraMod: units of
-        100 µV). A no-op when the model consumes microvolt channels as-is.
+        subset), then applies the model's amplitude scale (CBraMod and LaBraM:
+        units of 100 µV). A no-op when the model consumes microvolt channels
+        as-is.
         """
         if self._channel_adapter is not None:
             X = self._channel_adapter(X)

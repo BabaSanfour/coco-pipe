@@ -154,8 +154,9 @@ def test_fit_predict_and_reset_head(offline):
     assert backend.predict_proba(X).shape == (4, 3)
 
 
-def test_cbramod_receives_its_input_in_units_of_100_microvolts(offline):
-    backend, X = _load("cbramod", "full")
+@pytest.mark.parametrize("model_key", ["cbramod", "labram"])
+def test_input_in_units_of_100_microvolts(offline, model_key):
+    backend, X = _load(model_key, "full")
     seen = []
     backend._model.register_forward_pre_hook(
         lambda _module, args: seen.append(args[0].detach().numpy())

@@ -709,9 +709,12 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         supports_channel_interpolation=True,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
+        input_scale=0.01,
         model_notes=(
             "Requires 128 channels in LABRAM_CHANNEL_ORDER. "
-            "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets."
+            "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets. "
+            "Tokenized, pretrained and fine-tuned by its authors on signals in "
+            "units of 100 µV: the backend divides the microvolt input by 100."
         ),
     ),
     "luna": _fm_spec(
