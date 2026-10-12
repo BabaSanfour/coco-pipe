@@ -1,1 +1,0 @@
-LUNA receives windows whose channels are each z-scored, and is resampled to 256 Hz, as in its authors' pretraining and fine-tuning (`ChannelWiseNormalize` in `tasks/pretrain_task_LUNA.py`, 256 Hz in `docs/model/LUNA.md` of their repository). It was fed plain microvolts resampled to 200 Hz before, so LUNA embeddings and fine-tunes change and must be recomputed.

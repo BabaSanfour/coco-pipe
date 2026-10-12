@@ -158,6 +158,9 @@ def check_capability(
         "expects_microvolts": spec.expects_microvolts,
         "input_scale": spec.input_scale,
         "input_normalization": spec.input_normalization,
+        "input_reference": spec.input_reference,
+        "input_clip": spec.input_clip,
+        "finetune_input_scale": spec.finetune_input_scale,
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
@@ -534,6 +537,9 @@ class FoundationEmbeddingExtractor:
             "expects_microvolts": bool(spec.expects_microvolts),
             "input_scale": float(spec.input_scale),
             "input_normalization": spec.input_normalization,
+            "input_reference": spec.input_reference,
+            "input_clip": spec.input_clip,
+            "finetune_input_scale": spec.finetune_input_scale,
             "expected_passband": (
                 list(spec.expected_passband)
                 if spec.expected_passband is not None

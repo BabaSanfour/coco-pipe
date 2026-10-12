@@ -76,6 +76,9 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
     spec = get_estimator_spec(model_key)
     if model_key == "labram":
         kwargs.setdefault("interpolate_channels", True)
+    if model_key == "luna":
+        # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
+        kwargs.setdefault("n_times", 640)
     backend = BrainDecodeBackend.load(
         model_key,
         spec,
@@ -89,9 +92,11 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
     backend.signal_metadata_ = SignalMetadata(
         sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
     )
-    # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
-    seconds = 2.5 if model_key == "luna" else 2
-    n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * seconds)
+    n_times = (
+        spec.pretrained_n_times
+        or kwargs.get("n_times")
+        or round(spec.pretrained_sfreq * 2)
+    )
     X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
     return backend, X.astype(np.float32)
 
@@ -208,6 +213,20 @@ def test_luna_channels_are_z_scored(offline):
 
     np.testing.assert_allclose(seen[0].mean(axis=-1), 0.0, atol=1e-5)
     np.testing.assert_allclose(seen[0].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
+
+
+def test_eegpt_input_is_average_referenced_millivolts(offline):
+    backend, X = _load("eegpt")
+    assert backend.signal_metadata_.sfreq == 256.0
+    seen = []
+    backend._model.register_forward_pre_hook(
+        lambda _module, args: seen.append(args[0].detach().numpy())
+    )
+
+    backend.transform(X + 50.0)  # an offset shared by every channel
+
+    expected = (X - X.mean(axis=1, keepdims=True)) / 1000
+    np.testing.assert_allclose(seen[0], expected, rtol=1e-4, atol=1e-7)
 
 
 def test_volt_scale_input_is_rejected(offline):

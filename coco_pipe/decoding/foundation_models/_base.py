@@ -463,6 +463,33 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         self._net_.fit(X, y)
         return self
 
+    def _native_amplitude(self, X: np.ndarray) -> np.ndarray:
+        """Bring microvolt windows to the amplitude the model was trained on.
+
+        Applies the reference, scale, per-channel normalisation and clip the
+        spec declares (``FoundationModelSpec.input_*``). When the backbone is
+        trained and the spec gives a ``finetune_input_scale``, that factor
+        replaces the scale, normalisation and clip.
+        """
+        spec = self._metadata
+        if spec.input_reference == "average":
+            X = X - X.mean(axis=1, keepdims=True)
+        if self._train_mode != "frozen" and spec.finetune_input_scale is not None:
+            X = X * np.float32(spec.finetune_input_scale)
+            return X.astype(np.float32, copy=False)
+        if spec.input_scale != 1.0:
+            X = X * np.float32(spec.input_scale)
+        if spec.input_normalization == "quantile95":
+            X = X / (np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True) + 1e-8)
+        elif spec.input_normalization == "zscore":
+            # sample standard deviation, as torch.std in the authors' code
+            X = (X - X.mean(axis=-1, keepdims=True)) / (
+                X.std(axis=-1, ddof=1, keepdims=True) + 1e-8
+            )
+        if spec.input_clip is not None:
+            X = np.clip(X, -spec.input_clip, spec.input_clip)
+        return X.astype(np.float32, copy=False)
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Return class probabilities from the fitted skorch network."""
         self._validate(X)

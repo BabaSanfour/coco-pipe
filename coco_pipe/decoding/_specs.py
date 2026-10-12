@@ -270,12 +270,21 @@ class FoundationModelSpec(EstimatorSpec):
     supports_channel_interpolation: bool = False
     # Input-signal expectations (so callers/guardrails can match preprocessing).
     expects_microvolts: bool = True
-    # Factor the backend applies to the microvolt input before the model.
+    # What the backend does to the microvolt input before the model, in this
+    # order, so that the model sees what its authors trained it on.
+    # "average": subtract the mean over channels.
+    input_reference: str | None = None
+    # Factor applied to the signal.
     input_scale: float = 1.0
-    # Normalisation the backend applies to each channel of each window, after
-    # the scale: "quantile95" divides by the 95th percentile of the absolute
-    # value, "zscore" removes the mean and divides by the standard deviation.
+    # Per channel of each window: "quantile95" divides by the 95th percentile
+    # of the absolute value, "zscore" removes the mean and divides by the
+    # standard deviation.
     input_normalization: str | None = None
+    # Values are clipped to [-input_clip, input_clip].
+    input_clip: float | None = None
+    # When the backbone is trained (full, lora, qlora), this factor replaces
+    # the scale, normalisation and clip above.
+    finetune_input_scale: float | None = None
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
@@ -663,7 +672,19 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         preferred_backend="hugging_face",
         supported_train_modes=("frozen", "full", "lora", "qlora"),
         dependency_extra="transformers",
-        model_notes="Requires ch_names in SignalMetadata for positional encoding.",
+        input_normalization="zscore",
+        input_clip=15.0,
+        finetune_input_scale=0.01,
+        model_notes=(
+            "Requires ch_names in SignalMetadata for positional encoding. "
+            "Pretrained by its authors on z-scored channels clipped to ±15, and "
+            "evaluated downstream on signals in units of 100 µV. The backend "
+            "z-scores each channel of a window and clips it when the backbone "
+            "is frozen (embeddings, linear probe), and divides the microvolt "
+            "input by 100 when the backbone is trained. The authors z-score "
+            "with the statistics of a whole recording; a window is the unit "
+            "the backend sees."
+        ),
     ),
     "cbramod": _fm_spec(
         "cbramod",
@@ -751,11 +772,17 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         hub_repo="braindecode/eegpt-pretrained",
         checkpoint_revision="e41cb3ae2ce4fd9eb736862292c91f8128d15618",
         embedding_dim=2048,
-        pretrained_sfreq=250.0,
+        pretrained_sfreq=256.0,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
+        input_reference="average",
+        input_scale=0.001,
+        expected_reference="average",
         model_notes=(
-            "Pretrained at 250 Hz with a 62-name channel-embedding vocabulary. "
+            "Pretrained by its authors at 256 Hz on average-referenced signals "
+            "in millivolts, with a 62-name channel-embedding vocabulary: the "
+            "backend re-references the channels it keeps to their average and "
+            "divides the microvolt input by 1000. "
             "EEGPT identifies channels by name (chans_id), so the backend builds "
             "it on the input montage (chan_proj_type='none') and loads the full "
             "name-indexed checkpoint; channels outside the 62-name vocabulary are "

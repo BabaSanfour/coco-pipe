@@ -317,6 +317,18 @@ class HuggingFaceBackend(BackendBase):
 
         return _REVESklearnModule
 
+    def fit(self, X: np.ndarray, y=None, **fit_params) -> HuggingFaceBackend:
+        """Fit on the amplitude the model expects, as ``transform`` does."""
+        self._validate(X)
+        return self._fit_with_skorch(self._native_amplitude(X), y, **fit_params)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        """Class probabilities on the amplitude the model expects."""
+        self._validate(X)
+        if self._net_ is None:
+            raise RuntimeError("Model must be fitted before predict_proba().")
+        return np.asarray(self._net_.predict_proba(self._native_amplitude(X)))
+
     def _reve_forward(
         self, x_tensor, *, return_embeddings: bool, return_tokens: bool = False
     ):
@@ -369,6 +381,7 @@ class HuggingFaceBackend(BackendBase):
             Pooled backbone representations.
         """
         self._validate(X)
+        X = self._native_amplitude(X)
         batch_size = self._eval_batch_size()
         pooled_chunks: list[np.ndarray] = []
         token_chunks: list[np.ndarray] = []
@@ -414,6 +427,7 @@ class HuggingFaceBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        X = self._native_amplitude(X)
         batch_size = self._eval_batch_size()
         is_regression = self._task == "regression"
         chunks = []
