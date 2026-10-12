@@ -157,6 +157,7 @@ def check_capability(
         "requires_auth": spec.requires_auth,
         "expects_microvolts": spec.expects_microvolts,
         "input_scale": spec.input_scale,
+        "input_normalization": spec.input_normalization,
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
@@ -532,6 +533,7 @@ class FoundationEmbeddingExtractor:
             "normalize_embeddings": self.normalize_embeddings,
             "expects_microvolts": bool(spec.expects_microvolts),
             "input_scale": float(spec.input_scale),
+            "input_normalization": spec.input_normalization,
             "expected_passband": (
                 list(spec.expected_passband)
                 if spec.expected_passband is not None

@@ -272,6 +272,10 @@ class FoundationModelSpec(EstimatorSpec):
     expects_microvolts: bool = True
     # Factor the backend applies to the microvolt input before the model.
     input_scale: float = 1.0
+    # Normalisation the backend applies to each channel of each window, after
+    # the scale: "quantile95" divides by the 95th percentile of the absolute
+    # value.
+    input_normalization: str | None = None
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
@@ -688,13 +692,17 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         pretrained_sfreq=200.0,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
+        input_normalization="quantile95",
         model_notes=(
             "Pretrained on the 16-channel TCP bipolar (double-banana) montage. "
             "The backend constructs those 16 bipolar derivations by exact "
             "subtraction V(A)-V(B) from a standard unipolar 10-20 montage "
             "(never InterpolatedBIOT, whose midpoint interpolation is physically "
             "wrong). Supported when the 16 lateral 10-20 electrodes are present; "
-            "set backend_kwargs.fill_missing_channels=True to interpolate gaps."
+            "set backend_kwargs.fill_missing_channels=True to interpolate gaps. "
+            "Pretrained and fine-tuned by its authors on windows whose channels "
+            "are each divided by the 95th percentile of their absolute value: "
+            "the backend does the same to the bipolar channels."
         ),
     ),
     "labram": _fm_spec(

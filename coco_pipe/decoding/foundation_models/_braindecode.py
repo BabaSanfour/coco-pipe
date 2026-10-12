@@ -676,13 +676,18 @@ class BrainDecodeBackend(BackendBase):
         Maps the source montage ``(n, n_source, t)`` to the model's native
         layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT name
         subset), then applies the model's amplitude scale (CBraMod and LaBraM:
-        units of 100 µV). A no-op when the model consumes microvolt channels
-        as-is.
+        units of 100 µV) and normalisation (BIOT: each channel of a window
+        divided by the 95th percentile of its absolute value). A no-op when
+        the model consumes microvolt channels as-is.
         """
         if self._channel_adapter is not None:
             X = self._channel_adapter(X)
         scale = self._metadata.input_scale
-        return X if scale == 1.0 else X * np.float32(scale)
+        if scale != 1.0:
+            X = X * np.float32(scale)
+        if self._metadata.input_normalization == "quantile95":
+            X = X / (np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True) + 1e-8)
+        return X.astype(np.float32, copy=False)
 
     def checkpoint_components(self) -> dict:
         """BrainDecode keeps one model (LoRA-wrapped when applicable)."""

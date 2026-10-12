@@ -176,6 +176,24 @@ def test_input_in_units_of_100_microvolts(offline, model_key):
         assert np.abs(batch).max() == pytest.approx(np.abs(X).max() / 100)
 
 
+def test_biot_channels_are_divided_by_their_95th_percentile(offline):
+    backend, X = _load("biot")
+    seen = []
+    backend._model.register_forward_pre_hook(
+        lambda _module, args: seen.append(args[0].detach().numpy())
+    )
+
+    backend.transform(X)
+    backend.transform(X * 7)
+
+    # every bipolar channel of every window has the same amplitude, whatever
+    # the amplitude of the recording
+    np.testing.assert_allclose(
+        np.quantile(np.abs(seen[0]), 0.95, axis=-1), 1.0, rtol=1e-4
+    )
+    np.testing.assert_allclose(seen[1], seen[0], rtol=1e-4, atol=1e-6)
+
+
 def test_volt_scale_input_is_rejected(offline):
     backend, X = _load("cbramod", "full")
     volts = X * 30e-6
