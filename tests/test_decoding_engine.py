@@ -862,3 +862,6 @@ def test_score_by_scores_one_prediction_per_group():
     assert list(plain.columns) == ["accuracy", "roc_auc"]
     assert np.allclose(scores["roc_auc"], plain["roc_auc"])
     assert not np.allclose(scores["roc_auc_by_recording"], plain["roc_auc"])
+
+    with pytest.raises(ValueError, match="score_by 'visit' not found"):
+        run("visit")
