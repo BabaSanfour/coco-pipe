@@ -805,7 +805,7 @@ def test_fit_and_score_fold_releases_foundation_only(monkeypatch):
     assert fired["count"] == 1
 
 
-def test_score_by_group_scores_one_prediction_per_group():
+def test_score_by_scores_one_prediction_per_group():
     from sklearn.metrics import accuracy_score, roc_auc_score
 
     from coco_pipe.decoding import CVConfig, Experiment, ExperimentConfig
@@ -815,40 +815,53 @@ def test_score_by_group_scores_one_prediction_per_group():
     groups = np.repeat(np.arange(20), 6)
     y = groups % 2
     X = rng.normal(size=(120, 4)) + 0.4 * y[:, None]
+    # two recordings per subject: scoring pools by recording, folds stay by subject
+    recordings = np.repeat(np.arange(40), 3)
 
-    def run(score_by_group):
+    def run(score_by):
         config = ExperimentConfig(
             models={"lr": LogisticRegressionConfig()},
             cv=CVConfig(
                 strategy="stratified_group_kfold",
                 n_splits=2,
                 group_key="subject",
-                score_by_group=score_by_group,
+                score_by=score_by,
             ),
             metrics=["accuracy", "roc_auc"],
             n_jobs=1,
         )
-        metadata = {"subject": groups, "session": ["01"] * len(groups)}
+        metadata = {
+            "subject": groups,
+            "session": ["01"] * len(groups),
+            "recording": recordings,
+        }
         return Experiment(config).run(X, y, groups=groups, sample_metadata=metadata)
 
     def fold_scores(result):
         scores = result.get_detailed_scores("lr")
         return scores.pivot(index="Fold", columns="Metric", values="Value")
 
-    pooled, per_sample = run(True), run(False)
+    pooled, per_sample = run("recording"), run(None)
 
-    # the stored predictions stay per sample; only the fold scores change
+    # the stored predictions stay per sample; the pooled scores are added
     predictions = pooled.get_predictions("lr")
     assert len(predictions) == 120
     scores = fold_scores(pooled)
     for fold, rows in predictions.groupby("Fold"):
-        by_group = rows.groupby("Group").agg(
+        by_group = rows.groupby(recordings[rows["SampleIndex"]]).agg(
             y_true=("y_true", "first"), proba=("y_proba_1", "mean")
         )
-        assert scores.loc[fold, "roc_auc"] == pytest.approx(
+        assert scores.loc[fold, "roc_auc_by_recording"] == pytest.approx(
             roc_auc_score(by_group["y_true"], by_group["proba"])
         )
-        assert scores.loc[fold, "accuracy"] == pytest.approx(
+        assert scores.loc[fold, "accuracy_by_recording"] == pytest.approx(
             accuracy_score(by_group["y_true"], by_group["proba"] > 0.5)
         )
-    assert not np.allclose(scores["roc_auc"], fold_scores(per_sample)["roc_auc"])
+    # the per-sample scores are the ones of a run without score_by
+    plain = fold_scores(per_sample)
+    assert list(plain.columns) == ["accuracy", "roc_auc"]
+    assert np.allclose(scores["roc_auc"], plain["roc_auc"])
+    assert not np.allclose(scores["roc_auc_by_recording"], plain["roc_auc"])
+
+    with pytest.raises(ValueError, match="score_by 'visit' not found"):
+        run("visit")

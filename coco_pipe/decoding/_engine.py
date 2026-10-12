@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn import config_context
-from sklearn.base import BaseEstimator, is_classifier
+from sklearn.base import BaseEstimator
 from sklearn.feature_selection import (
     SelectKBest,
     SequentialFeatureSelector,
@@ -170,7 +170,9 @@ class _SafeSelectKBest(BaseEstimator):
         return self.selector_.get_support(indices=indices)
 
 
-def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict:
+def pool_by_group(
+    fold_data: dict[str, Any], classes: np.ndarray | None, by: np.ndarray
+) -> dict:
     """Reduce the test predictions of a fold to one prediction per group.
 
     Probabilities, decision scores and regression predictions are averaged
@@ -180,8 +182,8 @@ def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict
     Parameters
     ----------
     fold_data : dict
-        Per-sample ``group``, ``y_true``, ``y_pred`` and, when available,
-        ``y_proba`` and ``y_score``.
+        Per-sample ``y_true``, ``y_pred`` and, when available, ``y_proba``
+        and ``y_score``.
     classes : np.ndarray or None
         Sorted class labels, or None for regression.
 
@@ -190,14 +192,10 @@ def pool_by_group(fold_data: dict[str, Any], classes: np.ndarray | None) -> dict
     dict
         The same keys, with one row per group.
     """
-    if fold_data["group"] is None:
-        raise ValueError("score_by_group needs groups.")
-    groups, first, index = np.unique(
-        fold_data["group"], return_index=True, return_inverse=True
-    )
+    groups, first, index = np.unique(by, return_index=True, return_inverse=True)
     y_true = np.asarray(fold_data["y_true"])
     if not np.array_equal(y_true[first][index], y_true):
-        raise ValueError("score_by_group needs one target value per group.")
+        raise ValueError("score_by needs one target value per group.")
 
     def mean(values):
         values = np.asarray(values, dtype=float)
@@ -239,7 +237,7 @@ def fit_and_score_fold(
     search_enabled: bool = False,
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
-    score_by_group: bool = False,
+    score_by: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -431,37 +429,44 @@ def fit_and_score_fold(
 
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
-    scored = fold_data
-    if score_by_group:
-        scored = pool_by_group(
-            fold_data, np.unique(y[train_idx]) if is_classifier(estimator) else None
-        )
-        y_test, y_pred = scored["y_true"], scored["y_pred"]
-    is_multiclass = type_of_target(y_test) == "multiclass"
     metric_specs = {m: get_metric_spec(m) for m in metrics}
+    # every metric is scored per sample; with score_by, a second time on one
+    # prediction per value of that column, named "<metric>_by_<column>"
+    scored_sets = {"": fold_data}
+    if score_by is not None:
+        # the task comes from the metrics: a fine-tuned model is not a
+        # scikit-learn classifier
+        classifies = any(m.task == "classification" for m in metric_specs.values())
+        scored_sets[f"_by_{score_by}"] = pool_by_group(
+            fold_data,
+            np.unique(y[train_idx]) if classifies else None,
+            by=sample_metadata[score_by][test_idx],
+        )
 
     score_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
         warnings.simplefilter("always")
-        for name, m_spec in metric_specs.items():
-            if m_spec.response_method == "predict":
-                y_est, is_p = y_pred, False
-            elif m_spec.response_method == "proba":
-                y_est, is_p = scored.get("y_proba"), True
-            else:  # proba_or_score
-                y_est = scored.get("y_proba")
-                is_p = True
-                if y_est is None:
-                    y_est, is_p = scored.get("y_score"), False
+        for suffix, scored in scored_sets.items():
+            is_multiclass = type_of_target(scored["y_true"]) == "multiclass"
+            for name, m_spec in metric_specs.items():
+                if m_spec.response_method == "predict":
+                    y_est, is_p = scored["y_pred"], False
+                elif m_spec.response_method == "proba":
+                    y_est, is_p = scored.get("y_proba"), True
+                else:  # proba_or_score
+                    y_est = scored.get("y_proba")
+                    is_p = True
+                    if y_est is None:
+                        y_est, is_p = scored.get("y_score"), False
 
-            scores[name] = compute_metric_safe(
-                m_spec.scorer,
-                y_test,
-                y_est,
-                is_multiclass,
-                is_proba=is_p,
-                name=name,
-            )
+                scores[name + suffix] = compute_metric_safe(
+                    m_spec.scorer,
+                    scored["y_true"],
+                    y_est,
+                    is_multiclass,
+                    is_proba=is_p,
+                    name=name,
+                )
     captured_warnings.extend(warning_records_to_dict("score", warning_records))
     score_time = time.perf_counter() - score_start
 
