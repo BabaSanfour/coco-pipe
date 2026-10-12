@@ -19,7 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn import config_context
-from sklearn.base import BaseEstimator, is_classifier
+from sklearn.base import BaseEstimator
 from sklearn.feature_selection import (
     SelectKBest,
     SequentialFeatureSelector,
@@ -429,16 +429,19 @@ def fit_and_score_fold(
 
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
+    metric_specs = {m: get_metric_spec(m) for m in metrics}
     scored = fold_data
     if score_by is not None:
+        # the task comes from the metrics: a fine-tuned model is not a
+        # scikit-learn classifier
+        classifies = any(m.task == "classification" for m in metric_specs.values())
         scored = pool_by_group(
             fold_data,
-            np.unique(y[train_idx]) if is_classifier(estimator) else None,
+            np.unique(y[train_idx]) if classifies else None,
             by=sample_metadata[score_by][test_idx],
         )
         y_test, y_pred = scored["y_true"], scored["y_pred"]
     is_multiclass = type_of_target(y_test) == "multiclass"
-    metric_specs = {m: get_metric_spec(m) for m in metrics}
 
     score_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
