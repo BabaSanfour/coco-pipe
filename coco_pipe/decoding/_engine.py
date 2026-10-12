@@ -430,41 +430,43 @@ def fit_and_score_fold(
     # 5. Compute Metrics (Pre-fetched Specs)
     scores = {}
     metric_specs = {m: get_metric_spec(m) for m in metrics}
-    scored = fold_data
+    # every metric is scored per sample; with score_by, a second time on one
+    # prediction per value of that column, named "<metric>_by_<column>"
+    scored_sets = {"": fold_data}
     if score_by is not None:
         # the task comes from the metrics: a fine-tuned model is not a
         # scikit-learn classifier
         classifies = any(m.task == "classification" for m in metric_specs.values())
-        scored = pool_by_group(
+        scored_sets[f"_by_{score_by}"] = pool_by_group(
             fold_data,
             np.unique(y[train_idx]) if classifies else None,
             by=sample_metadata[score_by][test_idx],
         )
-        y_test, y_pred = scored["y_true"], scored["y_pred"]
-    is_multiclass = type_of_target(y_test) == "multiclass"
 
     score_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
         warnings.simplefilter("always")
-        for name, m_spec in metric_specs.items():
-            if m_spec.response_method == "predict":
-                y_est, is_p = y_pred, False
-            elif m_spec.response_method == "proba":
-                y_est, is_p = scored.get("y_proba"), True
-            else:  # proba_or_score
-                y_est = scored.get("y_proba")
-                is_p = True
-                if y_est is None:
-                    y_est, is_p = scored.get("y_score"), False
+        for suffix, scored in scored_sets.items():
+            is_multiclass = type_of_target(scored["y_true"]) == "multiclass"
+            for name, m_spec in metric_specs.items():
+                if m_spec.response_method == "predict":
+                    y_est, is_p = scored["y_pred"], False
+                elif m_spec.response_method == "proba":
+                    y_est, is_p = scored.get("y_proba"), True
+                else:  # proba_or_score
+                    y_est = scored.get("y_proba")
+                    is_p = True
+                    if y_est is None:
+                        y_est, is_p = scored.get("y_score"), False
 
-            scores[name] = compute_metric_safe(
-                m_spec.scorer,
-                y_test,
-                y_est,
-                is_multiclass,
-                is_proba=is_p,
-                name=name,
-            )
+                scores[name + suffix] = compute_metric_safe(
+                    m_spec.scorer,
+                    scored["y_true"],
+                    y_est,
+                    is_multiclass,
+                    is_proba=is_p,
+                    name=name,
+                )
     captured_warnings.extend(warning_records_to_dict("score", warning_records))
     score_time = time.perf_counter() - score_start
 

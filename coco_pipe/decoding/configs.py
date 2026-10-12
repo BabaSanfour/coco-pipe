@@ -822,8 +822,9 @@ class CVConfig(BaseModel):
     group_key : str, optional
         The column name in sample_metadata to use for group-aware strategies.
     score_by : str, optional
-        The column name in sample_metadata to pool the test predictions by
-        before scoring, for example the recording of each epoch.
+        A column name in sample_metadata to also score by, for example the
+        recording of each epoch. Every metric is then reported twice: per
+        sample, and as ``<metric>_by_<column>`` on pooled predictions.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -854,9 +855,10 @@ class CVConfig(BaseModel):
     score_by: str | None = Field(
         None,
         description=(
-            "sample_metadata column to score by: the test predictions that share "
-            "a value are averaged before the metrics are computed. It does not "
-            "change the folds. Predictions are stored per sample either way."
+            "sample_metadata column to also score by. Each metric gets a second "
+            "fold score, '<metric>_by_<column>', computed after averaging the test "
+            "predictions that share a value. The fit, the folds and the stored "
+            "per-sample predictions are unchanged."
         ),
     )
     auto_reduce_n_splits: bool = Field(

@@ -843,7 +843,7 @@ def test_score_by_scores_one_prediction_per_group():
 
     pooled, per_sample = run("recording"), run(None)
 
-    # the stored predictions stay per sample; only the fold scores change
+    # the stored predictions stay per sample; the pooled scores are added
     predictions = pooled.get_predictions("lr")
     assert len(predictions) == 120
     scores = fold_scores(pooled)
@@ -851,10 +851,14 @@ def test_score_by_scores_one_prediction_per_group():
         by_group = rows.groupby(recordings[rows["SampleIndex"]]).agg(
             y_true=("y_true", "first"), proba=("y_proba_1", "mean")
         )
-        assert scores.loc[fold, "roc_auc"] == pytest.approx(
+        assert scores.loc[fold, "roc_auc_by_recording"] == pytest.approx(
             roc_auc_score(by_group["y_true"], by_group["proba"])
         )
-        assert scores.loc[fold, "accuracy"] == pytest.approx(
+        assert scores.loc[fold, "accuracy_by_recording"] == pytest.approx(
             accuracy_score(by_group["y_true"], by_group["proba"] > 0.5)
         )
-    assert not np.allclose(scores["roc_auc"], fold_scores(per_sample)["roc_auc"])
+    # the per-sample scores are the ones of a run without score_by
+    plain = fold_scores(per_sample)
+    assert list(plain.columns) == ["accuracy", "roc_auc"]
+    assert np.allclose(scores["roc_auc"], plain["roc_auc"])
+    assert not np.allclose(scores["roc_auc_by_recording"], plain["roc_auc"])
