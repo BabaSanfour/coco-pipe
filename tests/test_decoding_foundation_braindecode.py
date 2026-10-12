@@ -89,7 +89,9 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
     backend.signal_metadata_ = SignalMetadata(
         sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
     )
-    n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 2)
+    # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
+    seconds = 2.5 if model_key == "luna" else 2
+    n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * seconds)
     X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
     return backend, X.astype(np.float32)
 
@@ -192,6 +194,20 @@ def test_biot_channels_are_divided_by_their_95th_percentile(offline):
         np.quantile(np.abs(seen[0]), 0.95, axis=-1), 1.0, rtol=1e-4
     )
     np.testing.assert_allclose(seen[1], seen[0], rtol=1e-4, atol=1e-6)
+
+
+def test_luna_channels_are_z_scored(offline):
+    backend, X = _load("luna")
+    assert backend.signal_metadata_.sfreq == 256.0
+    seen = []
+    backend._model.register_forward_pre_hook(
+        lambda _module, args: seen.append(args[0].detach().numpy())
+    )
+
+    backend.transform(X * 7 + 3)
+
+    np.testing.assert_allclose(seen[0].mean(axis=-1), 0.0, atol=1e-5)
+    np.testing.assert_allclose(seen[0].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
 
 
 def test_volt_scale_input_is_rejected(offline):

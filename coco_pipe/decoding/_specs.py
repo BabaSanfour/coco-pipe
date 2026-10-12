@@ -274,7 +274,7 @@ class FoundationModelSpec(EstimatorSpec):
     input_scale: float = 1.0
     # Normalisation the backend applies to each channel of each window, after
     # the scale: "quantile95" divides by the 95th percentile of the absolute
-    # value.
+    # value, "zscore" removes the mean and divides by the standard deviation.
     input_normalization: str | None = None
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
@@ -730,16 +730,19 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         display_name="LUNA",
         hub_repo="PulpBio/LUNA",
         embedding_dim=256,
-        pretrained_sfreq=200.0,
+        pretrained_sfreq=256.0,
         checkpoint_revision="999c1af0fd6fbfb43ed47169c61fe9faa49cfe9f",
         checkpoint_filename="LUNA_base.safetensors",
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         supported_train_modes=("frozen", "full", "lora"),
+        input_normalization="zscore",
         paper_url="https://openreview.net/forum?id=uazfjnFL0G",
         model_notes=(
             "Verified base variant: embed_dim=64, num_queries=4, depth=8; "
-            "pooled latent width is 256. Supports variable channel sets."
+            "pooled latent width is 256. Supports variable channel sets. "
+            "Pretrained and fine-tuned by its authors at 256 Hz on windows "
+            "whose channels are each z-scored: the backend does the same."
         ),
     ),
     "eegpt": _fm_spec(
