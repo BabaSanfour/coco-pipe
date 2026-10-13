@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import warnings
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -55,7 +56,6 @@ class BrainDecodeBackend(BackendBase):
     """
 
     _uses_interpolation: bool = False
-    _channel_adapter = None
     _channel_plan = None
 
     def __init__(
@@ -311,7 +311,14 @@ class BrainDecodeBackend(BackendBase):
                 device=device,
             )
         else:
-            model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+            with warnings.catch_warnings():
+                # braindecode asks for the channel names at forward: given below
+                warnings.filterwarnings("ignore", "Labram chs_info does not match")
+                model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        if model_key == "labram" and not uses_interpolation and electrode_names:
+            # As in the authors' code, each channel takes the position embedding
+            # of its name, so a subset of the pretraining channels is fed as is.
+            model.forward = partial(model.forward, ch_names=list(electrode_names))
         model = model.to(device)
 
         if train_mode == "frozen":
@@ -474,6 +481,16 @@ class BrainDecodeBackend(BackendBase):
             feats = cls._forward_features(model, probe, metadata.name)
         return int(feats.shape[-1])
 
+    @classmethod
+    def _forward_logits(cls, model, tensor, model_key: str):
+        if model_key == "bendr":
+            # The head reads the features of ``transform``, not BENDR's start
+            # token (see ``_forward_features``).
+            features = cls._forward_features(model, tensor, model_key).mean(dim=1)
+            return model.final_layer(features)
+        out = model(tensor)
+        return out["logits"] if isinstance(out, dict) else out
+
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
         if model_key == "bendr":
@@ -510,8 +527,8 @@ class BrainDecodeBackend(BackendBase):
                 self.model = backend._model
 
             def forward(self, X):
-                out = self.model(X)
-                return out["logits"] if isinstance(out, dict) else out
+                backend = self._backend
+                return backend._forward_logits(self.model, X, backend._metadata.name)
 
             def train(self, mode: bool = True):
                 super().train(mode)
@@ -529,20 +546,6 @@ class BrainDecodeBackend(BackendBase):
                 for parameter in module.parameters(recurse=False)
             ):
                 module.train()
-
-    def fit(self, X: np.ndarray, y=None, **fit_params) -> BrainDecodeBackend:
-        """Fit on the model's native montage, as ``transform``/``predict`` do."""
-        self._validate(X)
-        X = self._native_input(X)
-        return self._fit_with_skorch(X, y, **fit_params)
-
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """Class probabilities on the model's native montage."""
-        self._validate(X)
-        X = self._native_input(X)
-        if self._net_ is None:
-            raise RuntimeError("Model must be fitted before predict_proba().")
-        return np.asarray(self._net_.predict_proba(X))
 
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False
@@ -670,19 +673,6 @@ class BrainDecodeBackend(BackendBase):
             )
         return metadata
 
-    def _native_input(self, X: np.ndarray) -> np.ndarray:
-        """Bring validated microvolt windows to the input the model was trained on.
-
-        Maps the source montage ``(n, n_source, t)`` to the model's native
-        layout (BIOT bipolar derivation, BENDR reorder + SCALE, EEGPT name
-        subset), then applies the model's amplitude scale (CBraMod: units of
-        100 µV). A no-op when the model consumes microvolt channels as-is.
-        """
-        if self._channel_adapter is not None:
-            X = self._channel_adapter(X)
-        scale = self._metadata.input_scale
-        return X if scale == 1.0 else X * np.float32(scale)
-
     def checkpoint_components(self) -> dict:
         """BrainDecode keeps one model (LoRA-wrapped when applicable)."""
         return {"model": self._model}
@@ -754,8 +744,7 @@ class BrainDecodeBackend(BackendBase):
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
-                out = self._model(tensor)
-                logits = out["logits"] if isinstance(out, dict) else out
+                logits = self._forward_logits(self._model, tensor, self._metadata.name)
                 if is_regression:
                     chunks.append(self._from_tensor(logits).squeeze(-1))
                 else:

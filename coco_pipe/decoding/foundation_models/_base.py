@@ -36,6 +36,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     """
 
     _task: str = "classification"
+    _channel_adapter = None
     _device: str = "cpu"
     _n_outputs: int | None = None
     _expected_n_chans: int | None = None
@@ -176,7 +177,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         self : BackendBase
             The fitted backend instance.
         """
-        return self._fit_with_skorch(X, y, **fit_params)
+        self._validate(X)
+        return self._fit_with_skorch(self._native_input(X), y, **fit_params)
 
     def get_channel_adaptation(self) -> dict:
         """Return the channel mapping actually applied by the backend."""
@@ -463,12 +465,38 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         self._net_.fit(X, y)
         return self
 
+    def _native_input(self, X: np.ndarray) -> np.ndarray:
+        """Bring validated microvolt windows to the input the model was trained on.
+
+        Maps the source montage to the model's layout when the backend has a
+        channel adapter, then applies the amplitude convention the spec
+        declares (``FoundationModelSpec.input_*``).
+        """
+        spec = self._metadata
+        if self._channel_adapter is not None:
+            X = self._channel_adapter(X)
+        if spec.input_reference == "average":
+            X = X - X.mean(axis=1, keepdims=True)
+        if self._train_mode != "frozen" and spec.finetune_input_scale is not None:
+            return (X * spec.finetune_input_scale).astype(np.float32)
+        X = X * spec.input_scale
+        if spec.input_normalization == "quantile95":
+            X = X / (np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True) + 1e-8)
+        elif spec.input_normalization == "zscore":
+            # sample standard deviation, as torch.std in the authors' code
+            X = (X - X.mean(axis=-1, keepdims=True)) / (
+                X.std(axis=-1, ddof=1, keepdims=True) + 1e-8
+            )
+        if spec.input_clip is not None:
+            X = np.clip(X, -spec.input_clip, spec.input_clip)
+        return X.astype(np.float32)
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Return class probabilities from the fitted skorch network."""
         self._validate(X)
         if self._net_ is None:
             raise RuntimeError("Model must be fitted before predict_proba().")
-        return np.asarray(self._net_.predict_proba(X))
+        return np.asarray(self._net_.predict_proba(self._native_input(X)))
 
     def training_history(self) -> list:
         """Return the skorch training history (empty if not trained)."""
@@ -493,10 +521,12 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     def _from_tensor(t) -> np.ndarray:
         return t.detach().cpu().numpy()
 
-    @staticmethod
-    def _no_grad():
+    def _no_grad(self):
+        """Enter inference: evaluation mode (a fit can leave dropout on), no grad."""
         import torch
 
+        for module in self.checkpoint_components().values():
+            module.eval()
         return torch.no_grad()
 
     def _get_skorch_module(self):

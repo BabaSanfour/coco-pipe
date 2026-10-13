@@ -20,7 +20,7 @@ torch = pytest.importorskip("torch")
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "LaBraM": {"n_times": 3000},
+    "Labram": {"n_times": 3000},
     "InterpolatedLaBraM": {"n_times": 3000},
     "BIOT": {"n_times": 2000, "sfreq": 200.0},
 }
@@ -46,7 +46,7 @@ def offline(monkeypatch, tmp_path):
             params.setdefault(key, value)
         return cls(**params)
 
-    classes = ("BENDR", "BIOT", "CBraMod", "LaBraM", "InterpolatedLaBraM", "LUNA")
+    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "InterpolatedLaBraM", "LUNA")
     for name in (*classes, "SignalJEPA_Contextual"):
         if hasattr(bm, name):
             monkeypatch.setattr(
@@ -76,6 +76,9 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
     spec = get_estimator_spec(model_key)
     if model_key == "labram":
         kwargs.setdefault("interpolate_channels", True)
+    if model_key == "luna":
+        # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
+        kwargs.setdefault("n_times", 640)
     backend = BrainDecodeBackend.load(
         model_key,
         spec,
@@ -89,7 +92,11 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
     backend.signal_metadata_ = SignalMetadata(
         sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
     )
-    n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 2)
+    n_times = (
+        spec.pretrained_n_times
+        or kwargs.get("n_times")
+        or round(spec.pretrained_sfreq * 2)
+    )
     X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
     return backend, X.astype(np.float32)
 
@@ -143,6 +150,8 @@ def test_fit_predict_and_reset_head(offline):
     backend.fit(X, y, max_epochs=1, batch_size=2, validation_fraction=0.0)
     # no validation split: the epoch trains on all four windows
     assert "valid_loss" not in backend.training_history()[0]
+    # dropout is off once training is over
+    np.testing.assert_array_equal(backend.transform(X), backend.transform(X))
     # without groups, the fraction is held out by sample
     backend.fit(np.tile(X, (2, 1, 1)), np.tile(y, 2), max_epochs=1, batch_size=2)
     assert "valid_loss" in backend.training_history()[0]
@@ -154,8 +163,23 @@ def test_fit_predict_and_reset_head(offline):
     assert backend.predict_proba(X).shape == (4, 3)
 
 
-def test_cbramod_receives_its_input_in_units_of_100_microvolts(offline):
-    backend, X = _load("cbramod", "full")
+def _zscore(X):
+    return (X - X.mean(-1, keepdims=True)) / X.std(-1, ddof=1, keepdims=True)
+
+
+# What each model's authors feed it, from microvolt channels in its own montage.
+AUTHORS_INPUT = {
+    "cbramod": lambda X: X / 100,
+    "labram": lambda X: X / 100,
+    "biot": lambda X: X / np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True),
+    "luna": _zscore,
+    "eegpt": lambda X: (X - X.mean(1, keepdims=True)) / 1000,
+}
+
+
+@pytest.mark.parametrize("model_key", AUTHORS_INPUT)
+def test_models_receive_the_input_of_their_authors(offline, model_key):
+    backend, X = _load(model_key, "full")
     seen = []
     backend._model.register_forward_pre_hook(
         lambda _module, args: seen.append(args[0].detach().numpy())
@@ -168,11 +192,24 @@ def test_cbramod_receives_its_input_in_units_of_100_microvolts(offline):
     )
     backend.predict_proba(X)
 
-    np.testing.assert_allclose(seen[0], X / 100, rtol=1e-6)
-    # embedding, prediction, training and probabilities all see that scale
+    adapter = backend._channel_adapter
+    expected = AUTHORS_INPUT[model_key](adapter(X) if adapter else X)
+    # embedding, prediction, training and probabilities all see that input
     assert len(seen) == 4
-    for batch in seen:
-        assert np.abs(batch).max() == pytest.approx(np.abs(X).max() / 100)
+    for batch in (seen[0], seen[1], seen[3]):
+        np.testing.assert_allclose(batch, expected, rtol=1e-4, atol=1e-6)
+
+
+def test_bendr_head_reads_the_embedding_not_the_start_token(offline):
+    backend, X = _load("bendr", "full")
+    backend.fit(X, np.array([0, 1, 0, 1]), max_epochs=1, validation_fraction=0.0)
+    probabilities = backend.predict_proba(X)
+    with torch.no_grad():
+        logits = backend._model.final_layer(torch.from_numpy(backend.transform(X)))
+    np.testing.assert_allclose(
+        probabilities, logits.softmax(-1).numpy(), rtol=1e-4, atol=1e-6
+    )
+    np.testing.assert_array_equal(backend.predict(X), logits.argmax(-1).numpy())
 
 
 def test_volt_scale_input_is_rejected(offline):
@@ -192,10 +229,11 @@ def test_volt_scale_input_is_rejected(offline):
     assert backend.transform(np.zeros_like(X)).shape[0] == 4
 
 
-def test_load_passes_the_pinned_checkpoint(offline):
+def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     _load("cbramod")
-    spec = get_estimator_spec("cbramod")
-    assert offline[-1]["revision"] == spec.checkpoint_revision
+    assert "revision" not in offline[-1]
+    _load("cbramod", revision="abc123")
+    assert offline[-1]["revision"] == "abc123"
 
 
 def test_labram_interpolates_missing_channels(offline):
@@ -207,8 +245,11 @@ def test_labram_interpolates_missing_channels(offline):
     assert adaptation["interpolated_channels"]
     assert adaptation["interpolation_method"]
 
-    plain, _ = _load("cbramod")
+    # without interpolation the 19 channels go in as they are, found by name
+    plain, X = _load("labram", interpolate_channels=False)
     assert not plain.get_channel_adaptation().get("interpolated_channels")
+    _, tokens = plain.transform(X, return_tokens=True)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS) * 15, 200)
 
 
 def test_eegpt_refuses_a_partly_loaded_checkpoint(offline, tmp_path, monkeypatch):

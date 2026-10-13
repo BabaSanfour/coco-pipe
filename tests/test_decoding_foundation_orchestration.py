@@ -490,7 +490,7 @@ def test_gated_checkpoint_without_token_reports_authentication_required(
             "status": "authentication_required",
             "expected_embedding_dim": 512,
             "checkpoint": "brain-bzh/reve-base",
-            "checkpoint_revision": "fa9a2163a4b7c0a42c8e28b56077ef9c368944dc",
+            "checkpoint_revision": None,
             "checkpoint_filename": None,
             "reason": (
                 "Run `hf auth login` or set HF_TOKEN after accepting the "
