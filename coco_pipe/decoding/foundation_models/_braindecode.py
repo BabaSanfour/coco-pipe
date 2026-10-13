@@ -473,6 +473,16 @@ class BrainDecodeBackend(BackendBase):
             feats = cls._forward_features(model, probe, metadata.name)
         return int(feats.shape[-1])
 
+    @classmethod
+    def _forward_logits(cls, model, tensor, model_key: str):
+        if model_key == "bendr":
+            # The head reads the features of ``transform``, not BENDR's start
+            # token (see ``_forward_features``).
+            features = cls._forward_features(model, tensor, model_key).mean(dim=1)
+            return model.final_layer(features)
+        out = model(tensor)
+        return out["logits"] if isinstance(out, dict) else out
+
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
         if model_key == "bendr":
@@ -509,8 +519,8 @@ class BrainDecodeBackend(BackendBase):
                 self.model = backend._model
 
             def forward(self, X):
-                out = self.model(X)
-                return out["logits"] if isinstance(out, dict) else out
+                backend = self._backend
+                return backend._forward_logits(self.model, X, backend._metadata.name)
 
             def train(self, mode: bool = True):
                 super().train(mode)
@@ -726,8 +736,7 @@ class BrainDecodeBackend(BackendBase):
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
-                out = self._model(tensor)
-                logits = out["logits"] if isinstance(out, dict) else out
+                logits = self._forward_logits(self._model, tensor, self._metadata.name)
                 if is_regression:
                     chunks.append(self._from_tensor(logits).squeeze(-1))
                 else:

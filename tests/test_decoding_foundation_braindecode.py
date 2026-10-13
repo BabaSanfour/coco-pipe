@@ -198,6 +198,18 @@ def test_models_receive_the_input_of_their_authors(offline, model_key):
         np.testing.assert_allclose(batch, expected, rtol=1e-4, atol=1e-6)
 
 
+def test_bendr_head_reads_the_embedding_not_the_start_token(offline):
+    backend, X = _load("bendr", "full")
+    backend.fit(X, np.array([0, 1, 0, 1]), max_epochs=1, validation_fraction=0.0)
+    probabilities = backend.predict_proba(X)
+    with torch.no_grad():
+        logits = backend._model.final_layer(torch.from_numpy(backend.transform(X)))
+    np.testing.assert_allclose(
+        probabilities, logits.softmax(-1).numpy(), rtol=1e-4, atol=1e-6
+    )
+    np.testing.assert_array_equal(backend.predict(X), logits.argmax(-1).numpy())
+
+
 def test_volt_scale_input_is_rejected(offline):
     backend, X = _load("cbramod", "full")
     volts = X * 30e-6
