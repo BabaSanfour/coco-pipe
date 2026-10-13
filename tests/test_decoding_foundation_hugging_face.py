@@ -212,6 +212,25 @@ def test_transform_return_tokens_preserves_native_reve_output():
     ]
 
 
+def test_reve_input_depends_on_whether_the_backbone_is_trained():
+    adapter = _make_fitted_adapter(n_outputs=2)
+    X = np.random.default_rng(0).normal(scale=30.0, size=(3, 19, 400))
+    X[0, 0, 0] = 5000.0  # an artefact, far above 15 standard deviations
+
+    # frozen backbone: each channel z-scored and clipped, as in pretraining
+    adapter.transform(X)
+    frozen = adapter._backbone.call_args.args[0].numpy()
+    assert frozen.max() == pytest.approx(15.0)
+    np.testing.assert_allclose(frozen[1].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
+
+    # trained backbone: units of 100 microvolts, as in the authors' fine-tunes
+    adapter._train_mode = "full"
+    adapter.predict(X)
+    np.testing.assert_allclose(
+        adapter._backbone.call_args.args[0].numpy(), X / 100, rtol=1e-6
+    )
+
+
 def test_transform_raises_before_fit():
     import torch.nn as nn
 

@@ -1,0 +1,15 @@
+Five foundation models now receive the input their authors trained them on. They were all fed plain microvolts before, so their embeddings and fine-tunes change and must be recomputed. The convention of each model is read from its authors' code, is declared on `FoundationModelSpec` (`input_reference`, `input_scale`, `input_normalization`, `input_clip`, `finetune_input_scale`), is applied by the backend for embeddings and for fine-tuning, and is recorded with the embeddings:
+
+  - LaBraM: units of 100 µV (`/ 100` in the tokenizer, pretraining and fine-tuning engines).
+  - BIOT: each bipolar channel of a window divided by the 95th percentile of its absolute value.
+  - LUNA: each channel of a window z-scored, and resampling to 256 Hz instead of 200 Hz.
+  - REVE: each channel of a window z-scored and clipped to ±15 when the backbone is frozen (embeddings, linear probe), as in pretraining; units of 100 µV when the backbone is trained, as in the authors' downstream code. The authors z-score with the statistics of a whole recording; the backend only sees a window. The REVE backend applied no input convention at all before.
+  - EEGPT: average reference over the channels it keeps, millivolts, and resampling to 256 Hz instead of 250 Hz. The authors' own downstream code does not use one scale; this follows their pretraining data preparation.
+
+The eight foundation models are no longer pinned to a checkpoint revision: each load takes the latest revision of its Hugging Face repository (the pinned ones were the latest, apart from documentation commits on REVE). `backend_kwargs={"revision": ...}` still selects one.
+
+BENDR's classification head is trained on the mean of its time tokens, the features `transform()` returns. braindecode feeds the head the transformer output at the start token, which is almost the same for every input on the released checkpoint, so linear probes and LoRA fine-tunes stayed at chance.
+
+`transform()` and `predict()` of a foundation backend now run in evaluation mode. After a fit without a validation split the model was left in training mode, so both ran with dropout on.
+
+LaBraM without `interpolate_channels` now works on a subset of its pretraining channels: each channel takes the position embedding of its name, as in the authors' code. It raised before, so the only way to load it was interpolation to 128 channels, which costs 1,920 tokens per 15 s window instead of 285 for 19 channels.

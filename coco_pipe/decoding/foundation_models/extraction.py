@@ -131,19 +131,25 @@ def check_capability(
     interpolation_requested = bool(
         (backend_kwargs or {}).get("interpolate_channels", False)
     )
-    if requires_adaptation and (
-        not spec.supports_channel_interpolation or not interpolation_requested
-    ):
-        return CapabilityResult(
-            model_key,
-            train_mode,
-            "incompatible_channels",
-            (
-                f"Expected {spec.pretrained_n_chans} channels, got "
-                f"{len(normalized)}. Enable and validate channel interpolation."
-            ),
-            {"normalized_channels": normalized},
-        )
+    if requires_adaptation and not interpolation_requested:
+        # LaBraM takes any subset of its pretraining channels, found by name.
+        from braindecode.models.labram import LABRAM_CHANNEL_ORDER
+
+        known = {name.upper() for name in LABRAM_CHANNEL_ORDER}
+        unknown = [name for name in normalized if name.upper() not in known]
+        if unknown:
+            return CapabilityResult(
+                model_key,
+                train_mode,
+                "incompatible_channels",
+                (
+                    f"{unknown} are not among the {spec.pretrained_n_chans} "
+                    f"pretraining channels of {spec.display_name}. Drop them or "
+                    "enable channel interpolation."
+                ),
+                {"normalized_channels": normalized},
+            )
+        requires_adaptation = False
     details = {
         "display_name": spec.display_name,
         "pretrained_sfreq": spec.pretrained_sfreq,
@@ -157,6 +163,10 @@ def check_capability(
         "requires_auth": spec.requires_auth,
         "expects_microvolts": spec.expects_microvolts,
         "input_scale": spec.input_scale,
+        "input_normalization": spec.input_normalization,
+        "input_reference": spec.input_reference,
+        "input_clip": spec.input_clip,
+        "finetune_input_scale": spec.finetune_input_scale,
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
@@ -532,6 +542,10 @@ class FoundationEmbeddingExtractor:
             "normalize_embeddings": self.normalize_embeddings,
             "expects_microvolts": bool(spec.expects_microvolts),
             "input_scale": float(spec.input_scale),
+            "input_normalization": spec.input_normalization,
+            "input_reference": spec.input_reference,
+            "input_clip": spec.input_clip,
+            "finetune_input_scale": spec.finetune_input_scale,
             "expected_passband": (
                 list(spec.expected_passband)
                 if spec.expected_passband is not None

@@ -369,6 +369,7 @@ class HuggingFaceBackend(BackendBase):
             Pooled backbone representations.
         """
         self._validate(X)
+        X = self._native_input(X)
         batch_size = self._eval_batch_size()
         pooled_chunks: list[np.ndarray] = []
         token_chunks: list[np.ndarray] = []
@@ -414,6 +415,7 @@ class HuggingFaceBackend(BackendBase):
             (regression).
         """
         self._validate(X)
+        X = self._native_input(X)
         batch_size = self._eval_batch_size()
         is_regression = self._task == "regression"
         chunks = []
