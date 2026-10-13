@@ -14,7 +14,7 @@ from sklearn.base import BaseEstimator, clone
 from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import GroupKFold, StratifiedGroupKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
 def _cv_random_state(shuffle: bool, random_state: int | None) -> int | None:
@@ -80,6 +80,9 @@ def _cross_validate_score(
     y_values = np.asarray(y).reshape(-1)
     if len(X_values) != len(y_values):
         raise ValueError("X and y must have matching sample counts.")
+    # integer classes: a random forest with class_weight="balanced" fails on
+    # text labels in scikit-learn 1.9
+    y_values = LabelEncoder().fit_transform(y_values)
 
     group_values = None
     if groups is not None:
