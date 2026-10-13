@@ -12,16 +12,10 @@ on:
       - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
+  # No path filter here: "Build Sphinx docs" is a required check, and a check
+  # that never runs blocks the merge. The build job is skipped instead (a
+  # skipped job satisfies the requirement) when the files below are untouched.
   pull_request:
-    paths:
-      - "docs/**"
-      - "coco_pipe/**"
-      - "examples/**"
-      - "README.md"
-      - "CONTRIBUTING.md"
-      - "CHANGELOG.md"
-      - "pyproject.toml"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -32,8 +26,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    name: Detect docs changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      docs: ${{ steps.diff.outputs.docs }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Look for files the docs are built from
+        id: diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          pattern='^(docs/|coco_pipe/|examples/|README\.md$|CONTRIBUTING\.md$|CHANGELOG\.md$|pyproject\.toml$|\.github/workflows/docs\.yml$)'
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE "$pattern"; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: Build Sphinx docs
+    needs: changes
+    # always(): on a push the changes job is skipped and the build still runs
+    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.docs == 'true')
     runs-on: ubuntu-latest
 
     steps:
@@ -62,7 +84,8 @@ jobs:
 
   deploy:
     name: Deploy to GitHub Pages
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # always(): the skipped changes job would otherwise skip this one too
+    if: always() && needs.build.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
 
