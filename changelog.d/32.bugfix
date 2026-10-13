@@ -11,3 +11,5 @@ The eight foundation models are no longer pinned to a checkpoint revision: each 
 BENDR's classification head is trained on the mean of its time tokens, the features `transform()` returns. braindecode feeds the head the transformer output at the start token, which is almost the same for every input on the released checkpoint, so linear probes and LoRA fine-tunes stayed at chance.
 
 `transform()` and `predict()` of a foundation backend now run in evaluation mode. After a fit without a validation split the model was left in training mode, so both ran with dropout on.
+
+LaBraM without `interpolate_channels` now works on a subset of its pretraining channels: each channel takes the position embedding of its name, as in the authors' code. It raised before, so the only way to load it was interpolation to 128 channels, which costs 1,920 tokens per 15 s window instead of 285 for 19 channels.

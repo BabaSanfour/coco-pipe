@@ -20,7 +20,7 @@ torch = pytest.importorskip("torch")
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "LaBraM": {"n_times": 3000},
+    "Labram": {"n_times": 3000},
     "InterpolatedLaBraM": {"n_times": 3000},
     "BIOT": {"n_times": 2000, "sfreq": 200.0},
 }
@@ -46,7 +46,7 @@ def offline(monkeypatch, tmp_path):
             params.setdefault(key, value)
         return cls(**params)
 
-    classes = ("BENDR", "BIOT", "CBraMod", "LaBraM", "InterpolatedLaBraM", "LUNA")
+    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "InterpolatedLaBraM", "LUNA")
     for name in (*classes, "SignalJEPA_Contextual"):
         if hasattr(bm, name):
             monkeypatch.setattr(
@@ -245,8 +245,11 @@ def test_labram_interpolates_missing_channels(offline):
     assert adaptation["interpolated_channels"]
     assert adaptation["interpolation_method"]
 
-    plain, _ = _load("cbramod")
+    # without interpolation the 19 channels go in as they are, found by name
+    plain, X = _load("labram", interpolate_channels=False)
     assert not plain.get_channel_adaptation().get("interpolated_channels")
+    _, tokens = plain.transform(X, return_tokens=True)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS) * 15, 200)
 
 
 def test_eegpt_refuses_a_partly_loaded_checkpoint(offline, tmp_path, monkeypatch):

@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import warnings
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -310,7 +311,14 @@ class BrainDecodeBackend(BackendBase):
                 device=device,
             )
         else:
-            model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+            with warnings.catch_warnings():
+                # braindecode asks for the channel names at forward: given below
+                warnings.filterwarnings("ignore", "Labram chs_info does not match")
+                model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        if model_key == "labram" and not uses_interpolation and electrode_names:
+            # As in the authors' code, each channel takes the position embedding
+            # of its name, so a subset of the pretraining channels is fed as is.
+            model.forward = partial(model.forward, ch_names=list(electrode_names))
         model = model.to(device)
 
         if train_mode == "frozen":
