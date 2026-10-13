@@ -25,8 +25,13 @@ def resolve_primary_metric_name(
     Preference order: ``balanced_accuracy`` (the group-robust default), then the
     first configured metric that has a ``_mean`` column, then the first available
     ``*_mean`` column. Returns ``None`` when no scalar metric column is present.
+    A ``<metric>_by_<column>`` score (``CVConfig.score_by``) is never primary.
     """
-    mean_metrics = [str(col)[:-5] for col in available if str(col).endswith("_mean")]
+    mean_metrics = [
+        str(col)[:-5]
+        for col in available
+        if str(col).endswith("_mean") and "_by_" not in str(col)
+    ]
     if not mean_metrics:
         return None
     if "balanced_accuracy" in mean_metrics:
@@ -45,12 +50,16 @@ def stamp_primary_metric(
 
     Keeps every downstream consumer (leaderboards, head-to-head, reports) on one
     metric contract instead of re-deriving it. No-op when the record carries no
-    scalar ``*_mean`` metric column.
+    scalar ``*_mean`` metric column. With ``CVConfig.score_by``, the same metric
+    scored by that column is added as ``primary_metric_by_<column>``.
     """
     name = resolve_primary_metric_name(record.keys(), metrics)
     if name is not None:
         record["primary_metric_name"] = name
         record["primary_metric"] = record[f"{name}_mean"]
+        for key in [k for k in record if str(k).startswith(f"{name}_by_")]:
+            if str(key).endswith("_mean"):
+                record[f"primary_metric{str(key)[len(name) : -5]}"] = record[key]
     return record
 
 

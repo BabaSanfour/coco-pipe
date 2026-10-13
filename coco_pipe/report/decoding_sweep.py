@@ -64,6 +64,7 @@ from .tables import (
     signature_compatibility,
     sort_by_metrics,
     split_by_status,
+    with_score_by_columns,
 )
 
 # ---------------------------------------------------------------------------
@@ -2096,7 +2097,11 @@ def normalize_head_to_head_frame(
     """
     if frame.empty:
         return frame
-    present = [column for column in display_columns if column in frame.columns]
+    present = [
+        column
+        for column in with_score_by_columns(display_columns, frame)
+        if column in frame.columns
+    ]
     return sort_by_metrics(frame, tie_breakers=PRIMARY_TIE_BREAKERS).loc[:, present]
 
 

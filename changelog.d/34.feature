@@ -1,0 +1,1 @@
+Decoding report tables show the primary metric scored by the `CVConfig.score_by` column next to the per-sample one, as "Primary Score by <Column>". Result records carry it as `primary_metric_by_<column>`, and a `<metric>_by_<column>` score is never picked as the primary metric.
