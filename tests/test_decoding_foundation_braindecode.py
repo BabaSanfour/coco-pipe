@@ -150,6 +150,8 @@ def test_fit_predict_and_reset_head(offline):
     backend.fit(X, y, max_epochs=1, batch_size=2, validation_fraction=0.0)
     # no validation split: the epoch trains on all four windows
     assert "valid_loss" not in backend.training_history()[0]
+    # dropout is off once training is over
+    np.testing.assert_array_equal(backend.transform(X), backend.transform(X))
     # without groups, the fraction is held out by sample
     backend.fit(np.tile(X, (2, 1, 1)), np.tile(y, 2), max_epochs=1, batch_size=2)
     assert "valid_loss" in backend.training_history()[0]

@@ -7,3 +7,7 @@ Five foundation models now receive the input their authors trained them on. They
   - EEGPT: average reference over the channels it keeps, millivolts, and resampling to 256 Hz instead of 250 Hz. The authors' own downstream code does not use one scale; this follows their pretraining data preparation.
 
 The eight foundation models are no longer pinned to a checkpoint revision: each load takes the latest revision of its Hugging Face repository (the pinned ones were the latest, apart from documentation commits on REVE). `backend_kwargs={"revision": ...}` still selects one.
+
+BENDR's classification head is trained on the mean of its time tokens, the features `transform()` returns. braindecode feeds the head the transformer output at the start token, which is almost the same for every input on the released checkpoint, so linear probes and LoRA fine-tunes stayed at chance.
+
+`transform()` and `predict()` of a foundation backend now run in evaluation mode. After a fit without a validation split the model was left in training mode, so both ran with dropout on.

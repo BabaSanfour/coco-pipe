@@ -521,10 +521,12 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     def _from_tensor(t) -> np.ndarray:
         return t.detach().cpu().numpy()
 
-    @staticmethod
-    def _no_grad():
+    def _no_grad(self):
+        """Enter inference: evaluation mode (a fit can leave dropout on), no grad."""
         import torch
 
+        for module in self.checkpoint_components().values():
+            module.eval()
         return torch.no_grad()
 
     def _get_skorch_module(self):
