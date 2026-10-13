@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.datasets import make_classification
@@ -862,6 +863,19 @@ def test_score_by_scores_one_prediction_per_group():
     assert list(plain.columns) == ["accuracy", "roc_auc"]
     assert np.allclose(scores["roc_auc"], plain["roc_auc"])
     assert not np.allclose(scores["roc_auc_by_recording"], plain["roc_auc"])
+
+    # in a result table the pooled primary score sits next to the per-sample one
+    from coco_pipe.decoding import stamp_primary_metric
+    from coco_pipe.report.tables import display_frame
+
+    record = stamp_primary_metric(pooled.summary().reset_index().iloc[0].to_dict())
+    assert record["primary_metric"] == pytest.approx(scores["accuracy"].mean())
+    assert record["primary_metric_by_recording"] == pytest.approx(
+        scores["accuracy_by_recording"].mean()
+    )
+    columns = list(display_frame(pd.DataFrame([record])).columns)
+    at = columns.index("Primary Score")
+    assert columns[at + 1] == "Primary Score by Recording"
 
     with pytest.raises(ValueError, match="score_by 'visit' not found"):
         run("visit")

@@ -218,6 +218,17 @@ def relabel_columns(
     return [label_map.get(str(column), str(column)) for column in columns]
 
 
+def with_score_by_columns(order: Sequence[str], frame: pd.DataFrame) -> list[str]:
+    """Put the frame's ``primary_metric_by_<column>`` scores after the primary one."""
+    by = [str(c) for c in frame.columns if str(c).startswith("primary_metric_by_")]
+    columns: list[str] = []
+    for column in order:
+        columns.append(column)
+        if column == "primary_metric":
+            columns.extend(by)
+    return columns
+
+
 def display_frame(
     frame: pd.DataFrame,
     *,
@@ -241,9 +252,14 @@ def display_frame(
     )
     display_columns = [
         column
-        for column in column_order
+        for column in with_score_by_columns(column_order, frame)
         if column in frame and frame[column].notna().any()
     ]
+    for column in display_columns:
+        if column.startswith("primary_metric_by_"):
+            label_map.setdefault(
+                column, f"Primary Score by {column[18:].replace('_', ' ').title()}"
+            )
     display_columns = list(dict.fromkeys(display_columns))
     display = frame.loc[:, display_columns].copy()
     if round_decimals is not None:
@@ -267,4 +283,5 @@ __all__ = [
     "signature_compatibility",
     "sort_by_metrics",
     "split_by_status",
+    "with_score_by_columns",
 ]
