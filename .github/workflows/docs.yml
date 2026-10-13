@@ -12,16 +12,9 @@ on:
       - "CHANGELOG.md"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
+  # No path filter: "Build Sphinx docs" is a required check, and a pull request
+  # on which it never runs cannot be merged.
   pull_request:
-    paths:
-      - "docs/**"
-      - "coco_pipe/**"
-      - "examples/**"
-      - "README.md"
-      - "CONTRIBUTING.md"
-      - "CHANGELOG.md"
-      - "pyproject.toml"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
