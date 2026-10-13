@@ -615,6 +615,26 @@ def test_supervised_cv_score_errors():
         _cross_validate_score(est, X, y, groups=np.zeros(9))
 
 
+def test_separation_score_is_the_same_for_text_and_integer_labels():
+    from sklearn.ensemble import RandomForestClassifier
+
+    rng = np.random.default_rng(0)
+    y = np.tile([0, 1], 30)
+    X = rng.normal(size=(60, 3)) + y[:, None]
+    forest = RandomForestClassifier(
+        n_estimators=20, class_weight="balanced", random_state=0
+    )
+    groups = np.repeat(np.arange(30), 2)
+
+    scores = [
+        _cross_validate_score(forest, X, labels, groups=groups)
+        for labels in (y, y.astype(str), y.astype(object))
+    ]
+
+    assert 0.5 < scores[0] <= 1.0
+    assert scores[1] == scores[0] and scores[2] == scores[0]
+
+
 def test_supervised_splitter_success():
     from sklearn.model_selection import (
         GroupKFold,
