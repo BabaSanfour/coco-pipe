@@ -131,19 +131,25 @@ def check_capability(
     interpolation_requested = bool(
         (backend_kwargs or {}).get("interpolate_channels", False)
     )
-    if requires_adaptation and (
-        not spec.supports_channel_interpolation or not interpolation_requested
-    ):
-        return CapabilityResult(
-            model_key,
-            train_mode,
-            "incompatible_channels",
-            (
-                f"Expected {spec.pretrained_n_chans} channels, got "
-                f"{len(normalized)}. Enable and validate channel interpolation."
-            ),
-            {"normalized_channels": normalized},
-        )
+    if requires_adaptation and not interpolation_requested:
+        # LaBraM takes any subset of its pretraining channels, found by name.
+        from braindecode.models.labram import LABRAM_CHANNEL_ORDER
+
+        known = {name.upper() for name in LABRAM_CHANNEL_ORDER}
+        unknown = [name for name in normalized if name.upper() not in known]
+        if unknown:
+            return CapabilityResult(
+                model_key,
+                train_mode,
+                "incompatible_channels",
+                (
+                    f"{unknown} are not among the {spec.pretrained_n_chans} "
+                    f"pretraining channels of {spec.display_name}. Drop them or "
+                    "enable channel interpolation."
+                ),
+                {"normalized_channels": normalized},
+            )
+        requires_adaptation = False
     details = {
         "display_name": spec.display_name,
         "pretrained_sfreq": spec.pretrained_sfreq,

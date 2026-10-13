@@ -121,7 +121,7 @@ def test_labram_channel_adaptation_reports_real_19_to_128_mapping():
     assert adaptation["zero_filled_channels"] == []
 
 
-def test_labram_capability_requires_explicit_interpolation():
+def test_labram_capability_needs_known_channels_or_interpolation():
     channels = [f"ch-{index}" for index in range(19)]
     rejected = check_capability(
         "labram",
@@ -140,6 +140,11 @@ def test_labram_capability_requires_explicit_interpolation():
         backend_kwargs={"interpolate_channels": True},
     )
     assert accepted.status == "available"
+    # its own pretraining channels need no interpolation
+    known = check_capability(
+        "labram", train_mode="frozen", sfreq=200, ch_names=["Fp1", "Cz"], n_times=3000
+    )
+    assert known.status == "available"
 
 
 def test_reve_capability_reports_missing_gated_checkpoint_authentication():
