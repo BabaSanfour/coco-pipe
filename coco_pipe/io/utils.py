@@ -7,6 +7,7 @@ This module is intentionally thin: heavy quality logic lives in
 (``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -157,8 +158,21 @@ def split_column(name: str, sep: str, reverse: bool) -> tuple[str, str]:
 
 
 def load_participants_tsv(root: Path) -> dict[str, dict[str, Any]]:
-    """Return the rows of ``participants.tsv``, by normalized subject label."""
-    path = Path(root) / "participants.tsv"
+    """Return the rows of ``participants.tsv``, by normalized subject label.
+
+    A derivative dataset without one reads that of its first local source dataset
+    (a relative ``URL`` in ``SourceDatasets`` of ``dataset_description.json``).
+    """
+    root = Path(root)
+    path = root / "participants.tsv"
+    description = root / "dataset_description.json"
+    if not path.exists() and description.exists():
+        sources = json.loads(description.read_text(encoding="utf-8"))
+        for source in sources.get("SourceDatasets", []):
+            url = source.get("URL", "")
+            if "://" not in url:
+                path = root / url / "participants.tsv"
+                break
     if not path.exists():
         return {}
     table = pd.read_csv(path, sep="\t")

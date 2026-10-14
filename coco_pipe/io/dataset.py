@@ -490,7 +490,8 @@ class BIDSDataset(BaseDataset):
     Recordings are found and read with MNE-BIDS, as :class:`mne.Epochs`, and
     stacked with :func:`mne.concatenate_epochs`, so they must share their
     channels, sampling rate and epoch length. Metadata from ``participants.tsv``
-    is attached to every observation.
+    (for a derivative dataset, that of its source dataset) is attached to every
+    observation.
 
     Parameters
     ----------
