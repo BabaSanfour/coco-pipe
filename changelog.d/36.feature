@@ -1,0 +1,1 @@
+Saved epochs loaded from a BIDS derivative dataset (for example `derivatives/preproc`) get the participant metadata of its source dataset: `load_participants_tsv` falls back to the `participants.tsv` of the first local source named in `SourceDatasets` of `dataset_description.json`.
