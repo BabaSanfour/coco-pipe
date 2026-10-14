@@ -86,6 +86,13 @@ def test_load_participants_tsv(tmp_path):
     assert load_participants_tsv(tmp_path)["0001"] == {"age": 20}
     assert load_participants_tsv(tmp_path / "nowhere") == {}
 
+    derivative = tmp_path / "derivatives" / "preproc"
+    derivative.mkdir(parents=True)
+    (derivative / "dataset_description.json").write_text(
+        '{"DatasetType": "derivative", "SourceDatasets": [{"URL": "../../"}]}'
+    )
+    assert load_participants_tsv(derivative)["0001"] == {"age": 20}
+
     (tmp_path / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
     assert load_participants_tsv(tmp_path) == {}
 
