@@ -2,7 +2,8 @@
 
 This is the descriptor-specific table IO layer. It builds on the generic
 :func:`coco_pipe.io._serialization.read_table` primitive but owns the
-descriptor concerns: the ``_feature_columns.json`` sidecar contract, loading a
+descriptor concerns: the feature-column list each table carries in its
+parquet metadata, loading a
 descriptor table into a flat :class:`~coco_pipe.io.structures.DataContainer`,
 and the cross-shard **merge** stage.
 
@@ -11,7 +12,6 @@ Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -35,92 +35,82 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+FEATURE_COLUMNS_ATTR = "feature_columns"
+"""Key of the feature-column list in a descriptor table's ``DataFrame.attrs``."""
+
+
 def save_descriptor_table(
     df: pd.DataFrame,
     base_path: Path | str,
     feature_columns: Sequence[str] | None = None,
-    formats: Sequence[str] = ("parquet",),
 ) -> None:
-    """Write a descriptor table, with an optional feature-column sidecar.
+    """Write a descriptor table as ``{base_path}.parquet``.
 
-    :func:`load_descriptor_table` reads whichever single file it is pointed at,
-    so by default only the canonical ``{base_path}.parquet`` is written.  Pass
-    ``formats=("parquet", "csv")`` to additionally emit a human-readable
-    ``{base_path}.csv`` (doubles the on-disk footprint).  A
-    ``{base_path.name}_feature_columns.json`` sidecar is written when
-    *feature_columns* is given.
+    The ordered feature-column list is kept in the table itself: in
+    ``df.attrs["feature_columns"]``, which pandas stores in the parquet file's
+    metadata and restores on read, so a table is one self-describing file.
 
     Parameters
     ----------
     df
         Table to write.
     base_path
-        Output path without suffix, e.g. ``combined/sensor_subject_features``.
+        Output path without suffix, e.g. ``combined/sensor_recording_features``.
     feature_columns
-        Optional ordered list of descriptor feature-column names written to
-        a ``_feature_columns.json`` sidecar alongside the table.
-    formats
-        Table formats to write. Any subset of ``{"parquet", "csv"}``; defaults
-        to parquet only.
-
-    Raises
-    ------
-    ValueError
-        If *formats* is empty or contains an unsupported format.
+        Ordered list of descriptor feature-column names; defaults to the
+        table's own ``attrs``.
     """
     base_path = Path(base_path)
-    requested = tuple(formats)
-    unsupported = sorted(set(requested) - {"parquet", "csv"})
-    if not requested or unsupported:
-        raise ValueError(
-            "formats must be a non-empty subset of {'parquet', 'csv'}; "
-            f"got {list(requested)}."
-        )
     base_path.parent.mkdir(parents=True, exist_ok=True)
-    if "parquet" in requested:
-        df.to_parquet(base_path.with_suffix(".parquet"), index=False)
-    if "csv" in requested:
-        df.to_csv(base_path.with_suffix(".csv"), index=False)
     if feature_columns is not None:
-        (base_path.parent / f"{base_path.name}_feature_columns.json").write_text(
-            json.dumps(list(feature_columns), indent=2),
-            encoding="utf-8",
+        df = df.copy()
+        df.attrs[FEATURE_COLUMNS_ATTR] = list(feature_columns)
+    df.to_parquet(base_path.with_suffix(".parquet"), index=False)
+
+
+def feature_columns_of(df: pd.DataFrame, source: Path | str) -> list[str]:
+    """The feature-column list a descriptor table carries in its ``attrs``."""
+    columns = df.attrs.get(FEATURE_COLUMNS_ATTR)
+    if not isinstance(columns, list) or not all(isinstance(c, str) for c in columns):
+        raise ValueError(
+            f"{source} carries no feature-column list; write it with "
+            "save_descriptor_table(..., feature_columns=...)."
         )
+    return columns
 
 
 def check_feature_column_consistency(
-    shard_root: Path | str,
-    json_name: str,
+    feature_columns: Sequence[str],
     accumulated: dict[str, list[str] | None],
     col_key: str,
+    source: Path | str,
 ) -> None:
-    """Load a feature-column sidecar from *shard_root* and assert consistency.
+    """Assert that a table's feature columns match the first table of its kind.
 
     Intended for merging per-shard descriptor outputs: on the first call for
-    a given *col_key* the loaded column list is stored in *accumulated*. On
-    every subsequent call the loaded list is compared against the stored one
-    and a :class:`ValueError` is raised on any mismatch, preventing a silent
-    merge of shards produced with incompatible feature sets.
+    a given *col_key* the column list is stored in *accumulated*. On every
+    subsequent call it is compared against the stored one and a
+    :class:`ValueError` is raised on any mismatch, preventing a silent merge of
+    shards produced with incompatible feature sets.
 
     Parameters
     ----------
-    shard_root
-        Directory containing the ``json_name`` feature-column sidecar.
-    json_name
-        Filename of the feature-column JSON sidecar within *shard_root*.
+    feature_columns
+        Feature columns of the table being checked.
     accumulated
         Mapping of ``col_key -> feature column list``, mutated in place.
     col_key
-        Key identifying which feature-column set this sidecar belongs to
+        Key identifying which table kind the columns belong to
         (e.g. ``"sensor_epoch"``).
+    source
+        The table's path, for the error message.
     """
-    shard_root = Path(shard_root)
-    loaded: list[str] = json.loads((shard_root / json_name).read_text(encoding="utf-8"))
+    feature_columns = list(feature_columns)
     if accumulated.get(col_key) is None:
-        accumulated[col_key] = loaded
-    elif loaded != accumulated[col_key]:
+        accumulated[col_key] = feature_columns
+    elif feature_columns != accumulated[col_key]:
         raise ValueError(
-            f"Feature column mismatch detected in shard {shard_root!r} "
+            f"Feature column mismatch detected in {str(source)!r} "
             f"(key '{col_key}'): columns differ from the first shard.\n"
             "This usually means shards were produced with different configs. "
             "Clear the derivative root and re-run extraction with a single config."
@@ -129,92 +119,61 @@ def check_feature_column_consistency(
 
 def merge_descriptor_tables(
     table_paths: Sequence[Path | str],
-    feature_columns_paths: Sequence[Path | str] | None = None,
     *,
     out_base_path: Path | str | None = None,
-    formats: Sequence[str] = ("parquet",),
-) -> tuple[pd.DataFrame, list[str] | None]:
+) -> tuple[pd.DataFrame, list[str]]:
     """Merge per-shard tables of one *table kind* into a single table.
 
     The cross-shard **merge** stage. A "table kind" is one descriptor output
-    table — e.g. ``sensor_epoch`` / ``sensor_subject`` / ``pooled_subject`` —
-    written once per shard; this row-concatenates that kind across shards. (It
-    is not about the band/param/complexity descriptor *family*.) Each shard is
-    read, its feature-column sidecar is optionally checked against the first, the
-    rows are concatenated, and the combined table (plus sidecar) is optionally
-    written via :func:`save_descriptor_table`. Discovery, manifests, and
-    dataset-level QC are deliberately left to the caller, which calls this once
-    per table kind.
+    table, e.g. ``sensor_epoch``, written once per shard; this row-concatenates
+    that kind across shards. Each shard's feature columns are checked against
+    the first via :func:`check_feature_column_consistency`, the rows are
+    concatenated, and the combined table is optionally written via
+    :func:`save_descriptor_table`. Discovery, manifests, and dataset-level QC are
+    left to the caller, which calls this once per table kind.
 
     Parameters
     ----------
     table_paths
-        Per-shard table files (``.csv`` / ``.parquet``) for one table kind, in
-        the desired row order.
-    feature_columns_paths
-        Optional per-shard feature-column JSON sidecars, aligned with
-        *table_paths*. When given, cross-shard consistency is enforced via
-        :func:`check_feature_column_consistency` and the agreed column list is
-        used as the combined sidecar.
+        Per-shard parquet tables for one table kind, in the desired row order.
     out_base_path
         Optional output path without suffix. When set, the combined table is
         written there via :func:`save_descriptor_table`.
-    formats
-        Output formats forwarded to :func:`save_descriptor_table` (default
-        parquet only).
 
     Returns
     -------
     tuple
-        ``(combined_df, feature_columns)`` where ``feature_columns`` is the
-        validated column list when *feature_columns_paths* was provided, else
-        ``None``.
+        ``(combined_df, feature_columns)``.
 
     Raises
     ------
     ValueError
-        If *table_paths* is empty, the sidecar list is misaligned, or a shard's
-        feature columns differ from the first shard.
+        If *table_paths* is empty, a table carries no feature-column list, or a
+        shard's feature columns differ from the first shard.
     """
     table_paths = [Path(path) for path in table_paths]
     if not table_paths:
         raise ValueError("merge_descriptor_tables requires at least one table path.")
 
-    sidecars: list[Path] | None = None
-    if feature_columns_paths is not None:
-        sidecars = [Path(path) for path in feature_columns_paths]
-        if len(sidecars) != len(table_paths):
-            raise ValueError(
-                "feature_columns_paths must align with table_paths "
-                f"({len(sidecars)} != {len(table_paths)})."
-            )
-
     accumulated: dict[str, list[str] | None] = {"features": None}
     frames: list[pd.DataFrame] = []
-    for index, table_path in enumerate(table_paths):
+    for table_path in table_paths:
         # Preserve every column exactly so shards stay aligned on concat.
-        frames.append(read_table(table_path, drop_all_empty=False))
-        if sidecars is not None:
-            sidecar = sidecars[index]
-            check_feature_column_consistency(
-                sidecar.parent, sidecar.name, accumulated, "features"
-            )
+        frame = read_table(table_path, drop_all_empty=False)
+        check_feature_column_consistency(
+            feature_columns_of(frame, table_path), accumulated, "features", table_path
+        )
+        frames.append(frame)
 
     combined = pd.concat(frames, ignore_index=True)
     feature_columns = accumulated["features"]
     if out_base_path is not None:
-        save_descriptor_table(
-            combined,
-            out_base_path,
-            feature_columns=feature_columns,
-            formats=formats,
-        )
+        save_descriptor_table(combined, out_base_path, feature_columns=feature_columns)
     return combined, feature_columns
 
 
 def load_descriptor_table(
     table_path: Path | str,
-    feature_columns_path: Path | str,
     known_families: tuple[str, ...] = ("band", "param", "complexity"),
     condition: str | None = None,
     target_col: str | None = None,
@@ -232,7 +191,6 @@ def load_descriptor_table(
 ) -> DataContainer:
     """Load a descriptor feature table into a :class:`~coco_pipe.io.DataContainer`."""
     table_path = Path(table_path)
-    feature_columns_path = Path(feature_columns_path)
     max_abs = None
     if descriptor_max_abs_value is not None:
         max_abs = float(descriptor_max_abs_value)
@@ -243,6 +201,7 @@ def load_descriptor_table(
         table_path,
         drop_all_empty=not drop_degenerate_columns,
     )
+    raw_cols = feature_columns_of(df, table_path)
 
     if condition is not None:
         if "condition" not in df.columns:
@@ -261,14 +220,6 @@ def load_descriptor_table(
     if df.empty:
         raise RuntimeError(f"No rows survived filtering for condition={condition!r}.")
     n_rows_entering_qc = len(df)
-
-    raw_cols = json.loads(feature_columns_path.read_text(encoding="utf-8"))
-    if not isinstance(raw_cols, list) or not all(
-        isinstance(column, str) for column in raw_cols
-    ):
-        raise ValueError(
-            f"Expected {feature_columns_path} to contain a JSON list of columns."
-        )
 
     missing_columns = [column for column in raw_cols if column not in df.columns]
     if missing_columns:
