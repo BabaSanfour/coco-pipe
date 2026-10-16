@@ -519,7 +519,9 @@ exactly one group per test fold, and a chance level :math:`p_0`. With
 ``matthews_corrcoef`` and ``cohen_kappa``. Other metrics need an explicit
 ``p0``. The test assumes that each deviation is symmetric about zero under the
 null. For subjects with unbalanced classes, plain accuracy breaks this
-assumption, so use ``balanced_accuracy`` or ``roc_auc`` instead. Cross-validated
+assumption: a chance-level classifier can score up to the majority-class rate,
+not one over the number of classes. The run logs a warning when that happens;
+use ``balanced_accuracy`` or ``roc_auc`` instead. Cross-validated
 accuracies can also fall below chance under the null in small samples
 (Jamalabadi et al., 2016, *Human Brain Mapping* 37:1842–1855), which makes the
 test conservative.
@@ -545,7 +547,8 @@ inference answers that question.
 
 Rows carry ``NullMethod="sign_flip_group"``, ``InferentialUnit="group"`` and
 ``NEff`` equal to the number of subjects. ``CILower`` and ``CIUpper`` are a
-bootstrap over subjects.
+bootstrap over subjects, with ``StatisticalAssessmentConfig.n_bootstraps``
+resamples.
 
 ---
 

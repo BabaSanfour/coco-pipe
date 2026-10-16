@@ -773,7 +773,9 @@ def test_stratified_scheme_over_time_keeps_the_temporal_correction():
 # --- group-level sign-flip test -------------------------------------------------------
 
 
-def _sign_flip_run(X, y, groups, metric="accuracy", time_axis=None, **chance):
+def _sign_flip_run(
+    X, y, groups, metric="accuracy", time_axis=None, n_bootstraps=1000, **chance
+):
     base = ClassicalModelConfig(estimator="LogisticRegression")
     model = (
         LogisticRegressionConfig()
@@ -783,6 +785,7 @@ def _sign_flip_run(X, y, groups, metric="accuracy", time_axis=None, **chance):
     assessment = StatisticalAssessmentConfig(
         enabled=True,
         metrics=[metric],
+        n_bootstraps=n_bootstraps,
         chance=ChanceAssessmentConfig(
             method="sign_flip", store_null_distribution=True, **chance
         ),
@@ -853,3 +856,26 @@ def test_sign_flip_needs_one_group_per_fold_and_a_chance_level():
     result = _sign_flip_run(X, y, SUBJECTS, metric="f1", p0=0.5, n_permutations=10)
     (row,) = result.raw["m"]["statistical_assessment"]
     assert row["P0"] == 0.5
+
+
+def test_sign_flip_warns_when_accuracy_chance_ignores_unbalanced_groups(caplog):
+    # subject 5 holds 8 trials of one class and 4 of the other
+    X, y, _ = _within_subject_data()
+    with caplog.at_level("WARNING", logger="coco_pipe.decoding.stats"):
+        _sign_flip_run(X, y, SUBJECTS, n_permutations=10)
+    assert "1 groups (first: 5) have unbalanced classes" in caplog.text
+
+    caplog.clear()
+    blocked_X, blocked_y, _ = _within_subject_data(blocked=True)
+    with caplog.at_level("WARNING", logger="coco_pipe.decoding.stats"):
+        _sign_flip_run(blocked_X, blocked_y, SUBJECTS, n_permutations=10)
+        _sign_flip_run(X, y, SUBJECTS, metric="balanced_accuracy", n_permutations=10)
+        _sign_flip_run(X, y, SUBJECTS, p0=0.6, n_permutations=10)
+    assert "unbalanced classes" not in caplog.text
+
+
+def test_sign_flip_interval_takes_the_configured_bootstrap_count():
+    X, y, _ = _within_subject_data(blocked=True)
+    result = _sign_flip_run(X, y, SUBJECTS, n_permutations=10, n_bootstraps=1)
+    (row,) = result.get_statistical_assessment().to_dict("records")
+    assert row["CILower"] == row["CIUpper"]  # one resample, one interval point

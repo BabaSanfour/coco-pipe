@@ -716,7 +716,7 @@ def _run_permutation_assessment(
         observed_agg,
         metric=metric,
         score_keys=score_keys,
-        n_bootstraps=1000,
+        n_bootstraps=config.n_bootstraps,
         random_state=config.random_state,
     )
 
@@ -1155,6 +1155,18 @@ def _run_sign_flip_assessment(
         )
 
     chance = _sign_flip_chance(metric, config.chance.p0, predictions["y_true"])
+    if metric == "accuracy" and config.chance.p0 in {None, "auto"}:
+        samples = predictions.drop_duplicates(["Fold", "SampleID"])
+        counts = pd.crosstab(samples["Group"], samples["y_true"])
+        unbalanced = counts.index[counts.nunique(axis=1) > 1].tolist()
+        if len(unbalanced):
+            logger.warning(
+                f"Sign-flip chance for accuracy is taken as {chance:g}, but "
+                f"{len(unbalanced)} groups (first: {unbalanced[0]!r}) have "
+                "unbalanced classes, where a chance-level classifier can score "
+                "up to the majority-class rate; the test is biased. Use "
+                "balanced_accuracy or set chance.p0."
+            )
     temporal_cols = [
         col
         for col in TEMPORAL_COLUMNS
@@ -1197,7 +1209,7 @@ def _run_sign_flip_assessment(
         return np.round(np.divide(m, se, out=infinite, where=se > 0), 9)
 
     resampled = np.random.default_rng(boot_seed).integers(
-        0, n_groups, size=(1000, n_groups)
+        0, n_groups, size=(config.n_bootstraps, n_groups)
     )
     boot_array = scores[resampled].mean(axis=1)
 

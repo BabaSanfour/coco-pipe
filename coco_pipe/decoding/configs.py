@@ -1188,8 +1188,9 @@ class StatisticalAssessmentConfig(BaseModel):
         1000,
         ge=1,
         description=(
-            "Resamples used for the paired comparison's confidence interval. "
-            "Independent of `chance.n_permutations`, which sets the p-value."
+            "Resamples used for the bootstrap confidence intervals of the "
+            "chance tests and the paired comparison. Independent of "
+            "`chance.n_permutations`, which sets the p-value."
         ),
     )
 
