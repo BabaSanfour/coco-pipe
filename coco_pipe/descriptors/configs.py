@@ -299,9 +299,13 @@ class ComplexityDescriptorConfig(_StrictConfigModel):
         Complexity measures to compute.
     measure_kwargs : dict of str to dict, default={}
         Per-measure keyword arguments forwarded to the backend implementation.
+    bandpass : tuple of (float, float), optional
+        ``(l_freq, h_freq)`` in Hz. When set, each epoch is band-passed with
+        :func:`mne.filter.filter_data` before the measures are computed.
 
     Notes
     -----
+    Each epoch is centred on its own mean before the measures are computed.
     Complexity measures are signal-domain descriptors. Unlike the PSD-based
     families, they do not participate in shared PSD planning.
     """
@@ -310,6 +314,18 @@ class ComplexityDescriptorConfig(_StrictConfigModel):
     backend: Literal["antropy", "neurokit2", "auto"] = "antropy"
     measures: list[str] = Field(default_factory=lambda: list(_COMPLEXITY_MEASURES))
     measure_kwargs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    bandpass: tuple[float, float] | None = None
+
+    @field_validator("bandpass")
+    @classmethod
+    def _validate_bandpass(
+        cls, value: tuple[float, float] | None
+    ) -> tuple[float, float] | None:
+        if value is not None and not 0 < value[0] < value[1]:
+            raise ValueError(
+                "bandpass must be (l_freq, h_freq) with 0 < l_freq < h_freq."
+            )
+        return value
 
     @field_validator("measures", mode="before")
     @classmethod

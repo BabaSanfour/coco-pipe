@@ -173,13 +173,30 @@ def test_simple_complexity_measures_match_their_definition():
         channels=["Fz"],
     )
 
-    assert values["complexity_zero_crossings_ch-Fz"][0] == 4
+    # measured on the epoch centred on its own mean
+    centred = signal - signal.mean()
+    assert values["complexity_zero_crossings_ch-Fz"][0] == 3
     assert values["complexity_rms_ch-Fz"][0] == pytest.approx(
-        np.sqrt(np.mean(signal**2))
+        np.sqrt(np.mean(centred**2))
     )
     assert values["complexity_kurtosis_ch-Fz"][0] == pytest.approx(
         kurtosis(signal, fisher=True, bias=False)
     )
+
+
+def test_complexity_bandpass_removes_drift_below_the_band():
+    times = np.arange(2000) / 200.0
+    sine = np.sin(2 * np.pi * 10.0 * times)
+    drifting = (sine + 3.0 * np.sin(2 * np.pi * 0.2 * times)).reshape(1, 1, -1)
+    config = {"complexity": {"enabled": True, "measures": ["zero_crossings"]}}
+    raw, _ = _extract(drifting, config, channels=["Fz"])
+    config["complexity"]["bandpass"] = (1.0, 45.0)
+    filtered, _ = _extract(drifting, config, channels=["Fz"])
+
+    # a 10 Hz sine crosses zero 200 times in 10 s; a slow drift three times larger
+    # hides most crossings until it is filtered out
+    assert raw["complexity_zero_crossings_ch-Fz"][0] < 50
+    assert filtered["complexity_zero_crossings_ch-Fz"][0] == pytest.approx(200, abs=2)
 
 
 def test_auto_backend_computes_every_measure_and_separates_order_from_noise():
