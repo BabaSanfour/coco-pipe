@@ -68,6 +68,8 @@ def compute_psd(
     method: str,
     fmin: float,
     fmax: float,
+    welch_segment_length: float,
+    welch_overlap: float,
     n_jobs: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -85,6 +87,11 @@ def compute_psd(
         Lower frequency bound passed to the PSD backend.
     fmax : float
         Upper frequency bound passed to the PSD backend.
+    welch_segment_length : float
+        Length in seconds of one Welch segment. Ignored by multitaper.
+    welch_overlap : float
+        Overlap between consecutive Welch segments, as a fraction of the
+        segment. Ignored by multitaper.
     n_jobs : int, optional
         Parallel worker count forwarded to the MNE PSD backend when the caller
         enables PSD-level parallelism. `None` leaves the backend default in
@@ -98,26 +105,24 @@ def compute_psd(
 
     Notes
     -----
-    For Welch PSDs, the descriptors module uses:
-
-    - ``n_fft = min(n_times, 256)``
-    - ``n_per_seg = n_fft``
-
-    while enforcing a minimum of `8` for both values. This keeps Welch
-    behavior bounded and deterministic across the current descriptor tests and
-    examples.
+    A Welch segment holds ``round(welch_segment_length * sfreq)`` samples, or
+    the whole epoch when the epoch is shorter, and is not zero-padded
+    (``n_fft = n_per_seg``): the frequency resolution is ``sfreq / n_per_seg``,
+    0.5 Hz for 2 s segments. Consecutive segments overlap by
+    ``int(welch_overlap * n_per_seg)`` samples.
     """
     psd_array_welch, psd_array_multitaper = load_mne_psd_functions()
 
     if method == "welch":
-        n_fft = min(int(X.shape[-1]), 256)
+        n_per_seg = min(round(welch_segment_length * sfreq), X.shape[-1])
         psd, freqs = psd_array_welch(
             X,
             sfreq=sfreq,
             fmin=fmin,
             fmax=fmax,
-            n_fft=max(n_fft, 8),
-            n_per_seg=max(n_fft, 8),
+            n_fft=n_per_seg,
+            n_per_seg=n_per_seg,
+            n_overlap=int(welch_overlap * n_per_seg),
             average="mean",
             n_jobs=n_jobs,
             verbose=False,

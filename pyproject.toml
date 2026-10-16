@@ -269,7 +269,7 @@ filterwarnings = [
   "ignore:.*is not group-aware.*:UserWarning",
   "ignore:.*uses channel names for positional encoding.*:UserWarning",
   "ignore:.*Variable epoch lengths detected.*:RuntimeWarning",
-  "ignore:.*references three external CDN scripts.*:UserWarning",
+  "ignore:.*references external CDN scripts.*:UserWarning",
   "ignore:.*expects data filtered between.*:UserWarning",
   # (1) third-party noise --------------------------------------------------
   "ignore:.*groups parameter is ignored.*:UserWarning",

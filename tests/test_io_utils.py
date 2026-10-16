@@ -149,6 +149,9 @@ def test_compute_constant_feature_summary():
             "constant": [2.0, 2.0, 2.0],
             "near_constant": [1.0, 1.0, 1.0 + 1e-13],
             "variable": [1.0, 2.0, 3.0],
+            # A power in V²: varies by less than 1e-12 but is not constant.
+            "small_unit": [1e-12, 2e-12, 3e-12],
+            "zeros": [0.0, 0.0, 0.0],
         }
     )
     summary = compute_constant_feature_summary(frame, list(frame)).set_index("column")
@@ -157,5 +160,7 @@ def test_compute_constant_feature_summary():
     assert summary.loc["constant", "std"] == 0.0
     assert bool(summary.loc["near_constant", "is_constant"])
     assert not bool(summary.loc["variable", "is_constant"])
+    assert not bool(summary.loc["small_unit", "is_constant"])
+    assert bool(summary.loc["zeros", "is_constant"])
     with pytest.raises(ValueError, match="tol must be non-negative"):
         compute_constant_feature_summary(frame, ["constant"], tol=-1)

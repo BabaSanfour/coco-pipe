@@ -20,6 +20,7 @@ from .configs import DescriptorConfig
 from .core import DescriptorPipeline
 from .io import (
     check_feature_column_consistency,
+    feature_columns_of,
     load_descriptor_table,
     merge_descriptor_tables,
     save_descriptor_table,
@@ -43,6 +44,7 @@ __all__ = [
     "build_descriptor_feature_metadata",
     "build_descriptor_tables",
     "check_feature_column_consistency",
+    "feature_columns_of",
     "load_descriptor_table",
     "mad_failures_from_qc",
     "merge_descriptor_tables",

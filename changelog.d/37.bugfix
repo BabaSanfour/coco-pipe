@@ -1,0 +1,25 @@
+Band power of the descriptors leaves no gap between bands: a band holds the PSD bins in `[low, high)` and its power is their sum times the frequency step, and the total behind relative power is the same sum over `[fmin, fmax)`, so the relative powers of bands that tile the window sum to 1. It was a trapezoid over the bins inside each band, which left out the strip between adjacent bands: the canonical bands summed to about 0.93 and white-noise delta power was 79 % of its true value. Corrected band power and the assignment of fitted peaks to bands, `alpha_peak_freq` included, use the same half-open rule.
+
+The Welch PSD of the descriptors uses 2 s segments with 50 % overlap, set by `welch_segment_length` and `welch_overlap` on `BandDescriptorConfig` and `ParametricDescriptorConfig`. It used at most 256 samples per segment, whatever the sampling rate: 0.78 Hz resolution at 200 Hz, and the last 208 samples of a 10 s epoch were dropped. Band powers, relative powers, ratios and parametric fits computed with Welch change and must be recomputed.
+
+`compute_row_outlier_scores`, and with it `drop_epoch_outliers` and the subject outlier helpers, no longer scores a feature whose MAD is zero, and takes each row's outlier fraction over the finite, scored values. A zero MAD fell back to the mean absolute deviation, which flagged any change in a nearly constant feature (a peak count of 2 among counts of 1) as an extreme outlier, and missing values counted in the denominator, so an epoch needed more than the threshold of its finite features to be dropped.
+
+The complexity descriptors are computed on each epoch centred on its own mean, and `ComplexityDescriptorConfig.bandpass = (l_freq, h_freq)` band-passes each epoch first with `mne.filter.filter_data`. Zero crossings and RMS were taken around zero, so an offset or slow drift changed them.
+
+Log band power of a band with no power (a flat channel) is `NaN`, recorded as a failure, instead of `log10(eps) = -15.65`, a finite value that later steps took for data.
+
+`ParametricDescriptorConfig.min_peak_height` sets specparam's minimum peak height above the aperiodic fit (log10 power); it was not exposed, so every fit used 0.
+
+A descriptor table is one self-describing parquet file: `save_descriptor_table` keeps the feature-column list in `df.attrs["feature_columns"]`, which pandas stores in the parquet metadata, instead of a `_feature_columns.json` sidecar. `load_descriptor_table`, `merge_descriptor_tables` and `check_feature_column_consistency` read the list from the table (new `feature_columns_of`); their sidecar arguments and the CSV output of `save_descriptor_table` are removed.
+
+`generate_descriptor_subject_report` builds one report for several conditions: `overview_df` has one row per condition, named together in the title, a `condition` column in the tables becomes one of their selectors, and every entry of `figure_paths` is shown in its order, its key the caption. The title named the condition of the first row only, and only five fixed figure keys were shown.
+
+`compute_constant_feature_summary`, and with it the descriptor QC and `select_viable_feature_columns`, marks a column constant when its standard deviation is at most `tol` times its mean absolute value (new `relative_std` column), not when it is at most `tol`. Absolute band power in V² varies by less than 1e-12 V² between epochs and was marked constant.
+
+`aggregate_family_qc`'s `failure_rate` is the share of a family's (channel, observation) slots with a failure, counting only the failures of the observations in the table (by `id_col`). It divided the number of failure records, from several channels and from rejected epochs, by the number of observations, so one channel failing in every epoch read as 100 % and could exceed 1.
+
+The descriptor QC reports count their QC flags: the section holding them takes the worst flag level, so a report with a warn or fail flag no longer says "All Checks Passed" in its summary.
+
+A report image is embedded once: its PNG download link takes the image's own data URI when clicked. It was embedded twice, which made up half of a descriptor QC report.
+
+A report loads Plotly, from the CDN or inlined, only when it has a Plotly figure.

@@ -31,7 +31,9 @@ def test_foundation_embedding_report_renders_offline(tmp_path, monkeypatch):
     assert "Extraction Overview" in report.render()
     html = path.read_text(encoding="utf-8")
     assert "cdn.plot.ly" not in html
-    assert "window.plotly=true;" in html
+    assert "window.tailwind=true;" in html
+    # No Plotly figure in this report, so no Plotly bundle.
+    assert "window.plotly=true;" not in html
 
 
 def test_foundation_embedding_report_renders_nested_channel_adaptation():

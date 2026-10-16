@@ -112,6 +112,7 @@ def fit_single_spectrum(
         aperiodic_mode=config.aperiodic_mode,
         peak_width_limits=config.peak_width_limits,
         max_n_peaks=config.max_n_peaks,
+        min_peak_height=config.min_peak_height,
         verbose=False,
     )
     model.fit(freqs, spectrum, list(config.freq_range))
@@ -157,7 +158,7 @@ def fit_single_spectrum(
             valid_power
             & np.isfinite(periodic[:, 0])
             & (periodic[:, 0] >= _ALPHA_BAND[0])
-            & (periodic[:, 0] <= _ALPHA_BAND[1])
+            & (periodic[:, 0] < _ALPHA_BAND[1])
         )
         if np.any(alpha_mask):
             alpha_indices = np.flatnonzero(alpha_mask)

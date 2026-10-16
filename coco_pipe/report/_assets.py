@@ -1,9 +1,10 @@
 """
 Asset vendoring for offline-friendly reports.
 
-By default a rendered report references three CDN-hosted JS bundles
-(Plotly, Tailwind Play CDN, pako). For air-gapped environments or
-long-term archival, callers can pass ``asset_urls="inline"`` to
+By default a rendered report references CDN-hosted JS bundles: Tailwind
+Play CDN and pako, and Plotly when the report has a Plotly figure. For
+air-gapped environments or long-term archival, callers can pass
+``asset_urls="inline"`` to
 :class:`coco_pipe.report.core.Report` — :func:`get_vendored_contents`
 then downloads (once, with on-disk caching) and returns the JS source
 strings to inline into the rendered HTML.

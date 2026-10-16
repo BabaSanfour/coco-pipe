@@ -51,6 +51,8 @@ class _PSDGroup:
     ----------
     method : str
         Shared PSD estimator name.
+    welch_segment_length, welch_overlap : float
+        Shared Welch segment length in seconds and overlap fraction.
     fmin, fmax : float
         Union frequency window required by all consumers in the group.
     consumers : list of BasePSDDescriptorExtractor
@@ -66,6 +68,8 @@ class _PSDGroup:
     """
 
     method: str
+    welch_segment_length: float
+    welch_overlap: float
     fmin: float
     fmax: float
     consumers: list[BasePSDDescriptorExtractor]
@@ -205,8 +209,8 @@ def _build_psd_groups(
     Returns
     -------
     list of _PSDGroup
-        Shared PSD execution groups keyed by compatible PSD method and merged
-        fit requirements.
+        Shared PSD execution groups keyed by PSD method and Welch segment
+        settings, with merged fit requirements.
 
     Raises
     ------
@@ -214,25 +218,31 @@ def _build_psd_groups(
         If consumers that would share one parametric fit disagree on the fit
         configuration.
     """
-    groups_by_method: dict[str, _PSDGroup] = {}
+    groups_by_psd: dict[tuple, _PSDGroup] = {}
     for extractor in extractors:
         if not isinstance(extractor, BasePSDDescriptorExtractor):
             continue
         request = extractor.psd_request()
-        method = str(request["method"])
-        if method not in groups_by_method:
-            groups_by_method[method] = _PSDGroup(
-                method=method,
+        key = (
+            request["method"],
+            request["welch_segment_length"],
+            request["welch_overlap"],
+        )
+        if key not in groups_by_psd:
+            groups_by_psd[key] = _PSDGroup(
+                method=str(request["method"]),
+                welch_segment_length=float(request["welch_segment_length"]),
+                welch_overlap=float(request["welch_overlap"]),
                 fmin=float(request["fmin"]),
                 fmax=float(request["fmax"]),
                 consumers=[extractor],
             )
         else:
-            current = groups_by_method[method]
+            current = groups_by_psd[key]
             current.fmin = min(current.fmin, float(request["fmin"]))
             current.fmax = max(current.fmax, float(request["fmax"]))
             current.consumers.append(extractor)
-        current = groups_by_method[method]
+        current = groups_by_psd[key]
         fit_req = extractor.parametric_fit_requirements()
         if fit_req["needed"]:
             current.needs_parametric_fit = True
@@ -249,7 +259,7 @@ def _build_psd_groups(
                     "PSD consumers sharing one parametric fit must use the same "
                     "parametric fit configuration."
                 )
-    return list(groups_by_method.values())
+    return list(groups_by_psd.values())
 
 
 def _merge_family_blocks(
@@ -360,6 +370,8 @@ def _process_psd_group(
                 method=group.method,
                 fmin=group.fmin,
                 fmax=group.fmax,
+                welch_segment_length=group.welch_segment_length,
+                welch_overlap=group.welch_overlap,
                 n_jobs=psd_n_jobs,
             )
     else:
@@ -369,6 +381,8 @@ def _process_psd_group(
             method=group.method,
             fmin=group.fmin,
             fmax=group.fmax,
+            welch_segment_length=group.welch_segment_length,
+            welch_overlap=group.welch_overlap,
             n_jobs=psd_n_jobs,
         )
 

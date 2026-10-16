@@ -193,23 +193,30 @@ def test_row_outlier_scores():
     assert scores.index.tolist() == [5, 6, 7, 8]
     assert scores["outlier_fraction"].tolist() == [0.0, 0.0, 0.0, 1.0]
 
-    # a column with zero MAD falls back to the mean absolute deviation
-    constant = compute_row_outlier_scores(pd.DataFrame({"f1": [5.0] * 3}), ["f1"])
-    assert (constant["outlier_fraction"] == 0.0).all()
+    # a column with zero MAD (a count that is nearly always the same) is not scored
     one_off = compute_row_outlier_scores(
-        pd.DataFrame({"f1": [5.0, 5.0, 5.0, 6.0]}), ["f1"], z_threshold=3.0
+        pd.DataFrame({"f1": [5.0, 5.0, 5.0, 6.0], "f2": [1.0, 1.1, 0.9, 50.0]}),
+        ["f1", "f2"],
+        z_threshold=3.0,
     )
     assert one_off["outlier_fraction"].tolist() == [0.0, 0.0, 0.0, 1.0]
-    quantised = compute_row_outlier_scores(
-        pd.DataFrame({"f1": [2.0] * 6 + [1.0, 3.0, 1.0, 3.0, 40.0]}), ["f1"]
+    assert one_off["n_outlier_features"].tolist() == [0, 0, 0, 1]
+
+    # the fraction is over the finite values of the row: a missing feature does
+    # not dilute an outlier
+    missing = compute_row_outlier_scores(
+        pd.DataFrame({"f1": [1.0, 1.1, 0.9, 50.0], "f2": [2.0, 2.1, 1.9, np.nan]}),
+        ["f1", "f2"],
+        z_threshold=3.0,
     )
-    assert np.isfinite(quantised["mad_z_max"]).all()
-    assert quantised["outlier_fraction"].tolist() == [0.0] * 10 + [1.0]
+    assert missing["outlier_fraction"].tolist() == [0.0, 0.0, 0.0, 1.0]
 
 
 def test_row_outlier_scores_per_group():
     names = ["band_abs_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
-    frame = pd.DataFrame({names[0]: [0.0, 0.0, 0.0, 100.0], names[1]: [1.0] * 4})
+    frame = pd.DataFrame(
+        {names[0]: [1.0, 1.1, 0.9, 100.0], names[1]: [1.0, 1.1, 0.9, 1.0]}
+    )
     by_name = compute_row_outlier_scores(
         frame, names, z_threshold=3.0, descriptor_names=names, group_by="family"
     )
@@ -229,8 +236,9 @@ def test_row_outlier_scores_per_group():
     assert by_measure.loc[3, "outlier_fraction_entropy"] == 0.0
 
     columns = [f"feature_{index}" for index in range(120)]
-    wide = pd.DataFrame(np.zeros((4, 120)), columns=columns)
-    wide.iloc[3] = 100.0
+    wide = pd.DataFrame(
+        np.tile([[1.0], [1.1], [0.9], [100.0]], (1, 120)), columns=columns
+    )
     measures = pd.DataFrame({"column": columns, "measure": columns})
     with warnings.catch_warnings():
         warnings.simplefilter("error", pd.errors.PerformanceWarning)
@@ -249,7 +257,7 @@ def test_subject_outlier_burden():
     frame = pd.DataFrame(
         {
             "subject": [f"s{i}" for i in range(8)],
-            "spiky": [1.0] * 7 + [100.0],
+            "spiky": [1.0, 1.1, 0.9, 1.05, 0.95, 1.02, 0.98, 100.0],
             "stable": [2.0] * 8,
             "all_nan": [np.nan] * 8,
             "partly_infinite": [1.0, np.inf] + [1.0] * 6,
@@ -265,7 +273,7 @@ def test_subject_outlier_burden():
     epochs = pd.DataFrame(
         {
             "subject": [f"s{i}" for i in range(1, 9) for _ in range(2)],
-            "f1": [0.0] * 14 + [-100.0, 100.0],
+            "f1": [0.1, -0.1] * 7 + [-100.0, 100.0],
         }
     )
     s8 = compute_subject_outlier_burden(epochs, ["f1"]).set_index("subject").loc["s8"]
@@ -322,7 +330,7 @@ def test_drop_epoch_outliers_filters_rows_and_metadata():
 
 
 def test_drop_epoch_outliers_per_group():
-    X = np.ones((8, 2))
+    X = 1.0 + 0.01 * np.arange(16.0).reshape(8, 2)
     X[0, 0] = 1000.0
     container = DataContainer(
         X=X,
@@ -390,7 +398,7 @@ def test_drop_subject_outliers():
 
     names = ["band_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
     container = DataContainer(
-        X=np.asarray([[0.0, 1.0], [0.0, 1.0], [0.0, 1.0], [100.0, 1.0]]),
+        X=np.asarray([[0.0, 1.0], [0.1, 1.1], [-0.1, 0.9], [100.0, 1.0]]),
         dims=("obs", "feature"),
         coords={"feature": names, "subject": ["s1", "s2", "s3", "s4"]},
         ids=np.asarray(["o1", "o2", "o3", "o4"]),

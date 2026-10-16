@@ -554,6 +554,7 @@ class Report(ContainerElement):
             report_summary=report_summary,
             asset_urls=self.asset_urls,
             asset_mode=self.asset_mode,
+            needs_plotly=plot_count > 0,
         )
 
     def add_summary_card(
@@ -655,18 +656,24 @@ class Report(ContainerElement):
 
         Notes
         -----
-        Emits a ``UserWarning`` when the report still depends on three
-        external CDN scripts (Plotly, Tailwind, pako). A CDN-backed
-        report renders as grey placeholders if opened without a network
-        connection (e.g. ``file://`` viewing, offline archives, restrictive
-        corporate firewalls, air-gapped machines). Pass
+        Emits a ``UserWarning`` when the report still depends on external
+        CDN scripts (Tailwind and pako, and Plotly when it has a Plotly
+        figure). A CDN-backed report renders as grey placeholders if opened
+        without a network connection (e.g. ``file://`` viewing, offline
+        archives, restrictive corporate firewalls, air-gapped machines). Pass
         ``asset_urls="inline"`` to :class:`~coco_pipe.report.Report` to bundle the
         JavaScript directly into the HTML.
         """
+        full_html = self.render()
         if self.asset_mode == "cdn":
+            scripts = [
+                name
+                for name in ("Plotly", "Tailwind", "pako")
+                if self.asset_urls[name.lower()] in full_html
+            ]
             warnings.warn(
-                f"Report saved to {filename} references three external "
-                "CDN scripts (Plotly, Tailwind, pako). It will appear as "
+                f"Report saved to {filename} references external CDN scripts "
+                f"({', '.join(scripts)}). It will appear as "
                 "grey placeholder boxes if opened without a network "
                 "connection (file:// viewing, offline machines, "
                 "restrictive firewalls). Pass `asset_urls='inline'` to "
@@ -674,7 +681,6 @@ class Report(ContainerElement):
                 UserWarning,
                 stacklevel=2,
             )
-        full_html = self.render()
         Path(filename).write_text(full_html, encoding="utf-8")
 
 

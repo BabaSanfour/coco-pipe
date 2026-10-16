@@ -34,6 +34,7 @@ from scipy.stats import kurtosis as scipy_kurtosis
 from ...utils import import_optional_dependency
 from .._constants import KNOWN_FAMILY_TOKENS
 from ..configs import ComplexityDescriptorConfig
+from ._psd import load_mne_psd_functions
 from .base import BaseDescriptorExtractor, _DescriptorBlock, make_failure_record
 
 _ANTROPY_BATCHED_MEASURES = frozenset(
@@ -133,9 +134,20 @@ class ComplexityDescriptorExtractor(BaseDescriptorExtractor):
         """
         return {
             **super().capabilities,
-            "requires_sfreq": "spectral_entropy" in self.config.measures,
+            "requires_sfreq": "spectral_entropy" in self.config.measures
+            or self.config.bandpass is not None,
             "optional_dependencies": ["antropy", "neurokit2"],
         }
+
+    def _load_filter_data(self):
+        """Import MNE's ``filter_data`` lazily, with the descriptors' cache paths."""
+        load_mne_psd_functions()
+        return import_optional_dependency(
+            lambda: __import__("mne.filter", fromlist=["filter_data"]).filter_data,
+            feature="complexity band-pass",
+            dependency="mne",
+            install_hint="pip install coco-pipe[descriptors,eeg]",
+        )
 
     def _load_antropy(self):
         """Import `antropy` lazily when the configured backend needs it.
@@ -244,6 +256,14 @@ class ComplexityDescriptorExtractor(BaseDescriptorExtractor):
         ``complexity_perm_entropy_ch-Cz``.
         """
         channel_names = channel_names or [f"ch-{idx}" for idx in range(X.shape[1])]
+        # Each epoch around its own mean, then, if configured, its band-passed copy:
+        # the measures then see the band the spectral families use, without drift
+        # below it or muscle activity above it.
+        X = np.asarray(X, dtype=float)
+        X = X - X.mean(axis=-1, keepdims=True)
+        if self.config.bandpass is not None:
+            low, high = self.config.bandpass
+            X = self._load_filter_data()(X, sfreq, low, high, verbose=False)
 
         descriptor_names: list[str] | None = None
         failures: list[dict[str, Any]] = []

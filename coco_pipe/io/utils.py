@@ -263,8 +263,12 @@ def compute_constant_feature_summary(
 ) -> pd.DataFrame:
     """Compute per-column variance and constant-feature indicators.
 
-    Standard deviations use the population definition (``ddof=0``). Entirely
-    NaN columns are identified separately and are not marked constant.
+    Standard deviations use the population definition (``ddof=0``). A column is
+    constant when its standard deviation is at most ``tol`` times its mean
+    absolute value (``relative_std <= tol``), so the check does not depend on the
+    unit: a power in V² varies by less than 1e-12 V² and is not constant. A
+    column of zeros is constant. Entirely NaN columns are identified separately
+    and are not marked constant.
     """
     if tol < 0:
         raise ValueError("tol must be non-negative.")
@@ -278,15 +282,20 @@ def compute_constant_feature_summary(
             np.nan,
         )
         std = float(numeric.std(ddof=0)) if numeric.notna().any() else np.nan
+        scale = float(numeric.abs().mean()) if numeric.notna().any() else np.nan
+        relative_std = 0.0 if std == 0 else std / scale if scale > 0 else np.nan
         records.append(
             {
                 "column": column,
                 "std": std,
+                "relative_std": relative_std,
                 "is_all_nan": is_all_nan,
-                "is_constant": bool(not is_all_nan and np.isfinite(std) and std <= tol),
+                "is_constant": bool(
+                    not is_all_nan and np.isfinite(relative_std) and relative_std <= tol
+                ),
             }
         )
     return pd.DataFrame.from_records(
         records,
-        columns=["column", "std", "is_all_nan", "is_constant"],
+        columns=["column", "std", "relative_std", "is_all_nan", "is_constant"],
     )

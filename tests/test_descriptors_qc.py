@@ -267,6 +267,7 @@ def test_family_constant_summary_empty_descriptor_names():
     assert result.columns.tolist() == [
         "column",
         "std",
+        "relative_std",
         "is_all_nan",
         "is_constant",
         "family",
@@ -389,6 +390,30 @@ def test_aggregate_family_qc_failure_rate():
 
     assert band["failure_count"] == 2
     assert band["failure_rate"] == pytest.approx(2 / 3)
+
+
+def test_aggregate_family_qc_failure_rate_counts_slots_of_kept_epochs():
+    # 4 kept epochs x 2 channels = 8 slots. Epoch e0 fails twice on Fz (two
+    # bands, one slot) and once on Cz; e9 was rejected and does not count.
+    df = pd.DataFrame(
+        {
+            "obs_id": ["e0", "e1", "e2", "e3"],
+            "band_log_abs_alpha_ch-Fz": [1.0, 2.0, 3.0, 4.0],
+            "band_log_abs_alpha_ch-Cz": [1.0, 2.0, 3.0, 4.0],
+        }
+    )
+    failures = pd.DataFrame(
+        {
+            "family": ["band"] * 4,
+            "obs_id": ["e0", "e0", "e0", "e9"],
+            "channel_name": ["Fz", "Fz", "Cz", "Fz"],
+        }
+    )
+
+    band = aggregate_family_qc(df, list(df.columns[1:]), failures_df=failures).iloc[0]
+
+    assert band["failure_count"] == 3
+    assert band["failure_rate"] == pytest.approx(2 / 8)
 
 
 def test_aggregate_family_qc_normalizes_extractor_failure_names():

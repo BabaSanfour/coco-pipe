@@ -483,8 +483,16 @@ def aggregate_family_qc(
     known_families: tuple[str, ...] = KNOWN_FAMILY_TOKENS,
     tol: float = 1e-12,
     feature_schema: pd.DataFrame | None = None,
+    id_col: str = "obs_id",
 ) -> pd.DataFrame:
-    """Aggregate descriptor health indicators to one row per family."""
+    """Aggregate descriptor health indicators to one row per family.
+
+    ``failure_count`` is the number of failure records of the family and
+    ``failure_rate`` the share of its (channel, observation) slots with at least
+    one. When *df* has *id_col* and the failures an ``obs_id``, only the failures
+    of the observations in *df* count, so failures of rejected epochs do not.
+    *df* and *failures_df* must be at the same level (epochs).
+    """
     if not descriptor_names:
         return pd.DataFrame(columns=FAMILY_QC_COLUMNS)
 
@@ -503,21 +511,32 @@ def aggregate_family_qc(
     )
     present_families = sorted(missingness["family"].dropna().astype(str).unique())
     n_observations = len(df)
-    failure_families = pd.Series(dtype=object)
+    failures = pd.DataFrame(columns=["family"])
     if (
         failures_df is not None
         and not failures_df.empty
         and "family" in failures_df.columns
     ):
-        failure_families = (
-            failures_df["family"].astype(str).replace(FAILURE_FAMILY_ALIASES)
+        failures = failures_df.assign(
+            family=failures_df["family"].astype(str).replace(FAILURE_FAMILY_ALIASES)
         )
+        if id_col in df.columns and "obs_id" in failures.columns:
+            kept = set(df[id_col].astype(str))
+            failures = failures[failures["obs_id"].astype(str).isin(kept)]
 
     rows: list[dict[str, Any]] = []
     for family in present_families:
         family_missingness = missingness[missingness["family"] == family]
         family_constants = constants[constants["family"] == family]
-        failure_count = int((failure_families == family).sum())
+        family_failures = failures[failures["family"] == family]
+        failure_count = len(family_failures)
+        slot_columns = [c for c in ("obs_id", "channel_name") if c in family_failures]
+        failing_slots = (
+            len(family_failures.drop_duplicates(slot_columns))
+            if slot_columns
+            else failure_count
+        )
+        n_slots = n_observations * max(int(family_missingness["channel"].nunique()), 1)
 
         rows.append(
             {
@@ -531,9 +550,7 @@ def aggregate_family_qc(
                 "n_all_nan_features": int(family_constants["is_all_nan"].sum()),
                 "n_constant_features": int(family_constants["is_constant"].sum()),
                 "failure_count": failure_count,
-                "failure_rate": (
-                    failure_count / n_observations if n_observations > 0 else np.nan
-                ),
+                "failure_rate": failing_slots / n_slots if n_slots > 0 else np.nan,
             }
         )
 

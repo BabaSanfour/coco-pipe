@@ -38,7 +38,7 @@ def _metadata(n, recordings):
 # mad_failures_from_qc  (reject = drop_epoch_outliers + this helper)
 # --------------------------------------------------------------------------- #
 def test_mad_failures_from_qc_records_dropped_epochs():
-    X = np.ones((8, 2))
+    X = 1.0 + 0.01 * np.arange(16.0).reshape(8, 2)
     X[0, 0] = 1000.0  # strong outlier
     container = _container(X, ["band_abs_alpha_ch-Fz", "band_abs_beta_ch-Fz"])
 
