@@ -109,8 +109,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         Returns
         -------
         dict[str, Any]
-            Minimal PSD request containing the PSD method and the required
-            frequency range for this family.
+            Minimal PSD request containing the PSD method, the Welch segment
+            settings and the required frequency range for this family.
 
         Notes
         -----
@@ -122,11 +122,15 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
             fit_low, fit_high = self.fit_config.freq_range
             return {
                 "method": self.config.psd_method,
+                "welch_segment_length": self.config.welch_segment_length,
+                "welch_overlap": self.config.welch_overlap,
                 "fmin": min(self.config.fmin, fit_low),
                 "fmax": max(self.config.fmax, fit_high),
             }
         return {
             "method": self.config.psd_method,
+            "welch_segment_length": self.config.welch_segment_length,
+            "welch_overlap": self.config.welch_overlap,
             "fmin": self.config.fmin,
             "fmax": self.config.fmax,
         }
@@ -198,11 +202,14 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         Notes
         -----
         The extractor first restricts the incoming PSD to the configured
-        frequency window, then integrates one power value per configured band
-        and sensor. Those band integrals are reused for all enabled outputs,
-        such as absolute power, log absolute power, relative power, and
-        ratios. Ratios are always derived from absolute band powers, not from
-        relative or log-transformed outputs.
+        frequency window ``[fmin, fmax)``, then integrates one power value per
+        configured band and sensor: the sum of the PSD bins in ``[low, high)``
+        times the frequency step. The total power of relative outputs is the
+        same sum over the window, so contiguous bands that cover it have
+        relative powers summing to 1. Those band integrals are reused for all
+        enabled outputs, such as absolute power, log absolute power, relative
+        power, and ratios. Ratios are always derived from absolute band
+        powers, not from relative or log-transformed outputs.
 
         Example
         -------
@@ -213,7 +220,10 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         channel_names = channel_names or [f"ch-{idx}" for idx in range(psds.shape[1])]
         eps = np.finfo(float).eps
 
-        freq_mask = (freqs >= self.config.fmin) & (freqs <= self.config.fmax)
+        # a bin belongs to [low, high) and stands for density x frequency step,
+        # so contiguous bands add up to the power of [fmin, fmax)
+        freq_step = freqs[1] - freqs[0] if freqs.size > 1 else np.nan
+        freq_mask = (freqs >= self.config.fmin) & (freqs < self.config.fmax)
         local_freqs = freqs[freq_mask]
         local_psds = psds[..., freq_mask]
 
@@ -222,7 +232,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
             if local_freqs.size == 0:
                 total_power = np.full(psds.shape[:-1], np.nan, dtype=float)
             else:
-                total_power = np.trapezoid(local_psds, local_freqs, axis=-1)
+                total_power = local_psds.sum(axis=-1) * freq_step
 
         failures: list[dict[str, Any]] = []
         descriptor_names: list[str] = []
@@ -240,7 +250,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                 else "parametric fit range"
             )
             for band_name, (low, high) in self.config.bands.items():
-                mask = (band_freqs >= low) & (band_freqs <= high)
+                mask = (band_freqs >= low) & (band_freqs < high)
                 if not np.any(mask):
                     message = (
                         f"{band_label_prefix} band '{band_name}' does not overlap "
@@ -268,10 +278,8 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                             )
                         )
                     continue
-                computed_band_power[band_name] = np.trapezoid(
-                    spectra[..., mask],
-                    band_freqs[mask],
-                    axis=-1,
+                computed_band_power[band_name] = (
+                    spectra[..., mask].sum(axis=-1) * freq_step
                 )
             return computed_band_power
 
@@ -412,7 +420,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                 )
 
             corrected_freq_mask = (fit_batch.freqs >= self.config.fmin) & (
-                fit_batch.freqs <= self.config.fmax
+                fit_batch.freqs < self.config.fmax
             )
             corrected_freqs = fit_batch.freqs[corrected_freq_mask]
             corrected_psds = fit_batch.periodic_psds[..., corrected_freq_mask]
@@ -425,11 +433,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
                         dtype=float,
                     )
                 else:
-                    corrected_total_power = np.trapezoid(
-                        corrected_psds,
-                        corrected_freqs,
-                        axis=-1,
-                    )
+                    corrected_total_power = corrected_psds.sum(axis=-1) * freq_step
 
             corrected_band_power = integrate_band_power(
                 corrected_psds,
@@ -440,7 +444,7 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
             for band_name, (low, high) in self.config.bands.items():
                 has_peak = np.array(
                     [
-                        [np.any((peaks >= low) & (peaks <= high)) for peaks in row]
+                        [np.any((peaks >= low) & (peaks < high)) for peaks in row]
                         for row in fit_batch.peak_freqs
                     ],
                     dtype=bool,

@@ -58,6 +58,35 @@ def test_band_powers_follow_the_injected_rhythms(signals):
     )
 
 
+def test_band_powers_of_white_noise_tile_the_frequency_window():
+    sfreq, sigma = 200.0, 10e-6
+    X = np.random.default_rng(0).normal(scale=sigma, size=(20, 3, 2000))
+    tiling = {
+        "delta": (1.0, 4.0),
+        "theta": (4.0, 8.0),
+        "alpha": (8.0, 13.0),
+        "beta": (13.0, 30.0),
+        "gamma": (30.0, 45.0),
+    }
+    bands = {
+        "enabled": True,
+        "fmin": 1.0,
+        "fmax": 45.0,
+        "bands": tiling,
+        "outputs": ["absolute_power", "relative_power"],
+    }
+    values, failures = _extract(X, {"bands": bands}, sfreq=sfreq, precision="float64")
+
+    assert not failures
+    for channel in CHANNELS:
+        relative = [values[f"band_rel_{band}_ch-{channel}"] for band in tiling]
+        np.testing.assert_allclose(np.sum(relative, axis=0), 1.0, rtol=1e-12)
+    # one-sided density of white noise: 2 sigma^2 / sfreq
+    for band, (low, high) in tiling.items():
+        power = np.mean([values[f"band_abs_{band}_ch-{c}"] for c in CHANNELS])
+        assert power == pytest.approx(2 * sigma**2 / sfreq * (high - low), rel=0.05)
+
+
 def test_relative_power_of_a_flat_channel_is_nan_and_logged(signals):
     X = signals.copy()
     X[:, 2] = 0.0

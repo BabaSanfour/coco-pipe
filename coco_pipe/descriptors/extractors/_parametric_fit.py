@@ -157,7 +157,7 @@ def fit_single_spectrum(
             valid_power
             & np.isfinite(periodic[:, 0])
             & (periodic[:, 0] >= _ALPHA_BAND[0])
-            & (periodic[:, 0] <= _ALPHA_BAND[1])
+            & (periodic[:, 0] < _ALPHA_BAND[1])
         )
         if np.any(alpha_mask):
             alpha_indices = np.flatnonzero(alpha_mask)

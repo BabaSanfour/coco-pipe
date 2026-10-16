@@ -693,7 +693,16 @@ def test_corrected_bands_and_parametric_share_one_fit_batch_per_psd_group(monkey
     assert "band_corr_abs_alpha_ch-Fz" in _names(result)
 
 
-def test_shared_psd_splits_groups_by_method(monkeypatch):
+@pytest.mark.parametrize(
+    ("parametric_psd", "parametric_call"),
+    [
+        ({"psd_method": "multitaper"}, ("multitaper", 2.0)),
+        ({"welch_segment_length": 0.5}, ("welch", 0.5)),
+    ],
+)
+def test_shared_psd_splits_groups_by_psd_settings(
+    monkeypatch, parametric_psd, parametric_call
+):
     rng = np.random.default_rng(20)
     t = np.linspace(0, 1, 128, endpoint=False)
     X = rng.normal(scale=0.05, size=(8, 3, 128))
@@ -702,10 +711,10 @@ def test_shared_psd_splits_groups_by_method(monkeypatch):
     X[:, 2, :] += np.sin(2 * np.pi * 6 * t)
 
     real_compute_psd = descriptors_core.compute_psd
-    calls: list[str] = []
+    calls: list[tuple[str, float]] = []
 
     def _counted_compute_psd(*args, **kwargs):
-        calls.append(kwargs["method"])
+        calls.append((kwargs["method"], kwargs["welch_segment_length"]))
         return real_compute_psd(*args, **kwargs)
 
     monkeypatch.setattr(descriptors_core, "compute_psd", _counted_compute_psd)
@@ -720,15 +729,16 @@ def test_shared_psd_splits_groups_by_method(monkeypatch):
                 },
                 "parametric": {
                     "enabled": True,
-                    "psd_method": "multitaper",
+                    "psd_method": "welch",
                     "outputs": ["aperiodic"],
+                    **parametric_psd,
                 },
             },
             "runtime": {"obs_chunk": 4},
         }
     ).extract(X=X, sfreq=128.0, channel_names=["Fz", "Cz", "Pz"])
 
-    assert calls == ["welch", "multitaper", "welch", "multitaper"]
+    assert calls == [("welch", 2.0), parametric_call] * 2
 
 
 def test_shared_union_psd_matches_separate_family_outputs():

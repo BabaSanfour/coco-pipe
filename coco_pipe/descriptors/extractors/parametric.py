@@ -88,6 +88,8 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
         """Describe the PSD requirements for the shared planner."""
         return {
             "method": self.config.psd_method,
+            "welch_segment_length": self.config.welch_segment_length,
+            "welch_overlap": self.config.welch_overlap,
             "fmin": self.config.freq_range[0],
             "fmax": self.config.freq_range[1],
         }
