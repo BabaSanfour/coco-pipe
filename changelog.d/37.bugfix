@@ -11,3 +11,5 @@ Log band power of a band with no power (a flat channel) is `NaN`, recorded as a 
 `ParametricDescriptorConfig.min_peak_height` sets specparam's minimum peak height above the aperiodic fit (log10 power); it was not exposed, so every fit used 0.
 
 A descriptor table is one self-describing parquet file: `save_descriptor_table` keeps the feature-column list in `df.attrs["feature_columns"]`, which pandas stores in the parquet metadata, instead of a `_feature_columns.json` sidecar. `load_descriptor_table`, `merge_descriptor_tables` and `check_feature_column_consistency` read the list from the table (new `feature_columns_of`); their sidecar arguments and the CSV output of `save_descriptor_table` are removed.
+
+`generate_descriptor_subject_report` builds one report for several conditions: `overview_df` has one row per condition, named together in the title, a `condition` column in the tables becomes one of their selectors, and every entry of `figure_paths` is shown in its order, its key the caption. The title named the condition of the first row only, and only five fixed figure keys were shown.

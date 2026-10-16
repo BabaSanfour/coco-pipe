@@ -79,7 +79,8 @@ def _add_family_diagnostic_sections(
         family_rows = family_summary_df[family_summary_df["family"] == family]
         if family_rows.empty:
             continue
-        diag_df = family_rows[["family", *present_columns]].round(4)
+        keys = [column for column in ("condition", "family") if column in family_rows]
+        diag_df = family_rows[[*keys, *present_columns]].round(4)
         if diag_df[present_columns].isna().all(axis=None):
             continue
         section = Section(title, icon=icon)
@@ -97,7 +98,7 @@ def generate_descriptor_subject_report(
     figure_paths: Mapping[str, Path],
     asset_urls: dict[str, str] | str | None = None,
 ) -> Path:
-    """Build the per-shard (subject/session/condition) descriptor QC report.
+    """Build a subject's descriptor QC report (one session, one or more conditions).
 
     Parameters
     ----------
@@ -108,11 +109,10 @@ def generate_descriptor_subject_report(
         ``"inline"`` to embed Plotly/Tailwind/pako so the saved HTML renders
         offline (file://) instead of referencing external CDNs.
     overview_df
-        Single-row dataframe with ``Subject``, ``Session``, ``Condition``,
-        and summary metrics for the shard.
+        One row per condition with ``Subject``, ``Session``, ``Condition``,
+        and summary metrics.
     flags_df
-        QC flags raised for this shard (e.g. from
-        :func:`coco_pipe.io.quality.make_qc_flag`).
+        QC flags raised (e.g. from :func:`coco_pipe.io.quality.make_qc_flag`).
     failure_summary_df
         Combined extraction-failure summary, e.g. the ``"combined"`` frame
         from :func:`coco_pipe.descriptors.qc.summarize_failures`.
@@ -124,8 +124,10 @@ def generate_descriptor_subject_report(
         :func:`coco_pipe.descriptors.qc.aggregate_family_qc` (optionally
         extended via :func:`coco_pipe.descriptors.qc.add_family_diagnostics`).
     figure_paths
-        Mapping of figure keys to image file paths, as produced by a
-        descriptor-QC figure-saving helper.
+        Caption to image path, shown in this order.
+
+    The tables may carry a ``condition`` column, which becomes one of their
+    selectors.
 
     Returns
     -------
@@ -137,13 +139,13 @@ def generate_descriptor_subject_report(
             "Descriptor QC Report - "
             f"{overview_df.iloc[0]['Subject']} "
             f"{overview_df.iloc[0]['Session']} "
-            f"{overview_df.iloc[0]['Condition']}"
+            + ", ".join(dict.fromkeys(overview_df["Condition"].astype(str)))
         ),
         asset_urls=asset_urls,
     )
 
     overview = Section("Overview", icon="📋")
-    _add_optional_table(overview, overview_df, "Shard Overview")
+    _add_optional_table(overview, overview_df, "Overview")
     report.add_section(overview)
 
     integrity = Section("Integrity Checks", icon="🧪")
@@ -153,7 +155,7 @@ def generate_descriptor_subject_report(
         "QC Flags",
         selector_columns=[
             column
-            for column in ["level", "scope", "code"]
+            for column in ["condition", "level", "scope", "code"]
             if column in flags_df.columns
         ],
         default_sort={"column": "level", "direction": "desc"}
@@ -170,7 +172,7 @@ def generate_descriptor_subject_report(
         "Failure Summary",
         selector_columns=[
             column
-            for column in ["group", "value"]
+            for column in ["condition", "group", "value"]
             if column in failure_summary_df.columns
         ],
         default_sort={"column": "count", "direction": "desc"}
@@ -187,7 +189,7 @@ def generate_descriptor_subject_report(
         "Feature Missingness",
         selector_columns=[
             column
-            for column in ["family", "scope", "sensor"]
+            for column in ["condition", "family", "scope", "sensor"]
             if column in feature_missingness_df.columns
         ],
         default_sort={"column": "missing_rate", "direction": "desc"}
@@ -204,7 +206,7 @@ def generate_descriptor_subject_report(
         "Family Summary",
         selector_columns=[
             column
-            for column in ["family"]
+            for column in ["condition", "family"]
             if family_summary_df is not None and column in family_summary_df.columns
         ],
         default_sort={"column": "missing_rate", "direction": "desc"}
@@ -217,17 +219,9 @@ def generate_descriptor_subject_report(
     _add_family_diagnostic_sections(report, family_summary_df)
 
     figures = Section("Figures", icon="📈")
-    _add_images(
-        figures,
-        figure_paths,
-        (
-            "family_missingness",
-            "failure_counts_by_family",
-            "top_missing_features",
-            "param_r_squared_hist",
-            "param_fit_error_hist",
-        ),
-    )
+    for caption, path in figure_paths.items():
+        if Path(path).exists():
+            figures.add_element(ImageElement(str(path), caption=caption))
     report.add_section(figures)
 
     output_path = Path(output_path)

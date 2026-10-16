@@ -27,6 +27,7 @@ from .naming import parse_descriptor_feature_column
 
 __all__ = [
     "check_feature_column_consistency",
+    "feature_columns_of",
     "load_descriptor_table",
     "merge_descriptor_tables",
     "save_descriptor_table",

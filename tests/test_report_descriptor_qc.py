@@ -16,16 +16,14 @@ def test_generate_descriptor_subject_report():
 
         overview_df = pd.DataFrame(
             [
-                {
-                    "Subject": "sub-01",
-                    "Session": "ses-01",
-                    "Condition": "rest",
-                }
+                {"Subject": "sub-01", "Session": "ses-01", "Condition": condition}
+                for condition in ("rest", "task")
             ]
         )
         flags_df = pd.DataFrame(
             [
                 {
+                    "condition": "task",
                     "level": "warning",
                     "scope": "subject",
                     "code": "missing_data",
@@ -80,20 +78,13 @@ def test_generate_descriptor_subject_report():
             ]
         )
 
-        # Write dummy images to avoid missing file issues in _add_images
         fig_dir = Path(tmpdir) / "figs"
         fig_dir.mkdir()
         fig_paths = {}
-        for key in [
-            "family_missingness",
-            "failure_counts_by_family",
-            "top_missing_features",
-            "param_r_squared_hist",
-            "param_fit_error_hist",
-        ]:
-            img_path = fig_dir / f"{key}.png"
+        for caption in ["rest: family missingness", "task: family missingness"]:
+            img_path = fig_dir / f"{caption.replace(' ', '_')}.png"
             img_path.write_text("dummy image")
-            fig_paths[key] = img_path
+            fig_paths[caption] = img_path
 
         res = generate_descriptor_subject_report(
             out_path,
@@ -105,7 +96,9 @@ def test_generate_descriptor_subject_report():
             fig_paths,
         )
         assert res.exists()
-        assert out_path.exists()
+        html = out_path.read_text(encoding="utf-8")
+        assert "Descriptor QC Report - sub-01 ses-01 rest, task" in html
+        assert "task: family missingness" in html
 
 
 def test_generate_descriptor_dataset_report():
