@@ -5,3 +5,5 @@ The Welch PSD of the descriptors uses 2 s segments with 50 % overlap, set by `we
 `compute_row_outlier_scores`, and with it `drop_epoch_outliers` and the subject outlier helpers, no longer scores a feature whose MAD is zero, and takes each row's outlier fraction over the finite, scored values. A zero MAD fell back to the mean absolute deviation, which flagged any change in a nearly constant feature (a peak count of 2 among counts of 1) as an extreme outlier, and missing values counted in the denominator, so an epoch needed more than the threshold of its finite features to be dropped.
 
 The complexity descriptors are computed on each epoch centred on its own mean, and `ComplexityDescriptorConfig.bandpass = (l_freq, h_freq)` band-passes each epoch first with `mne.filter.filter_data`. Zero crossings and RMS were taken around zero, so an offset or slow drift changed them.
+
+Log band power of a band with no power (a flat channel) is `NaN`, recorded as a failure, instead of `log10(eps) = -15.65`, a finite value that later steps took for data.

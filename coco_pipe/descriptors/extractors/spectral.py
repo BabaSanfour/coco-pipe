@@ -218,7 +218,6 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
         ``band_abs_alpha_ch-Cz``.
         """
         channel_names = channel_names or [f"ch-{idx}" for idx in range(psds.shape[1])]
-        eps = np.finfo(float).eps
 
         # a bin belongs to [low, high) and stands for density x frequency step,
         # so contiguous bands add up to the power of [fmin, fmax)
@@ -308,7 +307,26 @@ class BandDescriptorExtractor(BasePSDDescriptorExtractor):
 
             if enabled_log_output in self.config.outputs:
                 for band_name, values in band_power_dict.items():
-                    log_values = np.log10(np.clip(values, eps, None))
+                    # no power (a flat channel) has no log: NaN, not a floor value
+                    log_values = np.full_like(values, np.nan, dtype=float)
+                    np.log10(values, out=log_values, where=values > 0)
+                    for obs_rel, ch_idx in np.argwhere(
+                        np.isfinite(values) & (values <= 0)
+                    ):
+                        failures.append(
+                            make_failure_record(
+                                family=self.family_name,
+                                obs_index=obs_offset + int(obs_rel),
+                                obs_id=None if ids is None else ids[obs_rel],
+                                channel_index=int(ch_idx),
+                                channel_name=channel_names[ch_idx],
+                                exception_type="NumericalIssue",
+                                message=(
+                                    f"Band '{band_name}' has no power; "
+                                    "its log is undefined."
+                                ),
+                            )
+                        )
                     feature, names = self._finalize_descriptor(
                         log_values,
                         family_prefix=KNOWN_FAMILY_TOKENS[0],

@@ -87,14 +87,19 @@ def test_band_powers_of_white_noise_tile_the_frequency_window():
         assert power == pytest.approx(2 * sigma**2 / sfreq * (high - low), rel=0.05)
 
 
-def test_relative_power_of_a_flat_channel_is_nan_and_logged(signals):
+def test_relative_and_log_power_of_a_flat_channel_are_nan_and_logged(signals):
     X = signals.copy()
     X[:, 2] = 0.0
-    bands = {"enabled": True, "outputs": ["relative_power"], "bands": BANDS}
+    bands = {
+        "enabled": True,
+        "outputs": ["relative_power", "log_absolute_power"],
+        "bands": BANDS,
+    }
     values, failures = _extract(X, {"bands": bands})
 
-    assert np.isnan(values["band_rel_alpha_ch-Pz"]).all()
-    assert np.isfinite(values["band_rel_alpha_ch-Fz"]).all()
+    for output in ("rel", "log_abs"):
+        assert np.isnan(values[f"band_{output}_alpha_ch-Pz"]).all()
+        assert np.isfinite(values[f"band_{output}_alpha_ch-Fz"]).all()
     assert {failure["channel_name"] for failure in failures} == {"Pz"}
 
 
