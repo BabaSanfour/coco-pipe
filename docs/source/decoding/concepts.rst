@@ -153,7 +153,9 @@ and the final model fit — on permuted labels. This is what
 
 Each permutation:
 
-1. Shuffles ``y`` within each group (or globally for ``unit="sample"``).
+1. Permutes ``y``: between whole inference units by default (globally for
+   ``unit="sample"``), or inside strata or between blocks with
+   ``permutation_scheme`` (see :ref:`decoding-stats`).
 2. Reruns the complete outer CV with the shuffled labels.
 3. Aggregates the permuted predictions to the unit of inference.
 4. Scores the aggregated permuted predictions.

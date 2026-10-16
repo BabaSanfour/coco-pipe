@@ -297,6 +297,39 @@ def build_probability_section(
     return section
 
 
+def _null_note(meta: Mapping[str, Any], assessment: pd.DataFrame) -> str:
+    """State what the null distributions of *assessment* exchanged."""
+    stats_meta = meta.get("statistical_assessment") or {}
+    methods = (
+        set(assessment["NullMethod"].dropna()) if "NullMethod" in assessment else set()
+    )
+    unit = stats_meta.get("resolved_unit_of_inference", "sample")
+    sentences = []
+    if "permutation_full_pipeline" in methods:
+        scheme = stats_meta.get("permutation_scheme", "units")
+        strata = stats_meta.get("strata_column")
+        if scheme == "within_strata":
+            what = f"sample labels shuffled within each '{strata}' stratum"
+        elif scheme == "blocks_within_strata":
+            block = stats_meta.get("block_column")
+            what = (
+                f"labels of '{block}' blocks shuffled between the blocks of each "
+                f"'{strata}' stratum"
+            )
+        else:
+            what = f"labels permuted between whole '{unit}' units"
+        sentences.append(
+            f"Permutation null: {what}; the full pipeline was refit on every "
+            "permutation."
+        )
+    if "sign_flip_group" in methods:
+        sentences.append(
+            "Sign-flip null: per-group fold scores minus chance with signs "
+            "flipped at random across groups; no refits."
+        )
+    return " ".join(sentences)
+
+
 def build_statistical_section(
     result: Any,
     *,
@@ -319,6 +352,9 @@ def build_statistical_section(
         raise SectionDataUnavailable("No matching statistical assessment.")
 
     section = Section(title=name)
+    note = _null_note(getattr(result, "meta", {}) or {}, assessment)
+    if note:
+        section.add_element(CalloutElement(note, kind="info", title="Null"))
     section.add_element(
         _csv_download(
             assessment,

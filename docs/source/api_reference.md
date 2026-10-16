@@ -26,6 +26,7 @@ The most commonly used classes and functions, grouped by module.
    coco_pipe.decoding.list_capabilities
    coco_pipe.decoding.register_estimator
    coco_pipe.decoding.run_statistical_assessment
+   coco_pipe.decoding.permute_labels_within_strata
 ```
 
 ### Dimensionality Reduction
