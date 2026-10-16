@@ -1087,16 +1087,81 @@ class ChanceAssessmentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    method: Literal["permutation", "binomial", "auto"] = "permutation"
+    method: Literal["permutation", "binomial", "auto", "sign_flip"] = Field(
+        "permutation",
+        description=(
+            "Null for the chance test. 'permutation' refits the full pipeline on "
+            "permuted labels; 'binomial' is the analytical accuracy test; "
+            "'sign_flip' flips the signs of per-fold scores minus chance across "
+            "groups, for leave-one-group-out CV, without refitting."
+        ),
+    )
     n_permutations: int = Field(1000, ge=1)
     p0: float | Literal["auto"] | None = Field(
         "auto",
-        description="Chance level for binomial test (e.g., 0.5 for binary).",
+        description=(
+            "Chance level for the binomial and sign-flip tests (e.g., 0.5 for binary)."
+        ),
     )
     temporal_correction: Literal["max_stat", "fdr_bh", "none"] = Field(
         "max_stat", description="Method to correct for multiple comparisons."
     )
     store_null_distribution: bool = False
+    permutation_scheme: Literal["units", "within_strata", "blocks_within_strata"] = (
+        Field(
+            "units",
+            description=(
+                "What the permutation null exchanges. 'units' swaps labels "
+                "between whole inference units, each holding one label. "
+                "'within_strata' shuffles sample labels inside each stratum "
+                "(`strata_column`), keeping its class counts. "
+                "'blocks_within_strata' shuffles the labels of blocks "
+                "(`block_column`, one label each) inside each stratum."
+            ),
+        )
+    )
+    strata_column: str | None = Field(
+        None,
+        description=(
+            "Sample-metadata column whose values bound every shuffle, e.g. "
+            "'Subject'; 'group' uses the CV groups. Matched ignoring case."
+        ),
+    )
+    block_column: str | None = Field(
+        None,
+        description=(
+            "Sample-metadata column naming the blocks of a blocked design, e.g. "
+            "'Run'. A block is one value of it within one stratum."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_permutation_scheme(self) -> ChanceAssessmentConfig:
+        scheme = self.permutation_scheme
+        if scheme == "units":
+            if self.strata_column is not None or self.block_column is not None:
+                raise ValueError(
+                    "strata_column and block_column only apply to "
+                    "permutation_scheme='within_strata' or 'blocks_within_strata'."
+                )
+            return self
+        if self.method in {"binomial", "sign_flip"}:
+            raise ValueError(
+                f"permutation_scheme={scheme!r} needs method='permutation' or "
+                f"'auto', not {self.method!r}."
+            )
+        if self.strata_column is None:
+            raise ValueError(f"permutation_scheme={scheme!r} requires strata_column.")
+        if scheme == "within_strata" and self.block_column is not None:
+            raise ValueError(
+                "block_column only applies to "
+                "permutation_scheme='blocks_within_strata'."
+            )
+        if scheme == "blocks_within_strata" and self.block_column is None:
+            raise ValueError(
+                "permutation_scheme='blocks_within_strata' requires block_column."
+            )
+        return self
 
 
 class StatisticalAssessmentConfig(BaseModel):
@@ -1154,7 +1219,7 @@ def grouped_chance_assessment(
     """Chance assessment whose independent unit is a group, not a sample.
 
     Keeps every sweep on an identical inferential contract: ``method="permutation"``
-    builds an empirical null by shuffling labels *within groups* (via
+    builds an empirical null by swapping labels *between groups* (via
     *unit_column*), so significance reflects the number of independent units
     (e.g. subjects) rather than the theoretical chance level; ``method="binomial"``
     falls back to the analytical chance level. Permutation refits the full pipeline

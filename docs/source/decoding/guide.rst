@@ -365,11 +365,14 @@ Enables probability calibration inside the training path.
        random_state=42,
        unit_of_inference="group_mean",   # "sample", "group_mean", "group_majority", "custom"
        chance=ChanceAssessmentConfig(
-           method="permutation",         # or "binomial", "auto"
+           method="permutation",         # or "binomial", "auto", "sign_flip"
            n_permutations=1000,
            p0=None,                      # required for "binomial"
            temporal_correction="max_stat",  # "max_stat", "fdr_bh", "none"
            store_null_distribution=False,
+           permutation_scheme="units",   # or "within_strata", "blocks_within_strata"
+           strata_column=None,           # e.g. "Subject" for the stratified schemes
+           block_column=None,            # e.g. "Run" for "blocks_within_strata"
        ),
        confidence_intervals=ConfidenceIntervalConfig(
            alpha=0.05,

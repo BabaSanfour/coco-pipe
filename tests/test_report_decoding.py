@@ -13,6 +13,7 @@ from coco_pipe.report.decoding import (
     DECODING_PRESETS,
     SectionDataUnavailable,
     _accepted_kwargs,
+    _null_note,
     _result_frame,
     add_decoding_features,
     add_decoding_neural_artifacts,
@@ -661,3 +662,48 @@ def test_make_decoding_report_output_path(tmp_path):
         make_synthetic_result(), sections=["overview"], output_path=str(path)
     )
     assert path.exists() and "<html" in path.read_text()
+
+
+def test_statistical_section_states_what_the_null_permuted():
+    permuted = pd.DataFrame(
+        {
+            "Model": ["A"],
+            "Metric": ["accuracy"],
+            "Observed": [0.7],
+            "PValue": [0.01],
+            "NullMethod": ["permutation_full_pipeline"],
+        }
+    )
+    within = {"permutation_scheme": "within_strata", "strata_column": "Subject"}
+    blocks = {
+        "permutation_scheme": "blocks_within_strata",
+        "strata_column": "Subject",
+        "block_column": "Run",
+    }
+    notes = {
+        "units": _null_note(
+            {"statistical_assessment": {"resolved_unit_of_inference": "group"}},
+            permuted,
+        ),
+        "within": _null_note({"statistical_assessment": within}, permuted),
+        "blocks": _null_note({"statistical_assessment": blocks}, permuted),
+        "sign_flip": _null_note({}, permuted.assign(NullMethod="sign_flip_group")),
+    }
+    assert "between whole 'group' units" in notes["units"]
+    assert "shuffled within each 'Subject' stratum" in notes["within"]
+    assert (
+        "'Run' blocks shuffled between the blocks of each 'Subject'"
+        in (notes["blocks"])
+    )
+    assert "flipped at random across groups" in notes["sign_flip"]
+    assert _null_note({}, permuted.assign(NullMethod="binomial")) == ""
+
+    class Result:
+        meta: ClassVar[dict] = {"statistical_assessment": blocks}
+
+        def get_statistical_assessment(self):
+            return permuted
+
+    with patch("coco_pipe.report.decoding._decoding_plot", return_value=None):
+        html = build_statistical_section(Result()).render()
+    assert "shuffled between the blocks of each" in html

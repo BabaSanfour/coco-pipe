@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.decoding import Experiment, ExperimentConfig, paired_prediction_test
+from coco_pipe.decoding import (
+    Experiment,
+    ExperimentConfig,
+    paired_prediction_test,
+    permute_labels_within_strata,
+)
 from coco_pipe.decoding.configs import (
     ChanceAssessmentConfig,
     ClassicalModelConfig,
@@ -441,3 +446,410 @@ def test_multiple_comparison_corrections():
 
     single = apply_multiple_comparison_correction(pd.DataFrame({"PValue": [0.01]}))
     assert single["Significant"].iloc[0]
+
+
+# --- permutation schemes ------------------------------------------------------------
+
+
+def test_units_scheme_matches_the_pinned_null():
+    # nulls drawn before permutation schemes existed; the default must not move
+    X, y = _grouped_data()
+    pinned = {
+        None: (24, [12, 13, 13, 8, 11, 9, 12, 10]),
+        "group_mean": (8, [5, 6, 5, 2, 5, 5, 3, 4]),
+    }
+    for unit, (n_units, counts) in pinned.items():
+        result = _experiment(
+            {"lr": LogisticRegressionConfig()},
+            _assessment(unit, n_permutations=8, store_null_distribution=True),
+        ).run(X, y, groups=GROUPS)
+        null = result.get_statistical_nulls("lr")["lr"]["accuracy"]["values"]
+        np.testing.assert_array_equal(np.ravel(null) * n_units, counts)
+        meta = result.meta["statistical_assessment"]
+        assert meta["permutation_scheme"] == "units"
+        assert meta["strata_column"] is None and meta["block_column"] is None
+
+
+SUBJECTS = np.repeat(np.arange(6), 12)
+RUNS = np.tile(np.repeat(np.arange(4), 3), 6)
+
+
+def _within_subject_data(effect_subjects=(), effect=3.0, seed=0, blocked=False):
+    """Six subjects of 12 trials whose label varies inside every subject.
+
+    Unblocked, labels alternate trial by trial and subject 5 is imbalanced;
+    blocked, each of the four runs of a subject holds one label.
+    """
+    rng = np.random.default_rng(seed)
+    if blocked:
+        y = np.tile(np.repeat([0, 1, 1, 0], 3), 6)
+    else:
+        y = np.tile([0, 1], 36)
+        y[SUBJECTS == 5] = [0] * 8 + [1] * 4
+    X = rng.normal(size=(len(y), 3))
+    planted = np.isin(SUBJECTS, effect_subjects)
+    X[planted, 0] += effect * (2 * y[planted] - 1)
+    metadata = pd.DataFrame({"Subject": SUBJECTS, "Session": "01", "Run": RUNS})
+    return X, y, metadata
+
+
+def _scheme_run(X, y, metadata, cv=None, **chance):
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        chance=ChanceAssessmentConfig(store_null_distribution=True, **chance),
+    )
+    return _experiment(
+        {"lr": LogisticRegressionConfig()},
+        assessment,
+        cv=cv or CVConfig(strategy="stratified", n_splits=3),
+    ).run(X, y, sample_metadata=metadata)
+
+
+def _null(result):
+    return np.ravel(result.get_statistical_nulls("lr")["lr"]["accuracy"]["values"])
+
+
+def test_within_strata_shuffles_keep_each_strata_class_counts():
+    _, y, _ = _within_subject_data()
+    moved = 0
+    for seed in range(50):
+        y_perm = permute_labels_within_strata(y, SUBJECTS, random_state=seed)
+        for subject in np.unique(SUBJECTS):
+            rows = subject == SUBJECTS
+            np.testing.assert_array_equal(
+                np.bincount(y_perm[rows], minlength=2), np.bincount(y[rows])
+            )
+        moved += (y_perm != y).any()
+    assert moved == 50
+    # text labels and strata work the same way
+    labels = np.where(y == 1, "right", "left")
+    shuffled = permute_labels_within_strata(labels, SUBJECTS.astype(str))
+    assert sorted(shuffled) == sorted(labels)
+
+
+def test_block_shuffles_move_whole_blocks_inside_their_stratum():
+    _, y, _ = _within_subject_data(blocked=True)
+    # unequal blocks: the last run of subject 0 is one trial longer
+    runs = RUNS.copy()
+    runs[8] = 3
+    y = y.copy()
+    y[8] = y[9]
+    moved = 0
+    for seed in range(50):
+        y_perm = permute_labels_within_strata(
+            y, SUBJECTS, blocks=runs, random_state=seed
+        )
+        for subject in np.unique(SUBJECTS):
+            rows = subject == SUBJECTS
+            block_labels = {}
+            for run in np.unique(runs[rows]):
+                block = rows & (runs == run)
+                (label,) = np.unique(y_perm[block])  # constant within the block
+                block_labels[run] = label
+            original = [np.unique(y[rows & (runs == r)])[0] for r in block_labels]
+            # the stratum keeps its multiset of block labels: none crossed over
+            assert sorted(block_labels.values()) == sorted(original)
+        moved += (y_perm != y).any()
+    assert moved == 50
+
+
+def test_permuters_reject_degenerate_and_incomplete_strata():
+    y = np.array([0, 0, 1, 1])
+    with pytest.raises(ValueError, match="null is degenerate"):
+        permute_labels_within_strata(y, ["a", "a", "b", "b"])
+    with pytest.raises(ValueError, match="null is degenerate"):
+        permute_labels_within_strata(y, ["a", "a", "b", "b"], blocks=[0, 0, 1, 1])
+    with pytest.raises(ValueError, match="1 samples have no stratum"):
+        permute_labels_within_strata(y, ["a", None, "b", "b"])
+    with pytest.raises(ValueError, match="1 samples have no block"):
+        permute_labels_within_strata(y, ["a"] * 4, blocks=[0, 0, np.nan, 1])
+
+
+def test_within_strata_null_is_centred_on_chance_for_random_features():
+    X, y, metadata = _within_subject_data()
+    result = _scheme_run(
+        X,
+        y,
+        metadata,
+        n_permutations=30,
+        permutation_scheme="within_strata",
+        strata_column="Subject",
+    )
+    null = _null(result)
+    assert len(null) == 30
+    assert abs(null.mean() - 0.5) < 0.05
+    (row,) = result.get_statistical_assessment().to_dict("records")
+    assert abs(row["NullMedian"] - 0.5) < 0.05
+    assert (row["InferentialUnit"], row["NEff"]) == ("sample", 72)
+
+
+def test_within_strata_detects_an_effect_planted_in_some_subjects():
+    X, y, metadata = _within_subject_data(effect_subjects=(0, 2, 4))
+    result = _scheme_run(
+        X,
+        y,
+        metadata,
+        n_permutations=19,
+        permutation_scheme="within_strata",
+        strata_column="subject",  # matched ignoring case
+    )
+    (row,) = result.get_statistical_assessment().to_dict("records")
+    assert row["Observed"] > 0.7
+    assert row["PValue"] == pytest.approx(1 / 20)
+
+    (raw,) = result.raw["lr"]["statistical_assessment"]
+    assert "shuffled within each 'subject' stratum" in raw["Assumptions"]
+    meta = result.meta["statistical_assessment"]
+    assert meta["permutation_scheme"] == "within_strata"
+    assert (meta["strata_column"], meta["block_column"]) == ("subject", None)
+    assert meta["resolved_unit_of_inference"] == "sample"
+
+
+def test_block_scheme_detects_an_effect_planted_in_some_subjects():
+    X, y, metadata = _within_subject_data(effect_subjects=(0, 1, 2, 3), blocked=True)
+    result = _scheme_run(
+        X,
+        y,
+        metadata,
+        cv=CVConfig(strategy="leave_one_group_out", group_key="Subject"),
+        n_permutations=19,
+        permutation_scheme="blocks_within_strata",
+        strata_column="Subject",
+        block_column="Run",
+    )
+    (row,) = result.get_statistical_assessment().to_dict("records")
+    assert row["Observed"] > 0.8
+    assert row["PValue"] == pytest.approx(1 / 20)
+    assert len(_null(result)) == 19
+    (raw,) = result.raw["lr"]["statistical_assessment"]
+    assert "'Run' block labels shuffled within each 'Subject'" in raw["Assumptions"]
+    meta = result.meta["statistical_assessment"]
+    assert (meta["permutation_scheme"], meta["block_column"]) == (
+        "blocks_within_strata",
+        "Run",
+    )
+
+
+def test_block_scheme_names_a_block_holding_two_labels():
+    X, y, metadata = _within_subject_data(blocked=True)
+    y = y.copy()
+    y[SUBJECTS == 2] = np.tile([0, 1], 6)  # subject 2 alternates inside runs
+    with pytest.raises(ValueError, match="Block 0 of stratum 2 holds more than one"):
+        _scheme_run(
+            X,
+            y,
+            metadata,
+            n_permutations=3,
+            permutation_scheme="blocks_within_strata",
+            strata_column="Subject",
+            block_column="Run",
+        )
+
+
+def test_schemes_check_their_columns_and_scoring_unit():
+    X, y, metadata = _within_subject_data()
+    with pytest.raises(ValueError, match="Strata column 'Site' not found"):
+        _scheme_run(
+            X,
+            y,
+            metadata,
+            n_permutations=3,
+            permutation_scheme="within_strata",
+            strata_column="Site",
+        )
+    # a subject-level score takes one label per subject, which a within-subject
+    # shuffle does not keep
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        unit_of_inference="group_mean",
+        chance=ChanceAssessmentConfig(
+            n_permutations=3,
+            permutation_scheme="within_strata",
+            strata_column="Subject",
+        ),
+    )
+    experiment = _experiment({"lr": LogisticRegressionConfig()}, assessment)
+    with pytest.raises(ValueError, match="spans more than one sample"):
+        experiment.run(X, y, groups=SUBJECTS)
+
+
+def test_strata_can_be_the_cv_groups():
+    X, y, _ = _within_subject_data(effect_subjects=(0, 1))
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        chance=ChanceAssessmentConfig(
+            n_permutations=5,
+            permutation_scheme="within_strata",
+            strata_column="group",
+            store_null_distribution=True,
+        ),
+    )
+    result = _experiment(
+        {"lr": LogisticRegressionConfig()},
+        assessment,
+        cv=CVConfig(strategy="leave_one_group_out"),
+    ).run(X, y, groups=SUBJECTS)
+    assert len(_null(result)) == 5
+
+
+def test_stratified_null_is_reproducible_from_the_seed():
+    X, y, metadata = _within_subject_data()
+    chance = {
+        "n_permutations": 6,
+        "permutation_scheme": "within_strata",
+        "strata_column": "Subject",
+    }
+    first = _null(_scheme_run(X, y, metadata, **chance))
+    np.testing.assert_array_equal(first, _null(_scheme_run(X, y, metadata, **chance)))
+    np.testing.assert_array_equal(
+        permute_labels_within_strata(y, SUBJECTS, random_state=3),
+        permute_labels_within_strata(y, SUBJECTS, random_state=3),
+    )
+
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        random_state=7,
+        chance=ChanceAssessmentConfig(store_null_distribution=True, **chance),
+    )
+    other = _experiment(
+        {"lr": LogisticRegressionConfig()},
+        assessment,
+        cv=CVConfig(strategy="stratified", n_splits=3),
+    ).run(X, y, sample_metadata=metadata)
+    assert not np.array_equal(first, _null(other))
+
+    # parallel workers draw from the same per-permutation seeds
+    parallel = Experiment(
+        ExperimentConfig(
+            task="classification",
+            models={"lr": LogisticRegressionConfig()},
+            metrics=["accuracy"],
+            cv=CVConfig(strategy="stratified", n_splits=3),
+            statistical_assessment=StatisticalAssessmentConfig(
+                enabled=True,
+                metrics=["accuracy"],
+                chance=ChanceAssessmentConfig(store_null_distribution=True, **chance),
+            ),
+            n_jobs=2,
+            verbose=False,
+        )
+    ).run(X, y, sample_metadata=metadata)
+    np.testing.assert_array_equal(first, _null(parallel))
+
+
+def test_stratified_scheme_over_time_keeps_the_temporal_correction():
+    X, y, metadata = _within_subject_data(effect_subjects=(0, 2, 4))
+    X = np.repeat(X[:, :, None], 3, axis=2)
+    X[:, 0, 2] = np.random.default_rng(1).normal(size=len(y))  # no effect at t=2
+    base = ClassicalModelConfig(estimator="LogisticRegression")
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=["accuracy"],
+        chance=ChanceAssessmentConfig(
+            n_permutations=9,
+            temporal_correction="max_stat",
+            permutation_scheme="within_strata",
+            strata_column="Subject",
+            store_null_distribution=True,
+        ),
+    )
+    result = _experiment(
+        {"sl": TemporalDecoderConfig(wrapper="sliding", base=base)},
+        assessment,
+        cv=CVConfig(strategy="stratified", n_splits=3),
+    ).run(X, y, sample_metadata=metadata, time_axis=np.array([0.0, 0.1, 0.2]))
+    rows = result.get_statistical_assessment().sort_values("Time")
+    null = np.asarray(result.get_statistical_nulls("sl")["sl"]["accuracy"]["values"])
+    observed = rows["Observed"].to_numpy()
+    max_stat = ((null.max(axis=1)[:, None] >= observed).sum(axis=0) + 1) / 10
+    np.testing.assert_allclose(rows["CorrectedPValue"], max_stat)
+    assert rows["CorrectedPValue"].iloc[0] == pytest.approx(0.1)
+
+
+# --- group-level sign-flip test -------------------------------------------------------
+
+
+def _sign_flip_run(X, y, groups, metric="accuracy", time_axis=None, **chance):
+    base = ClassicalModelConfig(estimator="LogisticRegression")
+    model = (
+        LogisticRegressionConfig()
+        if X.ndim == 2
+        else TemporalDecoderConfig(wrapper="sliding", base=base)
+    )
+    assessment = StatisticalAssessmentConfig(
+        enabled=True,
+        metrics=[metric],
+        chance=ChanceAssessmentConfig(
+            method="sign_flip", store_null_distribution=True, **chance
+        ),
+    )
+    return Experiment(
+        ExperimentConfig(
+            task="classification",
+            models={"m": model},
+            metrics=[metric],
+            cv=CVConfig(strategy="leave_one_group_out"),
+            statistical_assessment=assessment,
+            n_jobs=1,
+            verbose=False,
+        )
+    ).run(X, y, groups=groups, time_axis=time_axis)
+
+
+def test_sign_flip_flips_per_group_scores_around_chance():
+    X, y, _ = _within_subject_data(effect_subjects=(0, 1, 2, 3, 4, 5), effect=1.0)
+    X = np.repeat(X[:, :, None], 2, axis=2)
+    X[:, 0, 1] = np.random.default_rng(1).normal(size=len(y))
+    result = _sign_flip_run(
+        X, y, SUBJECTS, n_permutations=200, time_axis=np.array([0.0, 0.1])
+    )
+    rows = result.get_statistical_assessment().sort_values("Time")
+    assert (rows["NullMethod"] == "sign_flip_group").all()
+    assert (rows["NEff"] == 6).all() and (rows["InferentialUnit"] == "group").all()
+
+    predictions = result.get_predictions()
+    hits = predictions["y_true"] == predictions["y_pred"]
+    per_group = hits.groupby([predictions["Group"], predictions["Time"]]).mean()
+    scores = per_group.unstack("Time").to_numpy()  # groups x times
+    np.testing.assert_allclose(rows["Observed"], scores.mean(axis=0))
+
+    null = np.asarray(result.get_statistical_nulls("m")["m"]["accuracy"]["values"])
+    assert null.shape == (200, 2)
+    # every draw is chance plus a mean of sign-flipped deviations
+    deviations = scores - 0.5
+    sign_seed, _ = np.random.SeedSequence(42).spawn(2)
+    signs = np.random.default_rng(sign_seed).choice([-1.0, 1.0], size=(200, 6))
+    np.testing.assert_allclose(null, 0.5 + signs @ deviations / 6)
+    assert abs(null.mean() - 0.5) < 0.02
+
+    # p-values rank one-sample t values, so the max-stat correction compares
+    # each observed t with the largest t of every draw (Nichols & Holmes 2002)
+    flipped = signs[:, :, None] * deviations[None]
+    t_null = flipped.mean(1) / (flipped.std(1, ddof=1) / np.sqrt(6))
+    t_obs = deviations.mean(0) / (deviations.std(0, ddof=1) / np.sqrt(6))
+    tied = 1e-9 * np.abs(t_obs)  # draws tying with the observed t count
+    raw = (t_null >= t_obs - tied).sum(0) + 1
+    max_stat = (t_null.max(axis=1)[:, None] >= t_obs - tied).sum(0) + 1
+    np.testing.assert_allclose(rows["PValue"], raw / 201)
+    np.testing.assert_allclose(rows["CorrectedPValue"], max_stat / 201)
+    assert rows["CorrectedPValue"].iloc[0] < 0.05
+    assert all(row["P0"] == 0.5 for row in result.raw["m"]["statistical_assessment"])
+
+
+def test_sign_flip_needs_one_group_per_fold_and_a_chance_level():
+    X, y, _ = _within_subject_data()
+    with pytest.raises(ValueError, match="one group per test fold"):
+        _experiment(
+            {"lr": LogisticRegressionConfig()},
+            _assessment(method="sign_flip", n_permutations=10),
+            cv=CVConfig(strategy="group_kfold", n_splits=3),
+        ).run(X, y, groups=SUBJECTS)
+    with pytest.raises(ValueError, match="no known chance level for 'f1'"):
+        _sign_flip_run(X, y, SUBJECTS, metric="f1", n_permutations=10)
+    result = _sign_flip_run(X, y, SUBJECTS, metric="f1", p0=0.5, n_permutations=10)
+    (row,) = result.raw["m"]["statistical_assessment"]
+    assert row["P0"] == 0.5

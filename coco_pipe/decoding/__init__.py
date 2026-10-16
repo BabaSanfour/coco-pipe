@@ -72,6 +72,7 @@ from .stats import (
     binomial_accuracy_test,
     correct_sweep_pvalues,
     paired_prediction_test,
+    permute_labels_within_strata,
     run_statistical_assessment,
 )
 from .targets import prepare_target, safe_group_n_splits
@@ -127,6 +128,7 @@ __all__ = [
     "load_completed_result_records",
     "load_sweep_records",
     "paired_prediction_test",
+    "permute_labels_within_strata",
     "prepare_target",
     "read_run_manifest",
     "read_sweep",
