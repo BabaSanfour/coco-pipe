@@ -24,7 +24,7 @@ def test_generate_descriptor_subject_report():
             [
                 {
                     "condition": "task",
-                    "level": "warning",
+                    "level": "warn",
                     "scope": "subject",
                     "code": "missing_data",
                 }
@@ -99,6 +99,8 @@ def test_generate_descriptor_subject_report():
         html = out_path.read_text(encoding="utf-8")
         assert "Descriptor QC Report - sub-01 ses-01 rest, task" in html
         assert "task: family missingness" in html
+        # The warn flag makes its section, and so the report summary, a warning.
+        assert 'data-status="WARN"' in html
 
 
 def test_generate_descriptor_dataset_report():

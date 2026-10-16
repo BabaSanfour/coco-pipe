@@ -17,3 +17,9 @@ A descriptor table is one self-describing parquet file: `save_descriptor_table` 
 `compute_constant_feature_summary`, and with it the descriptor QC and `select_viable_feature_columns`, marks a column constant when its standard deviation is at most `tol` times its mean absolute value (new `relative_std` column), not when it is at most `tol`. Absolute band power in V² varies by less than 1e-12 V² between epochs and was marked constant.
 
 `aggregate_family_qc`'s `failure_rate` is the share of a family's (channel, observation) slots with a failure, counting only the failures of the observations in the table (by `id_col`). It divided the number of failure records, from several channels and from rejected epochs, by the number of observations, so one channel failing in every epoch read as 100 % and could exceed 1.
+
+The descriptor QC reports count their QC flags: the section holding them takes the worst flag level, so a report with a warn or fail flag no longer says "All Checks Passed" in its summary.
+
+A report image is embedded once: its PNG download link takes the image's own data URI when clicked. It was embedded twice, which made up half of a descriptor QC report.
+
+A report loads Plotly, from the CDN or inlined, only when it has a Plotly figure.

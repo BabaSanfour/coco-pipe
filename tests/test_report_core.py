@@ -208,6 +208,8 @@ def test_global_data_store_payload():
 
     # Payload script tag exists
     assert 'id="report-payload"' in html
+    # A report with a Plotly figure loads Plotly.
+    assert 'src="https://cdn.plot.ly' in html
     # Inline data-figure is *not* used; the lazy plot looks up by data-id
     assert 'data-id="' in html
 
@@ -324,8 +326,9 @@ def test_asset_mode_inline_round_trip(monkeypatch, tmp_path):
     assert rep.asset_urls["plotly"].startswith("/* fake plotly bundle")
 
     html = rep.render()
-    # Inlined contents appear in the output; src= references do not.
-    assert "/* fake plotly bundle */" in html
+    # Inlined contents appear in the output; src= references do not. Plotly is
+    # left out: the report has no Plotly figure.
+    assert "/* fake plotly bundle */" not in html
     assert "/* fake tailwind bundle */" in html
     assert "/* fake pako bundle */" in html
     assert 'src="https://cdn.plot.ly' not in html

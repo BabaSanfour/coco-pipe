@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..io.quality import resolve_qc_status
 from ._constants import FAMILY_DIAGNOSTIC_COLUMNS
 from .core import Report, Section
 from .elements import ImageElement, InteractiveTableElement, TableElement
@@ -55,6 +56,14 @@ def _add_images(
             section.add_element(
                 ImageElement(str(path), caption=key.replace("_", " ").title())
             )
+
+
+def _flags_status(flags_df: pd.DataFrame | None) -> str:
+    """Section status of the worst QC flag level, so the report's summary counts it."""
+    if flags_df is None or flags_df.empty or "level" not in flags_df.columns:
+        return "OK"
+    level = resolve_qc_status(flags_df.to_dict("records"))
+    return {"fail": "FAIL", "warn": "WARN"}.get(level, "OK")
 
 
 def _add_family_diagnostic_sections(
@@ -148,7 +157,7 @@ def generate_descriptor_subject_report(
     _add_optional_table(overview, overview_df, "Overview")
     report.add_section(overview)
 
-    integrity = Section("Integrity Checks", icon="🧪")
+    integrity = Section("Integrity Checks", icon="🧪", status=_flags_status(flags_df))
     _add_optional_interactive_table(
         integrity,
         flags_df,
@@ -293,7 +302,7 @@ def generate_descriptor_dataset_report(
     _add_optional_table(overview, manifest_df, "Merge Provenance")
     report.add_section(overview)
 
-    shards = Section("Shard-Level QC Summary", icon="🗂️")
+    shards = Section("Shard-Level QC Summary", icon="🗂️", status=_flags_status(flags_df))
     _add_optional_interactive_table(
         shards,
         shard_summary_df,
