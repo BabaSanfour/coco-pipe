@@ -8,6 +8,7 @@ from coco_pipe.decoding.configs import (
     ARDRegressionConfig,
     BayesianRidgeConfig,
     CalibrationConfig,
+    ChanceAssessmentConfig,
     ConfidenceIntervalConfig,
     CVConfig,
     DecisionTreeRegressorConfig,
@@ -187,6 +188,46 @@ def test_statistical_assessment_nesting():
         unit_of_inference="custom", custom_unit_column="session"
     )
     assert cfg_unit.custom_unit_column == "session"
+
+
+def test_permutation_scheme_settings():
+    chance = StatisticalAssessmentConfig().chance
+    assert chance.permutation_scheme == "units"
+    assert chance.strata_column is None and chance.block_column is None
+    blocks = ChanceAssessmentConfig(
+        permutation_scheme="blocks_within_strata",
+        strata_column="Subject",
+        block_column="Run",
+    )
+    assert blocks.block_column == "Run"
+
+    invalid = [
+        ({"strata_column": "Subject"}, "only apply to permutation_scheme"),
+        ({"permutation_scheme": "within_strata"}, "requires strata_column"),
+        (
+            {"permutation_scheme": "blocks_within_strata", "strata_column": "S"},
+            "requires block_column",
+        ),
+        (
+            {
+                "permutation_scheme": "within_strata",
+                "strata_column": "S",
+                "block_column": "Run",
+            },
+            "block_column only applies",
+        ),
+        (
+            {
+                "method": "binomial",
+                "permutation_scheme": "within_strata",
+                "strata_column": "S",
+            },
+            "needs method='permutation'",
+        ),
+    ]
+    for fields, message in invalid:
+        with pytest.raises(ValidationError, match=message):
+            ChanceAssessmentConfig(**fields)
 
 
 @pytest.mark.parametrize("config_cls", ACTIVE_SKLEARN_CONFIGS, ids=lambda c: c.__name__)

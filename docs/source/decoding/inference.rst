@@ -348,19 +348,207 @@ The returned DataFrame contains, per model and metric:
    * - ``Time`` / ``TrainTime`` / ``TestTime``
      - Present only for temporal outputs.
 
-2.1 Label Permutation Inside Groups
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2.1 Label Permutation Between Groups
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When ``unit_of_inference="group_mean"`` and ``cv.group_key`` is set, labels are
-permuted **across groups**, not within them. This preserves within-subject epoch
+By default (``permutation_scheme="units"``), each permutation swaps labels
+between whole inference units. When ``unit_of_inference="group_mean"`` and
+``cv.group_key`` is set, the labels of whole subjects are permuted
+**across groups**, not within them. This preserves within-subject epoch
 correlations in the null distribution, yielding a correctly-calibrated p-value
-for the group-level null hypothesis.
+for the group-level null hypothesis when the label belongs to the subject
+(patients against controls, for example).
 
-.. note::
+This scheme needs one label per unit, and it raises
+``ValueError("The label varies within inference unit …")`` otherwise. When
+the label varies inside each subject, use one of the schemes below.
 
-   Permuting only within subjects (swapping epochs within a subject) would be
-   the wrong null for testing whether the model performs above chance at the
-   **population** level.
+2.2 Permutation Schemes for Within-Subject Labels
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In a within-subject design, the label varies inside each subject: a left or
+right choice on every trial, or a Fast or Slow condition run in blocks. Before
+these schemes existed, the only option was ``unit_of_inference="sample"``,
+which shuffles labels across every trial of every subject as if trials were
+independent and exchangeable across subjects. That null is wrong when
+subjects differ in baseline decodability or class balance. For blocked designs,
+where the label is constant within a run, it also inflates false positives.
+
+``ChanceAssessmentConfig.permutation_scheme`` sets what the null exchanges.
+In every scheme, the full pipeline is refit on every permutation, and the
+temporal correction, ``n_jobs`` parallelism, ``random_state`` seeding and
+``store_null_distribution`` work as for the default.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 40 35
+
+   * - ``permutation_scheme``
+     - What one permutation does
+     - Use for
+   * - ``"units"`` (default)
+     - Swaps labels between whole inference units, each holding one label.
+     - Labels that belong to the subject (or other unit).
+   * - ``"within_strata"``
+     - Shuffles sample labels inside each stratum (``strata_column``), so each
+       stratum keeps its class counts.
+     - Trial-wise labels whose trials are exchangeable inside the subject.
+   * - ``"blocks_within_strata"``
+     - Shuffles the labels of blocks (``block_column``) between the blocks of
+       each stratum. A block is one value of ``block_column`` within one
+       stratum, and it must carry a single label.
+     - Blocked conditions: the run, not the trial, is the exchangeable unit.
+
+Strata are the exchangeability blocks of Winkler et al. (2014, *NeuroImage*
+92:381–397): ``"within_strata"`` is their within-block permutation, and
+``"blocks_within_strata"`` exchanges whole blocks inside a higher-level block,
+as in multi-level block permutation (Winkler et al., 2015, *NeuroImage*
+123:253–268). Unlike whole-block exchange of data, coco-pipe moves block
+*labels*, so blocks may differ in size. The test is then valid when the
+assignment of conditions to runs is exchangeable, as with a randomized or
+counterbalanced run order. ``"within_strata"`` assumes trials are exchangeable
+inside a subject. Slow drifts or carry-over between neighbouring trials break
+that assumption; when the condition changes run by run, use the block scheme.
+
+``strata_column`` and ``block_column`` name ``sample_metadata`` columns, matched
+ignoring case. ``strata_column="group"`` uses the CV groups. A block that holds
+two labels raises an error that names the block and its stratum. The schemes
+apply to ``method="permutation"``; with ``method="auto"``, a stratified scheme
+always runs the permutation test, never the binomial one.
+
+These schemes score predictions per sample, so ``unit_of_inference`` resolves
+to ``"sample"`` unless you set it. A unit you set must lie inside what is
+permuted: a single sample for ``"within_strata"``, or one block for
+``"blocks_within_strata"``. Otherwise the run raises an error, because a
+subject-level score takes one label per subject, and that label changes under
+a within-subject shuffle. Block shuffles keep every label inside its block, so
+when blocks differ in size, the per-stratum class counts change from one
+permutation to the next.
+
+**Choice decoding, within subject.** The label (left or right) changes trial by
+trial inside every subject, so trial labels are shuffled within each subject:
+
+.. code-block:: python
+
+   from coco_pipe.decoding import Experiment, ExperimentConfig
+   from coco_pipe.decoding.configs import (
+       ChanceAssessmentConfig, CVConfig, LogisticRegressionConfig,
+       StatisticalAssessmentConfig,
+   )
+
+   config = ExperimentConfig(
+       task="classification",
+       models={"lr": LogisticRegressionConfig()},
+       metrics=["accuracy"],
+       cv=CVConfig(strategy="stratified", n_splits=5),
+       statistical_assessment=StatisticalAssessmentConfig(
+           enabled=True,
+           chance=ChanceAssessmentConfig(
+               n_permutations=1000,
+               permutation_scheme="within_strata",
+               strata_column="Subject",
+           ),
+       ),
+   )
+   result = Experiment(config).run(
+       X, choice,
+       sample_metadata={"Subject": subject_ids, "Session": session_ids},
+   )
+
+**Fast or Slow decoding, blocked by run.** Each run holds one condition, so the
+run is what is exchangeable: run labels are shuffled between the runs of each
+subject, and trials never move between runs or subjects:
+
+.. code-block:: python
+
+   config = ExperimentConfig(
+       task="classification",
+       models={"lr": LogisticRegressionConfig()},
+       metrics=["accuracy"],
+       cv=CVConfig(strategy="leave_one_group_out", group_key="Subject"),
+       statistical_assessment=StatisticalAssessmentConfig(
+           enabled=True,
+           chance=ChanceAssessmentConfig(
+               n_permutations=1000,
+               permutation_scheme="blocks_within_strata",
+               strata_column="Subject",
+               block_column="Run",
+           ),
+       ),
+   )
+   result = Experiment(config).run(
+       X, speed,
+       sample_metadata={
+           "Subject": subject_ids, "Session": session_ids, "Run": run_ids,
+       },
+   )
+
+With few blocks per stratum, a block null has few distinct permutations (with
+two Fast and two Slow runs, a subject has six arrangements), so the smallest
+reachable p-value is bounded by the design and not only by
+``n_permutations``.
+
+``result.meta["statistical_assessment"]`` records the scheme as
+``permutation_scheme``, ``strata_column`` and ``block_column``. Each row's
+``Assumptions`` and ``Caveat`` state what was permuted, and the report's
+Statistical Assessment section repeats it above the table.
+:func:`coco_pipe.decoding.permute_labels_within_strata` draws one such
+permutation on its own, for checking a design before a long run.
+
+2.3 Group-Level Sign-Flip Test
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With leave-one-group-out CV, each fold holds out one subject, so a fold score
+is that subject's score. ``ChanceAssessmentConfig(method="sign_flip")`` tests
+the mean of those scores against chance, with the subject as the unit:
+
+1. For each subject :math:`s`, take the deviation :math:`d_s(t) = \text{score}_s(t) - p_0`.
+2. Each permutation flips the sign of every :math:`d_s` at random, with one
+   flip per subject shared by all timepoints, and records
+   :math:`p_0 + \frac{1}{S}\sum_s \pm d_s(t)`.
+3. p-values rank the one-sample t-statistic of the deviations, so ``max_stat``
+   takes the largest t over time in each permutation (the t-max of Nichols &
+   Holmes, 2002, *Human Brain Mapping* 15:1–25). This weighs timepoints by their
+   spread across subjects rather than letting the noisiest timepoint dominate.
+   ``Observed``, ``NullMedian`` and the other score columns stay in metric units.
+
+Nothing is refit, so the test costs almost nothing beyond the CV run. It needs
+exactly one group per test fold, and a chance level :math:`p_0`. With
+``p0="auto"``, the chance level is one over the number of classes for
+``accuracy`` and ``balanced_accuracy``, 0.5 for ``roc_auc``, and 0 for
+``matthews_corrcoef`` and ``cohen_kappa``. Other metrics need an explicit
+``p0``. The test assumes that each deviation is symmetric about zero under the
+null. For subjects with unbalanced classes, plain accuracy breaks this
+assumption: a chance-level classifier can score up to the majority-class rate,
+not one over the number of classes. The run logs a warning when that happens;
+use ``balanced_accuracy`` or ``roc_auc`` instead. Cross-validated
+accuracies can also fall below chance under the null in small samples
+(Jamalabadi et al., 2016, *Human Brain Mapping* 37:1842–1855), which makes the
+test conservative.
+
+A significant result rejects the global null that **no** subject's data carry
+information about the label. Because a subject's true accuracy cannot fall
+below chance, this is not evidence that the effect is typical in the
+population (Allefeld et al., 2016, *NeuroImage* 141:378–392). Prevalence
+inference answers that question.
+
+.. code-block:: python
+
+   config = ExperimentConfig(
+       task="classification",
+       models={"lr": LogisticRegressionConfig()},
+       metrics=["roc_auc"],
+       cv=CVConfig(strategy="leave_one_group_out", group_key="Subject"),
+       statistical_assessment=StatisticalAssessmentConfig(
+           enabled=True,
+           chance=ChanceAssessmentConfig(method="sign_flip", n_permutations=5000),
+       ),
+   )
+
+Rows carry ``NullMethod="sign_flip_group"``, ``InferentialUnit="group"`` and
+``NEff`` equal to the number of subjects. ``CILower`` and ``CIUpper`` are a
+bootstrap over subjects, with ``StatisticalAssessmentConfig.n_bootstraps``
+resamples.
 
 ---
 

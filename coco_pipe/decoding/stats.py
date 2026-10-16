@@ -345,16 +345,18 @@ def run_statistical_assessment(
     """
     Orchestrate the statistical assessment of experiment results.
 
-    Resolves the chosen statistical method (binomial or permutation) and
-    dispatches analysis for each model and metric.
+    Resolves the chosen statistical method (binomial, permutation or sign
+    flip) and dispatches analysis for each model and metric.
 
     Scientific Rationale
     --------------------
     Statistical significance in decoding is often non-trivial due to temporal
     autocorrelations and multiple comparisons. This orchestrator handles
-    either analytical binomial tests (fast, theoretical chance) or full-pipeline
-    permutation tests (rigorous, empirical null) to provide scientifically
-    grounded inferential claims about model performance.
+    analytical binomial tests (fast, theoretical chance), full-pipeline
+    permutation tests (rigorous, empirical null; labels permuted between
+    units, within strata, or between blocks within strata, as
+    ``chance.permutation_scheme`` sets) and group-level sign-flip tests of
+    leave-one-group-out fold scores (no refits).
 
     Parameters
     ----------
@@ -382,7 +384,17 @@ def run_statistical_assessment(
     Returns
     -------
     assessment_payload : dict
-        Summary containing 'rows' (standardized results) and 'nulls'.
+        Summary containing 'rows' (standardized results), 'nulls' and 'meta',
+        which records the permutation scheme and its strata and block columns.
+
+    Raises
+    ------
+    ValueError
+        If the experiment produced no predictions; if a unit, strata or block
+        column is missing; if a permuted unit or block holds more than one
+        label, or the scoring unit spans several permuted units; or, for the
+        sign-flip test, if a test fold holds more than one group or the metric
+        has no known chance level and ``chance.p0`` is unset.
 
     Examples
     --------
@@ -414,6 +426,11 @@ def run_statistical_assessment(
                 "unit_of_inference='custom' requires custom_unit_column to be set."
             )
         unit = "custom"
+    chance = stats_config.chance
+    if chance.permutation_scheme != "units" and stats_config.unit_of_inference is None:
+        # These schemes exchange single samples or blocks of samples, so the
+        # score is computed per sample unless a nested unit is set explicitly.
+        unit = "sample"
     metrics = experiment_config.get_all_evaluation_metrics()
     if stats_config.metrics:
         metrics = [m for m in metrics if m in stats_config.metrics]
@@ -444,9 +461,22 @@ def run_statistical_assessment(
             if method == "auto":
                 method = (
                     "binomial"
-                    if (metric == "accuracy" and stats_config.chance.p0)
+                    if (
+                        metric == "accuracy"
+                        and stats_config.chance.p0
+                        and chance.permutation_scheme == "units"
+                    )
                     else "permutation"
                 )
+
+            if method == "sign_flip":
+                flip_rows, flip_null = _run_sign_flip_assessment(
+                    model, metric, model_predictions, stats_config
+                )
+                rows.extend(flip_rows)
+                if chance.store_null_distribution:
+                    nulls.setdefault(model, {})[metric] = flip_null
+                continue
 
             if method == "binomial":
                 rows.extend(
@@ -493,6 +523,9 @@ def run_statistical_assessment(
             "n_permutations": stats_config.chance.n_permutations,
             "alpha": stats_config.confidence_intervals.alpha,
             "temporal_correction": stats_config.chance.temporal_correction,
+            "permutation_scheme": chance.permutation_scheme,
+            "strata_column": chance.strata_column,
+            "block_column": chance.block_column,
         },
     }
 
@@ -683,7 +716,7 @@ def _run_permutation_assessment(
         observed_agg,
         metric=metric,
         score_keys=score_keys,
-        n_bootstraps=1000,
+        n_bootstraps=config.n_bootstraps,
         random_state=config.random_state,
     )
 
@@ -756,24 +789,37 @@ def _run_permutation_loop(
         unit_values = sample_metadata[columns[str(target_col).casefold()]].to_numpy()
     else:
         raise ValueError(f"Could not resolve unit values for '{unit}'.")
-    unique_units, unit_map_idx = np.unique(unit_values, return_inverse=True)
-    n_unique = len(unique_units)
+    if config.chance.permutation_scheme == "units":
+        unique_units, unit_map_idx = np.unique(unit_values, return_inverse=True)
+        n_unique = len(unique_units)
 
-    unit_labels_orig = []
-    for u in unique_units:
-        mask = unit_values == u
-        u_y = y[mask]
-        if experiment_config.task == "classification":
-            if np.unique(u_y).size > 1:
-                raise ValueError(
-                    f"The label varies within inference unit {u!r}; a permutation "
-                    "test swaps whole units, so each unit needs one label. Use a "
-                    "unit inside which the target is constant."
-                )
-            unit_labels_orig.append(u_y[0])
-        else:
-            unit_labels_orig.append(np.mean(u_y))
-    unit_labels_orig = np.array(unit_labels_orig)
+        unit_labels_orig = []
+        for u in unique_units:
+            mask = unit_values == u
+            u_y = y[mask]
+            if experiment_config.task == "classification":
+                if np.unique(u_y).size > 1:
+                    raise ValueError(
+                        f"The label varies within inference unit {u!r}; a "
+                        "permutation test swaps whole units, so each unit needs "
+                        "one label. Use a unit inside which the target is "
+                        "constant, or keep the units and permute inside them "
+                        "with chance.permutation_scheme='within_strata' or "
+                        "'blocks_within_strata'."
+                    )
+                unit_labels_orig.append(u_y[0])
+            else:
+                unit_labels_orig.append(np.mean(u_y))
+        unit_labels_orig = np.array(unit_labels_orig)
+
+        def _permuted_labels(local_rng):
+            perm_idx = local_rng.permutation(n_unique)
+            return unit_labels_orig[perm_idx][unit_map_idx]
+
+    else:
+        _permuted_labels = _scheme_label_permuter(
+            y, unit, unit_values, config, groups, sample_metadata
+        )
 
     import joblib
 
@@ -781,8 +827,7 @@ def _run_permutation_loop(
 
     def _run_single_permutation(p_idx, seed):
         local_rng = np.random.default_rng(seed)
-        perm_idx = local_rng.permutation(n_unique)
-        y_perm = unit_labels_orig[perm_idx][unit_map_idx]
+        y_perm = _permuted_labels(local_rng)
         perm_config = experiment_config.model_copy(deep=True)
         # A permutation run must not recursively trigger its own statistical
         # assessment: that nests permutation-within-permutation (runaway cost and
@@ -829,6 +874,377 @@ def _run_permutation_loop(
     return np.array(results)
 
 
+def _metadata_values(
+    name: str,
+    role: str,
+    groups: np.ndarray | None,
+    sample_metadata: pd.DataFrame | None,
+) -> np.ndarray:
+    """One value per sample from the CV groups or a sample-metadata column.
+
+    ``"group"`` names the CV groups; any other name is matched ignoring case,
+    because run() capitalises metadata columns.
+    """
+    if str(name).casefold() == "group" and groups is not None:
+        return np.asarray(groups)
+    available = list(sample_metadata.columns) if sample_metadata is not None else []
+    columns = {str(column).casefold(): column for column in available}
+    column = columns.get(str(name).casefold())
+    if column is None:
+        raise ValueError(
+            f"{role} '{name}' not found in sample_metadata. Available: {available}"
+            + ("" if groups is None else "; 'group' names the CV groups.")
+        )
+    return sample_metadata[column].to_numpy()
+
+
+def _label_permuter(
+    y: np.ndarray,
+    strata: np.ndarray,
+    blocks: np.ndarray | None = None,
+) -> tuple[Callable[[np.random.Generator], np.ndarray], np.ndarray]:
+    """Build a draw of permuted labels that never crosses a stratum.
+
+    Without *blocks*, the labels of the samples of each stratum are shuffled
+    among those samples, so each stratum keeps its class counts. With *blocks*,
+    a block is one value of *blocks* within one stratum; it must carry a single
+    label, and the block labels of each stratum are shuffled among its blocks.
+
+    Returns the draw, a callable taking a generator, and the exchangeable unit
+    of every sample: its position without blocks, its block id with them.
+    """
+    y = np.asarray(y)
+    strata = np.asarray(strata)
+    frame = pd.DataFrame({"stratum": strata})
+    if frame["stratum"].isna().any():
+        raise ValueError(
+            f"{int(frame['stratum'].isna().sum())} samples have no stratum; every "
+            "sample needs one for a stratified permutation."
+        )
+    if blocks is None:
+        rows = list(frame.groupby("stratum", sort=False).indices.values())
+        exchange_ids = np.arange(len(y))
+        informative = any(np.unique(y[r]).size > 1 for r in rows)
+
+        def draw(rng: np.random.Generator) -> np.ndarray:
+            out = y.copy()
+            for r in rows:
+                out[r] = y[rng.permutation(r)]
+            return out
+
+    else:
+        frame["block"] = np.asarray(blocks)
+        if frame["block"].isna().any():
+            raise ValueError(
+                f"{int(frame['block'].isna().sum())} samples have no block; every "
+                "sample needs one for a block permutation."
+            )
+        by_block = frame.groupby(["stratum", "block"], sort=False)
+        exchange_ids = by_block.ngroup().to_numpy()
+        strata_blocks: dict[Any, list[np.ndarray]] = {}
+        for (stratum, block), r in by_block.indices.items():
+            labels = pd.unique(y[r])
+            if len(labels) > 1:
+                block, stratum = (
+                    v.item() if isinstance(v, np.generic) else v
+                    for v in (block, stratum)
+                )
+                raise ValueError(
+                    f"Block {block!r} of stratum {stratum!r} holds more than one "
+                    f"label ({sorted(labels.tolist())}); "
+                    "permutation_scheme='blocks_within_strata' moves labels block "
+                    "by block, so each block needs a single label."
+                )
+            strata_blocks.setdefault(stratum, []).append(r)
+        layout = [
+            (block_rows, np.array([y[r[0]] for r in block_rows]))
+            for block_rows in strata_blocks.values()
+        ]
+        informative = any(np.unique(labels).size > 1 for _, labels in layout)
+
+        def draw(rng: np.random.Generator) -> np.ndarray:
+            out = y.copy()
+            for block_rows, labels in layout:
+                for r, label in zip(
+                    block_rows, labels[rng.permutation(len(labels))], strict=True
+                ):
+                    out[r] = label
+            return out
+
+    if not informative:
+        raise ValueError(
+            "No stratum holds two exchangeable "
+            + ("samples" if blocks is None else "blocks")
+            + " with different labels, so every permutation returns the observed "
+            "labels and the null is degenerate."
+        )
+    return draw, exchange_ids
+
+
+def permute_labels_within_strata(
+    y: Sequence[Any],
+    strata: Sequence[Any],
+    *,
+    blocks: Sequence[Any] | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> np.ndarray:
+    """Permute labels without moving any of them across a stratum.
+
+    Without *blocks*, sample labels are shuffled inside each stratum, which
+    keeps each stratum's class counts. With *blocks*, each block (one value of
+    *blocks* within one stratum) must carry a single label, and block labels
+    are shuffled between the blocks of each stratum. This is the draw the
+    full-pipeline permutation test makes for
+    ``permutation_scheme="within_strata"`` and ``"blocks_within_strata"``.
+
+    Parameters
+    ----------
+    y : sequence
+        One label per sample.
+    strata : sequence
+        One stratum per sample (e.g. the subject).
+    blocks : sequence, optional
+        One block per sample (e.g. the run), for a blocked design.
+    random_state : int or numpy.random.Generator, optional
+        Seed or generator for the draw.
+
+    Returns
+    -------
+    y_perm : np.ndarray
+        The permuted labels, aligned with *y*.
+
+    Raises
+    ------
+    ValueError
+        If a block holds more than one label, or no stratum holds two
+        exchangeable units with different labels.
+
+    Examples
+    --------
+    >>> from coco_pipe.decoding import permute_labels_within_strata
+    >>> y = [0, 1, 0, 1, 0, 1]
+    >>> subjects = ["S1", "S1", "S1", "S2", "S2", "S2"]
+    >>> y_perm = permute_labels_within_strata(y, subjects, random_state=0)
+    """
+    draw, _ = _label_permuter(
+        np.asarray(y),
+        np.asarray(strata),
+        None if blocks is None else np.asarray(blocks),
+    )
+    return draw(np.random.default_rng(random_state))
+
+
+def _scheme_label_permuter(
+    y: np.ndarray,
+    unit: str,
+    unit_values: np.ndarray,
+    config: StatisticalAssessmentConfig,
+    groups: np.ndarray | None,
+    sample_metadata: pd.DataFrame | None,
+) -> Callable[[np.random.Generator], np.ndarray]:
+    """The label draw of a stratified scheme, checked against the scoring unit."""
+    chance = config.chance
+    strata = _metadata_values(
+        chance.strata_column, "Strata column", groups, sample_metadata
+    )
+    blocks = None
+    if chance.permutation_scheme == "blocks_within_strata":
+        blocks = _metadata_values(
+            chance.block_column, "Block column", groups, sample_metadata
+        )
+    draw, exchange_ids = _label_permuter(y, strata, blocks)
+    if unit != "sample":
+        # A scored unit takes one label (or one mean target); the draw keeps it
+        # one label only if the unit lies inside a single exchangeable unit.
+        spans = pd.Series(exchange_ids).groupby(unit_values).nunique()
+        if (spans > 1).any():
+            exchanged = "sample" if blocks is None else f"'{chance.block_column}' block"
+            raise ValueError(
+                f"Inference unit {spans.index[spans > 1][0]!r} spans more than one "
+                f"{exchanged}, but permutation_scheme="
+                f"'{chance.permutation_scheme}' moves labels {exchanged} by "
+                f"{exchanged}. Use unit_of_inference='sample' or a unit nested "
+                "inside what is permuted."
+            )
+    return draw
+
+
+def _permutation_description(
+    config: StatisticalAssessmentConfig, unit: str, task: str
+) -> tuple[str, str]:
+    """The Assumptions and Caveat texts of a full-pipeline permutation row."""
+    chance = config.chance
+    if chance.permutation_scheme == "within_strata":
+        return (
+            "full outer-CV pipeline rerun with labels shuffled within each "
+            f"'{chance.strata_column}' stratum",
+            f"Labels assumed exchangeable within '{chance.strata_column}' strata.",
+        )
+    if chance.permutation_scheme == "blocks_within_strata":
+        return (
+            f"full outer-CV pipeline rerun with '{chance.block_column}' block "
+            f"labels shuffled within each '{chance.strata_column}' stratum",
+            f"Labels assumed exchangeable between '{chance.block_column}' blocks "
+            f"within '{chance.strata_column}' strata.",
+        )
+    return (
+        "full outer-CV pipeline rerun under label permutations; "
+        "regression targets averaged by unit"
+        if task == "regression" and unit != "sample"
+        else "full outer-CV pipeline rerun under label permutations",
+        f"Independence assumed at the '{unit}' level.",
+    )
+
+
+# Chance levels the sign-flip test knows without an explicit p0; accuracy and
+# balanced accuracy use one over the number of classes.
+_SIGN_FLIP_CHANCE = {
+    "roc_auc": 0.5,
+    "roc_auc_ovr_weighted": 0.5,
+    "matthews_corrcoef": 0.0,
+    "cohen_kappa": 0.0,
+}
+
+
+def _sign_flip_chance(metric: str, p0: Any, y_true: pd.Series) -> float:
+    """The chance level per-fold scores are compared with."""
+    if p0 is not None and p0 != "auto":
+        return float(p0)
+    if metric in {"accuracy", "balanced_accuracy"}:
+        return 1.0 / y_true.nunique()
+    if metric in _SIGN_FLIP_CHANCE:
+        return _SIGN_FLIP_CHANCE[metric]
+    raise ValueError(
+        f"method='sign_flip' has no known chance level for {metric!r}; set "
+        "chance.p0 explicitly."
+    )
+
+
+def _run_sign_flip_assessment(
+    model: str,
+    metric: str,
+    predictions: pd.DataFrame,
+    config: StatisticalAssessmentConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Group-level sign-flip test of per-fold scores against chance.
+
+    Each test fold must hold exactly one group, as in leave-one-group-out CV,
+    so a fold score is a group score. Under the null, each group's score minus
+    chance is symmetric about zero; the null of the mean flips those signs at
+    random, independently per group but jointly over time, so the max-stat
+    correction sees the temporal dependence. Nothing is refit.
+    """
+    if "Group" not in predictions or predictions["Group"].isna().any():
+        raise ValueError(
+            "method='sign_flip' needs CV groups, one per test fold "
+            "(leave-one-group-out)."
+        )
+    groups_per_fold = predictions.groupby("Fold")["Group"].nunique()
+    if (groups_per_fold != 1).any():
+        fold = groups_per_fold.index[groups_per_fold != 1][0]
+        raise ValueError(
+            f"method='sign_flip' needs one group per test fold "
+            f"(leave-one-group-out); fold {fold} tests "
+            f"{groups_per_fold[fold]} groups."
+        )
+    folds_per_group = predictions.groupby("Group")["Fold"].nunique()
+    if (folds_per_group > 1).any():
+        raise ValueError(
+            f"Group {folds_per_group.index[folds_per_group > 1][0]!r} is tested in "
+            "more than one fold; method='sign_flip' needs one score per group."
+        )
+
+    chance = _sign_flip_chance(metric, config.chance.p0, predictions["y_true"])
+    if metric == "accuracy" and config.chance.p0 in {None, "auto"}:
+        samples = predictions.drop_duplicates(["Fold", "SampleID"])
+        counts = pd.crosstab(samples["Group"], samples["y_true"])
+        unbalanced = counts.index[counts.nunique(axis=1) > 1].tolist()
+        if len(unbalanced):
+            logger.warning(
+                f"Sign-flip chance for accuracy is taken as {chance:g}, but "
+                f"{len(unbalanced)} groups (first: {unbalanced[0]!r}) have "
+                "unbalanced classes, where a chance-level classifier can score "
+                "up to the majority-class rate; the test is biased. Use "
+                "balanced_accuracy or set chance.p0."
+            )
+    temporal_cols = [
+        col
+        for col in TEMPORAL_COLUMNS
+        if col in predictions and predictions[col].notna().any()
+    ]
+    score_keys = list(_score_by_coordinates(predictions, metric).keys())
+    fold_scores = []
+    for fold, frame in predictions.groupby("Fold", sort=True):
+        scores = _score_by_coordinates(frame, metric)
+        values = np.array([scores.get(key, np.nan) for key in score_keys], float)
+        if not np.isfinite(values).all():
+            raise ValueError(
+                f"The {metric} score of fold {fold} (group "
+                f"{frame['Group'].iloc[0]!r}) is not finite; method='sign_flip' "
+                "needs a score for every group."
+            )
+        fold_scores.append(values)
+    scores = np.vstack(fold_scores)
+    n_groups = len(scores)
+    deviations = scores - chance
+
+    sign_seed, boot_seed = np.random.SeedSequence(config.random_state).spawn(2)
+    signs = np.random.default_rng(sign_seed).choice(
+        [-1.0, 1.0], size=(config.chance.n_permutations, n_groups)
+    )
+    null_array = chance + signs @ deviations / n_groups
+    observed_array = scores.mean(axis=0)
+    # p-values use the one-sample t, so max-stat weighs timepoints by their
+    # spread across groups. Flips keep the sum of squared deviations, so each
+    # draw's t follows from its mean alone. Discrete scores tie often, so t is
+    # rounded to make ties exact whatever the summation order.
+    sum_sq = (deviations**2).sum(axis=0)
+
+    def t_stat(mean_score: np.ndarray) -> np.ndarray:
+        m = mean_score - chance
+        se = np.sqrt(
+            np.maximum(sum_sq - n_groups * m**2, 0) / (n_groups * (n_groups - 1))
+        )
+        infinite = np.where(m == 0, 0.0, np.copysign(np.inf, m))
+        return np.round(np.divide(m, se, out=infinite, where=se > 0), 9)
+
+    resampled = np.random.default_rng(boot_seed).integers(
+        0, n_groups, size=(config.n_bootstraps, n_groups)
+    )
+    boot_array = scores[resampled].mean(axis=1)
+
+    rows = _build_permutation_rows(
+        model=model,
+        metric=metric,
+        observed_array=observed_array,
+        null_array=null_array,
+        obs_ci_lower=np.percentile(boot_array, 2.5, axis=0),
+        obs_ci_upper=np.percentile(boot_array, 97.5, axis=0),
+        score_keys=score_keys,
+        temporal_cols=temporal_cols,
+        unit="group",
+        n_units=n_groups,
+        config=config,
+        task="classification",
+        null_method="sign_flip_group",
+        statistic=(t_stat(observed_array), t_stat(null_array)),
+        assumptions=(
+            f"one group per test fold; per-group {metric} minus chance "
+            f"({chance:g}) symmetric about zero under the null; no refits"
+        ),
+        caveat="Independence assumed at the 'group' level.",
+    )
+    for row in rows:
+        row["P0"] = chance
+    null_payload = {
+        "metric": metric,
+        "unit": "group",
+        "coordinates": [_coord_dict(key, temporal_cols) for key in score_keys],
+        "values": null_array,
+    }
+    return rows, null_payload
+
+
 def _build_permutation_rows(
     model: str,
     metric: str,
@@ -842,20 +1258,31 @@ def _build_permutation_rows(
     n_units: int,
     config: StatisticalAssessmentConfig,
     task: str,
+    null_method: str = "permutation_full_pipeline",
+    statistic: tuple[np.ndarray, np.ndarray] | None = None,
+    assumptions: str | None = None,
+    caveat: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Format a permutation test result into a standardized result row."""
+    """Format a permutation test result into a standardized result row.
+
+    p-values compare *observed_array* with *null_array*, or the observed and
+    null arrays of *statistic* when it is given.
+    """
+    if assumptions is None or caveat is None:
+        default_assumptions, default_caveat = _permutation_description(
+            config, unit, task
+        )
+        assumptions = assumptions or default_assumptions
+        caveat = caveat or default_caveat
     metric_spec = get_metric_spec(metric)
     greater_is_better = metric_spec.greater_is_better
 
-    p_values = _empirical_p_values(
-        observed_array,
-        null_array,
-        greater_is_better,
-    )
+    stat_observed, stat_null = statistic or (observed_array, null_array)
+    p_values = _empirical_p_values(stat_observed, stat_null, greater_is_better)
 
     corrected = _correct_p_values(
-        observed_array,
-        null_array,
+        stat_observed,
+        stat_null,
         p_values,
         config.chance.temporal_correction,
         metric_spec.greater_is_better,
@@ -875,7 +1302,7 @@ def _build_permutation_rows(
                 "Observed": observed_array[idx],
                 "InferentialUnit": unit,
                 "NEff": n_units,
-                "NullMethod": "permutation_full_pipeline",
+                "NullMethod": null_method,
                 "NPermutations": config.chance.n_permutations,
                 "P0": null_median[idx],
                 "PValue": p_values[idx],
@@ -890,13 +1317,8 @@ def _build_permutation_rows(
                 "NullLower": null_lower[idx],
                 "NullUpper": null_upper[idx],
                 "Significant": corrected[idx] <= config.confidence_intervals.alpha,
-                "Assumptions": (
-                    "full outer-CV pipeline rerun under label permutations; "
-                    "regression targets averaged by unit"
-                    if task == "regression" and unit != "sample"
-                    else "full outer-CV pipeline rerun under label permutations"
-                ),
-                "Caveat": f"Independence assumed at the '{unit}' level.",
+                "Assumptions": assumptions,
+                "Caveat": caveat,
                 **coord,
             }
         )
