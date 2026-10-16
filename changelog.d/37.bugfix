@@ -7,3 +7,5 @@ The Welch PSD of the descriptors uses 2 s segments with 50 % overlap, set by `we
 The complexity descriptors are computed on each epoch centred on its own mean, and `ComplexityDescriptorConfig.bandpass = (l_freq, h_freq)` band-passes each epoch first with `mne.filter.filter_data`. Zero crossings and RMS were taken around zero, so an offset or slow drift changed them.
 
 Log band power of a band with no power (a flat channel) is `NaN`, recorded as a failure, instead of `log10(eps) = -15.65`, a finite value that later steps took for data.
+
+`ParametricDescriptorConfig.min_peak_height` sets specparam's minimum peak height above the aperiodic fit (log10 power); it was not exposed, so every fit used 0.

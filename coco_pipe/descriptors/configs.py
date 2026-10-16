@@ -241,6 +241,9 @@ class ParametricDescriptorConfig(_StrictConfigModel):
         Peak width bounds forwarded to the model backend.
     max_n_peaks : int, default=6
         Maximum number of periodic peaks to fit.
+    min_peak_height : float, default=0.0
+        Minimum height of a peak above the aperiodic fit, in log10 power,
+        forwarded to the model backend.
     aperiodic_mode : {"fixed", "knee"}, default="fixed"
         Aperiodic model form used by specparam.
     outputs : list of {"aperiodic", "fit_quality", "peak_summary"}
@@ -261,6 +264,7 @@ class ParametricDescriptorConfig(_StrictConfigModel):
     freq_range: tuple[float, float] = (1.0, 45.0)
     peak_width_limits: tuple[float, float] = (1.0, 12.0)
     max_n_peaks: int = Field(6, ge=0)
+    min_peak_height: float = Field(0.0, ge=0.0)
     aperiodic_mode: Literal["fixed", "knee"] = "fixed"
     outputs: list[Literal["aperiodic", "fit_quality", "peak_summary"]] = Field(
         default_factory=lambda: ["aperiodic", "fit_quality", "peak_summary"]

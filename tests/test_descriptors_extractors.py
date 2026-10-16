@@ -132,6 +132,20 @@ def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
     # Cz has no peak in the alpha band
     assert np.isnan(values["param_alpha_peak_freq_ch-Cz"]).all()
 
+    # a minimum height above every peak leaves only the aperiodic fit
+    values, _ = _extract(
+        signals,
+        {
+            "parametric": {
+                "enabled": True,
+                "outputs": ["peak_summary"],
+                "min_peak_height": 100.0,
+            }
+        },
+    )
+    assert (values["param_peak_count_ch-Fz"] == 0).all()
+    assert np.isnan(values["param_alpha_peak_freq_ch-Fz"]).all()
+
 
 def test_corrected_band_power_is_measured_only_where_a_peak_was_fitted(signals):
     values, failures = _extract(

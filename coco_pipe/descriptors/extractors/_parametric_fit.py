@@ -112,6 +112,7 @@ def fit_single_spectrum(
         aperiodic_mode=config.aperiodic_mode,
         peak_width_limits=config.peak_width_limits,
         max_n_peaks=config.max_n_peaks,
+        min_peak_height=config.min_peak_height,
         verbose=False,
     )
     model.fit(freqs, spectrum, list(config.freq_range))
