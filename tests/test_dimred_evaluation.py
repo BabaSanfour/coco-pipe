@@ -1291,6 +1291,70 @@ def test_trajectory_auc_speed():
     np.testing.assert_allclose(auc_time, [1.0])
 
 
+# --- missing time points ------------------------------------------------------
+
+_GAP = 3  # missing time point of the second trajectory
+
+
+def _clean_and_gapped():
+    walk = np.cumsum(np.random.default_rng(0).normal(size=(2, 7, 2)), axis=1)
+    walk[1, _GAP] = np.nan
+    return walk
+
+
+@pytest.mark.parametrize(
+    "func",
+    [
+        pytest.param(trajectory_path_length, id="path_length"),
+        pytest.param(trajectory_tortuosity, id="tortuosity"),
+        pytest.param(lambda tr: trajectory_auc_speed(tr, dt=1.0), id="auc_speed"),
+        pytest.param(
+            lambda tr: trajectory_auc_speed(tr, time=np.linspace(0, 0.6, 7)),
+            id="auc_speed_time",
+        ),
+        pytest.param(trajectory_cohesion, id="cohesion"),
+        pytest.param(trajectory_intra_spread, id="intra_spread"),
+    ],
+)
+def test_a_missing_point_makes_the_trajectory_scalar_nan(func):
+    traj = _clean_and_gapped()
+    values = func(traj)
+    assert np.isnan(values[1])
+    # the gap does not leak into the other trajectory of the batch
+    np.testing.assert_allclose(values[0], func(traj[:1])[0])
+    assert np.isfinite(values[0])
+
+
+def test_cumulative_path_length_is_nan_from_the_gap_on():
+    cumulative = trajectory_path_length(_clean_and_gapped(), cumulative=True)[1]
+    assert np.isfinite(cumulative[:_GAP]).all()
+    assert np.isnan(cumulative[_GAP:]).all()
+
+
+def test_local_geometry_is_nan_only_where_it_uses_the_gap():
+    traj = _clean_and_gapped()
+    # steps _GAP - 1 and _GAP touch the missing point
+    speed = trajectory_speed(traj)[1, :-1]
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(speed)), [_GAP - 1, _GAP])
+    # each angle uses two consecutive steps: angles _GAP - 2 to _GAP
+    for angles in (
+        trajectory_turning_angle(traj)[1],
+        trajectory_curvature(traj, method="cosine")[1],
+    ):
+        np.testing.assert_array_equal(
+            np.flatnonzero(np.isnan(angles)), [_GAP - 2, _GAP - 1, _GAP]
+        )
+
+
+@pytest.mark.parametrize("method", ["centroid", "mahalanobis"])
+def test_separation_is_nan_at_a_missing_time_point(method):
+    rng = np.random.default_rng(0)
+    traj = rng.normal(size=(8, 5, 2)) + np.repeat([0.0, 3.0], 4)[:, None, None]
+    traj[0, 2] = np.nan
+    curve = trajectory_separation(traj, np.repeat([0, 1], 4), method=method)[(0, 1)]
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(curve)), [2])
+
+
 @pytest.mark.parametrize(
     "call, match",
     [

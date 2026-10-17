@@ -211,6 +211,29 @@ These wrap standard non-parametric tests (Wilcoxon, Friedman) over per-trial
 scalar summaries and are convenient when you want a publication-ready
 condition comparison without leaving the dim-reduction module.
 
+:class:`~coco_pipe.dim_reduction.evaluation.TrajectoryResult` holds the
+trajectories with their subject and condition labels and returns tidy tables
+of per-trial, per-condition and separation scalars. Conditions keep the labels
+you give, names or integers, and every method that chooses conditions takes
+them. Trajectories on a (subject, condition) grid, such as condition means,
+build the container directly:
+
+.. code-block:: python
+
+   from coco_pipe.dim_reduction.evaluation import (
+       TrajectoryResult,
+       permutation_null_separation_auc,
+   )
+
+   # grid: (n_subjects, n_conditions, n_times, n_dims)
+   result = TrajectoryResult.from_grid(
+       grid, times, subjects=subject_ids, conditions=["fast-easy", "slow-hard"]
+   )
+   pairs = result.get_separation_pair_scalars()   # pair "fast-easy_vs_slow-hard"
+   observed, null = permutation_null_separation_auc(
+       result, group_a=["fast-easy"], group_b=["slow-hard"], within_subject=True
+   )
+
 ---
 
 7. Caveats
@@ -221,6 +244,10 @@ condition comparison without leaving the dim-reduction module.
   on dimensionless quantities (``tortuosity``, ``turning_angle``).
 - **Time spacing**. The default ``dt=1.0`` assumes uniform spacing. Pass an
   explicit ``times`` array to the evaluator when you need physical units.
+- **Missing time points**. A NaN coordinate propagates: path length, speed,
+  curvature, separation and every summary computed from it are NaN, so a gap
+  never counts as zero length. Drop or interpolate gaps first when you need
+  finite values.
 - **Evaluation-level ``trajectory_dispersion``** is the global unlabeled
   variant. For label-conditioned dispersion, call
   ``geometry.trajectory_dispersion`` directly.

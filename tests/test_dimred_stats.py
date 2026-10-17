@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from coco_pipe.dim_reduction.evaluation.result import TrajectoryResult
 from coco_pipe.dim_reduction.evaluation.stats import (
@@ -108,9 +109,8 @@ def test_permutation_null_separation_auc_missing():
     subjects = np.array([1, 1])
     conditions = np.array([1, 2])
     res = TrajectoryResult(traj, times, subjects, conditions)
-    # The groups passed are not present
-    obs, _null = permutation_null_separation_auc(res, group_a=[3], group_b=[4])
-    assert np.isnan(obs)
+    with pytest.raises(ValueError, match=r"Unknown condition\(s\) \[3\]"):
+        permutation_null_separation_auc(res, group_a=[3], group_b=[2])
 
     rng = np.random.default_rng(0)
     permutation_null_separation_auc(res, group_a=[1], group_b=[2], n_perm=10, rng=rng)

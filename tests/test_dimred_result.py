@@ -275,7 +275,13 @@ def test_trajectory_result_separation_pair_scalars():
         traj_nan, np.array([0, 1, 2]), np.array([1, 1]), np.array([1, 2])
     )
     df_nan = res_nan.get_separation_pair_scalars(["centroid"])
-    assert len(df_nan) == 0
+    # an undefined curve is reported, as NaN, rather than dropped
+    assert df_nan["metric"].tolist() == [
+        "peak_separation",
+        "peak_separation_time",
+        "auc_separation",
+    ]
+    assert df_nan["value"].isna().all()
 
 
 def test_trajectory_result_filter_and_slice():
@@ -313,3 +319,145 @@ def test_result_loads_type_error():
 
         with pytest.raises(TypeError, match="not a VelocityResult"):
             VelocityResult.load(p)
+
+
+# --- condition labels -----------------------------------------------------------
+
+# sorted, so the integer labels 3, 4, 5 below take the names' order
+NAMES = np.array(["fast-easy-right", "fast-hard-left", "slow-hard-left"])
+TO_NAME = {3: NAMES[0], 4: NAMES[1], 5: NAMES[2]}
+
+
+def _named_and_integer_results():
+    rng = np.random.default_rng(0)
+    codes = np.tile(np.repeat([0, 1, 2], 4), 2)  # 2 subjects x 3 conditions x 4
+    subjects = np.repeat(["s1", "s2"], 12)
+    traj = rng.normal(size=(codes.size, 20, 3)) + codes[:, None, None]
+    times = np.linspace(0, 1, 20)
+    named = TrajectoryResult(traj, times, subjects, NAMES[codes])
+    integer = TrajectoryResult(traj, times, subjects, codes + 3)
+    return named, integer
+
+
+def test_named_conditions_give_the_numbers_of_integer_ones():
+    named, integer = _named_and_integer_results()
+
+    per_cond_named = named.get_per_condition_scalars()
+    per_cond_int = integer.get_per_condition_scalars()
+    assert per_cond_named["condition"].tolist() == [
+        TO_NAME[c] for c in per_cond_int["condition"]
+    ]
+    np.testing.assert_array_equal(per_cond_named["value"], per_cond_int["value"])
+
+    pairs_named = named.get_separation_pair_scalars()
+    pairs_int = integer.get_separation_pair_scalars()
+    assert pairs_named["pair"].tolist() == [
+        f"{TO_NAME[a]}_vs_{TO_NAME[b]}"
+        for a, b in zip(pairs_int["label_a"], pairs_int["label_b"], strict=True)
+    ]
+    assert set(pairs_named["label_a"]) <= set(NAMES)
+    np.testing.assert_array_equal(pairs_named["value"], pairs_int["value"])
+
+    curves_named = named.get_separation_timecourses(methods=["centroid"])["centroid"]
+    curves_int = integer.get_separation_timecourses(methods=["centroid"])["centroid"]
+    assert list(curves_named) == [(TO_NAME[a], TO_NAME[b]) for a, b in curves_int]
+    for (a, b), curve in curves_int.items():
+        np.testing.assert_array_equal(curves_named[(TO_NAME[a], TO_NAME[b])], curve)
+
+    obs_named, null_named = permutation_null_separation_auc(
+        named,
+        group_a=[NAMES[0]],
+        group_b=NAMES[1:],
+        n_perm=20,
+        rng=np.random.default_rng(1),
+        within_subject=True,
+    )
+    obs_int, null_int = permutation_null_separation_auc(
+        integer,
+        group_a=[3],
+        group_b=[4, 5],
+        n_perm=20,
+        rng=np.random.default_rng(1),
+        within_subject=True,
+    )
+    assert obs_named == obs_int
+    np.testing.assert_array_equal(null_named, null_int)
+
+    kept = named.filter(conditions=[NAMES[2]])
+    assert set(kept.conditions) == {NAMES[2]}
+    np.testing.assert_array_equal(
+        kept.trajectories, integer.filter(conditions=[5]).trajectories
+    )
+
+
+def test_integer_conditions_keep_integer_labels():
+    _, integer = _named_and_integer_results()
+    pairs = integer.get_separation_pair_scalars(methods=["centroid"])
+    assert pairs["pair"].unique().tolist() == ["3_vs_4", "3_vs_5", "4_vs_5"]
+    assert {type(label) for label in pairs["label_a"]} == {int}
+    curves = integer.get_separation_timecourses(methods=["centroid"])["centroid"]
+    assert list(curves) == [(3, 4), (3, 5), (4, 5)]
+
+
+def test_unknown_conditions_are_rejected():
+    named, _ = _named_and_integer_results()
+    with pytest.raises(
+        ValueError, match=r"Unknown condition\(s\) \['fast-easy-rigth'\]"
+    ):
+        named.filter(conditions=["fast-easy-rigth"])
+    with pytest.raises(ValueError, match="Unknown condition"):
+        permutation_null_separation_auc(named, group_a=[3], group_b=[NAMES[1]])
+
+
+def test_labels_must_match_the_trajectories():
+    with pytest.raises(ValueError, match="one entry per trajectory"):
+        TrajectoryResult(np.zeros((4, 5, 2)), np.arange(5), ["s1"] * 4, [0, 1, 0])
+
+
+# --- grid constructor -----------------------------------------------------------
+
+
+def test_from_grid_flattens_subject_major():
+    rng = np.random.default_rng(0)
+    grid = rng.normal(size=(3, 2, 10, 4))
+    times = np.linspace(0, 1, 10)
+    res = TrajectoryResult.from_grid(grid, times, ["s1", "s2", "s3"], ["easy", "hard"])
+
+    assert res.subjects.tolist() == ["s1", "s1", "s2", "s2", "s3", "s3"]
+    assert res.conditions.tolist() == ["easy", "hard"] * 3
+    for i in range(3):
+        for j in range(2):
+            np.testing.assert_array_equal(res.trajectories[2 * i + j], grid[i, j])
+
+    by_hand = TrajectoryResult(
+        np.concatenate([grid[:, 0], grid[:, 1]]),
+        times,
+        ["s1", "s2", "s3"] * 2,
+        ["easy"] * 3 + ["hard"] * 3,
+    )
+    pd.testing.assert_frame_equal(
+        res.get_per_condition_scalars(), by_hand.get_per_condition_scalars()
+    )
+
+
+def test_from_grid_checks_its_shape():
+    grid = np.zeros((3, 2, 10, 4))
+    with pytest.raises(ValueError, match="n_subjects, n_conditions"):
+        TrajectoryResult.from_grid(grid[0], np.arange(10), ["s1", "s2"], ["a", "b"])
+    with pytest.raises(ValueError, match="Expected 3 subject and 2 condition"):
+        TrajectoryResult.from_grid(grid, np.arange(10), ["s1", "s2"], ["a", "b"])
+
+
+def test_a_trial_with_a_gap_reports_nan_for_the_metrics_that_use_it():
+    traj = np.cumsum(np.random.default_rng(0).normal(size=(2, 10, 2)), axis=1)
+    traj[1, 4] = np.nan
+    res = TrajectoryResult(traj, np.linspace(0, 1, 10), ["s1", "s1"], ["a", "b"])
+    values = res.get_per_trial_scalars().pivot(
+        index="metric", columns="trial", values="value"
+    )
+    assert values[0].notna().all()
+    # only the start-to-end distance does not pass through the missing point
+    assert values.index[values[1].notna()].tolist() == ["straight_distance"]
+    assert values.loc["straight_distance", 1] == pytest.approx(
+        np.linalg.norm(traj[1, -1] - traj[1, 0])
+    )

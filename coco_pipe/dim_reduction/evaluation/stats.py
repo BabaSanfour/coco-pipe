@@ -211,8 +211,8 @@ def grouped_condition_stats(
 
 def permutation_null_separation_auc(
     result: TrajectoryResult,
-    group_a: Sequence[int],
-    group_b: Sequence[int],
+    group_a: Sequence,
+    group_b: Sequence,
     n_perm: int = 200,
     rng: np.random.Generator | None = None,
     method: str = "centroid",
@@ -225,8 +225,9 @@ def permutation_null_separation_auc(
     ----------
     result : TrajectoryResult
         The TrajectoryResult container holding trajectories and metadata.
-    group_a, group_b : Sequence[int]
-        The condition labels to compare.
+    group_a, group_b : Sequence
+        The condition labels to compare, as stored in ``result.conditions``
+        (names or integers).
     n_perm : int, default=200
     rng : np.random.Generator, optional
     method : str, default="centroid"
@@ -244,13 +245,19 @@ def permutation_null_separation_auc(
     observed_auc : float
     null_aucs : np.ndarray
         AUC values under ``n_perm`` random label shuffles.
+
+    Raises
+    ------
+    ValueError
+        If a label in ``group_a`` or ``group_b`` is not a condition of
+        ``result``.
     """
     if rng is None:
         rng = np.random.default_rng(0)
 
-    group_a_arr = np.asarray(group_a).astype(int)
-    group_b_arr = np.asarray(group_b).astype(int)
-    conditions = np.asarray(result.conditions)
+    group_a_arr = result._condition_codes_of(group_a)
+    group_b_arr = result._condition_codes_of(group_b)
+    _, conditions = result._condition_coding()
 
     subjects = None
     if within_subject:
