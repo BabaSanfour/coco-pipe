@@ -255,7 +255,11 @@ class HuggingFaceBackend(BackendBase):
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
             if train_mode == "qlora":
-                backbone = prepare_model_for_kbit_training(backbone)
+                # REVE does not support gradient checkpointing, which peft
+                # turns on by default and which then fails the load
+                backbone = prepare_model_for_kbit_training(
+                    backbone, use_gradient_checkpointing=False
+                )
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,

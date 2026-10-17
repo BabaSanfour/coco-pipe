@@ -350,7 +350,8 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
             pooling="flatten",
             electrode_names=["Fp1", "Fp2"],
         )
-    mock_prep.assert_called_once()
+    # REVE cannot checkpoint gradients, which peft turns on by default
+    mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
     assert backend._feat_dim == 2048
 
 
