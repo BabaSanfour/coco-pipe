@@ -449,6 +449,15 @@ def test_from_grid_checks_its_shape():
         TrajectoryResult.from_grid(grid, np.arange(10), ["s1", "s2"], ["a", "b"])
 
 
+def test_times_must_match_the_time_axis():
+    with pytest.raises(ValueError, match=r"one entry per time point \(5\)"):
+        TrajectoryResult(np.zeros((2, 5, 2)), np.arange(4), ["s1"] * 2, [0, 1])
+    with pytest.raises(ValueError, match=r"one entry per time point \(10\)"):
+        TrajectoryResult.from_grid(
+            np.zeros((3, 2, 10, 4)), np.arange(9), ["s1", "s2", "s3"], ["a", "b"]
+        )
+
+
 def test_a_trial_with_a_gap_reports_nan_for_the_metrics_that_use_it():
     traj = np.cumsum(np.random.default_rng(0).normal(size=(2, 10, 2)), axis=1)
     traj[1, 4] = np.nan

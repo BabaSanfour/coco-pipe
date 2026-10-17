@@ -138,7 +138,7 @@ is measured from the origin. ``reconstruction_error`` needs a linear reducer;
 .. code-block:: python
 
    pca = DimReduction("PCA", n_components=3).fit(X_group)
-   per_subject = pca.reducer.reconstruction_error(X_subjects, per_row=True)
+   per_subject = pca.reconstruction_error(X_subjects, per_row=True)
 
 2.2 IncrementalPCA
 --------------------

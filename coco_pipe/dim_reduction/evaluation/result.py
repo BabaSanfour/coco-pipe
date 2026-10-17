@@ -123,8 +123,9 @@ class TrajectoryResult:
         Raises
         ------
         ValueError
-            If ``trajectories`` is not 3-D, or ``subjects`` or ``conditions``
-            does not have one entry per trajectory.
+            If ``trajectories`` is not 3-D, ``times`` does not have one entry
+            per time point, or ``subjects`` or ``conditions`` does not have one
+            entry per trajectory.
 
         See Also
         --------
@@ -134,6 +135,13 @@ class TrajectoryResult:
             raise ValueError(
                 "`trajectories` must be (n_trials, n_times, n_dims); "
                 f"got {trajectories.shape}."
+            )
+        times = np.asarray(times)
+        n_times = trajectories.shape[1]
+        if times.shape != (n_times,):
+            raise ValueError(
+                f"`times` must have one entry per time point ({n_times}); "
+                f"got shape {times.shape}."
             )
         subjects = np.asarray(subjects)
         conditions = np.asarray(conditions)
@@ -180,8 +188,8 @@ class TrajectoryResult:
         Raises
         ------
         ValueError
-            If ``trajectories`` is not 4-D or the labels do not match its first
-            two axes.
+            If ``trajectories`` is not 4-D, the labels do not match its first
+            two axes, or ``times`` does not match its third.
 
         Examples
         --------

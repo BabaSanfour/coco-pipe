@@ -277,6 +277,21 @@ def test_transform_passes_center_to_the_reducer():
     np.testing.assert_allclose(dr.transform(X), (X - X.mean(axis=0)) @ W.T)
 
 
+def test_reconstruction_error_is_exposed_and_cached():
+    X = np.random.default_rng(0).random((20, 5))
+    dr = DimReduction("PCA", n_components=2).fit(X)
+    rows = dr.reducer.reconstruction_error(X, per_row=True)
+
+    container = DataContainer(X, dims=("obs", "feature"))
+    np.testing.assert_allclose(dr.reconstruction_error(container, per_row=True), rows)
+    assert dr.reconstruction_error(X) == pytest.approx(rows.mean())
+    np.testing.assert_allclose(dr.get_diagnostics()["reconstruction_error_"], rows)
+    assert "reconstruction_error_" in dr.get_summary()["diagnostics"]
+
+    dr.fit(X)  # a new fit clears the cached values
+    assert "reconstruction_error_" not in dr.get_diagnostics()
+
+
 def test_score_specific_reducers():
     """Test that score() scrapes specific attributes from different reducers."""
     X = np.random.rand(20, 5)
@@ -430,7 +445,8 @@ def test_score_errors_and_edge_cases(monkeypatch):
     _install_fake_trca(monkeypatch)
     dr_trca.fit(X_3d, y=y)
 
-    traj_3d = np.zeros((10, 3, 2))  # Fake 3D embedding
+    # a moving 3D embedding: a stationary one has no defined curvature
+    traj_3d = np.cumsum(np.random.default_rng(0).normal(size=(10, 3, 2)), axis=1)
     scores = dr_trca.score(traj_3d, X=np.zeros((10, 3, 5)))
     assert "trajectory_speed_mean" in scores["metrics"]
     assert "trajectory_acceleration_mean" in scores["metrics"]

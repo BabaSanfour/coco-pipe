@@ -487,6 +487,58 @@ def test_trajectory_curvature_line():
     np.testing.assert_allclose(k[10:-10], 0, atol=1e-5)
 
 
+def test_curvature_is_nan_at_a_zero_length_step():
+    # the repeated point gives a zero-length step 1 -> 2, whose direction, and
+    # so the angles at points 1 and 2, are undefined
+    traj = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [2.0, 1.0], [3.0, 1.0]])
+    curvature = trajectory_curvature(traj, method="cosine")
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(curvature)), [0, 1])
+    assert curvature[2] == pytest.approx((np.pi / 4) / 1.0)
+    # the turning angle is the same undefined angle: a pause is not straight
+    angles = trajectory_turning_angle(traj)
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(angles)), [0, 1])
+    assert angles[2] == pytest.approx(np.pi / 4)
+
+
+@pytest.mark.parametrize("radius", [1.0, 2.0])
+def test_gradient_curvature_does_not_depend_on_speed(radius):
+    # a slow path: about 1e-3 per sample, so |v|^3 is about 1e-9
+    t = np.linspace(0, 2 * np.pi, 6000)
+    circle = radius * np.stack([np.cos(t), np.sin(t)], axis=1)
+    curvature = trajectory_curvature(circle, method="gradient")
+    # np.gradient is one-sided at the ends, which bends the two outer samples
+    np.testing.assert_allclose(curvature[2:-2], 1 / radius, rtol=1e-3)
+
+
+def test_gradient_curvature_is_nan_only_where_the_path_stops():
+    # three equal points: the central velocity at the middle one is zero
+    traj = np.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 0.0],
+            [3.0, 1.0],
+            [4.0, 1.0],
+        ]
+    )
+    curvature = trajectory_curvature(traj, method="gradient")
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(curvature)), [3])
+
+
+def test_score_and_trajectory_result_agree_on_a_stationary_point():
+    from coco_pipe.dim_reduction.evaluation import TrajectoryResult
+
+    traj = np.cumsum(np.random.default_rng(0).normal(size=(4, 12, 2)), axis=1)
+    traj[0, 6] = traj[0, 5]  # one repeated point in the first trajectory
+    metrics = evaluate_embedding(traj, metrics=["trajectory_curvature"])["metrics"]
+    assert np.isnan(metrics["trajectory_curvature_mean"])
+    per_trial = TrajectoryResult(traj, np.arange(12), ["s"] * 4, list("aabb"))
+    values = per_trial.get_per_trial_scalars().query("metric == 'mean_curvature'")
+    assert values["value"].isna().tolist() == [True, False, False, False]
+
+
 def test_trajectory_path_length_displacement_and_tortuosity():
     traj = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
 

@@ -551,7 +551,8 @@ class BaseReducer(ABC):
         Parameters
         ----------
         X : ArrayLike of shape (n_samples, n_features)
-            Data to rebuild.
+            Data to rebuild: an array, a list or a DataFrame, converted to a
+            NumPy array; a Dask array stays lazy.
         per_row : bool, default=False
             Return one value per row instead of the total. Each row's squared
             residual is divided by the mean of ``||x_j - c||^2`` over the rows
@@ -593,6 +594,10 @@ class BaseReducer(ABC):
                 f"{type(self).__name__} is not linear; reconstruction_error() "
                 "needs a linear reducer with inverse_transform()."
             )
+        # Dask collections (``__dask_graph__``) stay lazy; anything else, such
+        # as a list or a DataFrame, is computed on as a NumPy array
+        if not hasattr(X, "__dask_graph__"):
+            X = np.asarray(X)
         X_emb = self.transform(X)
         centre = self.inverse_transform(np.zeros((1, X_emb.shape[1])))
         residual = ((X - self.inverse_transform(X_emb)) ** 2).sum(axis=1)
