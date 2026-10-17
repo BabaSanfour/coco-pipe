@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -83,15 +84,23 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         return self
 
     def _fingerprint(self) -> str:
-        """Stable identity of this deterministic window->embedding mapping."""
-        return "|".join(
-            str(part)
-            for part in (
+        """Stable identity of this deterministic window->embedding mapping.
+
+        The cache is shared by every transformer in the process, so the key
+        holds everything that changes the embedding: the backend and its
+        keyword arguments (checkpoint revision, channel interpolation, ...) too.
+        """
+        return json.dumps(
+            [
                 self.model_key,
+                self.backend,
                 self.pooling,
-                float(getattr(self.prepared_, "target_sfreq", 0.0)),
-                tuple(getattr(self.prepared_, "ch_names", ()) or ()),
-            )
+                self.prepared_.target_sfreq,
+                self.prepared_.ch_names,
+                self.backend_kwargs or {},
+            ],
+            sort_keys=True,
+            default=str,
         )
 
     def transform(self, X: np.ndarray) -> np.ndarray:

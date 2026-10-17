@@ -377,6 +377,21 @@ def test_frozen_backbone_embedding_cache_matches_uncached_and_memoizes():
     second = cached.transform(X)
     assert call_count["n"] == len(X)  # second pass served entirely from the cache
     np.testing.assert_allclose(second, expected, rtol=1e-6)
+
+    # another checkpoint of the same model gets its own embeddings, not these
+    other = FrozenBackboneTransformer(
+        "cbramod",
+        backend="fake",
+        sfreq=200,
+        ch_names=["C3", "C4"],
+        cache_embeddings=True,
+        backend_kwargs={"revision": "other"},
+    ).fit(X, None)
+    np.testing.assert_allclose(
+        other.transform(X),
+        other.backend_.transform(other.prepared_.adapt(X)),
+        rtol=1e-6,
+    )
     clear_frozen_embedding_cache()
 
 
