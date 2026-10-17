@@ -14,6 +14,7 @@ from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from . import _montages
+from ._base import check_finite
 from ._channels import normalize_channel_names
 from ._loader import _BACKEND_MAP
 from ._prepare import prepare_backend
@@ -361,9 +362,12 @@ class FoundationEmbeddingExtractor:
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
-        """L2-normalize along the last axis, mapping zero-norm rows to zero."""
+        """L2-normalize along the last axis, mapping zero-norm rows to zero.
+
+        A NaN row stays NaN.
+        """
         norms = np.linalg.norm(x, axis=-1, keepdims=True)
-        return np.divide(x, norms, out=np.zeros_like(x), where=norms > 0)
+        return np.divide(x, norms, out=np.zeros_like(x), where=norms != 0)
 
     def _embed_windows(
         self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
@@ -440,6 +444,7 @@ class FoundationEmbeddingExtractor:
         X = np.asarray(epochs, dtype=np.float32)
         if X.ndim != 3:
             raise ValueError("epochs must have shape (window, channel, time).")
+        check_finite(X, self.model_key)
         ch_names = normalize_channel_names(signal_metadata.ch_names)
         # A model is built for one montage, rate and window length (channel
         # positions and adapters, n_times): another recording loads its own.

@@ -291,6 +291,14 @@ def test_embedding_extractor_normalizes_backend_pooled_rows():
     np.testing.assert_allclose(np.linalg.norm(res_mean.window_embeddings, axis=1), 1.0)
 
 
+def test_normalization_keeps_a_nan_embedding_nan():
+    rows = np.array([[3.0, 4.0], [0.0, 0.0], [np.nan, 1.0]])
+    np.testing.assert_array_equal(
+        FoundationEmbeddingExtractor._l2_normalize(rows),
+        [[0.6, 0.8], [0.0, 0.0], [np.nan, np.nan]],
+    )
+
+
 def test_embedding_extractor_store_tokens_returns_native_tensor():
     raw = np.arange(4 * 10 * 2, dtype=float).reshape(4, 10, 2)
 

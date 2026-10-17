@@ -26,6 +26,20 @@ if TYPE_CHECKING:
 _MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
 
 
+def check_finite(X: np.ndarray, name: str) -> None:
+    """Raise when a window holds NaN or infinite values, naming the windows.
+
+    A model turns such a window into a NaN embedding, which L2 normalisation
+    or pooling can hide.
+    """
+    bad = np.flatnonzero(~np.isfinite(X).all(axis=tuple(range(1, X.ndim))))
+    if bad.size:
+        raise ValueError(
+            f"{name}: {bad.size} of {len(X)} windows hold NaN or infinite values "
+            f"(windows {bad[:10].tolist()}{', ...' if bad.size > 10 else ''})."
+        )
+
+
 def resolve_revision(repo_id: str, revision: str | None = None, **hub_kwargs) -> str:
     """Return the commit of ``repo_id`` that ``revision`` points to.
 
@@ -570,6 +584,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
 
         sfreq mismatch → UserWarning (allows intentional mismatch for research).
         Channel count mismatch for fixed-channel models → ValueError.
+        NaN or infinite values → ValueError.
         Volt-scale input for a model that expects microvolts → ValueError.
         """
         meta = self.signal_metadata_
@@ -596,6 +611,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 f"{model_meta.display_name} expects {expected_n_chans} "
                 f"channels, got {X.shape[1]}."
             )
+        check_finite(X, model_meta.display_name)
         if model_meta.expects_microvolts and X.size:
             peak = max(float(X.max()), -float(X.min()))
             # peak == 0 is all-zero synthetic data, not a units mistake.

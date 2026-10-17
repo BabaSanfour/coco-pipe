@@ -236,6 +236,25 @@ def test_volt_scale_input_is_rejected(offline):
     assert backend.transform(np.zeros_like(X)).shape[0] == 4
 
 
+def test_windows_with_nan_or_inf_are_rejected(offline):
+    backend, X = _load("cbramod", "full")
+    X[1, 0, 5] = np.nan
+    X[3, 2, 0] = np.inf
+    y = np.array([0, 1, 0, 1])
+
+    for call in (
+        lambda: backend.fit(X, y, max_epochs=1),
+        lambda: backend.transform(X),
+        lambda: backend.predict(X),
+        lambda: backend.predict_proba(X),
+        lambda: FoundationEmbeddingExtractor("cbramod").extract(
+            X, signal_metadata=SignalMetadata(200.0, DEFAULT_CHANNELS)
+        ),
+    ):
+        with pytest.raises(ValueError, match=r"2 of 4 windows .* \[1, 3\]"):
+            call()
+
+
 def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     # the commit is resolved first, so the one loaded is the one recorded
     backend, X = _load("cbramod")
