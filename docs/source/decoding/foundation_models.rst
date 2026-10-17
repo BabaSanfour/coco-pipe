@@ -38,6 +38,8 @@ extracted embeddings.
        ClassicalModelConfig,
    )
 
+   ch_names = epochs.ch_names  # the channels of your epochs, in order
+
    config = ExperimentConfig(
        task="classification",
        models={
@@ -45,6 +47,8 @@ extracted embeddings.
                backbone=FoundationEmbeddingModelConfig(
                    backend="braindecode",
                    model_key="labram",
+                   sfreq=epochs.info["sfreq"], # sampling rate of the epochs
+                   ch_names=ch_names,        # their channel names, in order
                    pooling="mean",
                    cache_embeddings=True,    # cache to disk for reuse across folds
                ),
@@ -89,12 +93,16 @@ coco-pipe integrates the following foundation models natively, registered in
        NeuralFineTuneConfig, LoRAConfig, QuantizationConfig, DeviceConfig, CheckpointConfig
    )
 
+   ch_names = epochs.ch_names  # the channels of your epochs, in order
+
    config = ExperimentConfig(
        task="classification",
        models={
            "reve_qlora": NeuralFineTuneConfig(
                backend="hugging_face",
                model_key="reve",
+               sfreq=epochs.info["sfreq"],
+               ch_names=ch_names,
                input_kind="epoched",
                train_mode="qlora",
                lora=LoRAConfig(r=16, alpha=32, dropout=0.05),

@@ -183,6 +183,14 @@ def test_prepare_backend_and_adapt_paths():
     with pytest.raises(ValueError, match="requires ch_names"):
         prepare_backend("cbramod", np.zeros((2, 19, 200), dtype=np.float32))
 
+    # 1c. so is sfreq — the rate of the data is not assumed to be the model's
+    with pytest.raises(ValueError, match="requires sfreq"):
+        prepare_backend(
+            "cbramod",
+            np.zeros((2, 19, 200), dtype=np.float32),
+            ch_names=[f"ch{i}" for i in range(19)],
+        )
+
     # 2. Resampling path in PreparedBackend.adapt()
     X = np.zeros((2, 19, 100), dtype=np.float32)
     ch19 = [f"ch{i}" for i in range(19)]
@@ -236,6 +244,7 @@ def test_prepare_backend_fallback_binding():
     prepared = prepare_backend(
         "cbramod",
         np.zeros((2, 19, 200)),
+        sfreq=200.0,
         ch_names=[f"ch{i}" for i in range(19)],
         model=bare,
     )

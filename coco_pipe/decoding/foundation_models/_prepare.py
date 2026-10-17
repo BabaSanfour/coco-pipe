@@ -81,10 +81,10 @@ def prepare_backend(
 ) -> PreparedBackend:
     """Load and bind one backend using a common adaptation path.
 
-    ``ch_names`` is required and must already be normalized by the caller (see
-    ``normalize_channel_names``). Foundation-model embeddings are montage
-    dependent, so channel identity must be explicit — this function does not
-    fabricate generic placeholder names.
+    ``sfreq`` and ``ch_names`` are required, ``ch_names`` already normalized by
+    the caller (see ``normalize_channel_names``). Foundation-model embeddings
+    depend on the time scale and the montage, so neither is guessed: no rate is
+    assumed and no generic placeholder names are made up.
     """
     values = np.asarray(X)
     if values.ndim != 3:
@@ -95,9 +95,15 @@ def prepare_backend(
             "montage dependent, so channel names must be provided explicitly "
             "(e.g. signal_metadata.ch_names), already normalized."
         )
+    if not sfreq:
+        raise ValueError(
+            "prepare_backend requires sfreq: the input is resampled from it to "
+            "the model's rate, so the sampling rate of X must be provided "
+            "explicitly (e.g. signal_metadata.sfreq)."
+        )
     spec = get_foundation_model_spec(model_key)
     resolved_names = list(ch_names)
-    source_sfreq = float(sfreq or spec.pretrained_sfreq)
+    source_sfreq = float(sfreq)
     target_sfreq = float(spec.pretrained_sfreq)
     model_n_times = spec.pretrained_n_times or round(
         values.shape[-1] * target_sfreq / source_sfreq

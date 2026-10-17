@@ -397,10 +397,14 @@ Enables probability calibration inside the training path.
        CheckpointConfig,
    )
 
+   ch_names = epochs.ch_names  # the channels of your epochs, in order
+
    # Frozen embedding extractor
    embed_cfg = FoundationEmbeddingModelConfig(
        backend="braindecode",      # "auto" (default), "braindecode", "hugging_face"
        model_key="labram",         # a registered model — see list_foundation_models()
+       sfreq=epochs.info["sfreq"], # sampling rate of the epochs (required)
+       ch_names=ch_names,          # their channel names, in order (required)
        pooling="mean",             # "mean" or "flatten"
        cache_embeddings=True,
        normalize_embeddings=True,
@@ -410,6 +414,8 @@ Enables probability calibration inside the training path.
    ft_cfg = NeuralFineTuneConfig(
        backend="hugging_face",
        model_key="reve",
+       sfreq=epochs.info["sfreq"],
+       ch_names=ch_names,
        input_kind="epoched",       # "temporal", "epoched", "tokens"
        train_mode="qlora",         # "full", "frozen", "linear_probe", "lora", "qlora"
        lora=LoRAConfig(r=16, alpha=32),
