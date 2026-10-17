@@ -51,6 +51,11 @@ def test_luna_registered_and_neural_configs_resolve():
             config(model_key="cbramod", ch_names=["C3", "C4"])
         with pytest.raises(ValidationError, match="ch_names"):
             config(model_key="cbramod", sfreq=200.0)
+    # a backbone alone has no head to decode with: it is not a model
+    with pytest.raises(ValidationError, match="foundation_embedding"):
+        ExperimentConfig(
+            models={"fm": FoundationEmbeddingModelConfig(model_key="cbramod", **signal)}
+        )
 
 
 def test_fold_local_pca_is_part_of_each_classical_pipeline():

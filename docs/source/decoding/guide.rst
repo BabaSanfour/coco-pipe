@@ -388,6 +388,7 @@ Enables probability calibration inside the training path.
 .. code-block:: python
 
    from coco_pipe.decoding.configs import (
+       ClassicalModelConfig,
        FoundationEmbeddingModelConfig,
        FrozenBackboneDecoderConfig,
        NeuralFineTuneConfig,
@@ -399,7 +400,8 @@ Enables probability calibration inside the training path.
 
    ch_names = epochs.ch_names  # the channels of your epochs, in order
 
-   # Frozen embedding extractor
+   # Frozen backbone: embeddings from the pretrained model, decoded by a
+   # classical head
    embed_cfg = FoundationEmbeddingModelConfig(
        backend="braindecode",      # "auto" (default), "braindecode", "hugging_face"
        model_key="labram",         # a registered model — see list_foundation_models()
@@ -408,6 +410,10 @@ Enables probability calibration inside the training path.
        pooling="mean",             # "mean" or "flatten"
        cache_embeddings=True,
        normalize_embeddings=True,
+   )
+   frozen_cfg = FrozenBackboneDecoderConfig(
+       backbone=embed_cfg,
+       head=ClassicalModelConfig(estimator="LogisticRegression"),
    )
 
    # Full / parameter-efficient neural fine-tuning

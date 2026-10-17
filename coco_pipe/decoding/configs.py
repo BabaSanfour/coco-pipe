@@ -1253,9 +1253,10 @@ def grouped_chance_assessment(
     )
 
 
+# A FoundationEmbeddingModelConfig only makes embeddings: it decodes as the
+# backbone of a FrozenBackboneDecoderConfig, which adds the head.
 ModelConfigType = Annotated[
     ClassicalModelType
-    | FoundationEmbeddingModelConfig
     | FrozenBackboneDecoderConfig
     | NeuralFineTuneConfig
     | TemporalDecoderConfig,
