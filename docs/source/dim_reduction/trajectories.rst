@@ -222,6 +222,7 @@ build the container directly:
 
    from coco_pipe.dim_reduction.evaluation import (
        TrajectoryResult,
+       permutation_familywise_separation_auc,
        permutation_null_separation_auc,
    )
 
@@ -230,9 +231,51 @@ build the container directly:
        grid, times, subjects=subject_ids, conditions=["fast-easy", "slow-hard"]
    )
    pairs = result.get_separation_pair_scalars()   # pair "fast-easy_vs_slow-hard"
-   observed, null = permutation_null_separation_auc(
-       result, group_a=["fast-easy"], group_b=["slow-hard"], within_subject=True
+   observed, null, p_value = permutation_null_separation_auc(
+       result, group_a=["fast-easy"], group_b=["slow-hard"], strata=result.subjects
    )
+
+``strata`` sets which trajectories may swap labels. Choose it so that only the
+tested factor moves. To test speed among speed x class x side conditions, use
+subject x class x side: a shuffle inside each subject would also swap class and
+side, putting their effects in the null and making it too wide. A stratum whose
+trials of the contrast can never change group, such as one row of subject x
+condition or a subject missing the slow row of a class x side cell, raises
+and is named, as does a null with zero spread.
+
+The statistic is the separation of the pooled trials, for example the distance
+between the centroids of all group-a and all group-b trials. With
+``per_subject=True`` it is the mean of each subject's own separation curve,
+the subject as the unit. With few trials per subject that mean is biased upward
+by noise. Both are valid under permutation but measure different things.
+
+For several results at once, such as one per frequency band built from the same
+trials, ``permutation_familywise_separation_auc`` corrects for the family.
+
+- Each permutation draws one relabelling inside ``strata`` and applies it to
+  every result and every contrast. Contrasts of different factors can take one
+  strata row each; each permutation then draws one relabelling per contrast,
+  which still controls the family-wise error, more conservatively.
+- Each (result, contrast) is standardised by its own null,
+  ``z = (AUC - null mean) / null sd``. The null of the family is the maximum
+  ``z`` per permutation, so bands fit with separate PCAs, whose AUCs differ in
+  scale, weigh equally. Pass ``standardize=False`` to take the maximum over raw
+  AUCs of results on one scale.
+- Each observed statistic gets
+  ``p_fwer = (1 + #(max_null >= observed)) / (n_perm + 1)``.
+- The trajectories are used as given; the reducer is not refit.
+
+.. code-block:: python
+
+   table, max_null, null_aucs = permutation_familywise_separation_auc(
+       {"theta": theta_result, "beta": beta_result, "high_gamma": gamma_result},
+       contrasts=[(fast_conditions, slow_conditions)],
+       strata=subject_class_side,          # one value per trial
+       n_perm=1000,
+       window=(0.1, 0.5),
+   )
+   table      # key, contrast, observed_auc, null_mean, null_sd, z, p_fwer
+   null_aucs  # (n_perm, n_results, n_contrasts), for null figures
 
 ---
 

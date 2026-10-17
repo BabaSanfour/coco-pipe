@@ -28,6 +28,7 @@ from .result import EmbeddingQualityResult, TrajectoryResult, VelocityResult
 from .stats import (
     grouped_condition_stats,
     paired_condition_stats,
+    permutation_familywise_separation_auc,
     permutation_null_separation_auc,
 )
 from .velocity import compute_velocity_fields
@@ -45,6 +46,7 @@ __all__ = [
     "lcmc",
     "moving_average",
     "paired_condition_stats",
+    "permutation_familywise_separation_auc",
     "permutation_null_separation_auc",
     "shepard_diagram_data",
     "trajectory_acceleration",

@@ -114,15 +114,19 @@ def _summarize_trajectory_metric(
     summary_type: str,
     use_last_axis: bool = False,
 ) -> dict[str, float]:
-    """Return scalar summaries for one trajectory metric payload."""
+    """Return scalar summaries for one trajectory metric payload.
+
+    NaN propagates, as in the geometry functions: a summary over a value that
+    is undefined, such as the curvature of a stationary point, is NaN.
+    """
     arr = np.asarray(values, dtype=float)
     summary_: dict[str, float] = {}
     if summary_type == "peak":
-        summary_[f"{prefix}_mean"] = float(np.nanmean(arr))
-        summary_[f"{prefix}_peak"] = float(np.nanmax(arr))
+        summary_[f"{prefix}_mean"] = float(np.mean(arr))
+        summary_[f"{prefix}_peak"] = float(np.max(arr))
     elif summary_type == "final":
         final_values = arr[..., -1] if use_last_axis else arr
-        summary_[f"{prefix}_final"] = float(np.nanmean(final_values))
+        summary_[f"{prefix}_final"] = float(np.mean(final_values))
     else:
         raise ValueError(f"Unsupported trajectory summary type '{summary_type}'.")
     return summary_
@@ -276,7 +280,7 @@ def _evaluate_trajectory_metrics(
                 peak_value = float("nan")
             elif times is None:
                 auc_value = float(integrate(values_arr))
-                peak_value = float(np.nanmax(values_arr))
+                peak_value = float(np.max(values_arr))
             else:
                 time_arr = np.asarray(times)
                 auc_value = (
@@ -284,7 +288,7 @@ def _evaluate_trajectory_metrics(
                     if len(time_arr) == len(values_arr)
                     else float(integrate(values_arr))
                 )
-                peak_value = float(np.nanmax(values_arr))
+                peak_value = float(np.max(values_arr))
             pair_metrics = {
                 f"trajectory_separation_auc::{pair_suffix}": auc_value,
                 f"trajectory_separation_peak::{pair_suffix}": peak_value,
@@ -557,6 +561,11 @@ def evaluate_embedding(
     This function is intentionally pure. It does not fit reducers, transform
     data, or inspect reducer internals. Callers are responsible for preparing
     ``X_emb`` and any optional metadata such as trajectory labels or times.
+
+    Trajectory summaries propagate NaN, as the geometry functions do: a
+    missing time point, or a stationary stretch where curvature and turning
+    angle are undefined, makes the summaries that use it NaN rather than being
+    skipped. A fully stationary embedding reports NaN curvature.
 
     See Also
     --------
