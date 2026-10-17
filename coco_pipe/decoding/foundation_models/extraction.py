@@ -503,7 +503,7 @@ class FoundationEmbeddingExtractor:
             "model_name": spec.display_name or self.model_key,
             "model_key": self.model_key,
             "model_checkpoint": spec.hub_repo,
-            "checkpoint_revision": spec.checkpoint_revision,
+            "checkpoint_revisions": dict(getattr(model, "checkpoint_revisions", {})),
             "checkpoint_filename": spec.checkpoint_filename,
             "backend": (
                 self.backend if self.backend != "auto" else spec.preferred_backend
@@ -563,9 +563,6 @@ class FoundationEmbeddingExtractor:
             "windowing_source": "upstream_epochs",
             "remainder_policy": "defined_by_upstream_epoching",
             "padding_policy": "defined_by_upstream_epoching",
-            "model_revision": (
-                self.backend_kwargs.get("revision") or spec.checkpoint_revision
-            ),
         }
         if tokens is not None:
             token_metadata = model.get_token_output_metadata()

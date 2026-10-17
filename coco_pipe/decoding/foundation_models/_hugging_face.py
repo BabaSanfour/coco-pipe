@@ -18,10 +18,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase
+from ._base import BackendBase, resolve_revision
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
+
+_POSITION_BANK_REPO = "brain-bzh/reve-positions"
 
 
 class HuggingFaceBackend(BackendBase):
@@ -211,11 +213,18 @@ class HuggingFaceBackend(BackendBase):
             },
         }
 
-        # The position bank lives in its own repo (``brain-bzh/reve-positions``)
-        # that is versioned independently of the backbone, so the backbone's
-        # ``revision`` must not be propagated to it. Quantization likewise only
-        # applies to the backbone, not the small position module.
-        pos_kw = {key: value for key, value in hf_kw.items() if key != "revision"}
+        # The position bank lives in its own repo that is versioned
+        # independently of the backbone: each loads the commit resolved for it.
+        # Quantization likewise only applies to the backbone.
+        hub_kw = {key: hf_kw[key] for key in ("token", "cache_dir") if key in hf_kw}
+        revisions = {
+            metadata.hub_repo: resolve_revision(
+                metadata.hub_repo, hf_kw.get("revision"), **hub_kw
+            ),
+            _POSITION_BANK_REPO: resolve_revision(_POSITION_BANK_REPO, **hub_kw),
+        }
+        pos_kw = {**hf_kw, "revision": revisions[_POSITION_BANK_REPO]}
+        hf_kw["revision"] = revisions[metadata.hub_repo]
 
         if train_mode == "qlora":
             from transformers import BitsAndBytesConfig
@@ -228,7 +237,7 @@ class HuggingFaceBackend(BackendBase):
             )
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **pos_kw)
+        pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
         feat_dim: int = getattr(
             backbone.config,
             "hidden_size",
@@ -274,7 +283,7 @@ class HuggingFaceBackend(BackendBase):
             else nn.Identity().to(device)
         )
 
-        return cls(
+        backend = cls(
             metadata=metadata,
             backbone=backbone.to(device),
             pos_bank=pos_bank.to(device),
@@ -287,6 +296,8 @@ class HuggingFaceBackend(BackendBase):
             electrode_names=electrode_names,
             task=task,
         )
+        backend.checkpoint_revisions = revisions
+        return backend
 
     # ------------------------------------------------------------------
     # Backend hooks

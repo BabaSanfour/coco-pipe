@@ -11,6 +11,15 @@ from coco_pipe.decoding.foundation_models._hugging_face import HuggingFaceBacken
 from coco_pipe.decoding.registry import get_estimator_spec
 
 
+@pytest.fixture(autouse=True)
+def commits(monkeypatch):
+    """Resolve every repository to a commit named after it, without the Hub."""
+    monkeypatch.setattr(
+        "coco_pipe.decoding.foundation_models._hugging_face.resolve_revision",
+        lambda repo_id, revision=None, **kwargs: revision or f"{repo_id}@latest",
+    )
+
+
 def test_hugging_face_available_when_packages_present(monkeypatch):
     monkeypatch.setattr(
         HuggingFaceBackend, "is_available", classmethod(lambda cls: True)
@@ -69,7 +78,7 @@ def test_load_calls_from_pretrained(mock_auto_model):
     meta = get_estimator_spec("reve")
     with patch.object(
         transformers.AutoModel, "from_pretrained", side_effect=[backbone, pos_bank]
-    ):
+    ) as from_pretrained:
         adapter = HuggingFaceBackend._load_reve(
             meta,
             n_outputs=2,
@@ -86,6 +95,18 @@ def test_load_calls_from_pretrained(mock_auto_model):
         )
     assert isinstance(adapter, HuggingFaceBackend)
     assert adapter._feat_dim == 1024
+    # each repository loads the commit resolved for it, and records it
+    loaded = {
+        call.args[0]: call.kwargs["revision"] for call in from_pretrained.call_args_list
+    }
+    assert (
+        loaded
+        == adapter.checkpoint_revisions
+        == {
+            "brain-bzh/reve-base": "brain-bzh/reve-base@latest",
+            "brain-bzh/reve-positions": "brain-bzh/reve-positions@latest",
+        }
+    )
 
 
 def test_frozen_mode_calls_eval(mock_auto_model):

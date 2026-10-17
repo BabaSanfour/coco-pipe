@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,6 +24,21 @@ if TYPE_CHECKING:
 
 # Largest absolute value below which microvolt EEG is implausible.
 _MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
+
+
+def resolve_revision(repo_id: str, revision: str | None = None, **hub_kwargs) -> str:
+    """Return the commit of ``repo_id`` that ``revision`` points to.
+
+    ``None`` is the latest commit. The commit is read from the snapshot that
+    holds the repository's ``config.json``, so it resolves offline from the
+    local cache as well.
+    """
+    from pathlib import Path
+
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(repo_id, "config.json", revision=revision, **hub_kwargs)
+    return Path(path).parent.name
 
 
 class BackendBase(BaseEstimator, TransformerMixin, ABC):
@@ -43,6 +60,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     signal_metadata_: SignalMetadata | None = None
     _net_ = None
     _model = None
+    # The commit loaded from each Hugging Face repository, set by ``load``.
+    checkpoint_revisions: Mapping[str, str] = MappingProxyType({})
 
     def release_memory(self) -> None:
         """Drop references to loaded torch modules so GC can reclaim them.

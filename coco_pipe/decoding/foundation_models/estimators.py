@@ -341,6 +341,9 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             "ch_names": self.ch_names,
             "trainer": dict(self.trainer or {}),
             "lora": dict(self.lora or {}),
+            "checkpoint_revisions": dict(
+                getattr(self.backend_, "checkpoint_revisions", {})
+            ),
         }
 
     def get_failure_diagnostics(self) -> dict[str, Any]:

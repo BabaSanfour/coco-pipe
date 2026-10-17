@@ -160,7 +160,7 @@ def validate_real_checkpoints(
                     "expected_embedding_dim": spec.embedding_dim,
                     "observed_embedding_dim": observed,
                     "checkpoint": spec.hub_repo,
-                    "checkpoint_revision": spec.checkpoint_revision,
+                    "checkpoint_revisions": result.metadata["checkpoint_revisions"],
                     "checkpoint_filename": spec.checkpoint_filename,
                     "channel_adaptation": result.metadata["channel_adaptation"],
                 }

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from coco_pipe.decoding._specs import SignalMetadata
+from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
@@ -18,6 +19,7 @@ pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
+LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
     "Labram": {"n_times": 3000},
@@ -66,9 +68,14 @@ def offline(monkeypatch, tmp_path):
     )
     weights = tmp_path / "eegpt.pt"
     torch.save(eegpt.state_dict(), weights)
-    monkeypatch.setattr(
-        huggingface_hub, "hf_hub_download", lambda *a, **k: str(weights)
-    )
+
+    def download(repo_id, filename, revision=None, **kwargs):
+        if filename == "config.json":
+            # a cached snapshot folder is named by its commit
+            return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
+        return str(weights)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     return calls
 
 
@@ -230,10 +237,21 @@ def test_volt_scale_input_is_rejected(offline):
 
 
 def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
-    _load("cbramod")
-    assert "revision" not in offline[-1]
-    _load("cbramod", revision="abc123")
+    # the commit is resolved first, so the one loaded is the one recorded
+    backend, X = _load("cbramod")
+    assert offline[-1]["revision"] == LATEST
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": LATEST}
+    backend, _ = _load("cbramod", revision="abc123")
     assert offline[-1]["revision"] == "abc123"
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": "abc123"}
+
+    # extracted embeddings say which commit made them
+    result = FoundationEmbeddingExtractor("cbramod", device="cpu").extract(
+        X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+    )
+    assert result.metadata["checkpoint_revisions"] == {
+        "braindecode/cbramod-pretrained": LATEST
+    }
 
 
 def test_labram_interpolates_missing_channels(offline):

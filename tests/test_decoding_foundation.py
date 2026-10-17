@@ -202,13 +202,18 @@ def test_validate_real_checkpoints(mock_extractor_cls):
 
     mock_result = MagicMock()
     mock_result.window_embeddings = MagicMock(shape=(1, 256))
-    mock_result.metadata = {"channel_adaptation": "none"}
+    revisions = {"braindecode/cbramod-pretrained": "584cdc4"}
+    mock_result.metadata = {
+        "channel_adaptation": "none",
+        "checkpoint_revisions": revisions,
+    }
     mock_extractor.extract.return_value = mock_result
 
     records = validate_real_checkpoints(model_keys=["cbramod"], token="dummy-token")
     assert len(records) == 1
     assert records[0]["model_key"] == "cbramod"
     assert records[0]["status"] in ("verified", "dimension_mismatch")
+    assert records[0]["checkpoint_revisions"] == revisions
 
 
 @patch("coco_pipe.decoding.foundation_models.validation.FoundationClassifier")
@@ -296,7 +301,10 @@ def test_validation_edge_cases():
         mock_extractor_cls.return_value = mock_extractor
         mock_result = MagicMock()
         mock_result.window_embeddings = MagicMock(shape=(1, 200))
-        mock_result.metadata = {"channel_adaptation": "none"}
+        mock_result.metadata = {
+            "channel_adaptation": "none",
+            "checkpoint_revisions": {"braindecode/labram-pretrained": "0563b6c"},
+        }
         mock_extractor.extract.return_value = mock_result
 
         records = validate_real_checkpoints(model_keys=["labram"], token="dummy-token")

@@ -22,7 +22,7 @@ import numpy as np
 
 from .._specs import SignalMetadata
 from . import _montages
-from ._base import BackendBase
+from ._base import BackendBase, resolve_revision
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -185,7 +185,11 @@ class BrainDecodeBackend(BackendBase):
             metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
         )
         kw.pop("n_times", None)
-        revision = kw.pop("revision", metadata.checkpoint_revision)
+        revision = resolve_revision(
+            metadata.hub_repo,
+            kw.pop("revision", metadata.checkpoint_revision),
+            token=kw.get("token"),
+        )
         filename = kw.pop("filename", metadata.checkpoint_filename)
         interpolate_channels = bool(kw.pop("interpolate_channels", False))
         uses_interpolation = interpolate_channels and model_key in _INTERPOLATED_CLASS
@@ -284,8 +288,7 @@ class BrainDecodeBackend(BackendBase):
             kw.pop("chs_info", None)
 
         load_kwargs = dict(kw)
-        if revision is not None:
-            load_kwargs["revision"] = revision
+        load_kwargs["revision"] = revision
         if filename is not None:
             load_kwargs["filename"] = filename
         effective_outputs = (
@@ -378,8 +381,7 @@ class BrainDecodeBackend(BackendBase):
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
         backend._uses_interpolation = model_key == "labram" and interpolate_channels
-        backend._checkpoint_revision = revision
-        backend._checkpoint_filename = filename
+        backend.checkpoint_revisions = {metadata.hub_repo: revision}
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None
         )
