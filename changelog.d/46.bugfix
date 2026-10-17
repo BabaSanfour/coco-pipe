@@ -1,0 +1,1 @@
+`BIDSDataset` reading saved epochs skips a recording for an event that its file lists in `event_id` but holds no epoch of, as when every epoch of a condition was rejected, the same as for an event the file does not list. It failed building the empty selection (`ValueError: max() arg is an empty sequence`), which stopped the whole load.
