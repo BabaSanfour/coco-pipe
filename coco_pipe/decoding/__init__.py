@@ -6,6 +6,8 @@ Core module for scientific decoding and machine learning experiments on
 electrophysiological and behavioral data.
 """
 
+from coco_pipe.utils import permute_labels_within_strata
+
 from ._metrics import get_scorer
 from ._specs import SignalMetadata
 from ._splitters import get_cv_splitter
@@ -72,7 +74,6 @@ from .stats import (
     binomial_accuracy_test,
     correct_sweep_pvalues,
     paired_prediction_test,
-    permute_labels_within_strata,
     run_statistical_assessment,
 )
 from .targets import prepare_target, safe_group_n_splits
