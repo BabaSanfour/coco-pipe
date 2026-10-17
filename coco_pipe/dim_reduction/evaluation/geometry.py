@@ -30,6 +30,13 @@ trajectory_tortuosity
 trajectory_turning_angle
     Compute local turning angles between consecutive trajectory segments.
 
+Notes
+-----
+A NaN coordinate marks a missing time point. It propagates: every value
+computed from it is NaN, so a gap never counts as zero length, zero speed or a
+straight step. Handle gaps (drop the trajectory, interpolate) before calling
+these functions when a finite value is needed.
+
 Author: Hamza Abdelhedi (hamza.abdelhedi@umontreal.ca)
 """
 
@@ -179,6 +186,10 @@ def _mahalanobis_separation_timecourse(
     for t_idx in range(samples_a.shape[1]):
         points_a = samples_a[:, t_idx, :]
         points_b = samples_b[:, t_idx, :]
+        # the pseudo-inverse cannot take NaN; a missing point leaves it undefined
+        if np.isnan(points_a).any() or np.isnan(points_b).any():
+            timecourse[t_idx] = np.nan
+            continue
         centroid_a = np.mean(points_a, axis=0)
         centroid_b = np.mean(points_b, axis=0)
         diff = centroid_a - centroid_b
@@ -448,7 +459,7 @@ def trajectory_speed(
     >>> trajectory_speed(traj)
     array([1., 1., 1.])
     >>> trajectory_speed(traj, time=np.array([0.0, 100.0, 250.0]))
-    array([0.01 , 0.00666667])
+    array([0.01      , 0.00666667])
     """
     traj = _validate_trajectory_array(traj, min_timepoints=2)
     step_dist = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)
@@ -535,9 +546,9 @@ def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray
 
         with np.errstate(divide="ignore", invalid="ignore"):
             cosang = np.where(
-                denom > 0,
-                np.clip(np.sum(v1 * v2, axis=-1) / denom, -1.0, 1.0),
+                denom == 0,
                 0.0,
+                np.clip(np.sum(v1 * v2, axis=-1) / denom, -1.0, 1.0),
             )
         angles = np.arccos(cosang)
         return angles / (step_dist_inner + np.finfo(float).eps)
@@ -586,8 +597,8 @@ def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.
 
     Notes
     -----
-    NaN-valued steps are skipped in both the total and cumulative modes so
-    that a single missing coordinate does not invalidate the whole result.
+    A step touching a NaN coordinate has NaN length, so the total and the
+    cumulative length from that step on are NaN: a gap is not zero length.
 
     See Also
     --------
@@ -606,11 +617,10 @@ def trajectory_path_length(traj: np.ndarray, *, cumulative: bool = False) -> np.
     segment_lengths = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)
 
     if cumulative:
-        safe = np.nan_to_num(segment_lengths, nan=0.0)
-        cumulative_lengths = np.cumsum(safe, axis=-1)
+        cumulative_lengths = np.cumsum(segment_lengths, axis=-1)
         zeros = np.zeros((*cumulative_lengths.shape[:-1], 1), dtype=float)
         return np.concatenate([zeros, cumulative_lengths], axis=-1)
-    return np.nansum(segment_lengths, axis=-1)
+    return np.sum(segment_lengths, axis=-1)
 
 
 def trajectory_displacement(traj: np.ndarray, *, final: bool = False) -> np.ndarray:
@@ -688,7 +698,7 @@ def trajectory_tortuosity(traj: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     >>> import numpy as np
     >>> traj = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
     >>> trajectory_tortuosity(traj)
-    np.float64(1.0)
+    array(1.)
     """
     traj = _validate_trajectory_array(traj, min_timepoints=2)
     total_length = trajectory_path_length(traj, cumulative=False)
@@ -906,7 +916,7 @@ def trajectory_distance_from_center(traj: np.ndarray) -> np.ndarray:
     array([0.66666667, 1.33333333, 0.66666667])
     """
     traj = _validate_trajectory_array(traj, min_timepoints=1)
-    centroid = np.nanmean(traj, axis=-2, keepdims=True)  # (..., 1, n_dims)
+    centroid = np.mean(traj, axis=-2, keepdims=True)  # (..., 1, n_dims)
     return np.linalg.norm(traj - centroid, axis=-1)  # (..., n_times)
 
 
@@ -940,7 +950,7 @@ def trajectory_cohesion(traj: np.ndarray) -> np.ndarray:
     >>> trajectory_cohesion(traj)
     np.float64(0.888...)
     """
-    return np.nanmean(trajectory_distance_from_center(traj), axis=-1)
+    return np.mean(trajectory_distance_from_center(traj), axis=-1)
 
 
 def trajectory_intra_spread(traj: np.ndarray) -> np.ndarray:
@@ -978,7 +988,7 @@ def trajectory_intra_spread(traj: np.ndarray) -> np.ndarray:
     >>> trajectory_intra_spread(traj)
     np.float64(0.314...)
     """
-    return np.nanstd(trajectory_distance_from_center(traj), axis=-1)
+    return np.std(trajectory_distance_from_center(traj), axis=-1)
 
 
 def trajectory_auc_speed(
@@ -1029,7 +1039,7 @@ def trajectory_auc_speed(
     >>> trajectory_auc_speed(traj, dt=1.0)
     np.float64(1.0)
     >>> trajectory_auc_speed(traj, time=np.array([0.0, 100.0, 200.0]))
-    np.float64(100.0)
+    np.float64(1.0)
     """
     traj = _validate_trajectory_array(traj, min_timepoints=2)
     step_dist = np.linalg.norm(np.diff(traj, axis=-2), axis=-1)  # (..., n_times-1)
@@ -1044,9 +1054,9 @@ def trajectory_auc_speed(
         dt_arr = np.diff(time)
         with np.errstate(divide="ignore", invalid="ignore"):
             speed = step_dist / np.where(dt_arr > 0, dt_arr, np.nan)
-        return np.trapezoid(np.nan_to_num(speed, nan=0.0), time[:-1], axis=-1)
+        return np.trapezoid(speed, time[:-1], axis=-1)
 
     if dt <= 0:
         raise ValueError("`dt` must be > 0.")
     speed = step_dist / dt
-    return np.trapezoid(np.nan_to_num(speed, nan=0.0), dx=dt, axis=-1)
+    return np.trapezoid(speed, dx=dt, axis=-1)

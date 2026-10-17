@@ -47,50 +47,54 @@ class TrajectoryResult:
 
     Provides tidy data views for easier analysis, visualization, and
     statistical assessment of trajectory dynamics across subjects and conditions.
+
+    Condition labels are kept as given, names such as ``"fast-easy-right"`` or
+    integers, and every method that chooses conditions takes those labels.
+
+    Summaries propagate NaN as the geometry functions do: a trajectory with a
+    missing time point reports NaN for every metric that depends on it.
     """
 
     _REDUCERS: ClassVar[list] = [
         (
             "trajectory_length",
-            lambda traj, t: float(np.nanmean(trajectory_path_length(traj))),
+            lambda traj, t: float(np.mean(trajectory_path_length(traj))),
         ),
         (
             "straight_distance",
-            lambda traj, t: float(
-                np.nanmean(trajectory_displacement(traj, final=True))
-            ),
+            lambda traj, t: float(np.mean(trajectory_displacement(traj, final=True))),
         ),
-        ("tortuosity", lambda traj, t: float(np.nanmean(trajectory_tortuosity(traj)))),
+        ("tortuosity", lambda traj, t: float(np.mean(trajectory_tortuosity(traj)))),
         (
             "mean_speed",
-            lambda traj, t: float(np.nanmean(trajectory_speed(traj, time=t))),
+            lambda traj, t: float(np.mean(trajectory_speed(traj, time=t))),
         ),
-        ("max_speed", lambda traj, t: float(np.nanmax(trajectory_speed(traj, time=t)))),
+        ("max_speed", lambda traj, t: float(np.max(trajectory_speed(traj, time=t)))),
         (
             "auc_speed",
-            lambda traj, t: float(np.nanmean(trajectory_auc_speed(traj, time=t))),
+            lambda traj, t: float(np.mean(trajectory_auc_speed(traj, time=t))),
         ),
         (
             "mean_curvature",
-            lambda traj, t: float(np.nanmean(trajectory_curvature(traj))),
+            lambda traj, t: float(np.mean(trajectory_curvature(traj))),
         ),
-        ("max_curvature", lambda traj, t: float(np.nanmax(trajectory_curvature(traj)))),
+        ("max_curvature", lambda traj, t: float(np.max(trajectory_curvature(traj)))),
         (
             "mean_acceleration",
-            lambda traj, t: float(np.nanmean(trajectory_acceleration(traj))),
+            lambda traj, t: float(np.mean(trajectory_acceleration(traj))),
         ),
-        ("mean_jerk", lambda traj, t: float(np.nanmean(trajectory_jerk(traj)))),
+        ("mean_jerk", lambda traj, t: float(np.mean(trajectory_jerk(traj)))),
         (
             "mean_turning_angle",
-            lambda traj, t: float(np.nanmean(trajectory_turning_angle(traj))),
+            lambda traj, t: float(np.mean(trajectory_turning_angle(traj))),
         ),
         (
             "mean_distance_from_center",
-            lambda traj, t: float(np.nanmean(trajectory_distance_from_center(traj))),
+            lambda traj, t: float(np.mean(trajectory_distance_from_center(traj))),
         ),
         (
             "mean_dispersion",
-            lambda traj, t: float(np.nanmean(trajectory_dispersion(traj))),
+            lambda traj, t: float(np.mean(trajectory_dispersion(traj))),
         ),
     ]
 
@@ -113,17 +117,120 @@ class TrajectoryResult:
         subjects : np.ndarray
             Shape (n_trials,). Per-trial subject identifier (any hashable).
         conditions : np.ndarray
-            Shape (n_trials,). Per-trial condition label (int).
+            Shape (n_trials,). Per-trial condition label, kept as given: names
+            such as ``"fast-easy-right"`` or integers.
+
+        Raises
+        ------
+        ValueError
+            If ``trajectories`` is not 3-D, or ``subjects`` or ``conditions``
+            does not have one entry per trajectory.
+
+        See Also
+        --------
+        from_grid : Build the container from a (subject, condition) grid.
         """
         if trajectories.ndim != 3:
             raise ValueError(
                 "`trajectories` must be (n_trials, n_times, n_dims); "
                 f"got {trajectories.shape}."
             )
+        subjects = np.asarray(subjects)
+        conditions = np.asarray(conditions)
+        n_trials = trajectories.shape[0]
+        if subjects.shape != (n_trials,) or conditions.shape != (n_trials,):
+            raise ValueError(
+                "`subjects` and `conditions` must have one entry per trajectory "
+                f"({n_trials}); got shapes {subjects.shape} and {conditions.shape}."
+            )
         self.trajectories = trajectories
         self.times = times
-        self.subjects = np.asarray(subjects)
-        self.conditions = np.asarray(conditions).astype(int)
+        self.subjects = subjects
+        self.conditions = conditions
+
+    @classmethod
+    def from_grid(
+        cls,
+        trajectories: np.ndarray,
+        times: np.ndarray,
+        subjects: Sequence,
+        conditions: Sequence,
+    ) -> TrajectoryResult:
+        """
+        Build the container from trajectories on a (subject, condition) grid.
+
+        Parameters
+        ----------
+        trajectories : np.ndarray
+            Shape (n_subjects, n_conditions, n_times, n_dims), such as one
+            condition-mean trajectory per subject and condition.
+        times : np.ndarray
+            Shape (n_times,). Time coordinates.
+        subjects : Sequence
+            Length n_subjects. Label of each row of the grid.
+        conditions : Sequence
+            Length n_conditions. Label of each column of the grid.
+
+        Returns
+        -------
+        TrajectoryResult
+            One trajectory per grid cell, subject-major: row
+            ``i * n_conditions + j`` holds subject ``i`` in condition ``j``.
+
+        Raises
+        ------
+        ValueError
+            If ``trajectories`` is not 4-D or the labels do not match its first
+            two axes.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> grid = np.zeros((3, 2, 50, 4))
+        >>> res = TrajectoryResult.from_grid(
+        ...     grid, np.arange(50), ["s1", "s2", "s3"], ["easy", "hard"]
+        ... )
+        >>> res.trajectories.shape
+        (6, 50, 4)
+        >>> res.subjects.tolist()[:3], res.conditions.tolist()[:3]
+        (['s1', 's1', 's2'], ['easy', 'hard', 'easy'])
+        """
+        grid = np.asarray(trajectories)
+        if grid.ndim != 4:
+            raise ValueError(
+                "`trajectories` must be (n_subjects, n_conditions, n_times, "
+                f"n_dims); got {grid.shape}."
+            )
+        n_subjects, n_conditions = grid.shape[:2]
+        subjects = np.asarray(subjects)
+        conditions = np.asarray(conditions)
+        if subjects.shape != (n_subjects,) or conditions.shape != (n_conditions,):
+            raise ValueError(
+                f"Expected {n_subjects} subject and {n_conditions} condition labels "
+                f"for a grid of shape {grid.shape}; got {subjects.shape} and "
+                f"{conditions.shape}."
+            )
+        return cls(
+            trajectories=grid.reshape(n_subjects * n_conditions, *grid.shape[2:]),
+            times=times,
+            subjects=np.repeat(subjects, n_conditions),
+            conditions=np.tile(conditions, n_subjects),
+        )
+
+    def _condition_coding(self) -> tuple[list, np.ndarray]:
+        """Return the sorted condition labels and each trajectory's code."""
+        labels, codes = np.unique(self.conditions, return_inverse=True)
+        return labels.tolist(), codes
+
+    def _condition_codes_of(self, chosen: Any) -> np.ndarray:
+        """Return the codes of the chosen condition labels (one label or many)."""
+        labels, _ = self._condition_coding()
+        index = {label: code for code, label in enumerate(labels)}
+        chosen = np.atleast_1d(np.asarray(chosen, dtype=object)).tolist()
+        unknown = [label for label in chosen if label not in index]
+        if unknown:
+            raise ValueError(f"Unknown condition(s) {unknown}; available: {labels}.")
+        return np.array([index[label] for label in chosen], dtype=int)
 
     def get_per_trial_scalars(self) -> pd.DataFrame:
         """Compute per-trial scalar metrics in long format.
@@ -163,15 +270,16 @@ class TrajectoryResult:
             Columns: ``subject``, ``condition``, ``metric``, ``value``.
         """
         rows: list[dict[str, Any]] = []
+        labels, codes = self._condition_coding()
         for sub in np.unique(self.subjects):
-            for cond in np.unique(self.conditions):
-                mask = (self.subjects == sub) & (self.conditions == cond)
+            for code, cond in enumerate(labels):
+                mask = (self.subjects == sub) & (codes == code)
                 if not mask.any():
                     continue
                 stack = self.trajectories[mask]
                 try:
-                    cohesion = float(np.nanmean(trajectory_cohesion(stack)))
-                    intra = float(np.nanmean(trajectory_intra_spread(stack)))
+                    cohesion = float(np.mean(trajectory_cohesion(stack)))
+                    intra = float(np.mean(trajectory_intra_spread(stack)))
                 except Exception:
                     cohesion, intra = float("nan"), float("nan")
                 rows.extend(
@@ -206,28 +314,32 @@ class TrajectoryResult:
             Columns: ``subject``, ``method``, ``pair`` (string ``"A_vs_B"``),
             ``label_a``, ``label_b``, ``metric``, ``value``.
             Metric values: ``peak_separation``, ``peak_separation_time``,
-            ``auc_separation``.
+            ``auc_separation``; all three are NaN for a curve with a missing
+            time point.
         """
         rows: list[dict[str, Any]] = []
+        labels, codes = self._condition_coding()
         for sub in np.unique(self.subjects):
             mask = self.subjects == sub
             traj_sub = self.trajectories[mask]
-            cond_sub = self.conditions[mask]
-            if np.unique(cond_sub).size < 2:
+            codes_sub = codes[mask]
+            if np.unique(codes_sub).size < 2:
                 continue
             for method in methods:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    sep = trajectory_separation(traj_sub, cond_sub, method=method)
-                for (a, b), curve in sep.items():
+                    sep = trajectory_separation(traj_sub, codes_sub, method=method)
+                for (code_a, code_b), curve in sep.items():
+                    a, b = labels[code_a], labels[code_b]
                     curve = np.asarray(curve, dtype=float)
-                    if not np.any(np.isfinite(curve)):
-                        continue
-                    peak_idx = int(np.nanargmax(curve))
-                    peak = float(curve[peak_idx])
-                    peak_time = float(self.times[peak_idx])
-                    auc = float(np.trapezoid(curve, self.times))
-                    pair = f"{int(a)}_vs_{int(b)}"
+                    if np.isnan(curve).any():
+                        peak = peak_time = auc = float("nan")
+                    else:
+                        peak_idx = int(np.argmax(curve))
+                        peak = float(curve[peak_idx])
+                        peak_time = float(self.times[peak_idx])
+                        auc = float(np.trapezoid(curve, self.times))
+                    pair = f"{a}_vs_{b}"
                     for metric_name, val in [
                         ("peak_separation", peak),
                         ("peak_separation_time", peak_time),
@@ -238,8 +350,8 @@ class TrajectoryResult:
                                 "subject": sub,
                                 "method": method,
                                 "pair": pair,
-                                "label_a": int(a),
-                                "label_b": int(b),
+                                "label_a": a,
+                                "label_b": b,
                                 "metric": metric_name,
                                 "value": val,
                             }
@@ -248,24 +360,25 @@ class TrajectoryResult:
 
     def get_separation_timecourses(
         self, methods: Sequence[str] = ("centroid", "mahalanobis")
-    ) -> dict[str, dict[tuple[int, int], np.ndarray]]:
+    ) -> dict[str, dict[tuple[Any, Any], np.ndarray]]:
         """Pooled-across-subjects separation timecourses per condition pair.
 
         Returns
         -------
         dict
-            ``{method: {(a, b): timecourse_array}}``. Use the result directly with
+            ``{method: {(a, b): timecourse_array}}`` with ``a`` and ``b`` the
+            condition labels. Use the result directly with
             ``coco_pipe.viz.interactive.plot_trajectory_separation``.
         """
-        out: dict[str, dict[tuple[int, int], np.ndarray]] = {}
+        labels, codes = self._condition_coding()
+        out: dict[str, dict[tuple[Any, Any], np.ndarray]] = {}
         for method in methods:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                sep = trajectory_separation(
-                    self.trajectories, self.conditions, method=method
-                )
+                sep = trajectory_separation(self.trajectories, codes, method=method)
             out[method] = {
-                (int(a), int(b)): np.asarray(curve) for (a, b), curve in sep.items()
+                (labels[a], labels[b]): np.asarray(curve)
+                for (a, b), curve in sep.items()
             }
         return out
 
@@ -285,15 +398,22 @@ class TrajectoryResult:
     def filter(
         self,
         subjects: Sequence | None = None,
-        conditions: Sequence[int] | None = None,
+        conditions: Sequence | None = None,
     ) -> TrajectoryResult:
         """Return a new TrajectoryResult containing only specified
-        subjects/conditions."""
+        subjects/conditions.
+
+        Raises
+        ------
+        ValueError
+            If a condition is not one of the labels, or no trajectory is left.
+        """
         mask = np.ones(self.trajectories.shape[0], dtype=bool)
         if subjects is not None:
             mask &= np.isin(self.subjects, subjects)
         if conditions is not None:
-            mask &= np.isin(self.conditions, conditions)
+            _, codes = self._condition_coding()
+            mask &= np.isin(codes, self._condition_codes_of(conditions))
 
         if not np.any(mask):
             raise ValueError("Filtering resulted in 0 trials.")
