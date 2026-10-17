@@ -505,6 +505,101 @@ class BaseReducer(ABC):
             f"{type(self).__name__} does not expose public get_components()."
         )
 
+    def inverse_transform(self, X_emb: ArrayLike) -> Any:
+        """
+        Map an embedding back to the input feature space.
+
+        Parameters
+        ----------
+        X_emb : ArrayLike of shape (n_samples, n_dims)
+            Embedded data, as returned by `transform`.
+
+        Returns
+        -------
+        X_hat : Any of shape (n_samples, n_features)
+            Data rebuilt by the backend's ``inverse_transform``. For linear
+            reducers this is the data rebuilt from the retained components.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        ValueError
+            If the backend model has no ``inverse_transform``
+            (``capabilities["has_inverse_transform"]`` is false).
+        """
+        self._require_fitted("inverse_transform")
+        if not self.capabilities["has_inverse_transform"]:
+            raise ValueError(
+                f"{type(self).__name__} does not expose inverse_transform()."
+            )
+        return self.model.inverse_transform(X_emb)
+
+    def reconstruction_error(self, X: ArrayLike, *, per_row: bool = False) -> Any:
+        """
+        Relative squared error of rebuilding data from the retained components.
+
+        The error is ``||X - X_hat||^2 / ||X - c||^2``, where
+        ``X_hat = inverse_transform(transform(X))`` and ``c`` is the centre of
+        the fitted model, the reconstruction of a zero embedding: the fitted
+        ``mean_`` for PCA reducers, the origin for truncated SVD. ``X`` can be
+        any data in the fitted feature space, such as held-out subjects or
+        single trials. On the fit data of an exact PCA it equals
+        ``1 - sum(explained_variance_ratio_)``; with every component retained
+        it is 0.
+
+        Parameters
+        ----------
+        X : ArrayLike of shape (n_samples, n_features)
+            Data to rebuild.
+        per_row : bool, default=False
+            Return one value per row instead of the total. Each row's squared
+            residual is divided by the mean of ``||x_j - c||^2`` over the rows
+            of ``X``, so the per-row values average to the total.
+
+        Returns
+        -------
+        error : float or np.ndarray of shape (n_samples,)
+            Relative reconstruction error. Dask input gives a lazy Dask
+            result.
+
+        Raises
+        ------
+        RuntimeError
+            If the reducer has not been fitted.
+        ValueError
+            If the reducer is not linear (``capabilities["is_linear"]``) or
+            exposes no ``inverse_transform``.
+
+        See Also
+        --------
+        inverse_transform : The reconstruction the error is measured on.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import PCAReducer
+        >>> X = np.random.default_rng(0).random((50, 6))
+        >>> reducer = PCAReducer(n_components=2).fit(X)
+        >>> error = reducer.reconstruction_error(X)
+        >>> bool(np.isclose(error, 1 - reducer.explained_variance_ratio_.sum()))
+        True
+        >>> reducer.reconstruction_error(X, per_row=True).shape
+        (50,)
+        """
+        self._require_fitted("reconstruction_error")
+        if not self.capabilities["is_linear"]:
+            raise ValueError(
+                f"{type(self).__name__} is not linear; reconstruction_error() "
+                "needs a linear reducer with inverse_transform()."
+            )
+        X_emb = self.transform(X)
+        centre = self.inverse_transform(np.zeros((1, X_emb.shape[1])))
+        residual = ((X - self.inverse_transform(X_emb)) ** 2).sum(axis=1)
+        spread = ((X - centre) ** 2).sum(axis=1).mean()
+        errors = residual / spread
+        return errors if per_row else errors.mean()
+
     @classmethod
     def load(cls, filepath: str | os.PathLike) -> "BaseReducer":
         """

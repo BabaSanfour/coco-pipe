@@ -123,6 +123,23 @@ condition means, are projected with their offset kept. ``IncrementalPCA`` and
 ``DaskPCA`` take the same argument.
 ``DaskTruncatedSVD`` fits no mean, so its ``transform`` is already uncentred.
 
+``inverse_transform(embedding)`` rebuilds data from the retained components, and
+``reconstruction_error(X)`` reports how much of it they miss:
+``||X - X_hat||^2 / ||X - mean_||^2``. ``X`` can be any data, such as held-out
+subjects or single trials, and ``per_row=True`` gives one value per row; the
+per-row values average to the total. On the fit data of PCA it equals
+``1 - sum(explained_variance_ratio_)``; an ``IncrementalPCA`` fit in several
+batches estimates that ratio, so there the two agree only approximately.
+Truncated SVD fits no mean, so its error
+is measured from the origin. ``reconstruction_error`` needs a linear reducer;
+``inverse_transform`` works on every reducer whose backend has one
+(``capabilities["has_inverse_transform"]``), UMAP included.
+
+.. code-block:: python
+
+   pca = DimReduction("PCA", n_components=3).fit(X_group)
+   per_subject = pca.reducer.reconstruction_error(X_subjects, per_row=True)
+
 2.2 IncrementalPCA
 --------------------
 

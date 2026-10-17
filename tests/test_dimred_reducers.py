@@ -104,6 +104,18 @@ def test_reducer_follows_its_declared_capabilities(name, tmp_path):
     assert set(reducer.get_diagnostics()) == set(caps["supported_diagnostics"])
     assert set(reducer.get_quality_metadata()) <= set(caps["supported_metadata"])
 
+    fitted_caps = reducer.capabilities
+    if fitted_caps["has_inverse_transform"]:
+        assert _compute(reducer.inverse_transform(embedding)).shape == data.shape
+    else:
+        with pytest.raises(ValueError, match="inverse_transform"):
+            reducer.inverse_transform(embedding)
+    if fitted_caps["is_linear"] and fitted_caps["has_inverse_transform"]:
+        assert 0 <= _compute(reducer.reconstruction_error(data)) < 1
+    else:
+        with pytest.raises(ValueError):
+            reducer.reconstruction_error(data)
+
     reducer.save(tmp_path / "nested" / "reducer.joblib")
     loaded = BaseReducer.load(tmp_path / "nested" / "reducer.joblib")
     assert type(loaded) is cls
@@ -200,13 +212,12 @@ CENTRED_LINEAR = ["PCAReducer", "IncrementalPCAReducer", "DaskPCAReducer"]
 OFFSET_X = X.astype(np.float64) + 50.0
 
 
-def _fit_linear(name, **kwargs):
-    reducer = getattr(reducers, name)(n_components=3, **kwargs)
-    data = OFFSET_X
+def _fit_linear(name, n_components=3, data=OFFSET_X, **kwargs):
+    reducer = getattr(reducers, name)(n_components=n_components, **kwargs)
     if name.startswith("Dask"):
         import dask.array as da
 
-        data = da.from_array(OFFSET_X, chunks=(20, 8))
+        data = da.from_array(data, chunks=(20, data.shape[1]))
     return reducer.fit(data), data
 
 
@@ -242,6 +253,71 @@ def test_truncated_svd_projection_is_uncentred():
     reducer, data = _fit_linear("DaskTruncatedSVDReducer")
     W = _compute(reducer.components_)
     np.testing.assert_allclose(_compute(reducer.transform(data)), OFFSET_X @ W.T)
+
+
+# one batch makes IncrementalPCA an exact PCA; in batches its explained
+# variance ratio is an estimate of its own
+EXACT = {"IncrementalPCAReducer": {"batch_size": len(OFFSET_X)}}
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_reconstruction_error_on_fit_data_is_the_unexplained_variance(name):
+    reducer, data = _fit_linear(name, **EXACT.get(name, {}))
+    unexplained = 1 - _compute(reducer.explained_variance_ratio_).sum()
+    error = _compute(reducer.reconstruction_error(data))
+    np.testing.assert_allclose(error, unexplained, rtol=1e-10)
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_reconstruction_error_is_zero_with_every_component(name):
+    reducer, data = _fit_linear(name, n_components=OFFSET_X.shape[1])
+    assert _compute(reducer.reconstruction_error(data)) == pytest.approx(0, abs=1e-12)
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_reconstruction_error_per_row_on_held_out_data(name):
+    reducer, _ = _fit_linear(name)
+    held_out = OFFSET_X[::-1] + np.random.default_rng(1).normal(size=OFFSET_X.shape)
+    if name.startswith("Dask"):
+        import dask.array as da
+
+        held_out = da.from_array(held_out, chunks=(20, 8))
+    rows = _compute(reducer.reconstruction_error(held_out, per_row=True))
+
+    Y = _compute(held_out) - _compute(reducer.model.mean_)
+    W = _compute(reducer.components_)
+    residual = Y - Y @ W.T @ W
+    expected = (residual**2).sum(axis=1) / (Y**2).sum(axis=1).mean()
+    np.testing.assert_allclose(rows, expected, rtol=1e-8)
+    assert rows.mean() == pytest.approx(
+        _compute(reducer.reconstruction_error(held_out)), rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_whitening_leaves_the_reconstruction_error_unchanged(name):
+    plain, data = _fit_linear(name)
+    whitened, _ = _fit_linear(name, whiten=True)
+    np.testing.assert_allclose(
+        _compute(whitened.reconstruction_error(data, per_row=True)),
+        _compute(plain.reconstruction_error(data, per_row=True)),
+        rtol=1e-8,
+    )
+
+
+def test_truncated_svd_reconstruction_error_is_measured_from_the_origin():
+    reducer, data = _fit_linear("DaskTruncatedSVDReducer")
+    s = _compute(reducer.model.singular_values_)
+    np.testing.assert_allclose(
+        _compute(reducer.reconstruction_error(data)),
+        1 - (s**2).sum() / (OFFSET_X**2).sum(),
+        rtol=1e-8,
+    )
+    # it keeps fewer components than features: data of rank 3 is rebuilt whole
+    rng = np.random.default_rng(0)
+    rank3 = rng.normal(size=(60, 3)) @ rng.normal(size=(3, 8))
+    reducer, data = _fit_linear("DaskTruncatedSVDReducer", data=rank3)
+    assert _compute(reducer.reconstruction_error(data)) == pytest.approx(0, abs=1e-12)
 
 
 @pytest.mark.parametrize("name", ["DaskPCAReducer", "DaskTruncatedSVDReducer"])
