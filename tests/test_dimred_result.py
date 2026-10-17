@@ -118,13 +118,13 @@ def test_trajectory_result_get_separation_timecourses(dummy_trajectory_data):
 
 def test_permutation_null_separation_auc(dummy_trajectory_data):
     res = TrajectoryResult(*dummy_trajectory_data)
-    obs, null = permutation_null_separation_auc(
+    obs, null, p_value = permutation_null_separation_auc(
         res, group_a=[1], group_b=[2], n_perm=10
     )
 
     assert isinstance(obs, float)
-    assert isinstance(null, np.ndarray)
-    assert len(null) <= 10
+    assert null.shape == (10,)
+    assert p_value == (1 + np.sum(null >= obs)) / 11
 
 
 @pytest.fixture
@@ -364,24 +364,25 @@ def test_named_conditions_give_the_numbers_of_integer_ones():
     for (a, b), curve in curves_int.items():
         np.testing.assert_array_equal(curves_named[(TO_NAME[a], TO_NAME[b])], curve)
 
-    obs_named, null_named = permutation_null_separation_auc(
+    obs_named, null_named, p_named = permutation_null_separation_auc(
         named,
         group_a=[NAMES[0]],
         group_b=NAMES[1:],
         n_perm=20,
         rng=np.random.default_rng(1),
-        within_subject=True,
+        strata=named.subjects,
     )
-    obs_int, null_int = permutation_null_separation_auc(
+    obs_int, null_int, p_int = permutation_null_separation_auc(
         integer,
         group_a=[3],
         group_b=[4, 5],
         n_perm=20,
         rng=np.random.default_rng(1),
-        within_subject=True,
+        strata=integer.subjects,
     )
     assert obs_named == obs_int
     np.testing.assert_array_equal(null_named, null_int)
+    assert p_named == p_int
 
     kept = named.filter(conditions=[NAMES[2]])
     assert set(kept.conditions) == {NAMES[2]}
