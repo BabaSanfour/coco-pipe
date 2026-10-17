@@ -667,9 +667,9 @@ let the checks fire automatically.
 .. code-block:: python
 
    from coco_pipe.report import Report
-   from coco_pipe.io import load_data
+   from coco_pipe.io import TabularConfig, load_data
 
-   container = load_data("scores.csv", mode="tabular", target_col="label")
+   container = load_data(TabularConfig(path="scores.csv", sep=",", target_col="label"))
 
    report = Report(title="Input QC")
    report.add_container(container)

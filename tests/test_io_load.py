@@ -1,5 +1,4 @@
 import importlib
-import json
 import pickle
 import sys
 
@@ -8,7 +7,12 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from coco_pipe.io.config import DatasetConfig, TabularConfig
+from coco_pipe.io.config import (
+    BIDSConfig,
+    DatasetConfig,
+    EmbeddingConfig,
+    TabularConfig,
+)
 from coco_pipe.io.load import load_data
 
 
@@ -20,37 +24,29 @@ def _csv(tmp_path):
     return path
 
 
-def test_load_data_infers_the_mode(tmp_path, write_bids_epochs):
-    table = load_data(_csv(tmp_path), mode="auto", sep=",", target_col="y")
+def test_load_data_reads_each_config(tmp_path):
+    table = load_data(TabularConfig(path=_csv(tmp_path), sep=",", target_col="y"))
     assert table.dims == ("obs", "feature")
 
     blobs = tmp_path / "blobs"
     blobs.mkdir()
     (blobs / "rec01_emb.pkl").write_bytes(pickle.dumps(np.ones((1, 4))))
     for path in (blobs, blobs / "rec01_emb.pkl"):
-        assert load_data(path, mode="auto", dims=("feature",)).X.shape == (1, 4)
-
-    bids = tmp_path / "bids"
-    write_bids_epochs(bids, "01")
-    (bids / "dataset_description.json").write_text(json.dumps({"Name": "x"}))
-    epochs = load_data(bids, mode="auto", suffix="epo", loading_mode="load_existing")
-    assert epochs.dims == ("obs", "channel", "time")
+        assert load_data(EmbeddingConfig(path=path)).X.shape == (1, 4)
 
 
 def test_load_data_bids_saved_epochs(tmp_path, write_bids_epochs):
     write_bids_epochs(tmp_path, "0001", description="base")
     meta = pd.DataFrame({"Study ID": [1], "age": [42], "group": ["case"]})
-    container = load_data(
-        tmp_path,
-        mode="bids",
+    config = BIDSConfig(
+        path=tmp_path,
         task="rest",
         suffix="epo",
         loading_mode="load_existing",
         description="base",
-        subject_metadata_df=meta,
-        subject_key="Study ID",
         target_col="group",
     )
+    container = load_data(config, subject_metadata_df=meta, subject_key="Study ID")
     assert container.X.shape == (2, 2, 20)
     assert container.ids.tolist() == [
         "sub-0001_task-rest_epoch-0000",
@@ -60,30 +56,28 @@ def test_load_data_bids_saved_epochs(tmp_path, write_bids_epochs):
     assert container.y.tolist() == ["case", "case"]
 
     with pytest.raises(ValueError, match="subject_key must be provided"):
-        load_data(tmp_path, mode="bids", suffix="epo", subject_metadata_df=meta)
+        load_data(config, subject_metadata_df=meta)
 
 
-def test_load_data_config_object_matches_kwargs(tmp_path):
+def test_load_data_takes_a_config_or_its_wrapper(tmp_path):
     path = _csv(tmp_path)
     options = {"sep": ",", "target_col": "y", "index_col": "id"}
-    via_kwargs = load_data(path, mode="tabular", **options)
-    via_config = load_data(config=TabularConfig(path=path, **options))
+    via_config = load_data(TabularConfig(path=path, **options))
     via_wrapper = load_data(
-        config=DatasetConfig(dataset={"mode": "tabular", "path": str(path), **options})
+        DatasetConfig(dataset={"mode": "tabular", "path": str(path), **options})
     )
-    for container in (via_kwargs, via_config, via_wrapper):
+    for container in (via_config, via_wrapper):
         assert list(container.coords["feature"]) == ["f0", "f1"]
         assert list(container.coords["obs"]) == ["a", "b", "c"]
         np.testing.assert_array_equal(container.y, [0, 1, 0])
 
 
 def test_load_data_errors(tmp_path):
-    with pytest.raises(ValueError, match="Unknown mode"):
-        load_data("dummy", mode="invalid")
-    with pytest.raises(ValueError, match="`path` is required"):
-        load_data(mode="tabular")
+    # settings belong to the config, which validates them
+    with pytest.raises(TypeError):
+        load_data(_csv(tmp_path), mode="tabular")
     with pytest.raises(ValidationError):
-        load_data(_csv(tmp_path), mode="tabular", clean_kwargs="not_a_dict")
+        TabularConfig(path=_csv(tmp_path), clean_kwargs="not_a_dict")
 
 
 def test_io_import_is_lightweight(monkeypatch):
@@ -106,3 +100,33 @@ def test_io_import_is_lightweight(monkeypatch):
         for module_name, module_obj in cached_modules.items():
             if module_obj is not None:
                 sys.modules[module_name] = module_obj
+
+
+def test_load_data_passes_the_array_type_and_threads(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    data = np.random.default_rng(0).normal(size=(2, 300)) * 1e-12
+    raw = mne.io.RawArray(data, mne.create_info(["M1", "M2"], 100.0, "mag"))
+    raw.set_meas_date(0)
+    for subject in ("01", "02"):
+        write_raw_bids(
+            raw,
+            BIDSPath(root=tmp_path, subject=subject, task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+    options = {
+        "path": tmp_path,
+        "task": "rest",
+        "datatype": "meg",
+        "window_length": 1.0,
+    }
+
+    default = load_data(BIDSConfig(**options))
+    wide = load_data(BIDSConfig(dtype="float64", n_jobs=2, **options))
+
+    assert default.X.dtype == np.float32
+    assert wide.X.dtype == np.float64
+    np.testing.assert_allclose(wide.X, default.X, rtol=1e-6)

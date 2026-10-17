@@ -58,9 +58,9 @@ decoding, visualization, and reporting all compose without glue code.
 
 .. code-block:: python
 
-   from coco_pipe.io import load_data
+   from coco_pipe.io import TabularConfig, load_data
 
-   container = load_data("my_dataset.csv")   # CSV / parquet / BIDS / npz
+   container = load_data(TabularConfig(path="my_dataset.csv", sep=",", target_col="y"))
    X, y = container.X, container.y
 
 Your first decoding experiment

@@ -19,8 +19,8 @@ provides quality-control and persistence utilities around it.
 
 .. rubric:: Key Features
 
-- One loader, :func:`~coco_pipe.io.load_data`, with auto-detected modes for
-  tabular files, BIDS datasets, and embedding derivatives.
+- One loader, :func:`~coco_pipe.io.load_data`, driven by a typed config for
+  tabular files, BIDS datasets, and embedding files.
 - A labelled, dimension-aware container with tidy selection, aggregation, and
   normalization helpers.
 - Inline data-quality checks (missingness, constant columns, outliers,
@@ -71,34 +71,29 @@ Common transformations return new containers (nothing mutates in place):
 2. Loading Data
 ===============
 
-:func:`~coco_pipe.io.load_data` is the single entry point. ``mode="auto"``
-infers the source type; pass an explicit mode or a typed config for full
-control.
+:func:`~coco_pipe.io.load_data` is the single entry point. It takes a typed
+config, validated when it is built, which says what to load and how:
 
 .. code-block:: python
 
-   from coco_pipe.io import load_data
+   from coco_pipe.io import BIDSConfig, EmbeddingConfig, TabularConfig, load_data
 
-   # Tabular feature table (CSV / parquet / Excel); columns map to dimensions.
-   container = load_data("features.csv", target_col="diagnosis")
-
-   # BIDS M/EEG dataset, epoched on load (requires the [eeg] extra).
+   # Tabular feature table (CSV / TSV / Excel); columns map to dimensions.
    container = load_data(
-       "/data/bids", mode="bids", datatype="eeg",
-       loading_mode="epochs", tmin=-0.2, tmax=0.5,
+       TabularConfig(path="features.csv", sep=",", target_col="diagnosis")
    )
 
-   # Precomputed embedding derivatives.
-   container = load_data("/data/embeddings", mode="embeddings")
+   # BIDS M/EEG dataset, cut into 2 s windows on load.
+   container = load_data(
+       BIDSConfig(path="/data/bids", task="rest", datatype="eeg", window_length=2.0)
+   )
 
-For reproducible, validated loading, pass a config object instead of loose
-keyword arguments:
+   # Embedding files (NPY / PKL / H5 / JSON).
+   container = load_data(EmbeddingConfig(path="/data/embeddings", pattern="*.npy"))
 
-.. code-block:: python
-
-   from coco_pipe.io import TabularConfig
-
-   container = load_data(config=TabularConfig(path="features.csv", target_col="diagnosis"))
+Tables and functions, which a config cannot hold, are passed to ``load_data``
+directly: ``subject_metadata_df`` / ``subject_key`` for BIDS, ``reader`` /
+``id_fn`` for embeddings.
 
 3. Quality Control
 ==================
