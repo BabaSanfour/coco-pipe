@@ -11,6 +11,15 @@ from coco_pipe.decoding.foundation_models._hugging_face import HuggingFaceBacken
 from coco_pipe.decoding.registry import get_estimator_spec
 
 
+@pytest.fixture(autouse=True)
+def commits(monkeypatch):
+    """Resolve every repository to a commit named after it, without the Hub."""
+    monkeypatch.setattr(
+        "coco_pipe.decoding.foundation_models._hugging_face.resolve_revision",
+        lambda repo_id, revision=None, **kwargs: revision or f"{repo_id}@latest",
+    )
+
+
 def test_hugging_face_available_when_packages_present(monkeypatch):
     monkeypatch.setattr(
         HuggingFaceBackend, "is_available", classmethod(lambda cls: True)
@@ -69,7 +78,7 @@ def test_load_calls_from_pretrained(mock_auto_model):
     meta = get_estimator_spec("reve")
     with patch.object(
         transformers.AutoModel, "from_pretrained", side_effect=[backbone, pos_bank]
-    ):
+    ) as from_pretrained:
         adapter = HuggingFaceBackend._load_reve(
             meta,
             n_outputs=2,
@@ -81,11 +90,23 @@ def test_load_calls_from_pretrained(mock_auto_model):
             task="classification",
             lora_r=16,
             lora_alpha=32,
-            lora_target_modules=("query", "value"),
+            lora_target_modules="all-linear",
             lora_dropout=0.05,
         )
     assert isinstance(adapter, HuggingFaceBackend)
     assert adapter._feat_dim == 1024
+    # each repository loads the commit resolved for it, and records it
+    loaded = {
+        call.args[0]: call.kwargs["revision"] for call in from_pretrained.call_args_list
+    }
+    assert (
+        loaded
+        == adapter.checkpoint_revisions
+        == {
+            "brain-bzh/reve-base": "brain-bzh/reve-base@latest",
+            "brain-bzh/reve-positions": "brain-bzh/reve-positions@latest",
+        }
+    )
 
 
 def test_frozen_mode_calls_eval(mock_auto_model):
@@ -107,7 +128,7 @@ def test_frozen_mode_calls_eval(mock_auto_model):
             task="classification",
             lora_r=16,
             lora_alpha=32,
-            lora_target_modules=("query", "value"),
+            lora_target_modules="all-linear",
             lora_dropout=0.05,
         )
     backbone.eval.assert_called()
@@ -317,7 +338,7 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
         patch(
             "peft.prepare_model_for_kbit_training", return_value=mock_model
         ) as mock_prep,
-        patch("peft.get_peft_model", return_value=mock_model),
+        patch("peft.get_peft_model", return_value=mock_model) as mock_get_peft,
         patch.object(HuggingFaceBackend, "is_available", return_value=True),
     ):
         backend = HuggingFaceBackend.load(
@@ -329,7 +350,10 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
             pooling="flatten",
             electrode_names=["Fp1", "Fp2"],
         )
-    mock_prep.assert_called_once()
+    # REVE cannot checkpoint gradients, which peft turns on by default
+    mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
+    # REVE has no "query"/"value" layers: every linear layer gets an adapter
+    assert mock_get_peft.call_args.args[1].target_modules == "all-linear"
     assert backend._feat_dim == 2048
 
 

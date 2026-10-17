@@ -370,6 +370,7 @@ class Experiment:
             transformer = FrozenBackboneTransformer(
                 model_key=_get_val(backbone, "model_key"),
                 backend=_get_val(backbone, "backend", "auto"),
+                device=_get_val(_get_val(backbone, "device"), "device", "auto"),
                 pooling=_get_val(backbone, "pooling", "mean"),
                 sfreq=_get_val(backbone, "sfreq"),
                 ch_names=_get_val(backbone, "ch_names"),
@@ -430,17 +431,6 @@ class Experiment:
                 raise ValueError(
                     f"Failed to instantiate model '{model_name}': {e}"
                 ) from e
-
-        if spec.family == "foundation":
-            from .foundation_models import load
-
-            return load(
-                model_key=_get_val(config, "model_key", "dummy"),
-                backend=_get_val(config, "backend", "auto"),
-                n_outputs=_get_val(config, "n_outputs", None),
-                train_mode=_get_val(config, "train_mode", "frozen"),
-                pooling=_get_val(config, "pooling", "mean"),
-            )
 
         if spec.family == "temporal":
             # wrapper is 'sliding' or 'generalizing'

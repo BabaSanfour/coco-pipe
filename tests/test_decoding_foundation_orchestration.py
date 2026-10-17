@@ -180,7 +180,7 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
             "lr": 3e-4,
             "weight_decay": 0.05,
         },
-        checkpoints={"save": "best", "output_dir": tmp_path},
+        checkpoints={"output_dir": tmp_path},
     )
     fitted = clone(classifier).fit(X, y, groups=groups)
     optimizer = fitted.backend_._net_.optimizer_
@@ -203,10 +203,20 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
         }
         for name, component in fitted._checkpoint_components().items()
     }
+    # the checkpoint holds what training changed; frozen weights stay pretrained
+    saved = torch.load(fitted.checkpoint_path_, weights_only=True)["components"]
+    frozen = {
+        name
+        for name, parameter in fitted.backend_._model.named_parameters()
+        if not parameter.requires_grad
+    }
+    assert set(saved["model"]) & frozen == set()
+    assert bool(frozen) == (train_mode == "linear_probe")
     with torch.no_grad():
         for component in fitted._checkpoint_components().values():
             for parameter in component.parameters():
-                parameter.add_(1)
+                if parameter.requires_grad:
+                    parameter.add_(1)
     fitted.restore_checkpoint()
     for name, component in fitted._checkpoint_components().items():
         for key, value in component.state_dict().items():
@@ -377,6 +387,21 @@ def test_frozen_backbone_embedding_cache_matches_uncached_and_memoizes():
     second = cached.transform(X)
     assert call_count["n"] == len(X)  # second pass served entirely from the cache
     np.testing.assert_allclose(second, expected, rtol=1e-6)
+
+    # another checkpoint of the same model gets its own embeddings, not these
+    other = FrozenBackboneTransformer(
+        "cbramod",
+        backend="fake",
+        sfreq=200,
+        ch_names=["C3", "C4"],
+        cache_embeddings=True,
+        backend_kwargs={"revision": "other"},
+    ).fit(X, None)
+    np.testing.assert_allclose(
+        other.transform(X),
+        other.backend_.transform(other.prepared_.adapt(X)),
+        rtol=1e-6,
+    )
     clear_frozen_embedding_cache()
 
 
@@ -544,3 +569,56 @@ def test_real_foundation_training():
         in {"verified", "authentication_required", "unsupported", "failed"}
         for record in records
     )
+
+
+@pytest.mark.parametrize("labels", [["ec", "eo"], [1, 2], [0, 3]])
+def test_classifier_takes_any_labels(labels):
+    import torch
+
+    X, y, groups = _data()
+
+    def fit(y):
+        torch.manual_seed(0)
+        return FoundationClassifier(
+            "cbramod",
+            backend="fake",
+            sfreq=200,
+            ch_names=["C3", "C4"],
+            trainer={"max_epochs": 1, "batch_size": 4, "validation_fraction": 0.0},
+        ).fit(X, y, groups=groups)
+
+    named = fit(np.asarray(labels)[y])
+    coded = fit(y)
+    # the labels only name the classes: the fit is the one on 0 and 1
+    np.testing.assert_array_equal(named.classes_, labels)
+    np.testing.assert_allclose(named.predict_proba(X), coded.predict_proba(X))
+    np.testing.assert_array_equal(
+        named.predict(X), np.asarray(labels)[coded.predict(X)]
+    )
+
+
+def test_early_stopping_needs_a_validation_split():
+    no_validation = {"early_stopping_patience": 2, "validation_fraction": 0.0}
+    with pytest.raises(ValueError, match="needs validation_fraction > 0"):
+        TrainerConfig(**no_validation)
+    with pytest.raises(ValueError, match="needs validation_fraction > 0"):
+        _fit_fake_classifier(no_validation)
+
+
+def test_restore_refuses_a_checkpoint_missing_trained_weights(tmp_path):
+    X, y, groups = _data()
+
+    def fit(train_mode):
+        return FoundationClassifier(
+            "cbramod",
+            backend="fake",
+            train_mode=train_mode,
+            sfreq=200,
+            ch_names=["C3", "C4"],
+            trainer={"max_epochs": 1, "batch_size": 4, "validation_fraction": 0.0},
+            checkpoints={"output_dir": tmp_path},
+        ).fit(X, y, groups=groups)
+
+    head_only = fit("linear_probe").checkpoint_path_
+    with pytest.raises(ValueError, match="lacks weights this model trains"):
+        fit("full").restore_checkpoint(head_only)

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,6 +24,35 @@ if TYPE_CHECKING:
 
 # Largest absolute value below which microvolt EEG is implausible.
 _MICROVOLT_MIN_PLAUSIBLE_PEAK = 1e-2
+
+
+def check_finite(X: np.ndarray, name: str) -> None:
+    """Raise when a window holds NaN or infinite values, naming the windows.
+
+    A model turns such a window into a NaN embedding, which L2 normalisation
+    or pooling can hide.
+    """
+    bad = np.flatnonzero(~np.isfinite(X).all(axis=tuple(range(1, X.ndim))))
+    if bad.size:
+        raise ValueError(
+            f"{name}: {bad.size} of {len(X)} windows hold NaN or infinite values "
+            f"(windows {bad[:10].tolist()}{', ...' if bad.size > 10 else ''})."
+        )
+
+
+def resolve_revision(repo_id: str, revision: str | None = None, **hub_kwargs) -> str:
+    """Return the commit of ``repo_id`` that ``revision`` points to.
+
+    ``None`` is the latest commit. The commit is read from the snapshot that
+    holds the repository's ``config.json``, so it resolves offline from the
+    local cache as well.
+    """
+    from pathlib import Path
+
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(repo_id, "config.json", revision=revision, **hub_kwargs)
+    return Path(path).parent.name
 
 
 class BackendBase(BaseEstimator, TransformerMixin, ABC):
@@ -43,6 +74,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     signal_metadata_: SignalMetadata | None = None
     _net_ = None
     _model = None
+    # The commit loaded from each Hugging Face repository, set by ``load``.
+    checkpoint_revisions: Mapping[str, str] = MappingProxyType({})
 
     def release_memory(self) -> None:
         """Drop references to loaded torch modules so GC can reclaim them.
@@ -313,7 +346,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             if self._task == "classification" and y is not None
             else 1
         )
-        if out_dim and self._n_outputs != out_dim:
+        if self._n_outputs != out_dim:
             self.reset_head(out_dim)
         net_cls = (
             NeuralNetClassifier
@@ -387,6 +420,11 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
 
         callbacks = []
         patience = fit_params.get("early_stopping_patience")
+        if patience and validation_fraction <= 0:
+            raise ValueError(
+                "early_stopping_patience watches the validation loss: it needs "
+                "validation_fraction > 0."
+            )
         if patience:
             from skorch.callbacks import EarlyStopping
 
@@ -551,6 +589,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
 
         sfreq mismatch → UserWarning (allows intentional mismatch for research).
         Channel count mismatch for fixed-channel models → ValueError.
+        NaN or infinite values → ValueError.
         Volt-scale input for a model that expects microvolts → ValueError.
         """
         meta = self.signal_metadata_
@@ -577,6 +616,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 f"{model_meta.display_name} expects {expected_n_chans} "
                 f"channels, got {X.shape[1]}."
             )
+        check_finite(X, model_meta.display_name)
         if model_meta.expects_microvolts and X.size:
             peak = max(float(X.max()), -float(X.min()))
             # peak == 0 is all-zero synthetic data, not a units mistake.

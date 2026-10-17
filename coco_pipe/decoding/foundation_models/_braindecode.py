@@ -22,7 +22,7 @@ import numpy as np
 
 from .._specs import SignalMetadata
 from . import _montages
-from ._base import BackendBase
+from ._base import BackendBase, resolve_revision
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -51,8 +51,8 @@ class BrainDecodeBackend(BackendBase):
     Training modes: frozen, full, lora.
     QLoRA is not supported (requires HF quantization in from_pretrained).
 
-    BrainDecode's dict output is unwrapped in ``_probe_feat_dim`` and
-    ``transform`` — no dict leaks outside those methods.
+    BrainDecode's dict output is unwrapped in ``_forward_features`` and
+    ``_forward_logits`` — no dict leaks outside those methods.
     """
 
     _uses_interpolation: bool = False
@@ -62,7 +62,6 @@ class BrainDecodeBackend(BackendBase):
         self,
         metadata: FoundationModelSpec,
         model,
-        feat_dim: int,
         n_outputs: int | None,
         device: str,
         train_mode: str,
@@ -71,7 +70,6 @@ class BrainDecodeBackend(BackendBase):
     ) -> None:
         self._metadata = metadata
         self._model = model
-        self._feat_dim = feat_dim
         self._n_outputs = n_outputs
         self._device = device
         self._train_mode = train_mode
@@ -185,7 +183,11 @@ class BrainDecodeBackend(BackendBase):
             metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
         )
         kw.pop("n_times", None)
-        revision = kw.pop("revision", metadata.checkpoint_revision)
+        revision = resolve_revision(
+            metadata.hub_repo,
+            kw.pop("revision", metadata.checkpoint_revision),
+            token=kw.get("token"),
+        )
         filename = kw.pop("filename", metadata.checkpoint_filename)
         interpolate_channels = bool(kw.pop("interpolate_channels", False))
         uses_interpolation = interpolate_channels and model_key in _INTERPOLATED_CLASS
@@ -284,8 +286,7 @@ class BrainDecodeBackend(BackendBase):
             kw.pop("chs_info", None)
 
         load_kwargs = dict(kw)
-        if revision is not None:
-            load_kwargs["revision"] = revision
+        load_kwargs["revision"] = revision
         if filename is not None:
             load_kwargs["filename"] = filename
         effective_outputs = (
@@ -338,19 +339,6 @@ class BrainDecodeBackend(BackendBase):
             model = get_peft_model(model, lora_cfg)
         # full: no changes — all params trainable
 
-        probe_n_chans = (
-            channel_plan.model_n_chans
-            if channel_plan is not None
-            else (len(electrode_names) if electrode_names else None)
-        )
-        feat_dim = cls._probe_feat_dim(
-            model,
-            metadata,
-            device,
-            n_chans=probe_n_chans,
-            n_times=n_times,
-        )
-
         if n_outputs is not None:
             try:
                 model.reset_head(n_outputs)
@@ -368,7 +356,6 @@ class BrainDecodeBackend(BackendBase):
         backend = cls(
             metadata=metadata,
             model=model,
-            feat_dim=feat_dim,
             n_outputs=n_outputs,
             device=device,
             train_mode=train_mode,
@@ -378,8 +365,7 @@ class BrainDecodeBackend(BackendBase):
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
         backend._uses_interpolation = model_key == "labram" and interpolate_channels
-        backend._checkpoint_revision = revision
-        backend._checkpoint_filename = filename
+        backend.checkpoint_revisions = {metadata.hub_repo: revision}
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None
         )
@@ -458,28 +444,6 @@ class BrainDecodeBackend(BackendBase):
                 "embeddings would be partly random."
             )
         return model
-
-    @classmethod
-    def _probe_feat_dim(
-        cls,
-        model,
-        metadata: FoundationModelSpec,
-        device: str,
-        *,
-        n_chans: int | None = None,
-        n_times: int = 400,
-    ) -> int:
-        """Zero forward pass to get actual feature dim.
-
-        Preferred over hard-coding — registry value is reference, probe is truth.
-        """
-        import torch
-
-        n_ch = n_chans or metadata.pretrained_n_chans or 19
-        probe = torch.zeros(1, n_ch, n_times, device=device)
-        with torch.no_grad():
-            feats = cls._forward_features(model, probe, metadata.name)
-        return int(feats.shape[-1])
 
     @classmethod
     def _forward_logits(cls, model, tensor, model_key: str):

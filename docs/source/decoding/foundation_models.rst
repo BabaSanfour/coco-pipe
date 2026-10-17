@@ -38,6 +38,8 @@ extracted embeddings.
        ClassicalModelConfig,
    )
 
+   ch_names = epochs.ch_names  # the channels of your epochs, in order
+
    config = ExperimentConfig(
        task="classification",
        models={
@@ -45,8 +47,10 @@ extracted embeddings.
                backbone=FoundationEmbeddingModelConfig(
                    backend="braindecode",
                    model_key="labram",
+                   sfreq=epochs.info["sfreq"], # sampling rate of the epochs
+                   ch_names=ch_names,        # their channel names, in order
                    pooling="mean",
-                   cache_embeddings=True,    # cache to disk for reuse across folds
+                   cache_embeddings=True,    # in memory, reused across folds
                ),
                head=ClassicalModelConfig(
                    estimator="LogisticRegression",
@@ -86,8 +90,10 @@ coco-pipe integrates the following foundation models natively, registered in
 .. code-block:: python
 
    from coco_pipe.decoding.configs import (
-       NeuralFineTuneConfig, LoRAConfig, QuantizationConfig, DeviceConfig, CheckpointConfig
+       NeuralFineTuneConfig, LoRAConfig, DeviceConfig, CheckpointConfig
    )
+
+   ch_names = epochs.ch_names  # the channels of your epochs, in order
 
    config = ExperimentConfig(
        task="classification",
@@ -95,12 +101,12 @@ coco-pipe integrates the following foundation models natively, registered in
            "reve_qlora": NeuralFineTuneConfig(
                backend="hugging_face",
                model_key="reve",
-               input_kind="epoched",
+               sfreq=epochs.info["sfreq"],
+               ch_names=ch_names,
                train_mode="qlora",
                lora=LoRAConfig(r=16, alpha=32, dropout=0.05),
-               quantization=QuantizationConfig(enabled=True, load_in_4bit=True),
-               device=DeviceConfig(device="auto", precision="bf16"),
-               checkpoints=CheckpointConfig(save="best"),
+               device=DeviceConfig(device="auto"),
+               checkpoints=CheckpointConfig(output_dir="checkpoints"),
            )
        },
        metrics=["balanced_accuracy"],

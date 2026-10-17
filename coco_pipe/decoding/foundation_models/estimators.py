@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -21,6 +22,18 @@ _FROZEN_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
 def clear_frozen_embedding_cache() -> None:
     """Empty the shared frozen-backbone embedding cache."""
     _FROZEN_EMBEDDING_CACHE.clear()
+
+
+def _trained_state(module: Any) -> dict[str, Any]:
+    """Return the state a fit can change: trainable parameters and buffers.
+
+    Frozen weights are left out: they are the pretrained checkpoint's, loaded
+    again with the model. A 4-bit (QLoRA) backbone is frozen, so its quantized
+    weights, which a plain ``load_state_dict`` cannot read back, are left out.
+    """
+    keep = {name for name, p in module.named_parameters() if p.requires_grad}
+    keep |= {name for name, _ in module.named_buffers()}
+    return {key: value for key, value in module.state_dict().items() if key in keep}
 
 
 def _release_fitted_backend(estimator: Any) -> None:
@@ -83,15 +96,23 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         return self
 
     def _fingerprint(self) -> str:
-        """Stable identity of this deterministic window->embedding mapping."""
-        return "|".join(
-            str(part)
-            for part in (
+        """Stable identity of this deterministic window->embedding mapping.
+
+        The cache is shared by every transformer in the process, so the key
+        holds everything that changes the embedding: the backend and its
+        keyword arguments (checkpoint revision, channel interpolation, ...) too.
+        """
+        return json.dumps(
+            [
                 self.model_key,
+                self.backend,
                 self.pooling,
-                float(getattr(self.prepared_, "target_sfreq", 0.0)),
-                tuple(getattr(self.prepared_, "ch_names", ()) or ()),
-            )
+                self.prepared_.target_sfreq,
+                self.prepared_.ch_names,
+                self.backend_kwargs or {},
+            ],
+            sort_keys=True,
+            default=str,
         )
 
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -221,7 +242,8 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         trainer = dict(self.trainer or {})
         self.backend_.fit(
             self.prepared_.adapt(X),
-            y,
+            # the network's outputs are classes_ in order: train on their indices
+            np.searchsorted(self.classes_, y),
             groups=groups,
             class_weight=class_weights,
             random_state=self.random_state,
@@ -239,7 +261,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         )
         self.checkpoint_path_ = None
         checkpoint = dict(self.checkpoints or {})
-        if checkpoint.get("save", "none") != "none" and checkpoint.get("output_dir"):
+        if checkpoint.get("output_dir"):
             import torch
 
             output_dir = Path(checkpoint["output_dir"])
@@ -255,7 +277,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
                         "model_key": self.model_key,
                         "train_mode": self.train_mode,
                         "components": {
-                            name: component.state_dict()
+                            name: _trained_state(component)
                             for name, component in components.items()
                         },
                     },
@@ -283,19 +305,24 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             weights_only=True,
         )
         components = self._checkpoint_components()
-        if "components" not in payload:
-            if len(components) != 1:
-                raise ValueError(
-                    "Legacy single-module checkpoint cannot restore a "
-                    "multi-component backend."
-                )
-            next(iter(components.values())).load_state_dict(payload)
-            return self
         missing = sorted(set(payload["components"]) - set(components))
         if missing:
             raise ValueError(f"Checkpoint components are unavailable: {missing}")
         for name, state in payload["components"].items():
-            components[name].load_state_dict(state)
+            component = components[name]
+            absent = sorted(set(_trained_state(component)) - set(state))
+            if absent:
+                raise ValueError(
+                    f"Checkpoint component {name!r} lacks weights this model "
+                    f"trains: {absent[:5]}"
+                )
+            # the frozen weights stay those of the pretrained checkpoint
+            unexpected = component.load_state_dict(state, strict=False).unexpected_keys
+            if unexpected:
+                raise ValueError(
+                    f"Checkpoint component {name!r} holds weights this model "
+                    f"lacks: {unexpected[:5]}"
+                )
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -332,15 +359,14 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             "ch_names": self.ch_names,
             "trainer": dict(self.trainer or {}),
             "lora": dict(self.lora or {}),
+            "checkpoint_revisions": dict(
+                getattr(self.backend_, "checkpoint_revisions", {})
+            ),
         }
-
-    def get_failure_diagnostics(self) -> dict[str, Any]:
-        return {}
 
     def get_artifact_metadata(self) -> dict[str, Any]:
         return {
             "history": self.get_training_history(),
             "checkpoints": self.get_checkpoint_manifest(),
             "model_card": self.get_model_card_info(),
-            "failures": self.get_failure_diagnostics(),
         }

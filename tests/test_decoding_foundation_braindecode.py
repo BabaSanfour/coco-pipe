@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from coco_pipe.decoding._specs import SignalMetadata
+from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
@@ -18,11 +19,12 @@ pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
+LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
     "Labram": {"n_times": 3000},
     "InterpolatedLaBraM": {"n_times": 3000},
-    "BIOT": {"n_times": 2000, "sfreq": 200.0},
+    "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
 }
 
 
@@ -66,9 +68,14 @@ def offline(monkeypatch, tmp_path):
     )
     weights = tmp_path / "eegpt.pt"
     torch.save(eegpt.state_dict(), weights)
-    monkeypatch.setattr(
-        huggingface_hub, "hf_hub_download", lambda *a, **k: str(weights)
-    )
+
+    def download(repo_id, filename, revision=None, **kwargs):
+        if filename == "config.json":
+            # a cached snapshot folder is named by its commit
+            return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
+        return str(weights)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     return calls
 
 
@@ -229,11 +236,41 @@ def test_volt_scale_input_is_rejected(offline):
     assert backend.transform(np.zeros_like(X)).shape[0] == 4
 
 
+def test_windows_with_nan_or_inf_are_rejected(offline):
+    backend, X = _load("cbramod", "full")
+    X[1, 0, 5] = np.nan
+    X[3, 2, 0] = np.inf
+    y = np.array([0, 1, 0, 1])
+
+    for call in (
+        lambda: backend.fit(X, y, max_epochs=1),
+        lambda: backend.transform(X),
+        lambda: backend.predict(X),
+        lambda: backend.predict_proba(X),
+        lambda: FoundationEmbeddingExtractor("cbramod").extract(
+            X, signal_metadata=SignalMetadata(200.0, DEFAULT_CHANNELS)
+        ),
+    ):
+        with pytest.raises(ValueError, match=r"2 of 4 windows .* \[1, 3\]"):
+            call()
+
+
 def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
-    _load("cbramod")
-    assert "revision" not in offline[-1]
-    _load("cbramod", revision="abc123")
+    # the commit is resolved first, so the one loaded is the one recorded
+    backend, X = _load("cbramod")
+    assert offline[-1]["revision"] == LATEST
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": LATEST}
+    backend, _ = _load("cbramod", revision="abc123")
     assert offline[-1]["revision"] == "abc123"
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": "abc123"}
+
+    # extracted embeddings say which commit made them
+    result = FoundationEmbeddingExtractor("cbramod", device="cpu").extract(
+        X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+    )
+    assert result.metadata["checkpoint_revisions"] == {
+        "braindecode/cbramod-pretrained": LATEST
+    }
 
 
 def test_labram_interpolates_missing_channels(offline):
@@ -302,7 +339,6 @@ def test_transform_checks_its_input(offline):
     unfitted = BrainDecodeBackend(
         metadata=get_estimator_spec("cbramod"),
         model=backend._model,
-        feat_dim=200,
         n_outputs=None,
         device="cpu",
         train_mode="frozen",
@@ -338,7 +374,6 @@ def test_token_hook_is_removed_when_forward_fails():
     backend = BrainDecodeBackend(
         metadata=metadata,
         model=model,
-        feat_dim=metadata.embedding_dim,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",
@@ -350,3 +385,25 @@ def test_token_hook_is_removed_when_forward_fails():
     with pytest.raises(RuntimeError, match="forward failed"):
         backend.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
     assert not model.encoder.transformer._forward_hooks
+
+
+def test_extractor_loads_again_for_another_montage(offline):
+    X = np.random.default_rng(0).normal(scale=20, size=(3, 19, 2000))
+    extractor = FoundationEmbeddingExtractor(
+        "biot", device="cpu", normalize_embeddings=False
+    )
+
+    def extract(X, ch_names):
+        torch.manual_seed(0)  # a model loaded again gets the same random weights
+        result = extractor.extract(
+            X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=ch_names)
+        )
+        return result.window_embeddings
+
+    first = extract(X, DEFAULT_CHANNELS)
+    extract(X, DEFAULT_CHANNELS)
+    assert len(offline) == 1  # same montage: the loaded model is kept
+    # the same signals with the channels listed in another order embed the same
+    again = extract(X[:, ::-1], DEFAULT_CHANNELS[::-1])
+    assert len(offline) == 2
+    np.testing.assert_allclose(again, first, rtol=1e-5, atol=1e-5)

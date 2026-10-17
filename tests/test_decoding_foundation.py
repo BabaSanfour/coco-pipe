@@ -52,7 +52,6 @@ def test_backend_is_sklearn_estimator():
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=MagicMock(),
-        feat_dim=200,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",
@@ -78,7 +77,6 @@ def _make_bd_adapter(model_key="cbramod", sfreq=200.0):
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=model,
-        feat_dim=feat_dim,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",
@@ -95,7 +93,6 @@ def test_validate_raises_before_fit():
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=MagicMock(),
-        feat_dim=200,
         n_outputs=None,
         device="cpu",
         train_mode="frozen",
@@ -202,13 +199,18 @@ def test_validate_real_checkpoints(mock_extractor_cls):
 
     mock_result = MagicMock()
     mock_result.window_embeddings = MagicMock(shape=(1, 256))
-    mock_result.metadata = {"channel_adaptation": "none"}
+    revisions = {"braindecode/cbramod-pretrained": "584cdc4"}
+    mock_result.metadata = {
+        "channel_adaptation": "none",
+        "checkpoint_revisions": revisions,
+    }
     mock_extractor.extract.return_value = mock_result
 
     records = validate_real_checkpoints(model_keys=["cbramod"], token="dummy-token")
     assert len(records) == 1
     assert records[0]["model_key"] == "cbramod"
     assert records[0]["status"] in ("verified", "dimension_mismatch")
+    assert records[0]["checkpoint_revisions"] == revisions
 
 
 @patch("coco_pipe.decoding.foundation_models.validation.FoundationClassifier")
@@ -296,7 +298,10 @@ def test_validation_edge_cases():
         mock_extractor_cls.return_value = mock_extractor
         mock_result = MagicMock()
         mock_result.window_embeddings = MagicMock(shape=(1, 200))
-        mock_result.metadata = {"channel_adaptation": "none"}
+        mock_result.metadata = {
+            "channel_adaptation": "none",
+            "checkpoint_revisions": {"braindecode/labram-pretrained": "0563b6c"},
+        }
         mock_extractor.extract.return_value = mock_result
 
         records = validate_real_checkpoints(model_keys=["labram"], token="dummy-token")

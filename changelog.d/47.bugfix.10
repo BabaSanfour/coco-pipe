@@ -1,0 +1,1 @@
+Fine-tuning REVE with `train_mode="qlora"` works: it failed while loading, with `ValueError: Reve does not support gradient checkpointing`, because peft's preparation of a 4-bit model turns on gradient checkpointing by default. It is now prepared without it.

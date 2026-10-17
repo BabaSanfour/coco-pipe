@@ -14,6 +14,7 @@ from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from . import _montages
+from ._base import check_finite
 from ._channels import normalize_channel_names
 from ._loader import _BACKEND_MAP
 from ._prepare import prepare_backend
@@ -286,6 +287,8 @@ class FoundationEmbeddingExtractor:
         self.batch_size = batch_size
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
+        # The input a model loaded here was built for; None for a given model.
+        self._loaded_for: tuple | None = None
         self._embedding_cache: dict[str, np.ndarray] = {}
 
     def clear_cache(self) -> None:
@@ -359,9 +362,12 @@ class FoundationEmbeddingExtractor:
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
-        """L2-normalize along the last axis, mapping zero-norm rows to zero."""
+        """L2-normalize along the last axis, mapping zero-norm rows to zero.
+
+        A NaN row stays NaN.
+        """
         norms = np.linalg.norm(x, axis=-1, keepdims=True)
-        return np.divide(x, norms, out=np.zeros_like(x), where=norms > 0)
+        return np.divide(x, norms, out=np.zeros_like(x), where=norms != 0)
 
     def _embed_windows(
         self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
@@ -386,11 +392,11 @@ class FoundationEmbeddingExtractor:
             str(part)
             for part in (
                 self.model_key,
-                getattr(prepared, "backend_name", self.backend),
+                self.backend,
                 self.pooling,
                 self.normalize_embeddings,
-                float(getattr(prepared, "target_sfreq", 0.0)),
-                tuple(getattr(prepared, "ch_names", ()) or ()),
+                prepared.target_sfreq,
+                tuple(prepared.ch_names),
             )
         )
 
@@ -438,6 +444,13 @@ class FoundationEmbeddingExtractor:
         X = np.asarray(epochs, dtype=np.float32)
         if X.ndim != 3:
             raise ValueError("epochs must have shape (window, channel, time).")
+        check_finite(X, self.model_key)
+        ch_names = normalize_channel_names(signal_metadata.ch_names)
+        # A model is built for one montage, rate and window length (channel
+        # positions and adapters, n_times): another recording loads its own.
+        loaded_for = (float(signal_metadata.sfreq), tuple(ch_names), X.shape[-1])
+        if self._loaded_for not in (None, loaded_for):
+            self.model = None
         prepared = prepare_backend(
             self.model_key,
             X,
@@ -446,11 +459,13 @@ class FoundationEmbeddingExtractor:
             train_mode="frozen",
             n_outputs=None,
             sfreq=float(signal_metadata.sfreq),
-            ch_names=normalize_channel_names(signal_metadata.ch_names),
+            ch_names=ch_names,
             pooling=self.pooling,
             backend_kwargs=self.backend_kwargs,
             model=self.model,
         )
+        if self.model is None:
+            self._loaded_for = loaded_for
         self.model = prepared.backend
         model = prepared.backend
         spec = prepared.spec
@@ -503,7 +518,7 @@ class FoundationEmbeddingExtractor:
             "model_name": spec.display_name or self.model_key,
             "model_key": self.model_key,
             "model_checkpoint": spec.hub_repo,
-            "checkpoint_revision": spec.checkpoint_revision,
+            "checkpoint_revisions": dict(getattr(model, "checkpoint_revisions", {})),
             "checkpoint_filename": spec.checkpoint_filename,
             "backend": (
                 self.backend if self.backend != "auto" else spec.preferred_backend
@@ -563,9 +578,6 @@ class FoundationEmbeddingExtractor:
             "windowing_source": "upstream_epochs",
             "remainder_policy": "defined_by_upstream_epoching",
             "padding_policy": "defined_by_upstream_epoching",
-            "model_revision": (
-                self.backend_kwargs.get("revision") or spec.checkpoint_revision
-            ),
         }
         if tokens is not None:
             token_metadata = model.get_token_output_metadata()

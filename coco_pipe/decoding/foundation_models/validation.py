@@ -160,7 +160,7 @@ def validate_real_checkpoints(
                     "expected_embedding_dim": spec.embedding_dim,
                     "observed_embedding_dim": observed,
                     "checkpoint": spec.hub_repo,
-                    "checkpoint_revision": spec.checkpoint_revision,
+                    "checkpoint_revisions": result.metadata["checkpoint_revisions"],
                     "checkpoint_filename": spec.checkpoint_filename,
                     "channel_adaptation": result.metadata["channel_adaptation"],
                 }
@@ -250,10 +250,7 @@ def validate_real_training(
                         },
                         lora={"target_modules": "all-linear"},
                         backend_kwargs=backend_kwargs,
-                        checkpoints={
-                            "save": "best",
-                            "output_dir": checkpoint_dir,
-                        },
+                        checkpoints={"output_dir": checkpoint_dir},
                     ).fit(X, y, groups=groups)
                     probabilities = classifier.predict_proba(X[:2])
                     checkpoint_path = classifier.checkpoint_path_

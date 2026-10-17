@@ -18,10 +18,12 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase
+from ._base import BackendBase, resolve_revision
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
+
+_POSITION_BANK_REPO = "brain-bzh/reve-positions"
 
 
 class HuggingFaceBackend(BackendBase):
@@ -85,7 +87,7 @@ class HuggingFaceBackend(BackendBase):
         task: str = "classification",
         lora_r: int = 16,
         lora_alpha: int = 32,
-        lora_target_modules: tuple[str, ...] = ("query", "value"),
+        lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
         **kw,
     ) -> HuggingFaceBackend:
@@ -120,8 +122,10 @@ class HuggingFaceBackend(BackendBase):
             LoRA rank. Ignored unless ``train_mode`` is ``"lora"`` or ``"qlora"``.
         lora_alpha : int, default 32
             LoRA scaling factor.
-        lora_target_modules : tuple of str, default ``("query", "value")``
-            Transformer sub-modules to inject LoRA adapters into.
+        lora_target_modules : str or list of str, default ``"all-linear"``
+            Modules to inject LoRA adapters into: every linear layer by
+            default (REVE names its attention layers ``to_qkv`` and
+            ``to_out``).
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
         **kw
@@ -168,7 +172,7 @@ class HuggingFaceBackend(BackendBase):
         task: str,
         lora_r: int,
         lora_alpha: int,
-        lora_target_modules: tuple[str, ...],
+        lora_target_modules: str | list[str],
         lora_dropout: float,
         **kw,
     ) -> HuggingFaceBackend:
@@ -211,11 +215,18 @@ class HuggingFaceBackend(BackendBase):
             },
         }
 
-        # The position bank lives in its own repo (``brain-bzh/reve-positions``)
-        # that is versioned independently of the backbone, so the backbone's
-        # ``revision`` must not be propagated to it. Quantization likewise only
-        # applies to the backbone, not the small position module.
-        pos_kw = {key: value for key, value in hf_kw.items() if key != "revision"}
+        # The position bank lives in its own repo that is versioned
+        # independently of the backbone: each loads the commit resolved for it.
+        # Quantization likewise only applies to the backbone.
+        hub_kw = {key: hf_kw[key] for key in ("token", "cache_dir") if key in hf_kw}
+        revisions = {
+            metadata.hub_repo: resolve_revision(
+                metadata.hub_repo, hf_kw.get("revision"), **hub_kw
+            ),
+            _POSITION_BANK_REPO: resolve_revision(_POSITION_BANK_REPO, **hub_kw),
+        }
+        pos_kw = {**hf_kw, "revision": revisions[_POSITION_BANK_REPO]}
+        hf_kw["revision"] = revisions[metadata.hub_repo]
 
         if train_mode == "qlora":
             from transformers import BitsAndBytesConfig
@@ -228,7 +239,7 @@ class HuggingFaceBackend(BackendBase):
             )
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        pos_bank = AutoModel.from_pretrained("brain-bzh/reve-positions", **pos_kw)
+        pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
         feat_dim: int = getattr(
             backbone.config,
             "hidden_size",
@@ -246,7 +257,11 @@ class HuggingFaceBackend(BackendBase):
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
             if train_mode == "qlora":
-                backbone = prepare_model_for_kbit_training(backbone)
+                # REVE does not support gradient checkpointing, which peft
+                # turns on by default and which then fails the load
+                backbone = prepare_model_for_kbit_training(
+                    backbone, use_gradient_checkpointing=False
+                )
             lora_cfg = LoraConfig(
                 r=lora_r,
                 lora_alpha=lora_alpha,
@@ -274,7 +289,7 @@ class HuggingFaceBackend(BackendBase):
             else nn.Identity().to(device)
         )
 
-        return cls(
+        backend = cls(
             metadata=metadata,
             backbone=backbone.to(device),
             pos_bank=pos_bank.to(device),
@@ -287,6 +302,8 @@ class HuggingFaceBackend(BackendBase):
             electrode_names=electrode_names,
             task=task,
         )
+        backend.checkpoint_revisions = revisions
+        return backend
 
     # ------------------------------------------------------------------
     # Backend hooks

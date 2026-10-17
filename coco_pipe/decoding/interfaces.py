@@ -176,17 +176,6 @@ class NeuralTrainable(Protocol):
         """
         # pragma: no cover
 
-    def get_failure_diagnostics(self) -> dict[str, Any]:
-        """
-        Get technical diagnostics if training failed or diverged.
-
-        Returns
-        -------
-        diagnostics : dict
-            Information about gradients, NaN detection, or hardware state.
-        """
-        # pragma: no cover
-
     def get_artifact_metadata(self) -> dict[str, Any]:
         """
         Aggregate all diagnostic metadata into a single dictionary.
