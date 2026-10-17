@@ -87,7 +87,7 @@ class HuggingFaceBackend(BackendBase):
         task: str = "classification",
         lora_r: int = 16,
         lora_alpha: int = 32,
-        lora_target_modules: tuple[str, ...] = ("query", "value"),
+        lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
         **kw,
     ) -> HuggingFaceBackend:
@@ -122,8 +122,10 @@ class HuggingFaceBackend(BackendBase):
             LoRA rank. Ignored unless ``train_mode`` is ``"lora"`` or ``"qlora"``.
         lora_alpha : int, default 32
             LoRA scaling factor.
-        lora_target_modules : tuple of str, default ``("query", "value")``
-            Transformer sub-modules to inject LoRA adapters into.
+        lora_target_modules : str or list of str, default ``"all-linear"``
+            Modules to inject LoRA adapters into: every linear layer by
+            default (REVE names its attention layers ``to_qkv`` and
+            ``to_out``).
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
         **kw
@@ -170,7 +172,7 @@ class HuggingFaceBackend(BackendBase):
         task: str,
         lora_r: int,
         lora_alpha: int,
-        lora_target_modules: tuple[str, ...],
+        lora_target_modules: str | list[str],
         lora_dropout: float,
         **kw,
     ) -> HuggingFaceBackend:

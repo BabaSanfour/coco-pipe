@@ -90,7 +90,7 @@ def test_load_calls_from_pretrained(mock_auto_model):
             task="classification",
             lora_r=16,
             lora_alpha=32,
-            lora_target_modules=("query", "value"),
+            lora_target_modules="all-linear",
             lora_dropout=0.05,
         )
     assert isinstance(adapter, HuggingFaceBackend)
@@ -128,7 +128,7 @@ def test_frozen_mode_calls_eval(mock_auto_model):
             task="classification",
             lora_r=16,
             lora_alpha=32,
-            lora_target_modules=("query", "value"),
+            lora_target_modules="all-linear",
             lora_dropout=0.05,
         )
     backbone.eval.assert_called()
@@ -338,7 +338,7 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
         patch(
             "peft.prepare_model_for_kbit_training", return_value=mock_model
         ) as mock_prep,
-        patch("peft.get_peft_model", return_value=mock_model),
+        patch("peft.get_peft_model", return_value=mock_model) as mock_get_peft,
         patch.object(HuggingFaceBackend, "is_available", return_value=True),
     ):
         backend = HuggingFaceBackend.load(
@@ -352,6 +352,8 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
         )
     # REVE cannot checkpoint gradients, which peft turns on by default
     mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
+    # REVE has no "query"/"value" layers: every linear layer gets an adapter
+    assert mock_get_peft.call_args.args[1].target_modules == "all-linear"
     assert backend._feat_dim == 2048
 
 
