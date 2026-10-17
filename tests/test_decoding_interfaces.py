@@ -93,9 +93,6 @@ def test_neural_trainable_protocol():
         def get_model_card_info(self):
             return {}
 
-        def get_failure_diagnostics(self):
-            return {}
-
         def get_artifact_metadata(self):
             return {}
 

@@ -346,7 +346,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             if self._task == "classification" and y is not None
             else 1
         )
-        if out_dim and self._n_outputs != out_dim:
+        if self._n_outputs != out_dim:
             self.reset_head(out_dim)
         net_cls = (
             NeuralNetClassifier

@@ -167,9 +167,6 @@ def test_neural_artifacts_are_unwrapped_from_pipeline():
         def get_model_card_info(self):
             return {"model_key": "fake"}
 
-        def get_failure_diagnostics(self):
-            return {}
-
         def get_artifact_metadata(self):
             return {"history": self.get_training_history()}
 

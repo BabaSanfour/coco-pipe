@@ -52,7 +52,6 @@ def test_backend_is_sklearn_estimator():
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=MagicMock(),
-        feat_dim=200,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",
@@ -78,7 +77,6 @@ def _make_bd_adapter(model_key="cbramod", sfreq=200.0):
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=model,
-        feat_dim=feat_dim,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",
@@ -95,7 +93,6 @@ def test_validate_raises_before_fit():
     adapter = BrainDecodeBackend(
         metadata=meta,
         model=MagicMock(),
-        feat_dim=200,
         n_outputs=None,
         device="cpu",
         train_mode="frozen",

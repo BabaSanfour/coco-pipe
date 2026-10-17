@@ -392,11 +392,11 @@ class FoundationEmbeddingExtractor:
             str(part)
             for part in (
                 self.model_key,
-                getattr(prepared, "backend_name", self.backend),
+                self.backend,
                 self.pooling,
                 self.normalize_embeddings,
-                float(getattr(prepared, "target_sfreq", 0.0)),
-                tuple(getattr(prepared, "ch_names", ()) or ()),
+                prepared.target_sfreq,
+                tuple(prepared.ch_names),
             )
         )
 

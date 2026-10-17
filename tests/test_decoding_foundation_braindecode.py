@@ -339,7 +339,6 @@ def test_transform_checks_its_input(offline):
     unfitted = BrainDecodeBackend(
         metadata=get_estimator_spec("cbramod"),
         model=backend._model,
-        feat_dim=200,
         n_outputs=None,
         device="cpu",
         train_mode="frozen",
@@ -375,7 +374,6 @@ def test_token_hook_is_removed_when_forward_fails():
     backend = BrainDecodeBackend(
         metadata=metadata,
         model=model,
-        feat_dim=metadata.embedding_dim,
         n_outputs=2,
         device="cpu",
         train_mode="frozen",

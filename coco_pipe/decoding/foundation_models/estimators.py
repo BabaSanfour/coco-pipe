@@ -293,14 +293,6 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             weights_only=True,
         )
         components = self._checkpoint_components()
-        if "components" not in payload:
-            if len(components) != 1:
-                raise ValueError(
-                    "Legacy single-module checkpoint cannot restore a "
-                    "multi-component backend."
-                )
-            next(iter(components.values())).load_state_dict(payload)
-            return self
         missing = sorted(set(payload["components"]) - set(components))
         if missing:
             raise ValueError(f"Checkpoint components are unavailable: {missing}")
@@ -347,13 +339,9 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             ),
         }
 
-    def get_failure_diagnostics(self) -> dict[str, Any]:
-        return {}
-
     def get_artifact_metadata(self) -> dict[str, Any]:
         return {
             "history": self.get_training_history(),
             "checkpoints": self.get_checkpoint_manifest(),
             "model_card": self.get_model_card_info(),
-            "failures": self.get_failure_diagnostics(),
         }

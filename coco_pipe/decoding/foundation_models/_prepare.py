@@ -128,10 +128,8 @@ def prepare_backend(
             signal_metadata=metadata,
             **kwargs,
         )
-    elif hasattr(model, "bind_signal_metadata"):
-        # Pre-built/injected model (e.g. test doubles): bind directly.
-        model.bind_signal_metadata(metadata)
     else:
+        # a model given by the caller (e.g. a test double) gets the input's
         model.signal_metadata_ = metadata
     return PreparedBackend(
         backend=model,

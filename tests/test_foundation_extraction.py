@@ -16,10 +16,6 @@ from coco_pipe.decoding.registry import get_foundation_model_spec
 
 
 class FakeFoundationModel:
-    def bind_signal_metadata(self, metadata):
-        self.metadata = metadata
-        return self
-
     def transform(self, X):
         return X.mean(axis=-1)
 
@@ -107,7 +103,6 @@ def test_labram_channel_adaptation_reports_real_19_to_128_mapping():
     backend = BrainDecodeBackend(
         metadata=get_foundation_model_spec("labram"),
         model=model,
-        feat_dim=200,
         n_outputs=None,
         device="cpu",
         train_mode="frozen",
@@ -236,7 +231,7 @@ def test_prepare_backend_and_adapt_paths():
 def test_prepare_backend_fallback_binding():
     from coco_pipe.decoding.foundation_models._prepare import prepare_backend
 
-    # Model with no bind_signal_metadata nor signal_metadata_ originally
+    # a model given by the caller gets the metadata of the input
     class BareModel:
         pass
 
@@ -274,9 +269,6 @@ def test_check_capability_missing_dependency():
 
 def test_embedding_extractor_normalizes_backend_pooled_rows():
     class FakePooledModel:
-        def bind_signal_metadata(self, metadata):
-            return self
-
         def transform(self, X):
             return np.ones((len(X), 2))
 
@@ -312,9 +304,6 @@ def test_embedding_extractor_store_tokens_returns_native_tensor():
     raw = np.arange(4 * 10 * 2, dtype=float).reshape(4, 10, 2)
 
     class Fake3DModel:
-        def bind_signal_metadata(self, metadata):
-            return self
-
         def transform(self, X, *, return_tokens=False):
             pooled = raw[: len(X)].mean(axis=1)
             return (pooled, raw[: len(X)]) if return_tokens else pooled
@@ -356,9 +345,6 @@ def test_store_tokens_preserves_native_rank_values_and_dtype():
     raw = np.arange(4 * 3 * 5 * 2, dtype=np.float64).reshape(4, 3, 5, 2)
 
     class Fake3DModel:
-        def bind_signal_metadata(self, metadata):
-            return self
-
         def transform(self, X, *, return_tokens=False):
             pooled = raw[: len(X)].mean(axis=(1, 2))
             return (pooled, raw[: len(X)]) if return_tokens else pooled
@@ -397,9 +383,6 @@ def test_backend_pooling_is_kept_separate_from_native_tokens():
     raw = np.arange(3 * 6 * 4, dtype=float).reshape(3, 6, 4)
 
     class Fake3DModel:
-        def bind_signal_metadata(self, metadata):
-            return self
-
         def transform(self, X, *, return_tokens=False):
             pooled = raw[: len(X)].reshape(len(X), -1)
             return (pooled, raw[: len(X)]) if return_tokens else pooled
@@ -441,9 +424,6 @@ def test_batch_size_chunks_forward_without_changing_output():
     class CountingModel:
         def __init__(self):
             self.batch_sizes = []
-
-        def bind_signal_metadata(self, metadata):
-            return self
 
         def transform(self, X):
             self.batch_sizes.append(len(X))
