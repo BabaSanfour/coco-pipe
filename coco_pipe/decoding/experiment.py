@@ -370,6 +370,7 @@ class Experiment:
             transformer = FrozenBackboneTransformer(
                 model_key=_get_val(backbone, "model_key"),
                 backend=_get_val(backbone, "backend", "auto"),
+                device=_get_val(_get_val(backbone, "device"), "device", "auto"),
                 pooling=_get_val(backbone, "pooling", "mean"),
                 sfreq=_get_val(backbone, "sfreq"),
                 ch_names=_get_val(backbone, "ch_names"),

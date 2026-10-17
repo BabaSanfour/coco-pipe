@@ -50,7 +50,7 @@ extracted embeddings.
                    sfreq=epochs.info["sfreq"], # sampling rate of the epochs
                    ch_names=ch_names,        # their channel names, in order
                    pooling="mean",
-                   cache_embeddings=True,    # cache to disk for reuse across folds
+                   cache_embeddings=True,    # in memory, reused across folds
                ),
                head=ClassicalModelConfig(
                    estimator="LogisticRegression",
@@ -90,7 +90,7 @@ coco-pipe integrates the following foundation models natively, registered in
 .. code-block:: python
 
    from coco_pipe.decoding.configs import (
-       NeuralFineTuneConfig, LoRAConfig, QuantizationConfig, DeviceConfig, CheckpointConfig
+       NeuralFineTuneConfig, LoRAConfig, DeviceConfig, CheckpointConfig
    )
 
    ch_names = epochs.ch_names  # the channels of your epochs, in order
@@ -103,12 +103,10 @@ coco-pipe integrates the following foundation models natively, registered in
                model_key="reve",
                sfreq=epochs.info["sfreq"],
                ch_names=ch_names,
-               input_kind="epoched",
                train_mode="qlora",
                lora=LoRAConfig(r=16, alpha=32, dropout=0.05),
-               quantization=QuantizationConfig(enabled=True, load_in_4bit=True),
-               device=DeviceConfig(device="auto", precision="bf16"),
-               checkpoints=CheckpointConfig(save="best"),
+               device=DeviceConfig(device="auto"),
+               checkpoints=CheckpointConfig(output_dir="checkpoints"),
            )
        },
        metrics=["balanced_accuracy"],

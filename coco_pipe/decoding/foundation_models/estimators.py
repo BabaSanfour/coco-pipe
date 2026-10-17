@@ -249,7 +249,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         )
         self.checkpoint_path_ = None
         checkpoint = dict(self.checkpoints or {})
-        if checkpoint.get("save", "none") != "none" and checkpoint.get("output_dir"):
+        if checkpoint.get("output_dir"):
             import torch
 
             output_dir = Path(checkpoint["output_dir"])

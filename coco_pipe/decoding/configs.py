@@ -610,12 +610,10 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     """Configuration for pretrained feature extraction backbones."""
 
     kind: Literal["foundation_embedding"] = "foundation_embedding"
-    model_key: str = "dummy"
+    model_key: str
     backend: str = "auto"
-    n_outputs: int | None = None
-    train_mode: Literal["frozen", "full", "lora", "qlora"] = "frozen"
+    device: DeviceConfig = Field(default_factory=lambda: DeviceConfig())
     pooling: Literal["mean", "flatten"] = "mean"
-    normalize_embeddings: bool = True
     cache_embeddings: bool = True
     sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
     ch_names: list[str] = Field(
@@ -635,33 +633,24 @@ class LoRAConfig(BaseModel):
     target_modules: str | list[str] = "all-linear"
 
 
-class QuantizationConfig(BaseModel):
-    """Model quantization settings."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    load_in_4bit: bool = True
-    quant_type: Literal["nf4", "fp4"] = "nf4"
-    compute_dtype: Literal["bf16", "fp16", "fp32"] = "bf16"
-
-
 class DeviceConfig(BaseModel):
-    """Compute device and precision policy."""
+    """Compute device."""
 
     model_config = ConfigDict(extra="forbid")
 
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
-    precision: Literal["fp32", "fp16", "bf16"] = "fp32"
 
 
 class CheckpointConfig(BaseModel):
-    """Neural training checkpoint policy."""
+    """Where to save the weights of each fine-tune.
+
+    The weights at the end of training are saved, which are those of the
+    epoch with the lowest validation loss when early stopping restores them.
+    Nothing is saved without ``output_dir``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    save: Literal["none", "best", "last", "all"] = "best"
-    monitor: str = "val_loss"
     output_dir: Path | None = None
 
 
@@ -734,16 +723,14 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     """Configuration for end-to-end neural fine-tuning."""
 
     kind: Literal["neural_finetune"] = "neural_finetune"
-    model_key: str = "dummy"
+    model_key: str
     backend: str = "auto"
     n_outputs: int | None = Field(None, ge=1)
-    input_kind: Literal["temporal", "epoched", "tokens"] = "epoched"
     train_mode: Literal["full", "frozen", "linear_probe", "lora", "qlora"] = "full"
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
     lora: LoRAConfig | None = None
-    quantization: QuantizationConfig | None = None
     sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
     ch_names: list[str] = Field(
         min_length=1, description="Channel names of the input epochs, in order."

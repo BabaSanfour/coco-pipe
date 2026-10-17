@@ -180,7 +180,7 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
             "lr": 3e-4,
             "weight_decay": 0.05,
         },
-        checkpoints={"save": "best", "output_dir": tmp_path},
+        checkpoints={"output_dir": tmp_path},
     )
     fitted = clone(classifier).fit(X, y, groups=groups)
     optimizer = fitted.backend_._net_.optimizer_

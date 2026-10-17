@@ -393,7 +393,6 @@ Enables probability calibration inside the training path.
        FrozenBackboneDecoderConfig,
        NeuralFineTuneConfig,
        LoRAConfig,
-       QuantizationConfig,
        DeviceConfig,
        CheckpointConfig,
    )
@@ -409,7 +408,6 @@ Enables probability calibration inside the training path.
        ch_names=ch_names,          # their channel names, in order (required)
        pooling="mean",             # "mean" or "flatten"
        cache_embeddings=True,
-       normalize_embeddings=True,
    )
    frozen_cfg = FrozenBackboneDecoderConfig(
        backbone=embed_cfg,
@@ -422,12 +420,10 @@ Enables probability calibration inside the training path.
        model_key="reve",
        sfreq=epochs.info["sfreq"],
        ch_names=ch_names,
-       input_kind="epoched",       # "temporal", "epoched", "tokens"
        train_mode="qlora",         # "full", "frozen", "linear_probe", "lora", "qlora"
        lora=LoRAConfig(r=16, alpha=32),
-       quantization=QuantizationConfig(enabled=True, load_in_4bit=True),
-       device=DeviceConfig(device="auto", precision="bf16"),  # "fp32", "fp16", "bf16"
-       checkpoints=CheckpointConfig(save="best"),             # "none", "best", "last", "all"
+       device=DeviceConfig(device="auto"),                    # "cpu", "cuda", "mps"
+       checkpoints=CheckpointConfig(output_dir="checkpoints"),  # none saved without it
    )
 
 Discover available backbones and their capabilities with

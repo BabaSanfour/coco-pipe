@@ -250,10 +250,7 @@ def validate_real_training(
                         },
                         lora={"target_modules": "all-linear"},
                         backend_kwargs=backend_kwargs,
-                        checkpoints={
-                            "save": "best",
-                            "output_dir": checkpoint_dir,
-                        },
+                        checkpoints={"output_dir": checkpoint_dir},
                     ).fit(X, y, groups=groups)
                     probabilities = classifier.predict_proba(X[:2])
                     checkpoint_path = classifier.checkpoint_path_
