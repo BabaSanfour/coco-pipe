@@ -203,10 +203,20 @@ def test_clone_safe_transformer_and_classifier(tmp_path, train_mode):
         }
         for name, component in fitted._checkpoint_components().items()
     }
+    # the checkpoint holds what training changed; frozen weights stay pretrained
+    saved = torch.load(fitted.checkpoint_path_, weights_only=True)["components"]
+    frozen = {
+        name
+        for name, parameter in fitted.backend_._model.named_parameters()
+        if not parameter.requires_grad
+    }
+    assert set(saved["model"]) & frozen == set()
+    assert bool(frozen) == (train_mode == "linear_probe")
     with torch.no_grad():
         for component in fitted._checkpoint_components().values():
             for parameter in component.parameters():
-                parameter.add_(1)
+                if parameter.requires_grad:
+                    parameter.add_(1)
     fitted.restore_checkpoint()
     for name, component in fitted._checkpoint_components().items():
         for key, value in component.state_dict().items():
@@ -593,3 +603,22 @@ def test_early_stopping_needs_a_validation_split():
         TrainerConfig(**no_validation)
     with pytest.raises(ValueError, match="needs validation_fraction > 0"):
         _fit_fake_classifier(no_validation)
+
+
+def test_restore_refuses_a_checkpoint_missing_trained_weights(tmp_path):
+    X, y, groups = _data()
+
+    def fit(train_mode):
+        return FoundationClassifier(
+            "cbramod",
+            backend="fake",
+            train_mode=train_mode,
+            sfreq=200,
+            ch_names=["C3", "C4"],
+            trainer={"max_epochs": 1, "batch_size": 4, "validation_fraction": 0.0},
+            checkpoints={"output_dir": tmp_path},
+        ).fit(X, y, groups=groups)
+
+    head_only = fit("linear_probe").checkpoint_path_
+    with pytest.raises(ValueError, match="lacks weights this model trains"):
+        fit("full").restore_checkpoint(head_only)

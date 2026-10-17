@@ -24,6 +24,18 @@ def clear_frozen_embedding_cache() -> None:
     _FROZEN_EMBEDDING_CACHE.clear()
 
 
+def _trained_state(module: Any) -> dict[str, Any]:
+    """Return the state a fit can change: trainable parameters and buffers.
+
+    Frozen weights are left out: they are the pretrained checkpoint's, loaded
+    again with the model. A 4-bit (QLoRA) backbone is frozen, so its quantized
+    weights, which a plain ``load_state_dict`` cannot read back, are left out.
+    """
+    keep = {name for name, p in module.named_parameters() if p.requires_grad}
+    keep |= {name for name, _ in module.named_buffers()}
+    return {key: value for key, value in module.state_dict().items() if key in keep}
+
+
 def _release_fitted_backend(estimator: Any) -> None:
     """Release a fitted foundation estimator's torch backend after scoring.
 
@@ -265,7 +277,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
                         "model_key": self.model_key,
                         "train_mode": self.train_mode,
                         "components": {
-                            name: component.state_dict()
+                            name: _trained_state(component)
                             for name, component in components.items()
                         },
                     },
@@ -297,7 +309,20 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         if missing:
             raise ValueError(f"Checkpoint components are unavailable: {missing}")
         for name, state in payload["components"].items():
-            components[name].load_state_dict(state)
+            component = components[name]
+            absent = sorted(set(_trained_state(component)) - set(state))
+            if absent:
+                raise ValueError(
+                    f"Checkpoint component {name!r} lacks weights this model "
+                    f"trains: {absent[:5]}"
+                )
+            # the frozen weights stay those of the pretrained checkpoint
+            unexpected = component.load_state_dict(state, strict=False).unexpected_keys
+            if unexpected:
+                raise ValueError(
+                    f"Checkpoint component {name!r} holds weights this model "
+                    f"lacks: {unexpected[:5]}"
+                )
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
