@@ -516,6 +516,15 @@ def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray
         If ``traj`` has fewer than two dimensions, insufficient time points,
         or an unsupported ``method`` is given.
 
+    Notes
+    -----
+    Curvature divides a turning angle by a step length, so on a nearly
+    stationary stretch it grows without bound and noise dominates it. Smooth
+    the trajectory along time (for example with :func:`moving_average`) before
+    computing it, the more so at high sampling rates. With ``"cosine"``, a
+    zero-length step has no direction, so the angles and curvatures that use
+    it are NaN.
+
     See Also
     --------
     trajectory_turning_angle : Discrete local turning angles (no curvature scaling).
@@ -542,16 +551,11 @@ def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray
 
         norm_v1 = np.linalg.norm(v1, axis=-1)
         norm_v2 = np.linalg.norm(v2, axis=-1)
-        denom = norm_v1 * norm_v2
 
+        # a zero-length step has no direction: 0 / 0 leaves its angle NaN
         with np.errstate(divide="ignore", invalid="ignore"):
-            cosang = np.where(
-                denom == 0,
-                0.0,
-                np.clip(np.sum(v1 * v2, axis=-1) / denom, -1.0, 1.0),
-            )
-        angles = np.arccos(cosang)
-        return angles / (step_dist_inner + np.finfo(float).eps)
+            cosang = np.clip(np.sum(v1 * v2, axis=-1) / (norm_v1 * norm_v2), -1, 1)
+            return np.arccos(cosang) / step_dist_inner
 
     if method == "gradient":
         traj = _validate_trajectory_array(traj, min_timepoints=2)

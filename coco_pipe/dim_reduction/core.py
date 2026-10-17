@@ -328,6 +328,45 @@ class DimReduction:
         """
         return self.reducer.get_components()
 
+    def reconstruction_error(self, X: Any, *, per_row: bool = False) -> Any:
+        """
+        Relative squared error of rebuilding data from the retained components.
+
+        Parameters
+        ----------
+        X : DataContainer, array-like, or MNE object
+            Data in the reducer's native layout, such as held-out subjects or
+            single trials.
+        per_row : bool, default=False
+            Return one value per row instead of the total.
+
+        Returns
+        -------
+        error : float or np.ndarray of shape (n_samples,)
+            ``||X - X_hat||^2 / ||X - c||^2`` as defined by
+            :meth:`BaseReducer.reconstruction_error`.
+
+        Raises
+        ------
+        ValueError
+            If the reducer is not linear or has no inverse transform.
+
+        Notes
+        -----
+        The per-row values of the latest call are cached as
+        ``diagnostics_["reconstruction_error_"]``, so ``get_diagnostics()`` and
+        ``get_summary()`` report them. Fitting again clears them.
+
+        See Also
+        --------
+        coco_pipe.dim_reduction.reducers.base.BaseReducer.reconstruction_error
+            Definition of the error.
+        """
+        X_arr, _ = self._prepare_input(X)
+        rows = np.asarray(self.reducer.reconstruction_error(X_arr, per_row=True))
+        self.diagnostics_["reconstruction_error_"] = rows
+        return rows if per_row else float(rows.mean())
+
     def score(
         self,
         X_emb: Any,

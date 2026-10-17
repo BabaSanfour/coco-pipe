@@ -274,6 +274,19 @@ def test_reconstruction_error_is_zero_with_every_component(name):
     assert _compute(reducer.reconstruction_error(data)) == pytest.approx(0, abs=1e-12)
 
 
+@pytest.mark.parametrize("name", ["PCAReducer", "IncrementalPCAReducer"])
+def test_reconstruction_error_takes_lists_and_frames(name):
+    import pandas as pd
+
+    reducer, _ = _fit_linear(name)
+    rows = reducer.reconstruction_error(OFFSET_X, per_row=True)
+    for data in (OFFSET_X.tolist(), pd.DataFrame(OFFSET_X)):
+        out = reducer.reconstruction_error(data, per_row=True)
+        assert type(out) is np.ndarray
+        np.testing.assert_allclose(out, rows)
+        assert reducer.reconstruction_error(data) == pytest.approx(rows.mean())
+
+
 @pytest.mark.parametrize("name", CENTRED_LINEAR)
 def test_reconstruction_error_per_row_on_held_out_data(name):
     reducer, _ = _fit_linear(name)

@@ -487,6 +487,15 @@ def test_trajectory_curvature_line():
     np.testing.assert_allclose(k[10:-10], 0, atol=1e-5)
 
 
+def test_curvature_is_nan_at_a_zero_length_step():
+    # the repeated point gives a zero-length step 1 -> 2, whose direction, and
+    # so the angles at points 1 and 2, are undefined
+    traj = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [2.0, 1.0], [3.0, 1.0]])
+    curvature = trajectory_curvature(traj, method="cosine")
+    np.testing.assert_array_equal(np.flatnonzero(np.isnan(curvature)), [0, 1])
+    assert curvature[2] == pytest.approx((np.pi / 4) / 1.0)
+
+
 def test_trajectory_path_length_displacement_and_tortuosity():
     traj = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
 

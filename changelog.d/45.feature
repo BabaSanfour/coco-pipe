@@ -1,0 +1,1 @@
+`DimReduction.reconstruction_error(X, per_row=False)` exposes the reconstruction error of linear reducers on any input `transform` takes, including a `DataContainer`, and caches the latest per-row values as `diagnostics_["reconstruction_error_"]`, so `get_diagnostics()` and `get_summary()` report them.
