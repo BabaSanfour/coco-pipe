@@ -381,14 +381,16 @@ class DataContainer:
         cls,
         containers: Sequence["DataContainer"],
         fill_condition_from_meta: bool = True,
+        join: str = "exact",
     ) -> "DataContainer":
         """Concatenate containers along their observation axis.
 
-        All containers must use matching dimensions and non-observation
-        shapes. Observation-aligned coordinates are concatenated, filling
-        missing entries with ``None`` when a coordinate is absent from a
-        container. Non-observation coordinates are copied from the first
-        container.
+        All containers must use matching dimensions. A labelled dimension
+        (``channel``, ``feature``, ...) is matched by label, not by position:
+        each container is put in the label order of the first. An unlabelled
+        dimension must have the same size in every container.
+        Observation-aligned coordinates are concatenated, filling missing
+        entries with ``None`` when a coordinate is absent from a container.
 
         Parameters
         ----------
@@ -397,6 +399,10 @@ class DataContainer:
         fill_condition_from_meta : bool, default=True
             If no observation-level ``condition`` coordinate is available,
             create one from each container's ``meta["condition"]`` value.
+        join : {"exact", "inner"}, default="exact"
+            How the labels of the other dimensions must agree. ``"exact"``:
+            every container has the same labels, in any order. ``"inner"``:
+            only the labels all containers share are kept.
 
         Returns
         -------
@@ -412,15 +418,39 @@ class DataContainer:
             raise ValueError("Containers must include an 'obs' dimension.")
         if any(container.dims != base.dims for container in containers[1:]):
             raise ValueError("All containers must have matching dims.")
-        other_sizes = {dim: n for dim, n in base.data.sizes.items() if dim != "obs"}
+        if join not in {"exact", "inner"}:
+            raise ValueError("`join` must be 'exact' or 'inner'.")
+
+        arrays = [container.data for container in containers]
+        for dim in base.dims:
+            if dim == "obs" or dim not in base.data.indexes:
+                continue
+            if any(dim not in array.indexes for array in arrays):
+                raise ValueError(f"Some containers have no '{dim}' labels.")
+            labels = [array.indexes[dim].tolist() for array in arrays]
+            if join == "inner":
+                shared = set.intersection(*(set(values) for values in labels))
+                keep = [value for value in labels[0] if value in shared]
+                if not keep:
+                    raise ValueError(f"The containers share no '{dim}' label.")
+            elif any(set(values) != set(labels[0]) for values in labels[1:]):
+                raise ValueError(
+                    f"The containers have different '{dim}' labels; pass "
+                    "join='inner' to keep the labels they share."
+                )
+            else:
+                keep = labels[0]
+            arrays = [
+                array if values == keep else array.sel({dim: keep})
+                for array, values in zip(arrays, labels, strict=True)
+            ]
+        other_sizes = {dim: n for dim, n in arrays[0].sizes.items() if dim != "obs"}
         if any(
-            {dim: n for dim, n in container.data.sizes.items() if dim != "obs"}
-            != other_sizes
-            for container in containers[1:]
+            {dim: n for dim, n in array.sizes.items() if dim != "obs"} != other_sizes
+            for array in arrays[1:]
         ):
             raise ValueError("All containers must have matching non-obs dimensions.")
 
-        arrays = [container.data for container in containers]
         if fill_condition_from_meta and not any(
             "condition" in array.coords for array in arrays
         ):

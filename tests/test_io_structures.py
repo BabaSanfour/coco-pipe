@@ -476,6 +476,29 @@ def test_concat_fills_missing_coordinates():
     assert "twod" not in combined.coords
 
 
+def test_concat_matches_other_dimensions_by_label():
+    def container(features, values, kinds):
+        return DataContainer(
+            X=np.array([values], dtype=float),
+            dims=("obs", "feature"),
+            coords={"feature": features, "feature_kind": kinds},
+        )
+
+    first = container(["alpha", "beta"], [1, 2], ["band", "band2"])
+    second = container(["beta", "alpha"], [20, 10], ["band2", "band"])
+    combined = DataContainer.concat([first, second], fill_condition_from_meta=False)
+    assert combined.coords["feature"].tolist() == ["alpha", "beta"]
+    assert combined.X.tolist() == [[1, 2], [10, 20]]
+    assert combined.coords["feature_kind"].tolist() == ["band", "band2"]
+
+    third = container(["beta", "gamma"], [200, 300], ["band2", "band3"])
+    with pytest.raises(ValueError, match="different 'feature' labels"):
+        DataContainer.concat([first, third])
+    inner = DataContainer.concat([first, second, third], join="inner")
+    assert inner.coords["feature"].tolist() == ["beta"]
+    assert inner.X[:, 0].tolist() == [2, 20, 200]
+
+
 def test_concat_errors():
     flat = DataContainer(np.zeros((2, 2)), dims=("obs", "feature"))
     with pytest.raises(ValueError):
