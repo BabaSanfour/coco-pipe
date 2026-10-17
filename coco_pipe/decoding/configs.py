@@ -617,8 +617,10 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     pooling: Literal["mean", "flatten"] = "mean"
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
-    sfreq: float | None = Field(None, gt=0)
-    ch_names: list[str] | None = None
+    sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
+    ch_names: list[str] = Field(
+        min_length=1, description="Channel names of the input epochs, in order."
+    )
     backend_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -742,8 +744,10 @@ class NeuralFineTuneConfig(BaseEstimatorConfig):
     checkpoints: CheckpointConfig = Field(default_factory=CheckpointConfig)
     lora: LoRAConfig | None = None
     quantization: QuantizationConfig | None = None
-    sfreq: float | None = Field(None, gt=0)
-    ch_names: list[str] | None = None
+    sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
+    ch_names: list[str] = Field(
+        min_length=1, description="Channel names of the input epochs, in order."
+    )
     backend_kwargs: dict[str, Any] = Field(default_factory=dict)
     class_weight: str | dict[Any, float] | None = "balanced"
 

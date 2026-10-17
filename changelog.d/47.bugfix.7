@@ -1,0 +1,1 @@
+`FoundationEmbeddingModelConfig` and `NeuralFineTuneConfig` require `sfreq` and `ch_names`, so an `Experiment` without them is refused when its configuration is read. Both defaulted to `None`, and a foundation model cannot run without them, so every fold of such an experiment failed.

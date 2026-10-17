@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import pytest
+from pydantic import ValidationError
 from sklearn.base import BaseEstimator
 from sklearn.pipeline import Pipeline
 
@@ -27,13 +29,14 @@ from coco_pipe.decoding.stats import aggregate_predictions_for_inference
 
 def test_luna_registered_and_neural_configs_resolve():
     assert get_foundation_model_spec("luna").display_name == "LUNA"
+    signal = {"sfreq": 256.0, "ch_names": ["C3", "C4"]}
     neural = resolve_estimator_spec(
-        NeuralFineTuneConfig(model_key="luna", train_mode="linear_probe")
+        NeuralFineTuneConfig(model_key="luna", train_mode="linear_probe", **signal)
     )
     assert neural.supports_proba
     frozen = resolve_estimator_spec(
         FrozenBackboneDecoderConfig(
-            backbone=FoundationEmbeddingModelConfig(model_key="cbramod"),
+            backbone=FoundationEmbeddingModelConfig(model_key="cbramod", **signal),
             head=ClassicalModelConfig(
                 estimator="LogisticRegression",
                 params={"max_iter": 100},
@@ -42,6 +45,12 @@ def test_luna_registered_and_neural_configs_resolve():
     )
     assert frozen.input_kinds == ("epoched",)
     assert frozen.supports_proba
+    # the rate and the channels of the input are required, not guessed
+    for config in (NeuralFineTuneConfig, FoundationEmbeddingModelConfig):
+        with pytest.raises(ValidationError, match="sfreq"):
+            config(model_key="cbramod", ch_names=["C3", "C4"])
+        with pytest.raises(ValidationError, match="ch_names"):
+            config(model_key="cbramod", sfreq=200.0)
 
 
 def test_fold_local_pca_is_part_of_each_classical_pipeline():
