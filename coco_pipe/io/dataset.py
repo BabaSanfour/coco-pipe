@@ -613,7 +613,8 @@ class BIDSDataset(BaseDataset):
 
         Only data files are searched for, those MNE-BIDS reads (BrainVision's
         ``.vhdr``, not its ``.eeg`` and ``.vmrk``), so a recording is one path,
-        found with its extension.
+        found with its extension. A file MNE split into parts is its first
+        part: MNE reads the others from it.
         """
         paths = find_matching_paths(
             self.root,
@@ -629,6 +630,8 @@ class BIDSDataset(BaseDataset):
         )
         recordings = {}
         for path in paths:
+            if path.split not in (None, "01"):
+                continue
             recording_id = BIDSPath(
                 subject=path.subject,
                 session=path.session,

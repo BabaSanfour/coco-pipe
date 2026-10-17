@@ -364,6 +364,49 @@ def test_bids_dataset_raw_fif_derivatives(tmp_path):
         BIDSDataset(tmp_path, task="rest", window_length=1.0).load()
 
 
+def _save_split(inst, root, suffix):
+    """Save ``inst`` under ``root`` in parts of 2 MB, as MNE splits big files."""
+    from mne_bids import BIDSPath
+
+    path = BIDSPath(
+        root=root,
+        subject="01",
+        task="rest",
+        datatype="eeg",
+        suffix=suffix,
+        extension=".fif",
+        check=False,
+    ).mkdir()
+    inst.save(path.fpath, split_size="2MB", split_naming="bids", verbose=False)
+    assert len(list(path.fpath.parent.glob("*_split-*"))) > 1
+
+
+def test_bids_dataset_reads_a_raw_file_split_into_parts(tmp_path):
+    import mne
+
+    data = np.random.default_rng(0).normal(size=(4, 300_000)) * 1e-6
+    raw = mne.io.RawArray(data, mne.create_info(4, 100.0, "eeg"), verbose=False)
+    _save_split(raw, tmp_path, "eeg")
+
+    container = BIDSDataset(tmp_path, task="rest", window_length=1.0).load()
+
+    assert set(container.coords["recording_id"]) == {"sub-01_task-rest"}
+    assert len(container.X) == 3000
+
+
+def test_bids_dataset_reads_saved_epochs_split_into_parts(tmp_path, write_bids_epochs):
+    import mne
+
+    data = np.random.default_rng(0).normal(size=(4, 300_000)) * 1e-6
+    raw = mne.io.RawArray(data, mne.create_info(4, 100.0, "eeg"), verbose=False)
+    epochs = mne.make_fixed_length_epochs(raw, duration=1.0, preload=True)
+    _save_split(epochs, tmp_path, "epo")
+
+    container = _load_epochs(tmp_path)
+
+    assert len(container.X) == 3000
+
+
 def test_bids_dataset_reports_recordings_that_fail_to_load(
     tmp_path, write_bids_epochs, caplog
 ):
