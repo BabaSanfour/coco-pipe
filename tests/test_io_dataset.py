@@ -331,6 +331,39 @@ def test_bids_dataset_raw_recordings(tmp_path):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
 
 
+def test_bids_dataset_raw_fif_derivatives(tmp_path):
+    import mne
+    from mne_bids import BIDSPath
+
+    # FIF is no BIDS format for EEG, but preprocessing derivatives are saved so
+    data = np.arange(2 * 300, dtype=float).reshape(2, 300) * 1e-6
+    for description, scale in (("base", 1.0), ("clean", 2.0)):
+        path = BIDSPath(
+            root=tmp_path,
+            subject="01",
+            task="rest",
+            description=description,
+            datatype="eeg",
+            suffix="eeg",
+            extension=".fif",
+            check=False,
+        ).mkdir()
+        raw = mne.io.RawArray(
+            data * scale, mne.create_info(["C1", "C2"], 100.0, "eeg"), verbose=False
+        )
+        raw.save(path.fpath, verbose=False)
+
+    container = BIDSDataset(
+        tmp_path, task="rest", description="base", window_length=1.0
+    ).load()
+    np.testing.assert_allclose(
+        container.X, data.reshape(2, 3, 100).transpose(1, 0, 2), rtol=1e-6
+    )
+    # two versions of one recording: the loader does not pick one itself
+    with pytest.raises(ValueError, match="Several files match recording"):
+        BIDSDataset(tmp_path, task="rest", window_length=1.0).load()
+
+
 def test_bids_dataset_reports_recordings_that_fail_to_load(
     tmp_path, write_bids_epochs, caplog
 ):

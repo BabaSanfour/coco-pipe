@@ -16,6 +16,7 @@ import mne
 import numpy as np
 import pandas as pd
 from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
+from mne_bids.config import reader as mne_bids_reader
 
 from ._serialization import smart_reader
 from .structures import DataContainer
@@ -608,7 +609,12 @@ class BIDSDataset(BaseDataset):
         self.n_jobs = n_jobs
 
     def _find_recordings(self, saved: bool) -> dict[str, BIDSPath]:
-        """Return the ``BIDSPath`` of each recording to load, by recording ID."""
+        """Return the ``BIDSPath`` of each recording to load, by recording ID.
+
+        Only data files are searched for, those MNE-BIDS reads (BrainVision's
+        ``.vhdr``, not its ``.eeg`` and ``.vmrk``), so a recording is one path,
+        found with its extension.
+        """
         paths = find_matching_paths(
             self.root,
             subjects=self.subjects,
@@ -618,7 +624,7 @@ class BIDSDataset(BaseDataset):
             descriptions=self.description,
             datatypes=self.datatype,
             suffixes=self.suffix or ("epo" if saved else self.datatype),
-            extensions=".fif" if saved else None,
+            extensions=".fif" if saved else sorted(mne_bids_reader),
             ignore_json=True,
         )
         recordings = {}
@@ -630,17 +636,13 @@ class BIDSDataset(BaseDataset):
                 acquisition=path.acquisition,
                 run=path.run,
             ).basename
-            if not saved:
-                # Raw formats can have several files per recording (.vhdr, .eeg).
-                recordings.setdefault(recording_id, path.copy().update(extension=None))
-            elif recording_id in recordings:
+            if recording_id in recordings:
                 raise ValueError(
                     f"Several files match recording {recording_id}: "
                     f"{recordings[recording_id].basename} and {path.basename}. "
                     "Pass `description` to choose one."
                 )
-            else:
-                recordings[recording_id] = path
+            recordings[recording_id] = path
         return dict(sorted(recordings.items()))
 
     def _read_epochs(self, bids_path: BIDSPath, saved: bool) -> mne.BaseEpochs:
