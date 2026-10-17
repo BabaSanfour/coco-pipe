@@ -116,6 +116,13 @@ The full reducer registry is exposed as
    embedding = reducer.fit_transform(X)
    loadings = reducer.get_components()
 
+``transform(X, center=False)`` projects without subtracting the fitted mean,
+``X @ components_.T`` (whitened when ``whiten=True``). Use it when PCA is fit
+on one dataset, such as a grand average, and other data, such as per-subject
+condition means, are projected with their offset kept. ``IncrementalPCA`` and
+``DaskPCA`` take the same argument.
+``DaskTruncatedSVD`` fits no mean, so its ``transform`` is already uncentred.
+
 2.2 IncrementalPCA
 --------------------
 

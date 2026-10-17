@@ -1,0 +1,1 @@
+`PCAReducer`, `IncrementalPCAReducer` and `DaskPCAReducer` project without centring with `transform(X, center=False)`: the result is `X @ components_.T`, divided by `sqrt(explained_variance_)` when `whiten=True`. `DimReduction.transform` passes the argument on. `DaskTruncatedSVDReducer` fits no mean, so its `transform` is already uncentred and takes no `center`.
