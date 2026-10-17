@@ -116,10 +116,21 @@ class BandDescriptorConfig(_StrictConfigModel):
         Whether the band family is enabled.
     psd_method : {"welch", "multitaper"}, default="welch"
         PSD estimator used before computing band summaries.
+    welch_segment_length : float, default=2.0
+        Length in seconds of one Welch segment (the whole epoch if the epoch
+        is shorter). The PSD frequency resolution is its inverse.
+    welch_overlap : float, default=0.5
+        Overlap between consecutive Welch segments, as a fraction of the
+        segment.
     fmin, fmax : float
-        Global frequency window within which PSDs and bands are evaluated.
+        Global frequency window ``[fmin, fmax)`` within which PSDs and bands
+        are evaluated; relative power divides by the power of this window.
     bands : dict of str to tuple of float, default=canonical EEG bands
-        Mapping from band name to ``(low, high)`` boundaries.
+        Mapping from band name to ``(low, high)`` boundaries. A band holds the
+        PSD bins in ``[low, high)`` and its power is the sum of their
+        densities times the frequency step, so bands that tile
+        ``[fmin, fmax)`` have relative powers that sum to 1. A fitted peak
+        belongs to a band by the same rule.
     outputs : list of {"absolute_power", "log_absolute_power", \
 "relative_power", "ratios", "corrected_absolute_power", \
 "corrected_log_absolute_power", "corrected_relative_power"}
@@ -143,6 +154,8 @@ class BandDescriptorConfig(_StrictConfigModel):
 
     enabled: bool = False
     psd_method: Literal["welch", "multitaper"] = "welch"
+    welch_segment_length: float = Field(2.0, gt=0.0)
+    welch_overlap: float = Field(0.5, ge=0.0, lt=1.0)
     fmin: float = Field(1.0, ge=0.0)
     fmax: float = Field(45.0, gt=0.0)
     bands: dict[str, tuple[float, float]] = Field(
@@ -216,12 +229,21 @@ class ParametricDescriptorConfig(_StrictConfigModel):
         Parametric modeling backend.
     psd_method : {"welch", "multitaper"}, default="welch"
         PSD estimator used before fitting the parametric model.
+    welch_segment_length : float, default=2.0
+        Length in seconds of one Welch segment (the whole epoch if the epoch
+        is shorter). The PSD frequency resolution is its inverse.
+    welch_overlap : float, default=0.5
+        Overlap between consecutive Welch segments, as a fraction of the
+        segment.
     freq_range : tuple of float, default=(1.0, 45.0)
         Frequency range passed to the parametric model.
     peak_width_limits : tuple of float, default=(1.0, 12.0)
         Peak width bounds forwarded to the model backend.
     max_n_peaks : int, default=6
         Maximum number of periodic peaks to fit.
+    min_peak_height : float, default=0.0
+        Minimum height of a peak above the aperiodic fit, in log10 power,
+        forwarded to the model backend.
     aperiodic_mode : {"fixed", "knee"}, default="fixed"
         Aperiodic model form used by specparam.
     outputs : list of {"aperiodic", "fit_quality", "peak_summary"}
@@ -237,9 +259,12 @@ class ParametricDescriptorConfig(_StrictConfigModel):
     enabled: bool = False
     backend: Literal["specparam"] = "specparam"
     psd_method: Literal["welch", "multitaper"] = "welch"
+    welch_segment_length: float = Field(2.0, gt=0.0)
+    welch_overlap: float = Field(0.5, ge=0.0, lt=1.0)
     freq_range: tuple[float, float] = (1.0, 45.0)
     peak_width_limits: tuple[float, float] = (1.0, 12.0)
     max_n_peaks: int = Field(6, ge=0)
+    min_peak_height: float = Field(0.0, ge=0.0)
     aperiodic_mode: Literal["fixed", "knee"] = "fixed"
     outputs: list[Literal["aperiodic", "fit_quality", "peak_summary"]] = Field(
         default_factory=lambda: ["aperiodic", "fit_quality", "peak_summary"]
@@ -278,9 +303,13 @@ class ComplexityDescriptorConfig(_StrictConfigModel):
         Complexity measures to compute.
     measure_kwargs : dict of str to dict, default={}
         Per-measure keyword arguments forwarded to the backend implementation.
+    bandpass : tuple of (float, float), optional
+        ``(l_freq, h_freq)`` in Hz. When set, each epoch is band-passed with
+        :func:`mne.filter.filter_data` before the measures are computed.
 
     Notes
     -----
+    Each epoch is centred on its own mean before the measures are computed.
     Complexity measures are signal-domain descriptors. Unlike the PSD-based
     families, they do not participate in shared PSD planning.
     """
@@ -289,6 +318,18 @@ class ComplexityDescriptorConfig(_StrictConfigModel):
     backend: Literal["antropy", "neurokit2", "auto"] = "antropy"
     measures: list[str] = Field(default_factory=lambda: list(_COMPLEXITY_MEASURES))
     measure_kwargs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    bandpass: tuple[float, float] | None = None
+
+    @field_validator("bandpass")
+    @classmethod
+    def _validate_bandpass(
+        cls, value: tuple[float, float] | None
+    ) -> tuple[float, float] | None:
+        if value is not None and not 0 < value[0] < value[1]:
+            raise ValueError(
+                "bandpass must be (l_freq, h_freq) with 0 < l_freq < h_freq."
+            )
+        return value
 
     @field_validator("measures", mode="before")
     @classmethod

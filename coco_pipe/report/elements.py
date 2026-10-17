@@ -152,9 +152,12 @@ class ImageElement(Element):
             r"[^a-z0-9]+", "_", str(self.caption or "figure").lower()
         ).strip("_")
         filename = f"{filename_root or 'figure'}.png"
+        # The link takes the image's own data URI when clicked, so the PNG is
+        # embedded once.
         download_html = (
             f'<div class="flex justify-end mt-1 mb-0">'
-            f'<a href="data:image/png;base64,{b64_str}" download="{filename}"'
+            f'<a href="#" download="{filename}"'
+            f" onclick=\"this.href=this.closest('figure').querySelector('img').src\""
             f' aria-label="Download figure as PNG"'
             f' class="inline-flex items-center gap-1 text-xs text-gray-400'
             f" hover:text-brand-600 dark:hover:text-brand-400 transition px-2 py-0.5"

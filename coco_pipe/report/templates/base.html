@@ -5,13 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    {# Plotly only when the report has a Plotly figure. #}
     {% if asset_mode == 'inline' %}
     {# Inlined bundles — see coco_pipe.report._assets.get_vendored_contents #}
-    <script>{{ asset_urls.plotly | safe }}</script>
+    {% if needs_plotly %}<script>{{ asset_urls.plotly | safe }}</script>{% endif %}
     <script>{{ asset_urls.tailwind | safe }}</script>
     <script>{{ asset_urls.pako | safe }}</script>
     {% else %}
-    <script src="{{ asset_urls.plotly }}"></script>
+    {% if needs_plotly %}<script src="{{ asset_urls.plotly }}"></script>{% endif %}
     <script src="{{ asset_urls.tailwind }}"></script>
     <script src="{{ asset_urls.pako }}"></script>
     {% endif %}

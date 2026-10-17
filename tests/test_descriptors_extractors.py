@@ -58,14 +58,48 @@ def test_band_powers_follow_the_injected_rhythms(signals):
     )
 
 
-def test_relative_power_of_a_flat_channel_is_nan_and_logged(signals):
+def test_band_powers_of_white_noise_tile_the_frequency_window():
+    sfreq, sigma = 200.0, 10e-6
+    X = np.random.default_rng(0).normal(scale=sigma, size=(20, 3, 2000))
+    tiling = {
+        "delta": (1.0, 4.0),
+        "theta": (4.0, 8.0),
+        "alpha": (8.0, 13.0),
+        "beta": (13.0, 30.0),
+        "gamma": (30.0, 45.0),
+    }
+    bands = {
+        "enabled": True,
+        "fmin": 1.0,
+        "fmax": 45.0,
+        "bands": tiling,
+        "outputs": ["absolute_power", "relative_power"],
+    }
+    values, failures = _extract(X, {"bands": bands}, sfreq=sfreq, precision="float64")
+
+    assert not failures
+    for channel in CHANNELS:
+        relative = [values[f"band_rel_{band}_ch-{channel}"] for band in tiling]
+        np.testing.assert_allclose(np.sum(relative, axis=0), 1.0, rtol=1e-12)
+    # one-sided density of white noise: 2 sigma^2 / sfreq
+    for band, (low, high) in tiling.items():
+        power = np.mean([values[f"band_abs_{band}_ch-{c}"] for c in CHANNELS])
+        assert power == pytest.approx(2 * sigma**2 / sfreq * (high - low), rel=0.05)
+
+
+def test_relative_and_log_power_of_a_flat_channel_are_nan_and_logged(signals):
     X = signals.copy()
     X[:, 2] = 0.0
-    bands = {"enabled": True, "outputs": ["relative_power"], "bands": BANDS}
+    bands = {
+        "enabled": True,
+        "outputs": ["relative_power", "log_absolute_power"],
+        "bands": BANDS,
+    }
     values, failures = _extract(X, {"bands": bands})
 
-    assert np.isnan(values["band_rel_alpha_ch-Pz"]).all()
-    assert np.isfinite(values["band_rel_alpha_ch-Fz"]).all()
+    for output in ("rel", "log_abs"):
+        assert np.isnan(values[f"band_{output}_alpha_ch-Pz"]).all()
+        assert np.isfinite(values[f"band_{output}_alpha_ch-Fz"]).all()
     assert {failure["channel_name"] for failure in failures} == {"Pz"}
 
 
@@ -97,6 +131,20 @@ def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
     np.testing.assert_allclose(values["param_peak_freq_dom_ch-Cz"], 20.0, atol=0.5)
     # Cz has no peak in the alpha band
     assert np.isnan(values["param_alpha_peak_freq_ch-Cz"]).all()
+
+    # a minimum height above every peak leaves only the aperiodic fit
+    values, _ = _extract(
+        signals,
+        {
+            "parametric": {
+                "enabled": True,
+                "outputs": ["peak_summary"],
+                "min_peak_height": 100.0,
+            }
+        },
+    )
+    assert (values["param_peak_count_ch-Fz"] == 0).all()
+    assert np.isnan(values["param_alpha_peak_freq_ch-Fz"]).all()
 
 
 def test_corrected_band_power_is_measured_only_where_a_peak_was_fitted(signals):
@@ -144,13 +192,30 @@ def test_simple_complexity_measures_match_their_definition():
         channels=["Fz"],
     )
 
-    assert values["complexity_zero_crossings_ch-Fz"][0] == 4
+    # measured on the epoch centred on its own mean
+    centred = signal - signal.mean()
+    assert values["complexity_zero_crossings_ch-Fz"][0] == 3
     assert values["complexity_rms_ch-Fz"][0] == pytest.approx(
-        np.sqrt(np.mean(signal**2))
+        np.sqrt(np.mean(centred**2))
     )
     assert values["complexity_kurtosis_ch-Fz"][0] == pytest.approx(
         kurtosis(signal, fisher=True, bias=False)
     )
+
+
+def test_complexity_bandpass_removes_drift_below_the_band():
+    times = np.arange(2000) / 200.0
+    sine = np.sin(2 * np.pi * 10.0 * times)
+    drifting = (sine + 3.0 * np.sin(2 * np.pi * 0.2 * times)).reshape(1, 1, -1)
+    config = {"complexity": {"enabled": True, "measures": ["zero_crossings"]}}
+    raw, _ = _extract(drifting, config, channels=["Fz"])
+    config["complexity"]["bandpass"] = (1.0, 45.0)
+    filtered, _ = _extract(drifting, config, channels=["Fz"])
+
+    # a 10 Hz sine crosses zero 200 times in 10 s; a slow drift three times larger
+    # hides most crossings until it is filtered out
+    assert raw["complexity_zero_crossings_ch-Fz"][0] < 50
+    assert filtered["complexity_zero_crossings_ch-Fz"][0] == pytest.approx(200, abs=2)
 
 
 def test_auto_backend_computes_every_measure_and_separates_order_from_noise():

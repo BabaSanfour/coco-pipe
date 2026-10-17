@@ -66,7 +66,8 @@ def test_image_element_sources(tmp_path):
 def test_image_element_renders_data_uri(tmp_path):
     img_data = b"fake-image-data"
     elem = ImageElement(img_data)
-    assert "data:image/png;base64" in elem.render()
+    # Embedded once: the download link reads the image's src.
+    assert elem.render().count("data:image/png;base64") == 1
 
     p = tmp_path / "test.png"
     p.write_bytes(img_data)

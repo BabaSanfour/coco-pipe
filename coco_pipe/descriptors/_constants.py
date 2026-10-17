@@ -136,6 +136,7 @@ MISSINGNESS_COLUMNS: list[str] = [
 CONSTANT_COLUMNS: list[str] = [
     "column",
     "std",
+    "relative_std",
     "is_all_nan",
     "is_constant",
     "family",

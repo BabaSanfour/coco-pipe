@@ -222,7 +222,8 @@ class BasePSDDescriptorExtractor(BaseDescriptorExtractor, ABC):
     but they expose one additional explicit entry point:
 
     - `extract_psd(...)` consumes precomputed `psds, freqs`
-    - `psd_request()` tells the planner which PSD range and method is needed
+    - `psd_request()` tells the planner which PSD range, method and Welch
+      segment settings are needed
 
     This keeps the generic raw-signal interface narrow while still giving the
     planner one formal PSD-consumer contract shared by spectral and parametric
@@ -237,8 +238,8 @@ class BasePSDDescriptorExtractor(BaseDescriptorExtractor, ABC):
         Returns
         -------
         dict[str, Any]
-            Minimal request payload containing the PSD method and the required
-            frequency range for this family.
+            Minimal request payload containing the PSD method, the Welch
+            segment settings and the required frequency range for this family.
         """
 
     def parametric_fit_requirements(self) -> dict[str, Any]:

@@ -293,6 +293,13 @@ def group_labels(container: DataContainer, group_by: str = "family") -> list[str
     return list(dict.fromkeys(labels.tolist()))
 
 
+def _fraction(count: np.ndarray, total: np.ndarray) -> np.ndarray:
+    """``count / total`` per row, 0 where nothing was scored."""
+    return np.divide(
+        count, total, out=np.zeros(len(count), dtype=float), where=np.asarray(total) > 0
+    )
+
+
 def compute_row_outlier_scores(
     df: pd.DataFrame,
     feature_cols: list[str],
@@ -302,6 +309,12 @@ def compute_row_outlier_scores(
     feature_schema: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute per-row outlier fractions using MAD-based robust z-scores.
+
+    A value is an outlier when its robust z-score ``|x - median| / (1.4826 * MAD)``
+    exceeds ``z_threshold``. A feature whose MAD is zero (e.g. a count that is
+    nearly always the same) has no robust z-score and is not scored. Fractions are
+    taken over the finite, scored values of each row, so missing features neither
+    count as outliers nor dilute them.
 
     When ``group_by`` is set (``"family"``, ``"measure"``, or ``"feature"``) the
     result also carries per-group ``outlier_fraction_<label>`` columns so a row
@@ -330,20 +343,19 @@ def compute_row_outlier_scores(
     values = features.to_numpy(dtype=float)
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)
-    mad = pd.DataFrame(deviations).median(axis=0, skipna=True).to_numpy(dtype=float)
-    mean_ad = pd.DataFrame(deviations).mean(axis=0, skipna=True).to_numpy(dtype=float)
-    scale = np.where(mad == 0, 1.2533 * mean_ad, 1.4826 * mad)
+    scale = 1.4826 * pd.DataFrame(deviations).median(axis=0, skipna=True).to_numpy(
+        dtype=float
+    )
+    scored = np.isfinite(values) & (np.isfinite(scale) & (scale > 0))
     with np.errstate(divide="ignore", invalid="ignore"):
-        robust_z = np.where(scale == 0, 0.0, deviations / scale)
+        robust_z = np.where(scored, deviations / scale, np.nan)
 
-    finite_values = np.isfinite(values)
-    outlier_flags = finite_values & (robust_z > z_threshold)
+    outlier_flags = scored & (robust_z > z_threshold)
     n_outliers = outlier_flags.sum(axis=1).astype(int)
-    finite_z = np.where(finite_values, robust_z, np.nan)
-    mad_z_max = pd.DataFrame(finite_z).max(axis=1, skipna=True).to_numpy()
+    mad_z_max = pd.DataFrame(robust_z).max(axis=1, skipna=True).to_numpy()
     result = pd.DataFrame(
         {
-            "outlier_fraction": n_outliers.astype(float) / n_features,
+            "outlier_fraction": _fraction(n_outliers, scored.sum(axis=1)),
             "n_outlier_features": n_outliers,
             "mad_z_max": mad_z_max,
         },
@@ -360,8 +372,8 @@ def compute_row_outlier_scores(
     for label in dict.fromkeys(labels.tolist()):
         label_mask = labels == label
         label_count = outlier_flags[:, label_mask].sum(axis=1).astype(int)
-        group_columns[f"outlier_fraction_{label}"] = label_count.astype(float) / int(
-            label_mask.sum()
+        group_columns[f"outlier_fraction_{label}"] = _fraction(
+            label_count, scored[:, label_mask].sum(axis=1)
         )
         group_columns[f"n_outlier_features_{label}"] = label_count
     if group_columns:
