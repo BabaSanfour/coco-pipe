@@ -24,7 +24,7 @@ LATEST = "0123456789abcdef0123456789abcdef01234567"
 CHECKPOINT_DEFAULTS = {
     "Labram": {"n_times": 3000},
     "InterpolatedLaBraM": {"n_times": 3000},
-    "BIOT": {"n_times": 2000, "sfreq": 200.0},
+    "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
 }
 
 
@@ -368,3 +368,25 @@ def test_token_hook_is_removed_when_forward_fails():
     with pytest.raises(RuntimeError, match="forward failed"):
         backend.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
     assert not model.encoder.transformer._forward_hooks
+
+
+def test_extractor_loads_again_for_another_montage(offline):
+    X = np.random.default_rng(0).normal(scale=20, size=(3, 19, 2000))
+    extractor = FoundationEmbeddingExtractor(
+        "biot", device="cpu", normalize_embeddings=False
+    )
+
+    def extract(X, ch_names):
+        torch.manual_seed(0)  # a model loaded again gets the same random weights
+        result = extractor.extract(
+            X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=ch_names)
+        )
+        return result.window_embeddings
+
+    first = extract(X, DEFAULT_CHANNELS)
+    extract(X, DEFAULT_CHANNELS)
+    assert len(offline) == 1  # same montage: the loaded model is kept
+    # the same signals with the channels listed in another order embed the same
+    again = extract(X[:, ::-1], DEFAULT_CHANNELS[::-1])
+    assert len(offline) == 2
+    np.testing.assert_allclose(again, first, rtol=1e-5, atol=1e-5)

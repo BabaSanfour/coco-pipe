@@ -286,6 +286,8 @@ class FoundationEmbeddingExtractor:
         self.batch_size = batch_size
         self.backend_kwargs = dict(backend_kwargs or {})
         self.model = model
+        # The input a model loaded here was built for; None for a given model.
+        self._loaded_for: tuple | None = None
         self._embedding_cache: dict[str, np.ndarray] = {}
 
     def clear_cache(self) -> None:
@@ -438,6 +440,12 @@ class FoundationEmbeddingExtractor:
         X = np.asarray(epochs, dtype=np.float32)
         if X.ndim != 3:
             raise ValueError("epochs must have shape (window, channel, time).")
+        ch_names = normalize_channel_names(signal_metadata.ch_names)
+        # A model is built for one montage, rate and window length (channel
+        # positions and adapters, n_times): another recording loads its own.
+        loaded_for = (float(signal_metadata.sfreq), tuple(ch_names), X.shape[-1])
+        if self._loaded_for not in (None, loaded_for):
+            self.model = None
         prepared = prepare_backend(
             self.model_key,
             X,
@@ -446,11 +454,13 @@ class FoundationEmbeddingExtractor:
             train_mode="frozen",
             n_outputs=None,
             sfreq=float(signal_metadata.sfreq),
-            ch_names=normalize_channel_names(signal_metadata.ch_names),
+            ch_names=ch_names,
             pooling=self.pooling,
             backend_kwargs=self.backend_kwargs,
             model=self.model,
         )
+        if self.model is None:
+            self._loaded_for = loaded_for
         self.model = prepared.backend
         model = prepared.backend
         spec = prepared.spec
