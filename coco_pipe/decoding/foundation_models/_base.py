@@ -420,6 +420,11 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
 
         callbacks = []
         patience = fit_params.get("early_stopping_patience")
+        if patience and validation_fraction <= 0:
+            raise ValueError(
+                "early_stopping_patience watches the validation loss: it needs "
+                "validation_fraction > 0."
+            )
         if patience:
             from skorch.callbacks import EarlyStopping
 

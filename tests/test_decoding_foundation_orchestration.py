@@ -585,3 +585,11 @@ def test_classifier_takes_any_labels(labels):
     np.testing.assert_array_equal(
         named.predict(X), np.asarray(labels)[coded.predict(X)]
     )
+
+
+def test_early_stopping_needs_a_validation_split():
+    no_validation = {"early_stopping_patience": 2, "validation_fraction": 0.0}
+    with pytest.raises(ValueError, match="needs validation_fraction > 0"):
+        TrainerConfig(**no_validation)
+    with pytest.raises(ValueError, match="needs validation_fraction > 0"):
+        _fit_fake_classifier(no_validation)

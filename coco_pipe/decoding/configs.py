@@ -710,6 +710,15 @@ class TrainerConfig(BaseModel):
         None, gt=0, description="Learning rate of the probe phase. Defaults to lr."
     )
 
+    @model_validator(mode="after")
+    def _early_stopping_needs_validation(self) -> TrainerConfig:
+        if self.early_stopping_patience and self.validation_fraction == 0:
+            raise ValueError(
+                "early_stopping_patience watches the validation loss: it needs "
+                "validation_fraction > 0."
+            )
+        return self
+
 
 class FrozenBackboneDecoderConfig(BaseEstimatorConfig):
     """Config for a frozen backbone followed by a classical decoding head."""
