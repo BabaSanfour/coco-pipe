@@ -356,6 +356,15 @@ def test_bids_dataset_reports_recordings_that_fail_to_load(
     assert left.meta["load_failures"] == []
     assert left.meta["skipped_no_matching_events"] == ["sub-03_task-rest"]
     assert "sub-03" not in caplog.text
+    # so is one that lists the event but kept none of its epochs
+    import mne
+
+    path = write_bids_epochs(tmp_path, "04")
+    epochs = mne.read_epochs(path, verbose=False).drop([0], verbose=False)
+    epochs.save(path, overwrite=True, verbose=False)
+    left = _load_epochs(tmp_path, subjects=["01", "04"], event_id="left")
+    assert left.meta["skipped_no_matching_events"] == ["sub-04_task-rest"]
+    assert set(left.coords["subject"]) == {"01"}
     with pytest.raises(
         RuntimeError, match=r"No valid data found in .*sub-02_task-rest"
     ):

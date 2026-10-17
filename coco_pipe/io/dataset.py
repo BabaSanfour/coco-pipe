@@ -690,7 +690,13 @@ class BIDSDataset(BaseDataset):
         # whichever events are asked for.
         epochs.metadata = pd.DataFrame({"epoch": np.arange(len(epochs))})
         if saved and wanted is not None:
-            names = [name for name in wanted if name in epochs.event_id]
+            # A file can list an event whose epochs were all rejected.
+            present = set(epochs.events[:, 2].tolist())
+            names = [
+                name
+                for name in wanted
+                if name in epochs.event_id and epochs.event_id[name] in present
+            ]
             if not names:
                 raise _NoMatchingEvents
             epochs = epochs[names]
