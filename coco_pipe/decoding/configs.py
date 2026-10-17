@@ -606,13 +606,21 @@ class ClassicalModelConfig(ClassicalEstimatorConfig):
     input_kind: Literal["tabular", "embeddings"] = "tabular"
 
 
+class DeviceConfig(BaseModel):
+    """Compute device."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+
+
 class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     """Configuration for pretrained feature extraction backbones."""
 
     kind: Literal["foundation_embedding"] = "foundation_embedding"
     model_key: str
     backend: str = "auto"
-    device: DeviceConfig = Field(default_factory=lambda: DeviceConfig())
+    device: DeviceConfig = Field(default_factory=DeviceConfig)
     pooling: Literal["mean", "flatten"] = "mean"
     cache_embeddings: bool = True
     sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
@@ -631,14 +639,6 @@ class LoRAConfig(BaseModel):
     alpha: int = Field(32, ge=1)
     dropout: float = Field(0.0, ge=0.0, le=1.0)
     target_modules: str | list[str] = "all-linear"
-
-
-class DeviceConfig(BaseModel):
-    """Compute device."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
 
 
 class CheckpointConfig(BaseModel):
