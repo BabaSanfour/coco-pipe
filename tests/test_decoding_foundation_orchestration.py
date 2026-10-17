@@ -559,3 +559,29 @@ def test_real_foundation_training():
         in {"verified", "authentication_required", "unsupported", "failed"}
         for record in records
     )
+
+
+@pytest.mark.parametrize("labels", [["ec", "eo"], [1, 2], [0, 3]])
+def test_classifier_takes_any_labels(labels):
+    import torch
+
+    X, y, groups = _data()
+
+    def fit(y):
+        torch.manual_seed(0)
+        return FoundationClassifier(
+            "cbramod",
+            backend="fake",
+            sfreq=200,
+            ch_names=["C3", "C4"],
+            trainer={"max_epochs": 1, "batch_size": 4, "validation_fraction": 0.0},
+        ).fit(X, y, groups=groups)
+
+    named = fit(np.asarray(labels)[y])
+    coded = fit(y)
+    # the labels only name the classes: the fit is the one on 0 and 1
+    np.testing.assert_array_equal(named.classes_, labels)
+    np.testing.assert_allclose(named.predict_proba(X), coded.predict_proba(X))
+    np.testing.assert_array_equal(
+        named.predict(X), np.asarray(labels)[coded.predict(X)]
+    )

@@ -230,7 +230,8 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         trainer = dict(self.trainer or {})
         self.backend_.fit(
             self.prepared_.adapt(X),
-            y,
+            # the network's outputs are classes_ in order: train on their indices
+            np.searchsorted(self.classes_, y),
             groups=groups,
             class_weight=class_weights,
             random_state=self.random_state,
