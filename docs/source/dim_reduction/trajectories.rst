@@ -222,6 +222,7 @@ build the container directly:
 
    from coco_pipe.dim_reduction.evaluation import (
        TrajectoryResult,
+       permutation_familywise_separation_auc,
        permutation_null_separation_auc,
    )
 
@@ -230,9 +231,26 @@ build the container directly:
        grid, times, subjects=subject_ids, conditions=["fast-easy", "slow-hard"]
    )
    pairs = result.get_separation_pair_scalars()   # pair "fast-easy_vs_slow-hard"
-   observed, null = permutation_null_separation_auc(
+   observed, null, p_value = permutation_null_separation_auc(
        result, group_a=["fast-easy"], group_b=["slow-hard"], within_subject=True
    )
+
+For several results at once, such as one per frequency band built from the same
+trials, ``permutation_familywise_separation_auc`` corrects for the family. Each
+permutation draws one within-subject relabelling and applies it to every result
+and every contrast. The null is the maximum AUC over the family, and each
+observed AUC gets ``p_fwer = (1 + #(max_null >= observed)) / (n_perm + 1)``.
+The trajectories are used as given; the reducer is not refit.
+
+.. code-block:: python
+
+   table, max_null = permutation_familywise_separation_auc(
+       {"alpha": alpha_result, "beta": beta_result},
+       contrasts=[(["famous", "unfamiliar"], "scrambled"), ("famous", "unfamiliar")],
+       n_perm=1000,
+       window=(0.1, 0.5),
+   )
+   table  # key, contrast, observed_auc, p_fwer
 
 ---
 

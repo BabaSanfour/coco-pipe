@@ -7,6 +7,10 @@ paired_condition_stats
     Paired t-test across all condition pairs, with FDR correction.
 grouped_condition_stats
     Paired t-test across grouped condition sets, with FDR correction.
+permutation_null_separation_auc
+    Label-permutation test of the separation AUC of one contrast.
+permutation_familywise_separation_auc
+    Max-statistic permutation test over several results and contrasts.
 """
 
 from __future__ import annotations
@@ -16,18 +20,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .result import TrajectoryResult
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from itertools import combinations
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.stats import false_discovery_control, ttest_rel
+
+from coco_pipe.utils import permute_labels_within_strata
 
 from .geometry import trajectory_separation
 
 __all__ = [
     "grouped_condition_stats",
     "paired_condition_stats",
+    "permutation_familywise_separation_auc",
     "permutation_null_separation_auc",
 ]
 
@@ -209,6 +217,36 @@ def grouped_condition_stats(
     return out
 
 
+def _window_mask(times: np.ndarray, window: tuple[float, float] | None) -> np.ndarray:
+    """Return the time points inside ``window`` (all of them without one)."""
+    if window is None:
+        return np.ones_like(times, dtype=bool)
+    return (times >= window[0]) & (times <= window[1])
+
+
+def _separation_auc(
+    result: TrajectoryResult,
+    codes: np.ndarray,
+    codes_a: np.ndarray,
+    codes_b: np.ndarray,
+    method: str,
+    mask: np.ndarray,
+) -> float:
+    """Separation AUC between the trials coded ``codes_a`` and ``codes_b``."""
+    in_a = np.isin(codes, codes_a)
+    selected = in_a | np.isin(codes, codes_b)
+    binary = np.where(in_a[selected], 0, 1)
+    curve = trajectory_separation(result.trajectories[selected], binary, method=method)
+    return float(np.trapezoid(curve[(0, 1)][mask], result.times[mask]))
+
+
+def _permutation_p_value(observed: float, null: np.ndarray) -> float:
+    """``(1 + #(null >= observed)) / (n_perm + 1)``; NaN when any input is NaN."""
+    if np.isnan(observed) or np.isnan(null).any():
+        return float("nan")
+    return float((1 + np.sum(null >= observed)) / (null.size + 1))
+
+
 def permutation_null_separation_auc(
     result: TrajectoryResult,
     group_a: Sequence,
@@ -218,7 +256,7 @@ def permutation_null_separation_auc(
     method: str = "centroid",
     window: tuple[float, float] | None = None,
     within_subject: bool = False,
-) -> tuple[float, np.ndarray]:
+) -> tuple[float, np.ndarray, float]:
     """Label-shuffle null on between-group separation AUC.
 
     Parameters
@@ -236,65 +274,178 @@ def permutation_null_separation_auc(
     window : tuple of float, optional
         Time window (tmin, tmax) to restrict the AUC calculation.
     within_subject : bool, default=False
-        When True, permute labels within each subject so subject-level trial
-        counts and condition composition are preserved. Requires
-        ``result.subjects``. The default shuffles labels globally.
+        When True, permute labels within each subject
+        (:func:`~coco_pipe.utils.permute_labels_within_strata`), so each
+        subject keeps its trial counts per condition. The default shuffles
+        labels globally.
 
     Returns
     -------
     observed_auc : float
-    null_aucs : np.ndarray
+    null_aucs : np.ndarray of shape (n_perm,)
         AUC values under ``n_perm`` random label shuffles.
+    p_value : float
+        ``(1 + #(null_aucs >= observed_auc)) / (n_perm + 1)``, NaN when the
+        observed or a null AUC is NaN.
 
     Raises
     ------
     ValueError
         If a label in ``group_a`` or ``group_b`` is not a condition of
         ``result``.
+
+    See Also
+    --------
+    permutation_familywise_separation_auc : Max-statistic correction over
+        several results and contrasts.
     """
     if rng is None:
         rng = np.random.default_rng(0)
 
-    group_a_arr = result._condition_codes_of(group_a)
-    group_b_arr = result._condition_codes_of(group_b)
-    _, conditions = result._condition_coding()
+    codes_a = result._condition_codes_of(group_a)
+    codes_b = result._condition_codes_of(group_b)
+    _, codes = result._condition_coding()
+    mask = _window_mask(result.times, window)
 
-    subjects = None
-    if within_subject:
-        subjects = np.asarray(result.subjects)
-        if subjects.shape[0] != conditions.shape[0]:
+    observed = _separation_auc(result, codes, codes_a, codes_b, method, mask)
+    null = np.empty(n_perm, dtype=float)
+    for i in range(n_perm):
+        shuffled = (
+            permute_labels_within_strata(codes, result.subjects, random_state=rng)
+            if within_subject
+            else rng.permutation(codes)
+        )
+        null[i] = _separation_auc(result, shuffled, codes_a, codes_b, method, mask)
+    return observed, null, _permutation_p_value(observed, null)
+
+
+def permutation_familywise_separation_auc(
+    results: Mapping[Hashable, TrajectoryResult],
+    contrasts: Sequence[tuple[Any, Any]],
+    n_perm: int = 1000,
+    rng: np.random.Generator | None = None,
+    method: str = "centroid",
+    window: tuple[float, float] | None = None,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Family-wise max-statistic test of separation AUC over results and contrasts.
+
+    Each permutation draws one within-subject relabelling and applies it to
+    every result and every contrast; the null of the family is the maximum
+    separation AUC over all of them per permutation. Each observed AUC gets a
+    p-value corrected for the family-wise error rate. The trajectories are
+    used as given: a reducer that produced them is not refit.
+
+    Parameters
+    ----------
+    results : mapping of key to TrajectoryResult
+        The family, such as one result per frequency band. Every result holds
+        the same subjects and conditions in the same row order.
+    contrasts : sequence of (group_a, group_b)
+        Pairs of condition groups, each a label or a list of labels as stored
+        in ``conditions``, such as ``(["famous", "unfamiliar"], "scrambled")``.
+    n_perm : int, default=1000
+        Number of permutations.
+    rng : np.random.Generator, optional
+        Generator for the relabellings. Defaults to ``default_rng(0)``.
+    method : str, default="centroid"
+        Separation method passed to :func:`trajectory_separation`.
+    window : tuple of float, optional
+        Time window (tmin, tmax) of the AUC.
+
+    Returns
+    -------
+    table : pd.DataFrame
+        One row per (key, contrast): ``key``, ``contrast`` (``"A_vs_B"``, the
+        labels of a group joined by ``"+"``), ``observed_auc`` and ``p_fwer``,
+        ``(1 + #(max_null >= observed_auc)) / (n_perm + 1)``.
+    max_null : np.ndarray of shape (n_perm,)
+        Maximum AUC over the family under each permutation.
+
+    Raises
+    ------
+    ValueError
+        If ``results`` or ``contrasts`` is empty, the results do not hold the
+        same subjects and conditions in the same order, or a contrast names an
+        unknown condition.
+
+    See Also
+    --------
+    permutation_null_separation_auc : One result and one contrast.
+
+    Notes
+    -----
+    The maximum is taken over raw AUCs, so members should be on comparable
+    scales (for example embeddings of one fitted reducer); otherwise the
+    member with the largest scale dominates the null.
+    """
+    if not results or not contrasts:
+        raise ValueError("`results` and `contrasts` must each hold at least one entry.")
+    if rng is None:
+        rng = np.random.default_rng(0)
+
+    members = list(results.items())
+    reference = members[0][1]
+    for key, member in members[1:]:
+        if not (
+            np.array_equal(member.subjects, reference.subjects)
+            and np.array_equal(member.conditions, reference.conditions)
+        ):
             raise ValueError(
-                "`result.subjects` must contain one value per trial to permute "
-                "within subject."
+                f"Result {key!r} does not hold the subjects and conditions of "
+                f"{members[0][0]!r} in the same order."
             )
 
-    if window is None:
-        mask = np.ones_like(result.times, dtype=bool)
-    else:
-        mask = (result.times >= window[0]) & (result.times <= window[1])
+    _, codes = reference._condition_coding()
+    coded = [
+        (
+            _contrast_name(group_a, group_b),
+            reference._condition_codes_of(group_a),
+            reference._condition_codes_of(group_b),
+        )
+        for group_a, group_b in contrasts
+    ]
+    masks = {key: _window_mask(member.times, window) for key, member in members}
 
-    def _auc(labels_array: np.ndarray) -> float:
-        ma = np.isin(labels_array, group_a_arr)
-        mb = np.isin(labels_array, group_b_arr)
-        if not ma.any() or not mb.any():
-            return float("nan")
-        selected = ma | mb
-        binary = np.where(ma[selected], 0, 1)
-        d = trajectory_separation(result.trajectories[selected], binary, method=method)[
-            (0, 1)
-        ]
-        return float(np.trapezoid(np.asarray(d)[mask], result.times[mask]))
+    def _family(labels: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                [
+                    _separation_auc(
+                        member, labels, codes_a, codes_b, method, masks[key]
+                    )
+                    for _, codes_a, codes_b in coded
+                ]
+                for key, member in members
+            ]
+        )
 
-    observed = _auc(conditions)
-    null = np.full(n_perm, np.nan, dtype=float)
+    observed = _family(codes)
+    max_null = np.empty(n_perm, dtype=float)
     for i in range(n_perm):
-        if subjects is None:
-            shuffled = rng.permutation(conditions)
-        else:
-            shuffled = conditions.copy()
-            for subject in np.unique(subjects):
-                subject_mask = subjects == subject
-                shuffled[subject_mask] = rng.permutation(conditions[subject_mask])
-        null[i] = _auc(shuffled)
-    null = null[np.isfinite(null)]
-    return observed, null
+        shuffled = permute_labels_within_strata(
+            codes, reference.subjects, random_state=rng
+        )
+        max_null[i] = np.max(_family(shuffled))
+
+    table = pd.DataFrame(
+        [
+            {
+                "key": key,
+                "contrast": name,
+                "observed_auc": observed[m, c],
+                "p_fwer": _permutation_p_value(observed[m, c], max_null),
+            }
+            for m, (key, _) in enumerate(members)
+            for c, (name, _, _) in enumerate(coded)
+        ]
+    )
+    return table, max_null
+
+
+def _contrast_name(group_a: Any, group_b: Any) -> str:
+    """Name a contrast ``"A_vs_B"``, joining the labels of a group by ``"+"``."""
+
+    def _join(group: Any) -> str:
+        return "+".join(str(label) for label in np.atleast_1d(np.asarray(group)))
+
+    return f"{_join(group_a)}_vs_{_join(group_b)}"

@@ -6,6 +6,7 @@ from coco_pipe.dim_reduction.evaluation.result import TrajectoryResult
 from coco_pipe.dim_reduction.evaluation.stats import (
     grouped_condition_stats,
     paired_condition_stats,
+    permutation_familywise_separation_auc,
     permutation_null_separation_auc,
 )
 
@@ -170,8 +171,109 @@ def test_permutation_null_separation_auc_window():
     subjects = np.array([1, 2, 3, 4])
     conditions = np.array([1, 1, 2, 2])
     res = TrajectoryResult(traj, times, subjects, conditions)
-    obs, null = permutation_null_separation_auc(
+    obs, null, _ = permutation_null_separation_auc(
         res, group_a=[1], group_b=[2], n_perm=10, window=(0.5, 1.5)
     )
     assert np.isfinite(obs)
-    assert len(null) > 0
+    assert null.shape == (10,)
+
+
+# --- permutation p-values -------------------------------------------------------
+
+CONTRASTS = [(["famous", "unfamiliar"], "scrambled"), ("famous", "unfamiliar")]
+
+
+def _band_family(effect, seed=0, n_subjects=8, n_trials=3):
+    """Two bands of the same trials; ``scrambled`` sits ``effect`` away in alpha."""
+    rng = np.random.default_rng(seed)
+    conditions = np.tile(
+        np.repeat(["famous", "unfamiliar", "scrambled"], n_trials), n_subjects
+    )
+    subjects = np.repeat([f"s{i}" for i in range(n_subjects)], 3 * n_trials)
+    times = np.linspace(0, 1, 15)
+
+    def band(scale):
+        traj = rng.normal(size=(conditions.size, times.size, 3))
+        traj[conditions == "scrambled", :, 0] += scale * effect
+        return TrajectoryResult(traj, times, subjects, conditions)
+
+    return {"alpha": band(1.0), "beta": band(0.0)}
+
+
+def test_a_known_separation_gets_the_smallest_p():
+    family = _band_family(effect=3.0)
+    table, max_null = permutation_familywise_separation_auc(
+        family, CONTRASTS, n_perm=99
+    )
+    p = table.set_index(["key", "contrast"])["p_fwer"]
+    assert p["alpha", "famous+unfamiliar_vs_scrambled"] == pytest.approx(1 / 100)
+    assert p["beta", "famous_vs_unfamiliar"] > 0.2
+    assert max_null.shape == (99,)
+
+    _, _, p_single = permutation_null_separation_auc(
+        family["alpha"],
+        ["famous", "unfamiliar"],
+        ["scrambled"],
+        n_perm=99,
+        within_subject=True,
+    )
+    assert p_single == pytest.approx(1 / 100)
+
+
+def test_p_values_are_uniform_under_exchangeable_labels():
+    smallest_fwer, single = [], []
+    for seed in range(100):
+        family = _band_family(effect=0.0, seed=seed)
+        rng = np.random.default_rng(seed)
+        table, _ = permutation_familywise_separation_auc(
+            family, CONTRASTS, n_perm=49, rng=rng
+        )
+        smallest_fwer.append(table["p_fwer"].min())
+        single.append(
+            permutation_null_separation_auc(
+                family["alpha"], "famous", "unfamiliar", n_perm=49, rng=rng
+            )[2]
+        )
+    # 100 draws: the mean of uniform p-values has sd 0.029, P(p <= 0.1) sd 0.03
+    for p_values in (np.array(smallest_fwer), np.array(single)):
+        assert 0.41 < p_values.mean() < 0.59
+        assert 0.01 < np.mean(p_values <= 0.1) < 0.19
+
+
+def test_one_relabelling_per_permutation_is_shared_across_the_family():
+    alpha = _band_family(effect=1.0)["alpha"]
+    # two identical members: shared relabellings give them identical AUCs
+    family = {
+        "a": alpha,
+        "b": TrajectoryResult(
+            alpha.trajectories.copy(), alpha.times, alpha.subjects, alpha.conditions
+        ),
+    }
+    _, max_null = permutation_familywise_separation_auc(
+        family, CONTRASTS, n_perm=30, rng=np.random.default_rng(5)
+    )
+    nulls = [
+        permutation_null_separation_auc(
+            alpha, a, b, n_perm=30, rng=np.random.default_rng(5), within_subject=True
+        )[1]
+        for a, b in CONTRASTS
+    ]
+    np.testing.assert_array_equal(max_null, np.maximum(*nulls))
+
+
+def test_familywise_results_must_be_aligned():
+    family = _band_family(effect=0.0)
+    beta = family["beta"]
+    order = np.argsort(beta.conditions, kind="stable")
+    family["beta"] = TrajectoryResult(
+        beta.trajectories[order],
+        beta.times,
+        beta.subjects[order],
+        beta.conditions[order],
+    )
+    with pytest.raises(ValueError, match="'beta' does not hold the subjects"):
+        permutation_familywise_separation_auc(family, CONTRASTS, n_perm=5)
+    with pytest.raises(ValueError, match="Unknown condition"):
+        permutation_familywise_separation_auc(
+            _band_family(effect=0.0), [("famous", "scrambeld")], n_perm=5
+        )

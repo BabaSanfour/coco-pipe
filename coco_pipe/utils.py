@@ -18,6 +18,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import joblib
+import numpy as np
+import pandas as pd
 
 PACKAGE_VERSIONS: Mapping[str, str] = {
     "numpy": "numpy",
@@ -62,6 +64,7 @@ __all__ = [
     "get_git_revision_hash",
     "get_package_version",
     "import_optional_dependency",
+    "permute_labels_within_strata",
     "resolve_n_jobs",
     "run_task_batch",
     "slug",
@@ -251,3 +254,141 @@ def run_task_batch(
     return joblib.Parallel(n_jobs=min(max_workers, len(tasks)))(
         joblib.delayed(worker_fn)(task) for task in tasks
     )
+
+
+def _label_permuter(
+    y: np.ndarray,
+    strata: np.ndarray,
+    blocks: np.ndarray | None = None,
+) -> tuple[Callable[[np.random.Generator], np.ndarray], np.ndarray]:
+    """Build a draw of permuted labels that never crosses a stratum.
+
+    Without *blocks*, the labels of the samples of each stratum are shuffled
+    among those samples, so each stratum keeps its class counts. With *blocks*,
+    a block is one value of *blocks* within one stratum; it must carry a single
+    label, and the block labels of each stratum are shuffled among its blocks.
+
+    Returns the draw, a callable taking a generator, and the exchangeable unit
+    of every sample: its position without blocks, its block id with them.
+    """
+    y = np.asarray(y)
+    strata = np.asarray(strata)
+    frame = pd.DataFrame({"stratum": strata})
+    if frame["stratum"].isna().any():
+        raise ValueError(
+            f"{int(frame['stratum'].isna().sum())} samples have no stratum; every "
+            "sample needs one for a stratified permutation."
+        )
+    if blocks is None:
+        rows = list(frame.groupby("stratum", sort=False).indices.values())
+        exchange_ids = np.arange(len(y))
+        informative = any(np.unique(y[r]).size > 1 for r in rows)
+
+        def draw(rng: np.random.Generator) -> np.ndarray:
+            out = y.copy()
+            for r in rows:
+                out[r] = y[rng.permutation(r)]
+            return out
+
+    else:
+        frame["block"] = np.asarray(blocks)
+        if frame["block"].isna().any():
+            raise ValueError(
+                f"{int(frame['block'].isna().sum())} samples have no block; every "
+                "sample needs one for a block permutation."
+            )
+        by_block = frame.groupby(["stratum", "block"], sort=False)
+        exchange_ids = by_block.ngroup().to_numpy()
+        strata_blocks: dict[Any, list[np.ndarray]] = {}
+        for (stratum, block), r in by_block.indices.items():
+            labels = pd.unique(y[r])
+            if len(labels) > 1:
+                block, stratum = (
+                    v.item() if isinstance(v, np.generic) else v
+                    for v in (block, stratum)
+                )
+                raise ValueError(
+                    f"Block {block!r} of stratum {stratum!r} holds more than one "
+                    f"label ({sorted(labels.tolist())}); "
+                    "a block permutation moves labels block by block, so each "
+                    "block needs a single label."
+                )
+            strata_blocks.setdefault(stratum, []).append(r)
+        layout = [
+            (block_rows, np.array([y[r[0]] for r in block_rows]))
+            for block_rows in strata_blocks.values()
+        ]
+        informative = any(np.unique(labels).size > 1 for _, labels in layout)
+
+        def draw(rng: np.random.Generator) -> np.ndarray:
+            out = y.copy()
+            for block_rows, labels in layout:
+                for r, label in zip(
+                    block_rows, labels[rng.permutation(len(labels))], strict=True
+                ):
+                    out[r] = label
+            return out
+
+    if not informative:
+        raise ValueError(
+            "No stratum holds two exchangeable "
+            + ("samples" if blocks is None else "blocks")
+            + " with different labels, so every permutation returns the observed "
+            "labels and the null is degenerate."
+        )
+    return draw, exchange_ids
+
+
+def permute_labels_within_strata(
+    y: Sequence[Any],
+    strata: Sequence[Any],
+    *,
+    blocks: Sequence[Any] | None = None,
+    random_state: int | np.random.Generator | None = None,
+) -> np.ndarray:
+    """Permute labels without moving any of them across a stratum.
+
+    Without *blocks*, sample labels are shuffled inside each stratum, which
+    keeps each stratum's class counts. With *blocks*, each block (one value of
+    *blocks* within one stratum) must carry a single label, and block labels
+    are shuffled between the blocks of each stratum. This is the draw the
+    decoding full-pipeline permutation test makes for
+    ``permutation_scheme="within_strata"`` and ``"blocks_within_strata"``, and
+    the one the trajectory separation tests of dim_reduction make within
+    subjects.
+
+    Parameters
+    ----------
+    y : sequence
+        One label per sample.
+    strata : sequence
+        One stratum per sample (e.g. the subject).
+    blocks : sequence, optional
+        One block per sample (e.g. the run), for a blocked design.
+    random_state : int or numpy.random.Generator, optional
+        Seed or generator for the draw.
+
+    Returns
+    -------
+    y_perm : np.ndarray
+        The permuted labels, aligned with *y*.
+
+    Raises
+    ------
+    ValueError
+        If a block holds more than one label, or no stratum holds two
+        exchangeable units with different labels.
+
+    Examples
+    --------
+    >>> from coco_pipe.utils import permute_labels_within_strata
+    >>> y = [0, 1, 0, 1, 0, 1]
+    >>> subjects = ["S1", "S1", "S1", "S2", "S2", "S2"]
+    >>> y_perm = permute_labels_within_strata(y, subjects, random_state=0)
+    """
+    draw, _ = _label_permuter(
+        np.asarray(y),
+        np.asarray(strata),
+        None if blocks is None else np.asarray(blocks),
+    )
+    return draw(np.random.default_rng(random_state))
