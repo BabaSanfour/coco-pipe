@@ -521,9 +521,11 @@ def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray
     Curvature divides a turning angle by a step length, so on a nearly
     stationary stretch it grows without bound and noise dominates it. Smooth
     the trajectory along time (for example with :func:`moving_average`) before
-    computing it, the more so at high sampling rates. With ``"cosine"``, a
-    zero-length step has no direction, so the angles and curvatures that use
-    it are NaN.
+    computing it, the more so at high sampling rates. Curvature is undefined
+    where the path stops: with ``"cosine"`` the angles and curvatures that use
+    a zero-length step are NaN, and with ``"gradient"`` curvature is NaN where
+    the velocity is exactly zero. No speed threshold applies, as curvature
+    does not depend on how fast the path is traversed.
 
     See Also
     --------
@@ -568,13 +570,10 @@ def trajectory_curvature(traj: np.ndarray, method: str = "cosine") -> np.ndarray
         v_dot_a = np.sum(vel * acc, axis=-1)
 
         numerator_sq = np.maximum(v_norm_sq * a_norm_sq - v_dot_a**2, 0.0)
-        numerator = np.sqrt(numerator_sq)
-        denominator = v_norm_sq**1.5
-        eps = 1e-8
+        # zero velocity leaves 0 / 0, so curvature is NaN only where the path
+        # stops; it does not depend on speed, so no threshold applies
         with np.errstate(divide="ignore", invalid="ignore"):
-            curvature = numerator / (denominator + eps)
-        curvature[denominator < eps] = 0.0
-        return curvature
+            return np.sqrt(numerator_sq) / v_norm_sq**1.5
 
     raise ValueError(f"Unsupported method '{method}'. Choose 'cosine' or 'gradient'.")
 
@@ -731,7 +730,8 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
     np.ndarray of shape (..., n_times - 2)
         Turning-angle timecourse in radians.  The output is shorter than the
         input by two points because each angle requires one predecessor and
-        one successor segment.
+        one successor segment. An angle that uses a zero-length step is NaN:
+        a pause has no direction.
 
     See Also
     --------
@@ -755,11 +755,10 @@ def trajectory_turning_angle(traj: np.ndarray) -> np.ndarray:
     next_norm = np.linalg.norm(step_next, axis=-1)
     denom = prev_norm * next_norm
 
+    # a zero-length step has no direction: 0 / 0 leaves its angles NaN
     with np.errstate(divide="ignore", invalid="ignore"):
         cos_angle = np.sum(step_prev * step_next, axis=-1) / denom
-    cos_angle = np.clip(cos_angle, -1.0, 1.0)
-    angles = np.arccos(cos_angle)
-    return np.where(denom < 1e-12, 0.0, angles)
+    return np.arccos(np.clip(cos_angle, -1.0, 1.0))
 
 
 def trajectory_dispersion(

@@ -82,6 +82,9 @@ class DimReduction:
 
     Examples
     --------
+    >>> import numpy as np
+    >>> X = np.random.default_rng(0).random((100, 6))
+    >>> feature_names = [f"f{i}" for i in range(6)]
     >>> reducer = DimReduction("UMAP", n_components=2, n_neighbors=15)
     >>> embedding = reducer.fit_transform(X)
     >>> scores = reducer.score(embedding, X=X)
@@ -441,6 +444,10 @@ class DimReduction:
         ``score()`` does not infer or cache embeddings. Callers must pass
         ``X_emb`` explicitly. ``X`` is only required when the requested
         evaluation path needs the original high-dimensional samples.
+
+        Trajectory summaries propagate NaN: a missing time point, or a
+        stationary stretch where curvature and turning angle are undefined,
+        makes the summaries that use it NaN, as in ``TrajectoryResult``.
         """
         if isinstance(X_emb, DataContainer):
             X_emb = X_emb.X
@@ -536,6 +543,9 @@ class DimReduction:
 
         Examples
         --------
+        >>> import numpy as np
+        >>> X = np.random.default_rng(0).random((50, 4))
+        >>> feature_names = ["a", "b", "c", "d"]
         >>> reducer = DimReduction("PCA", n_components=2)
         >>> embedding = reducer.fit_transform(X)
         >>> result = reducer.interpret(
