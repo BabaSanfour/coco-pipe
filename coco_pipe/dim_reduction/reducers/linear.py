@@ -77,6 +77,32 @@ def _get_components(model: Any) -> np.ndarray:
     return model.components_
 
 
+def _project_uncentred(model: Any, X: ArrayLike) -> Any:
+    """
+    Project data on fitted PCA components without subtracting ``mean_``.
+
+    Parameters
+    ----------
+    model : Any
+        Fitted PCA-like estimator exposing ``components_``, ``whiten`` and
+        ``explained_variance_``.
+    X : ArrayLike of shape (n_samples, n_features)
+        Data to project. Dask arrays stay lazy.
+
+    Returns
+    -------
+    Any of shape (n_samples, n_dims)
+        ``X @ components_.T``, divided by ``sqrt(explained_variance_)`` when
+        the model whitens. As in scikit-learn's ``PCA.transform``, that scale
+        is clipped below at machine epsilon.
+    """
+    projected = X @ model.components_.T
+    if model.whiten:
+        scale = np.sqrt(model.explained_variance_)
+        projected = projected / np.maximum(scale, np.finfo(scale.dtype).eps)
+    return projected
+
+
 class PCAReducer(BaseReducer):
     """
     Principal Component Analysis reducer.
@@ -194,7 +220,7 @@ class PCAReducer(BaseReducer):
         self.model.fit(X)
         return self
 
-    def transform(self, X: ArrayLike) -> np.ndarray:
+    def transform(self, X: ArrayLike, *, center: bool = True) -> np.ndarray:
         """
         Project data onto the fitted principal component basis.
 
@@ -202,6 +228,10 @@ class PCAReducer(BaseReducer):
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Data to project.
+        center : bool, default=True
+            Subtract the fitted ``mean_`` before projecting. With ``False``
+            the result is ``X @ components_.T``, divided by
+            ``sqrt(explained_variance_)`` when ``whiten=True``.
 
         Returns
         -------
@@ -212,9 +242,20 @@ class PCAReducer(BaseReducer):
         ------
         RuntimeError
             If the reducer has not been fitted.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from coco_pipe.dim_reduction import PCAReducer
+        >>> X = np.random.rand(20, 5)
+        >>> reducer = PCAReducer(n_components=2).fit(X)
+        >>> np.allclose(reducer.transform(X, center=False), X @ reducer.components_.T)
+        True
         """
         self._require_fitted()
-        return self.model.transform(X)
+        if center:
+            return self.model.transform(X)
+        return _project_uncentred(self.model, X)
 
     @property
     def explained_variance_ratio_(self) -> np.ndarray:
@@ -445,7 +486,7 @@ class IncrementalPCAReducer(BaseReducer):
         self.model.partial_fit(X, y=y)
         return self
 
-    def transform(self, X: ArrayLike) -> np.ndarray:
+    def transform(self, X: ArrayLike, *, center: bool = True) -> np.ndarray:
         """
         Project data onto the fitted incremental PCA basis.
 
@@ -453,6 +494,10 @@ class IncrementalPCAReducer(BaseReducer):
         ----------
         X : ArrayLike of shape (n_samples, n_features)
             Data to project.
+        center : bool, default=True
+            Subtract the fitted ``mean_`` before projecting. With ``False``
+            the result is ``X @ components_.T``, divided by
+            ``sqrt(explained_variance_)`` when ``whiten=True``.
 
         Returns
         -------
@@ -465,7 +510,9 @@ class IncrementalPCAReducer(BaseReducer):
             If the reducer has not been fitted.
         """
         self._require_fitted()
-        return self.model.transform(X)
+        if center:
+            return self.model.transform(X)
+        return _project_uncentred(self.model, X)
 
     @property
     def explained_variance_ratio_(self) -> np.ndarray:
@@ -675,7 +722,7 @@ class DaskPCAReducer(BaseReducer):
         self.model.fit(X)
         return self
 
-    def transform(self, X: ArrayLike) -> Any:
+    def transform(self, X: ArrayLike, *, center: bool = True) -> Any:
         """
         Project data using the fitted Dask PCA model.
 
@@ -683,6 +730,10 @@ class DaskPCAReducer(BaseReducer):
         ----------
         X : ArrayLike
             Data to project.
+        center : bool, default=True
+            Subtract the fitted ``mean_`` before projecting. With ``False``
+            the result is ``X @ components_.T``, divided by
+            ``sqrt(explained_variance_)`` when ``whiten=True``.
 
         Returns
         -------
@@ -695,7 +746,9 @@ class DaskPCAReducer(BaseReducer):
             If the reducer has not been fitted.
         """
         self._require_fitted()
-        return self.model.transform(X)
+        if center:
+            return self.model.transform(X)
+        return _project_uncentred(self.model, X)
 
     @property
     def explained_variance_ratio_(self) -> np.ndarray:
@@ -796,7 +849,9 @@ class DaskTruncatedSVDReducer(BaseReducer):
 
     Notes
     -----
-    This reducer requires the optional `dask-ml` backend.
+    This reducer requires the optional `dask-ml` backend. Truncated SVD fits
+    no mean, so `transform` already returns ``X @ components_.T`` and takes no
+    ``center`` argument.
 
     See Also
     --------

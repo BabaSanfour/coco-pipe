@@ -195,6 +195,55 @@ def test_incremental_pca_learns_batch_by_batch():
     assert streamed.model is not first_model
 
 
+CENTRED_LINEAR = ["PCAReducer", "IncrementalPCAReducer", "DaskPCAReducer"]
+# far from the origin, so centring changes every projection
+OFFSET_X = X.astype(np.float64) + 50.0
+
+
+def _fit_linear(name, **kwargs):
+    reducer = getattr(reducers, name)(n_components=3, **kwargs)
+    data = OFFSET_X
+    if name.startswith("Dask"):
+        import dask.array as da
+
+        data = da.from_array(OFFSET_X, chunks=(20, 8))
+    return reducer.fit(data), data
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_pca_projects_with_or_without_centring(name):
+    reducer, data = _fit_linear(name)
+    W = _compute(reducer.components_)
+    mean = _compute(reducer.model.mean_)
+
+    centred = _compute(reducer.transform(data))
+    uncentred = _compute(reducer.transform(data, center=False))
+
+    np.testing.assert_allclose(centred, (OFFSET_X - mean) @ W.T, atol=1e-8)
+    np.testing.assert_allclose(uncentred, OFFSET_X @ W.T, atol=1e-8)
+    assert np.abs(uncentred - centred).min() > 1.0
+
+
+@pytest.mark.parametrize("name", CENTRED_LINEAR)
+def test_whitened_pca_scales_the_uncentred_projection(name):
+    reducer, data = _fit_linear(name, whiten=True)
+    W = _compute(reducer.components_)
+    mean = _compute(reducer.model.mean_)
+    scale = np.sqrt(_compute(reducer.model.explained_variance_))
+
+    centred = _compute(reducer.transform(data))
+    uncentred = _compute(reducer.transform(data, center=False))
+
+    np.testing.assert_allclose(centred, (OFFSET_X - mean) @ W.T / scale, atol=1e-8)
+    np.testing.assert_allclose(uncentred, OFFSET_X @ W.T / scale, atol=1e-8)
+
+
+def test_truncated_svd_projection_is_uncentred():
+    reducer, data = _fit_linear("DaskTruncatedSVDReducer")
+    W = _compute(reducer.components_)
+    np.testing.assert_allclose(_compute(reducer.transform(data)), OFFSET_X @ W.T)
+
+
 @pytest.mark.parametrize("name", ["DaskPCAReducer", "DaskTruncatedSVDReducer"])
 def test_dask_reducers_take_dask_arrays(name):
     import dask.array as da

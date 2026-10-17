@@ -268,6 +268,15 @@ def test_transform_independent():
     assert not hasattr(dr, "embedding_")
 
 
+def test_transform_passes_center_to_the_reducer():
+    X = np.random.default_rng(0).random((20, 5)) + 10.0
+    dr = DimReduction("PCA", n_components=2).fit(X)
+    W = dr.get_components()
+
+    np.testing.assert_allclose(dr.transform(X, center=False), X @ W.T)
+    np.testing.assert_allclose(dr.transform(X), (X - X.mean(axis=0)) @ W.T)
+
+
 def test_score_specific_reducers():
     """Test that score() scrapes specific attributes from different reducers."""
     X = np.random.rand(20, 5)

@@ -262,7 +262,7 @@ class DimReduction:
         self.reducer.fit(X_arr, y=y)
         return self
 
-    def transform(self, X: Any) -> Any:
+    def transform(self, X: Any, **kwargs: Any) -> Any:
         """
         Transform new data with a fitted reducer.
 
@@ -270,6 +270,10 @@ class DimReduction:
         ----------
         X : DataContainer, array-like, or MNE object
             Input data in the reducer's native layout.
+        **kwargs : dict
+            Options of the reducer's own ``transform``, such as
+            ``center=False`` for ``PCA``, ``IncrementalPCA`` and ``DaskPCA``,
+            which projects without subtracting the fitted mean.
 
         Returns
         -------
@@ -280,7 +284,7 @@ class DimReduction:
             an array.
         """
         X_arr, source = self._prepare_input(X)
-        embedding = self.reducer.transform(X_arr)
+        embedding = self.reducer.transform(X_arr, **kwargs)
         return self._wrap_embedding(embedding, source)
 
     def fit_transform(self, X: Any, y: Any | None = None) -> Any:
