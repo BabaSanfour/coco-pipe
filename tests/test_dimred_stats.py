@@ -113,8 +113,9 @@ def test_permutation_null_separation_auc_missing():
     with pytest.raises(ValueError, match=r"Unknown condition\(s\) \[3\]"):
         permutation_null_separation_auc(res, group_a=[3], group_b=[2])
 
-    rng = np.random.default_rng(0)
-    permutation_null_separation_auc(res, group_a=[1], group_b=[2], n_perm=10, rng=rng)
+    # identical trajectories: no permutation changes the AUC
+    with pytest.raises(ValueError, match="zero spread"):
+        permutation_null_separation_auc(res, group_a=[1], group_b=[2], n_perm=10)
 
 
 def test_paired_condition_stats_missing_conditions():
@@ -162,19 +163,19 @@ def test_grouped_condition_stats_missing_conditions():
 
 
 def test_permutation_null_separation_auc_window():
-    traj = np.zeros((4, 3, 2))
-    traj[0, :, 0] = 1  # group 1
-    traj[1, :, 0] = 1  # group 1
-    traj[2, :, 0] = 5  # group 2
-    traj[3, :, 0] = 5  # group 2
-    times = np.array([0.0, 1.0, 2.0])
-    subjects = np.array([1, 2, 3, 4])
-    conditions = np.array([1, 1, 2, 2])
-    res = TrajectoryResult(traj, times, subjects, conditions)
+    rng = np.random.default_rng(0)
+    conditions = np.repeat([1, 2], 10)
+    traj = rng.normal(size=(20, 5, 2))
+    traj[conditions == 2, :, 0] += 4
+    times = np.arange(5.0)
+    res = TrajectoryResult(traj, times, np.arange(20), conditions)
     obs, null, _ = permutation_null_separation_auc(
-        res, group_a=[1], group_b=[2], n_perm=10, window=(0.5, 1.5)
+        res, group_a=[1], group_b=[2], n_perm=10, window=(0.5, 2.5)
     )
-    assert np.isfinite(obs)
+    curve = np.linalg.norm(
+        traj[conditions == 1].mean(axis=0) - traj[conditions == 2].mean(axis=0), axis=-1
+    )
+    assert obs == pytest.approx(np.trapezoid(curve[1:3], times[1:3]))
     assert null.shape == (10,)
 
 
@@ -405,6 +406,49 @@ def test_a_missing_point_raises_naming_the_member_and_contrast():
         )
     with pytest.raises(ValueError, match="AUC of the contrast is NaN"):
         permutation_null_separation_auc(family["beta"], "famous", "scrambled", n_perm=5)
+
+
+def test_strata_that_fix_labels_raise_naming_them():
+    result, subjects, subject_class = _speed_by_class(1.0)
+    # subject x condition by mistake: every stratum holds one condition
+    by_condition = np.char.add(subjects, result.conditions)
+    with pytest.raises(ValueError, match=r"32 strata hold trials of the contrast"):
+        permutation_null_separation_auc(result, *SPEED, n_perm=5, strata=by_condition)
+    with pytest.raises(ValueError, match="strata hold trials of 'fast-easy"):
+        permutation_familywise_separation_auc(
+            {"r": result}, [SPEED], strata=by_condition, n_perm=5
+        )
+
+    # a subject without the slow rows of one class: that stratum cannot swap
+    keep = ~((subjects == "s0") & (result.conditions == "slow-hard"))
+    partial = TrajectoryResult(
+        result.trajectories[keep], result.times, subjects[keep], result.conditions[keep]
+    )
+    with pytest.raises(ValueError, match=r"1 strata .* such as \['s0hard'\]"):
+        permutation_null_separation_auc(
+            partial, *SPEED, n_perm=5, strata=subject_class[keep]
+        )
+
+
+def test_a_null_with_zero_spread_raises():
+    result, _, subject_class = _speed_by_class(0.0)
+    flat = TrajectoryResult(
+        np.zeros_like(result.trajectories),
+        result.times,
+        result.subjects,
+        result.conditions,
+    )
+    with pytest.raises(ValueError, match="zero spread"):
+        permutation_null_separation_auc(flat, *SPEED, n_perm=5, strata=subject_class)
+    for standardize in (True, False):
+        with pytest.raises(ValueError, match=r"'r', 'fast-easy.*zero spread"):
+            permutation_familywise_separation_auc(
+                {"r": flat},
+                [SPEED],
+                strata=subject_class,
+                n_perm=5,
+                standardize=standardize,
+            )
 
 
 def test_familywise_results_must_be_aligned():

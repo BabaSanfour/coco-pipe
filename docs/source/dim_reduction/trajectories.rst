@@ -238,7 +238,10 @@ build the container directly:
 ``strata`` sets which trajectories may swap labels. Choose it so that only the
 tested factor moves. To test speed among speed x class x side conditions, use
 subject x class x side: a shuffle inside each subject would also swap class and
-side, putting their effects in the null and making it too wide.
+side, putting their effects in the null and making it too wide. A stratum whose
+trials of the contrast can never change group, such as one row of subject x
+condition or a subject missing the slow row of a class x side cell, raises
+and is named, as does a null with zero spread.
 
 The statistic is the separation of the pooled trials, for example the distance
 between the centroids of all group-a and all group-b trials. With

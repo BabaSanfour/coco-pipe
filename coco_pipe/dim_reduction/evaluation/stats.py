@@ -285,6 +285,35 @@ def _check_strata(
     return strata
 
 
+def _check_swappable(
+    codes: np.ndarray,
+    codes_a: np.ndarray,
+    codes_b: np.ndarray,
+    strata: np.ndarray,
+    what: str,
+) -> None:
+    """Raise when a stratum holds contrast trials no permutation can move.
+
+    A trial of the contrast leaves its group only by swapping with a trial of
+    the other group, or of a condition outside the contrast, in its stratum.
+    """
+    group = np.where(
+        np.isin(codes, codes_a), 0, np.where(np.isin(codes, codes_b), 1, 2)
+    )
+    per_stratum = pd.DataFrame({"stratum": strata, "group": group}).groupby(
+        "stratum", sort=False
+    )["group"]
+    fixed = per_stratum.nunique().lt(2) & per_stratum.min().lt(2)
+    if fixed.any():
+        names = fixed.index[fixed].tolist()
+        raise ValueError(
+            f"{len(names)} strata hold trials of {what} whose group no permutation "
+            f"can change, such as {names[:5]}: a stratum needs trials of both "
+            "groups, or of a group and another condition. Check `strata`; for "
+            "example subject x condition leaves every label fixed."
+        )
+
+
 def _check_finite(observed: float, null: np.ndarray, what: str) -> None:
     """Raise when a separation AUC is NaN, which leaves the p-value undefined."""
     if np.isnan(observed) or np.isnan(null).any():
@@ -344,7 +373,8 @@ def permutation_null_separation_auc(
     ------
     ValueError
         If a label in ``group_a`` or ``group_b`` is not a condition of
-        ``result``, ``strata`` does not fit, or an AUC is NaN.
+        ``result``, ``strata`` does not fit or leaves trials of the contrast
+        unable to change group, an AUC is NaN, or the null has zero spread.
 
     See Also
     --------
@@ -370,6 +400,13 @@ def permutation_null_separation_auc(
     _, codes = result._condition_coding()
     if strata is not None:
         strata = _check_strata(result, strata, per_subject)
+    _check_swappable(
+        codes,
+        codes_a,
+        codes_b,
+        np.zeros(codes.size) if strata is None else strata,
+        "the contrast",
+    )
     mask = _window_mask(result.times, window)
 
     def _auc(labels: np.ndarray) -> float:
@@ -387,6 +424,10 @@ def permutation_null_separation_auc(
         )
         null[i] = _auc(shuffled)
     _check_finite(observed, null, "the contrast")
+    if np.ptp(null) == 0:
+        raise ValueError(
+            "The null has zero spread: no permutation changes the AUC. Check `strata`."
+        )
     return observed, null, float((1 + np.sum(null >= observed)) / (n_perm + 1))
 
 
@@ -462,8 +503,8 @@ def permutation_familywise_separation_auc(
     ValueError
         If ``results`` or ``contrasts`` is empty, the results do not hold the
         same subjects and conditions in the same order, ``strata`` does not
-        fit, a contrast names an unknown condition, an AUC is NaN, or a null
-        is constant when ``standardize`` is true.
+        fit or leaves trials of a contrast unable to change group, a contrast
+        names an unknown condition, an AUC is NaN, or a null has zero spread.
 
     See Also
     --------
@@ -513,6 +554,12 @@ def permutation_familywise_separation_auc(
         )
         for group_a, group_b in contrasts
     ]
+    for (name, a, b), row in zip(
+        coded,
+        strata_per_contrast * len(coded) if shared else strata_per_contrast,
+        strict=True,
+    ):
+        _check_swappable(codes, a, b, row, repr(name))
     masks = {key: _window_mask(member.times, window) for key, member in members}
 
     def _family(labels_per_contrast: list[np.ndarray]) -> np.ndarray:
@@ -545,16 +592,15 @@ def permutation_familywise_separation_auc(
 
     null_mean = null_aucs.mean(axis=0)
     null_sd = null_aucs.std(axis=0, ddof=1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        z = (observed - null_mean) / null_sd
+    constant = np.argwhere(null_sd == 0)
+    if constant.size:
+        m, c = constant[0]
+        raise ValueError(
+            f"The null of {members[m][0]!r}, {coded[c][0]!r} has zero spread: no "
+            "permutation changes its AUC. Check `strata`."
+        )
+    z = (observed - null_mean) / null_sd
     if standardize:
-        constant = np.argwhere(null_sd == 0)
-        if constant.size:
-            m, c = constant[0]
-            raise ValueError(
-                f"The null of {members[m][0]!r}, {coded[c][0]!r} is constant, so it "
-                "cannot be standardised."
-            )
         statistic = z
         max_null = ((null_aucs - null_mean) / null_sd).max(axis=(1, 2))
     else:
