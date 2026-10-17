@@ -200,22 +200,45 @@ def _band_family(effect, seed=0, n_subjects=8, n_trials=3):
     return {"alpha": band(1.0), "beta": band(0.0)}
 
 
+SPEED = (["fast-easy", "fast-hard"], ["slow-easy", "slow-hard"])
+
+
+def _speed_by_class(speed_effect, seed=0, scale=1.0, class_effect=3.0):
+    """Speed x class conditions with a large class effect.
+
+    Returns the result, the subject of each trial and its subject x class
+    stratum, inside which only the speed label can move.
+    """
+    rng = np.random.default_rng(seed)
+    names = np.array(["fast-easy", "fast-hard", "slow-easy", "slow-hard"])
+    conditions = np.tile(np.repeat(names, 3), 8)
+    subjects = np.repeat([f"s{i}" for i in range(8)], 12)
+    speed, cls = np.array([c.split("-") for c in conditions]).T
+    traj = rng.normal(size=(conditions.size, 15, 3))
+    traj[cls == "hard", :, 0] += class_effect
+    traj[speed == "slow", :, 1] += speed_effect
+    result = TrajectoryResult(traj * scale, np.linspace(0, 1, 15), subjects, conditions)
+    return result, subjects, np.char.add(subjects, cls)
+
+
 def test_a_known_separation_gets_the_smallest_p():
     family = _band_family(effect=3.0)
-    table, max_null = permutation_familywise_separation_auc(
-        family, CONTRASTS, n_perm=99
+    subjects = family["alpha"].subjects
+    table, max_null, null_aucs = permutation_familywise_separation_auc(
+        family, CONTRASTS, strata=subjects, n_perm=99
     )
     p = table.set_index(["key", "contrast"])["p_fwer"]
     assert p["alpha", "famous+unfamiliar_vs_scrambled"] == pytest.approx(1 / 100)
     assert p["beta", "famous_vs_unfamiliar"] > 0.2
     assert max_null.shape == (99,)
+    assert null_aucs.shape == (99, 2, 2)
 
     _, _, p_single = permutation_null_separation_auc(
         family["alpha"],
         ["famous", "unfamiliar"],
         ["scrambled"],
         n_perm=99,
-        within_subject=True,
+        strata=subjects,
     )
     assert p_single == pytest.approx(1 / 100)
 
@@ -225,8 +248,8 @@ def test_p_values_are_uniform_under_exchangeable_labels():
     for seed in range(100):
         family = _band_family(effect=0.0, seed=seed)
         rng = np.random.default_rng(seed)
-        table, _ = permutation_familywise_separation_auc(
-            family, CONTRASTS, n_perm=49, rng=rng
+        table, _, _ = permutation_familywise_separation_auc(
+            family, CONTRASTS, strata=family["alpha"].subjects, n_perm=49, rng=rng
         )
         smallest_fwer.append(table["p_fwer"].min())
         single.append(
@@ -240,6 +263,66 @@ def test_p_values_are_uniform_under_exchangeable_labels():
         assert 0.01 < np.mean(p_values <= 0.1) < 0.19
 
 
+def test_strata_keep_the_other_factors_fixed():
+    # no speed effect: swapping speed across classes puts the class effect in
+    # the null, which then is too wide; within subject x class it is not
+    p_by_subject, p_by_class = [], []
+    for seed in range(60):
+        result, subjects, subject_class = _speed_by_class(0.0, seed=seed)
+        for strata, p_values in ((subjects, p_by_subject), (subject_class, p_by_class)):
+            p_values.append(
+                permutation_null_separation_auc(
+                    result,
+                    *SPEED,
+                    n_perm=49,
+                    strata=strata,
+                    rng=np.random.default_rng(seed),
+                )[2]
+            )
+    # measured: mean p 0.80 within subject, 0.51 within subject x class
+    assert np.mean(p_by_subject) > 0.7
+    assert 0.41 < np.mean(p_by_class) < 0.59
+
+    # and a small speed effect is found only with the right strata
+    result, subjects, subject_class = _speed_by_class(0.5)
+    p_subject = permutation_null_separation_auc(
+        result, *SPEED, n_perm=199, strata=subjects
+    )[2]
+    p_class = permutation_null_separation_auc(
+        result, *SPEED, n_perm=199, strata=subject_class
+    )[2]
+    assert p_class == pytest.approx(1 / 200)
+    assert p_subject > 0.1
+
+
+def test_standardising_lets_every_member_reach_significance():
+    # one PCA per band: alpha carries the effect, beta is noise ten times larger
+    alpha, _, subject_class = _speed_by_class(1.0, seed=1)
+    beta, _, _ = _speed_by_class(0.0, seed=2, scale=10.0)
+    family = {"alpha": alpha, "beta": beta}
+
+    def p_alpha(standardize):
+        table, _, _ = permutation_familywise_separation_auc(
+            family, [SPEED], strata=subject_class, n_perm=199, standardize=standardize
+        )
+        return table.set_index("key").loc["alpha", "p_fwer"]
+
+    assert p_alpha(standardize=True) == pytest.approx(1 / 200)
+    assert p_alpha(standardize=False) > 0.5  # beta's raw AUCs set the maximum
+
+
+def test_the_max_null_is_the_maximum_over_standardised_member_nulls():
+    family = _band_family(effect=1.0)
+    table, max_null, null_aucs = permutation_familywise_separation_auc(
+        family, CONTRASTS, strata=family["alpha"].subjects, n_perm=30
+    )
+    z_null = (null_aucs - null_aucs.mean(axis=0)) / null_aucs.std(axis=0, ddof=1)
+    np.testing.assert_allclose(max_null, z_null.max(axis=(1, 2)))
+    np.testing.assert_allclose(
+        table["z"], (table["observed_auc"] - table["null_mean"]) / table["null_sd"]
+    )
+
+
 def test_one_relabelling_per_permutation_is_shared_across_the_family():
     alpha = _band_family(effect=1.0)["alpha"]
     # two identical members: shared relabellings give them identical AUCs
@@ -249,16 +332,79 @@ def test_one_relabelling_per_permutation_is_shared_across_the_family():
             alpha.trajectories.copy(), alpha.times, alpha.subjects, alpha.conditions
         ),
     }
-    _, max_null = permutation_familywise_separation_auc(
-        family, CONTRASTS, n_perm=30, rng=np.random.default_rng(5)
+    _, max_null, null_aucs = permutation_familywise_separation_auc(
+        family,
+        CONTRASTS,
+        strata=alpha.subjects,
+        n_perm=30,
+        rng=np.random.default_rng(5),
+        standardize=False,
     )
+    np.testing.assert_array_equal(null_aucs[:, 0], null_aucs[:, 1])
     nulls = [
         permutation_null_separation_auc(
-            alpha, a, b, n_perm=30, rng=np.random.default_rng(5), within_subject=True
+            alpha, a, b, n_perm=30, rng=np.random.default_rng(5), strata=alpha.subjects
         )[1]
         for a, b in CONTRASTS
     ]
     np.testing.assert_array_equal(max_null, np.maximum(*nulls))
+
+
+def test_strata_per_contrast_draw_one_relabelling_per_contrast():
+    alpha = _band_family(effect=1.0)["alpha"]
+    twice = [CONTRASTS[0], CONTRASTS[0]]
+    _, _, shared = permutation_familywise_separation_auc(
+        {"alpha": alpha}, twice, strata=alpha.subjects, n_perm=20
+    )
+    _, _, separate = permutation_familywise_separation_auc(
+        {"alpha": alpha}, twice, strata=[alpha.subjects, alpha.subjects], n_perm=20
+    )
+    np.testing.assert_array_equal(shared[:, 0, 0], shared[:, 0, 1])
+    assert not np.array_equal(separate[:, 0, 0], separate[:, 0, 1])
+    with pytest.raises(ValueError, match="one row per contrast"):
+        permutation_familywise_separation_auc(
+            {"alpha": alpha}, twice, strata=[alpha.subjects] * 3, n_perm=5
+        )
+
+
+def test_per_subject_averages_the_subjects_separation_curves():
+    result, subjects, subject_class = _speed_by_class(1.0)
+    observed, _, _ = permutation_null_separation_auc(
+        result, *SPEED, n_perm=5, strata=subject_class, per_subject=True
+    )
+    slow = np.char.startswith(result.conditions, "slow")
+    curves = [
+        np.linalg.norm(
+            result.trajectories[(subjects == s) & ~slow].mean(axis=0)
+            - result.trajectories[(subjects == s) & slow].mean(axis=0),
+            axis=-1,
+        )
+        for s in np.unique(subjects)
+    ]
+    assert observed == pytest.approx(
+        np.trapezoid(np.mean(curves, axis=0), result.times)
+    )
+
+    with pytest.raises(ValueError, match="strata nested in subjects"):
+        permutation_null_separation_auc(result, *SPEED, n_perm=5, per_subject=True)
+    by_class_only = [condition.split("-")[1] for condition in result.conditions]
+    with pytest.raises(ValueError, match="strata nested in subjects"):
+        permutation_familywise_separation_auc(
+            {"r": result}, [SPEED], strata=by_class_only, n_perm=5, per_subject=True
+        )
+
+
+def test_a_missing_point_raises_naming_the_member_and_contrast():
+    family = _band_family(effect=0.0)
+    family["beta"].trajectories[0, 3] = np.nan
+    with pytest.raises(
+        ValueError, match=r"of 'beta', 'famous\+unfamiliar_vs_scrambled'"
+    ):
+        permutation_familywise_separation_auc(
+            family, CONTRASTS, strata=family["alpha"].subjects, n_perm=5
+        )
+    with pytest.raises(ValueError, match="AUC of the contrast is NaN"):
+        permutation_null_separation_auc(family["beta"], "famous", "scrambled", n_perm=5)
 
 
 def test_familywise_results_must_be_aligned():
@@ -271,9 +417,16 @@ def test_familywise_results_must_be_aligned():
         beta.subjects[order],
         beta.conditions[order],
     )
+    strata = family["alpha"].subjects
     with pytest.raises(ValueError, match="'beta' does not hold the subjects"):
-        permutation_familywise_separation_auc(family, CONTRASTS, n_perm=5)
+        permutation_familywise_separation_auc(
+            family, CONTRASTS, strata=strata, n_perm=5
+        )
     with pytest.raises(ValueError, match="Unknown condition"):
         permutation_familywise_separation_auc(
-            _band_family(effect=0.0), [("famous", "scrambeld")], n_perm=5
+            _band_family(effect=0.0), [("famous", "scrambeld")], strata=strata, n_perm=5
+        )
+    with pytest.raises(ValueError, match="one value per trajectory"):
+        permutation_familywise_separation_auc(
+            _band_family(effect=0.0), CONTRASTS, strata=strata[:-1], n_perm=5
         )

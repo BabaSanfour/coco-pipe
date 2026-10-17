@@ -370,7 +370,7 @@ def test_named_conditions_give_the_numbers_of_integer_ones():
         group_b=NAMES[1:],
         n_perm=20,
         rng=np.random.default_rng(1),
-        within_subject=True,
+        strata=named.subjects,
     )
     obs_int, null_int, p_int = permutation_null_separation_auc(
         integer,
@@ -378,7 +378,7 @@ def test_named_conditions_give_the_numbers_of_integer_ones():
         group_b=[4, 5],
         n_perm=20,
         rng=np.random.default_rng(1),
-        within_subject=True,
+        strata=integer.subjects,
     )
     assert obs_named == obs_int
     np.testing.assert_array_equal(null_named, null_int)
