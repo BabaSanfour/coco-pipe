@@ -1,0 +1,1 @@
+`resolve_qc_status` and `CheckResult.from_flag_dict` raise a `ValueError` for a QC flag whose level is not `"pass"`, `"warn"` or `"fail"`, as `make_qc_flag` already did. Any other level, such as `"FAIL"`, `"warning"`, a missing level or a NaN read from a flags table, counted as a pass, so the descriptor QC report showed such a section as OK.

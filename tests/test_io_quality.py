@@ -78,6 +78,18 @@ def test_qc_flags_and_status():
 
 
 @pytest.mark.parametrize(
+    "flag", [{"level": "FAIL"}, {"level": "error"}, {"level": np.nan}, {}]
+)
+def test_unknown_qc_flag_level_raises(flag):
+    # an unknown or missing level used to count as a pass
+    flag = {"code": "bad", **flag}
+    with pytest.raises(ValueError, match=r"level must be one of.*code 'bad'"):
+        resolve_qc_status([make_qc_flag("warn", "ok", "ok"), flag])
+    with pytest.raises(ValueError, match="level must be one of"):
+        CheckResult.from_flag_dict(flag)
+
+
+@pytest.mark.parametrize(
     ("level", "status", "severity"),
     [("pass", "OK", 0), ("warn", "WARN", 5), ("fail", "FAIL", 9)],
 )

@@ -194,7 +194,7 @@ class CheckResult:
     def from_flag_dict(cls, flag: dict[str, Any]) -> CheckResult:
         """Construct a CheckResult from a :func:`make_qc_flag` record."""
         level_map = {"pass": "OK", "warn": "WARN", "fail": "FAIL"}
-        status = level_map.get(str(flag.get("level", "pass")), "OK")
+        status = level_map[_flag_level(flag)]
         return cls(
             check_name=str(flag.get("code", "")),
             status=status,
@@ -227,14 +227,26 @@ def make_qc_flag(
 
 
 def resolve_qc_status(flags: list[dict[str, Any]]) -> str:
-    """Return the worst status level from a list of QC flag dicts."""
-    levels = [str(flag.get("level", "pass")) for flag in flags]
-    valid_levels = [level if level in STATUS_ORDER else "pass" for level in levels]
+    """Return the worst status level from a list of QC flag dicts.
+
+    Raises ``ValueError`` for a flag whose level is not ``"pass"``, ``"warn"``
+    or ``"fail"``.
+    """
     return max(
-        valid_levels,
-        key=lambda status: STATUS_ORDER.get(status, 0),
+        (_flag_level(flag) for flag in flags),
+        key=STATUS_ORDER.__getitem__,
         default="pass",
     )
+
+
+def _flag_level(flag: dict[str, Any]) -> str:
+    level = flag.get("level")
+    if level not in STATUS_ORDER:
+        raise ValueError(
+            "QC flag level must be one of 'pass', 'warn' or 'fail', got "
+            f"{level!r} (code {flag.get('code')!r})."
+        )
+    return level
 
 
 def _validate_group_by(value: str) -> None:
