@@ -401,6 +401,11 @@ def compute_subject_outlier_burden(
     """Aggregate row-level MAD outlier scores to one row per subject."""
     if subject_col not in df.columns:
         raise ValueError(f"Subject column '{subject_col}' not found.")
+    if subject_col in feature_cols:
+        raise ValueError(
+            f"Subject column '{subject_col}' is also in feature_cols; subject "
+            "labels cannot be scored as a feature."
+        )
     missing = int(df[subject_col].isna().sum())
     if missing:
         raise ValueError(
@@ -803,6 +808,11 @@ def drop_subject_outliers(
     subject_ids = np.asarray(_get_subject_ids(container, subject_col), dtype=object)
     n_subjects_in = len(set(subject_ids.tolist()))
     feature_df = _container_to_feature_df(container, feature_cols).copy()
+    if subject_col in feature_df.columns:
+        raise ValueError(
+            f"'{subject_col}' names both the subject coordinate and a feature; "
+            "rename the feature or pass another subject_col."
+        )
     schema = (
         feature_schema if feature_schema is not None else container.feature_schema()
     )

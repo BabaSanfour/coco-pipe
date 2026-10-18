@@ -478,6 +478,27 @@ def test_subject_column_must_exist():
     assert result.n_subjects_in is None
 
 
+def test_subject_column_named_like_a_feature():
+    # the subject IDs used to overwrite the feature, which was then not scored
+    X = np.random.default_rng(0).standard_normal((12, 2))
+    X[8:, 0] += 50.0
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={"feature": ["subject", "f1"], "subject": np.repeat(list("ABC"), 4)},
+    )
+    for group_by in (None, "feature"):
+        with pytest.raises(ValueError, match="names both the subject coordinate"):
+            drop_subject_outliers(container, group_by=group_by)
+    # a selection without that feature has no clash
+    _, result = drop_subject_outliers(container, feature_cols=["f1"])
+    assert result.n_subjects_in == 3
+
+    frame = pd.DataFrame(X, columns=["f0", "f1"]).assign(subject=list("AAAABBBBCCCC"))
+    with pytest.raises(ValueError, match="also in feature_cols"):
+        compute_subject_outlier_burden(frame, ["subject", "f1"])
+
+
 @pytest.mark.parametrize("missing", [None, np.nan])
 def test_missing_subject_ids(missing):
     # the epochs without a subject used to be pooled into a subject 'nan'
