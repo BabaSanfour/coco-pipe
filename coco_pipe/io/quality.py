@@ -340,24 +340,14 @@ def compute_row_outlier_scores(
     """
     if z_threshold <= 0:
         raise ValueError("z_threshold must be positive.")
+    if len(feature_cols) == 0:
+        raise ValueError("There are no features to score: feature_cols is empty.")
 
     features = (
         _require_feature_columns(df, feature_cols)
         .apply(pd.to_numeric, errors="coerce")
         .replace([np.inf, -np.inf], np.nan)
     )
-    n_rows = len(features)
-    n_features = len(feature_cols)
-    if n_features == 0:
-        return pd.DataFrame(
-            {
-                "outlier_fraction": np.zeros(n_rows, dtype=float),
-                "n_outlier_features": np.zeros(n_rows, dtype=int),
-                "mad_z_max": np.zeros(n_rows, dtype=float),
-            },
-            index=df.index,
-        )
-
     values = features.to_numpy(dtype=float)
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)

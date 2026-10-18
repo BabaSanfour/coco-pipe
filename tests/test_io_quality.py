@@ -336,13 +336,9 @@ def test_subject_outlier_burden():
 
 def test_subject_outlier_burden_arguments():
     frame = pd.DataFrame({"participant": ["s1", "s2"], "value": [1.0, 2.0]})
-    empty = compute_subject_outlier_burden(frame, [], subject_col="participant")
-    assert empty.to_dict(orient="list") == {
-        "participant": ["s1", "s2"],
-        "outlier_fraction": [0.0, 0.0],
-        "n_outlier_features": [0.0, 0.0],
-        "n_epochs": [1, 1],
-    }
+    # no features used to give every subject a clean burden of 0
+    with pytest.raises(ValueError, match="no features to score"):
+        compute_subject_outlier_burden(frame, [], subject_col="participant")
     with pytest.raises(ValueError, match="Subject column"):
         compute_subject_outlier_burden(frame, ["value"])
     with pytest.raises(ValueError, match="z_threshold must be positive"):
@@ -442,6 +438,9 @@ def test_drop_epoch_outliers_errors():
         ({"z_threshold": 0}, "z_threshold"),
         ({"group_by": "bogus"}, "group_by must be"),
         ({"min_obs": 0}, "min_obs"),
+        # no features passed QC silently, or crashed with group_by
+        ({"feature_cols": []}, "no features to score"),
+        ({"feature_cols": [], "group_by": "family"}, "no features to score"),
     ]:
         with pytest.raises(ValueError, match=match):
             drop_epoch_outliers(container, **kwargs)
