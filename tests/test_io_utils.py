@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -80,21 +82,40 @@ def test_normalize_subject_value(value, expected):
 
 
 def test_load_participants_tsv(tmp_path):
+    root = tmp_path / "my study"  # a space, as many real paths have
+    root.mkdir()
     pd.DataFrame({"participant_id": ["sub-01", "sub-02"], "age": [20, 30]}).to_csv(
-        tmp_path / "participants.tsv", sep="\t", index=False
+        root / "participants.tsv", sep="\t", index=False
     )
-    assert load_participants_tsv(tmp_path)["0001"] == {"age": 20}
-    assert load_participants_tsv(tmp_path / "nowhere") == {}
+    assert load_participants_tsv(root)["0001"] == {"age": 20}
+    assert load_participants_tsv(root / "nowhere") == {}
 
-    derivative = tmp_path / "derivatives" / "preproc"
+    derivative = root / "derivatives" / "preproc"
     derivative.mkdir(parents=True)
-    (derivative / "dataset_description.json").write_text(
-        '{"DatasetType": "derivative", "SourceDatasets": [{"URL": "../../"}]}'
-    )
-    assert load_participants_tsv(derivative)["0001"] == {"age": 20}
 
-    (tmp_path / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
-    assert load_participants_tsv(tmp_path) == {}
+    def lookup(sources, links=None):
+        description = {"DatasetType": "derivative", "SourceDatasets": sources}
+        if links is not None:
+            description["DatasetLinks"] = links
+        (derivative / "dataset_description.json").write_text(json.dumps(description))
+        return load_participants_tsv(derivative)
+
+    # every local form BIDS allows: a relative path, a file: URI (with the
+    # space percent-encoded), a plain absolute path (a drive on Windows), and a
+    # BIDS URI named in DatasetLinks
+    for source, links in (
+        ("../../", None),
+        (root.resolve().as_uri(), None),
+        (str(root.resolve()), None),
+        ("bids:raw:", {"raw": "../../"}),
+    ):
+        assert lookup([{"URL": source}], links)["0001"] == {"age": 20}, source
+    # remote sources are skipped, and the search goes on to the next source
+    assert lookup([{"URL": "doi:10.1/x"}, {"URL": "../../"}])["0001"] == {"age": 20}
+    assert lookup([{"URL": "doi:10.1/x"}, {"URL": "bids:other:"}]) == {}
+
+    (root / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
+    assert load_participants_tsv(root) == {}
 
 
 def test_io_exposes_dataset_classes_lazily():
