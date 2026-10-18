@@ -120,7 +120,7 @@ The individual checks live in :mod:`coco_pipe.io.quality` and each returns a
    * - :func:`coco_pipe.io.quality.check_missingness`
      - Fraction of ``NaN`` values per feature.
    * - :func:`coco_pipe.io.quality.check_constant_columns`
-     - Near-zero-variance (constant) columns.
+     - Constant columns: two or more values, all equal.
    * - :func:`coco_pipe.io.quality.check_outliers_zscore`
      - Z-score outliers above a threshold.
    * - :func:`coco_pipe.io.quality.check_flatline`

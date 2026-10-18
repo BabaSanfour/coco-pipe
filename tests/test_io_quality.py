@@ -136,10 +136,28 @@ def test_check_missingness():
 
 def test_check_constant_columns():
     (array,) = check_constant_columns(np.array([[1, 2, 3], [1, 4, 3], [1, 5, 3]]))
-    assert "2 constant features" in array.message
+    assert "2 constant column(s): 0, 2" in array.message
+    # a column is constant when it holds two or more values, all equal; arrays
+    # and tables agree, and an all-missing column does not warn
+    nan = np.nan
+    values = np.array(
+        [
+            [0.1, 0.1, 0.5, nan, 0.1],
+            [0.1, 0.1, nan, nan, nan],
+            [0.1, nan, nan, nan, nan],
+        ]
+    )
+    frame = pd.DataFrame(values, columns=list("ABCDE"))
+    for data, names in ((values, "0, 1"), (frame, "A, B")):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            (result,) = check_constant_columns(data)
+        assert result.message == f"Found 2 constant column(s): {names}."
+    assert check_constant_columns(values[:1]) == []
+    assert check_constant_columns(pd.DataFrame(values[:1])) == []
     frame = pd.DataFrame({"A": [1, 1, 1], "B": [1, 2, 3], "C": ["x", "x", "x"]})
     (named,) = check_constant_columns(frame)
-    assert "constant columns: A" in named.message
+    assert "constant column(s): A" in named.message
     many = pd.DataFrame({name: [1, 1] for name in "ABCD"} | {"E": [5, 6]})
     assert "..." in check_constant_columns(many)[0].message
     for nothing in (

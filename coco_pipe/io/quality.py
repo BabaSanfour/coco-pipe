@@ -496,7 +496,10 @@ def check_missingness(
 
 def check_constant_columns(df: QualityInput) -> list[CheckResult]:
     """
-    Check for columns/features with zero variance.
+    Check for columns/features that hold a single value.
+
+    A numeric column is constant when it has at least two non-missing values
+    and they are all equal. Array columns are named by position.
 
     Parameters
     ----------
@@ -520,33 +523,24 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
     if isinstance(df, np.ndarray):
         if df.ndim != 2:
             return []
-        arr = _numeric_values(df)
-        if arr.size == 0 or arr.shape[0] == 0:
-            return []
-        stds = np.nanstd(arr, axis=0)
-        constant_indices = np.where(stds == 0)[0]
-        if len(constant_indices) > 0:
-            return [
-                CheckResult(
-                    "Constant Features",
-                    "WARN",
-                    f"Found {len(constant_indices)} constant features (zero variance).",
-                    3,
-                )
-            ]
+        values = _numeric_values(df)
+        names = list(range(df.shape[1]))
+    else:
+        numeric = df.select_dtypes(include=np.number)
+        values = numeric.to_numpy(dtype=float)
+        names = numeric.columns.tolist()
+    if values.ndim != 2 or values.size == 0:
         return []
 
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    if len(numeric_cols) == 0:
-        return []
-
-    stds = df[numeric_cols].std()
-    constant_cols = stds[stds == 0].index.tolist()
+    # fmin/fmax skip NaN without warning; equality is exact, unlike a float std
+    n_present = np.count_nonzero(~np.isnan(values), axis=0)
+    single_value = np.fmin.reduce(values, axis=0) == np.fmax.reduce(values, axis=0)
+    constant_cols = [names[i] for i in np.flatnonzero((n_present >= 2) & single_value)]
     if not constant_cols:
         return []
 
     msg = (
-        f"Found {len(constant_cols)} constant columns: "
+        f"Found {len(constant_cols)} constant column(s): "
         f"{', '.join(str(c) for c in constant_cols[:3])}"
         f"{'...' if len(constant_cols) > 3 else ''}."
     )
