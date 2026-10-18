@@ -288,9 +288,10 @@ def test_load_descriptor_table_errors(tmp_path):
     table = _save(df, tmp_path / "tbl.parquet", columns)
     with pytest.raises(ValueError):
         load_descriptor_table(table, target_col="missing")
-    # No features matched descriptor_families
-    with pytest.raises(RuntimeError):
-        load_descriptor_table(table, descriptor_families=["other"])
+    # A family the table lacks, alone or next to one it has
+    for families in (["other"], ["band", "other"]):
+        with pytest.raises(ValueError, match=r"\['other'\] not found.*\['band'\]"):
+            load_descriptor_table(table, descriptor_families=families)
 
     # No rows survived NaN/Inf filtering
     df["band_feat_ch-s1"] = [np.nan, np.inf]

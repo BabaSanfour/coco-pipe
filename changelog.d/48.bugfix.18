@@ -1,0 +1,1 @@
+`load_descriptor_table` raises a `ValueError` when `descriptor_families` names a family the table does not have, naming it and the families present. In a list mixing real and misspelled names, the misspelled ones were silently left out; a list of only misspelled names raised a `RuntimeError`, which is now the same `ValueError`.

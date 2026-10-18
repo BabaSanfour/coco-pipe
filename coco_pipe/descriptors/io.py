@@ -232,12 +232,17 @@ def load_descriptor_table(
         parse_descriptor_feature_column(column, known_families) for column in raw_cols
     ]
     if descriptor_families:
-        allowed = {str(value).strip() for value in descriptor_families}
-        parsed = [item for item in parsed if item["family"] in allowed]
-        if not parsed:
-            raise RuntimeError(
-                f"No features matched descriptor_families={list(descriptor_families)}."
+        allowed = list(
+            dict.fromkeys(str(value).strip() for value in descriptor_families)
+        )
+        present = list(dict.fromkeys(item["family"] for item in parsed))
+        unknown = [family for family in allowed if family not in present]
+        if unknown:
+            raise ValueError(
+                f"descriptor_families {unknown} not found in {table_path}; its "
+                f"families are {present}."
             )
+        parsed = [item for item in parsed if item["family"] in allowed]
 
     if location_statistic is not None:
         if location_statistic not in {"mean", "median"}:
