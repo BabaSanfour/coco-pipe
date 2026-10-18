@@ -630,7 +630,10 @@ def load_combined_embedding_table(
         raise ValueError(f"No embedding_* feature columns in {path}.")
     id_cols = [c for c in frame.columns if c not in feature_cols]
 
-    X = frame[feature_cols].to_numpy(dtype=float)
+    # Keep the table's float type: the merged tables are float32.
+    X = frame[feature_cols].to_numpy()
+    if not np.issubdtype(X.dtype, np.floating):
+        X = X.astype(np.float64)
     coords: dict[str, Any] = {
         "feature": np.asarray([str(c) for c in feature_cols], dtype=object)
     }

@@ -561,8 +561,9 @@ def _write_combined_table(tmp_path, model_key, condition, representation):
             "recording_id": ["sub-0001_run-01", "sub-0001_run-02", "sub-0002_run-01"],
             "condition": [condition] * 3,
             "model_key": [model_key] * 3,
-            "embedding_0000": [0.1, 0.2, 0.3],
-            "embedding_0001": [1.0, 1.1, 1.2],
+            # float32, as the merge step writes model embeddings
+            "embedding_0000": np.float32([0.1, 0.2, 0.3]),
+            "embedding_0001": np.float32([1.0, 1.1, 1.2]),
         }
     )
     path = combined_embedding_table_path(tmp_path, model_key, condition, representation)
@@ -577,6 +578,9 @@ def test_load_combined_embedding_table_roundtrip(tmp_path):
     )
     assert container.dims == ("obs", "feature")
     assert container.X.shape == (3, 2)
+    # read back as stored, not doubled to float64
+    assert container.X.dtype == np.float32
+    np.testing.assert_array_equal(container.X[:, 1], np.float32([1.0, 1.1, 1.2]))
     assert list(container.coords["feature"]) == ["embedding_0000", "embedding_0001"]
     assert "subject" in container.coords
     assert container.meta["model_key"] == "cbramod"
