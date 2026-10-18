@@ -530,17 +530,23 @@ def check_missingness(
     )
 
 
-def check_constant_columns(df: QualityInput) -> list[CheckResult]:
+def check_constant_columns(
+    df: QualityInput, names: list[str] | None = None
+) -> list[CheckResult]:
     """
     Check for columns/features that hold a single value.
 
     A numeric column is constant when it has at least two non-missing values
-    and they are all equal. Array columns are named by position.
+    and they are all equal. In an array the columns are the second axis, and
+    further axes (e.g. time in epochs x channels x time) are pooled within each
+    column, so a dead channel is a constant column; a 1-D array is one column.
 
     Parameters
     ----------
     df : DataFrame or array-like
         The data to check.
+    names : list of str, optional
+        Labels of an array's columns, for the message; positions by default.
 
     Returns
     -------
@@ -558,20 +564,33 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
         return []
 
     if isinstance(df, np.ndarray):
-        if df.ndim != 2:
-            return []
         values = _numeric_values(df)
-        names = list(range(df.shape[1]))
+        if values.size == 0:
+            return []
+        if values.ndim == 1:
+            values = values[:, None]
+        if names is None:
+            names = list(range(values.shape[1]))
+        elif len(names) != values.shape[1]:
+            raise ValueError(
+                f"names has {len(names)} labels for {values.shape[1]} columns."
+            )
+        axes = tuple(axis for axis in range(values.ndim) if axis != 1)
     else:
+        if names is not None:
+            raise TypeError("names labels an array; a DataFrame names its columns.")
         numeric = df.select_dtypes(include=np.number)
         values = _numeric_values(numeric)
         names = numeric.columns.tolist()
-    if values.ndim != 2 or values.size == 0:
+        axes = (0,)
+    if values.size == 0:
         return []
 
     # fmin/fmax skip NaN without warning; equality is exact, unlike a float std
-    n_present = np.count_nonzero(~np.isnan(values), axis=0)
-    single_value = np.fmin.reduce(values, axis=0) == np.fmax.reduce(values, axis=0)
+    n_present = np.count_nonzero(~np.isnan(values), axis=axes)
+    single_value = np.fmin.reduce(values, axis=axes) == np.fmax.reduce(
+        values, axis=axes
+    )
     constant_cols = [names[i] for i in np.flatnonzero((n_present >= 2) & single_value)]
     if not constant_cols:
         return []

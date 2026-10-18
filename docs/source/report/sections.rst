@@ -635,7 +635,7 @@ operate on numeric columns only.
    * - :func:`~coco_pipe.io.quality.check_missingness`
      - Fraction of NaN values. ``WARN`` ≥ ``threshold_warn`` (default 0.01), ``FAIL`` ≥ ``threshold_fail`` (default 0.20).
    * - :func:`~coco_pipe.io.quality.check_constant_columns`
-     - Numeric columns holding two or more values, all equal. Returns one ``WARN`` ``CheckResult`` naming them (positions for arrays), or an empty list.
+     - Numeric columns holding two or more values, all equal. An array's columns are its second axis, with further axes pooled (a dead channel in epochs x channels x time), named by ``names`` or position. Returns one ``WARN`` ``CheckResult`` naming them, or an empty list.
    * - :func:`~coco_pipe.io.quality.check_outliers_zscore`
      - Z-score outlier detection. ``WARN`` when outlier fraction exceeds threshold.
    * - :func:`~coco_pipe.io.quality.check_flatline`

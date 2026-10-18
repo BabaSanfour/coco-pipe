@@ -383,18 +383,34 @@ def test_resolve_config_fallback():
 
 
 def test_add_container_constant_columns():
-    rep = Report("T")
+    from coco_pipe.io import DataContainer
 
-    class DummyContainer:
-        dims: ClassVar[list] = ["a"]
-        shape: ClassVar[list] = [2]
-        coords: ClassVar[dict] = {}
-        X = np.array([[1, 1], [1, 1]])  # constant
-        y = None
-
-    rep.add_container(DummyContainer(), show_dist=True)
-    sec = rep.children[-1]
-    assert len(sec.findings) >= 0
+    rng = np.random.default_rng(0)
+    # a dead channel in epochs x channels x time used to go unreported
+    epochs = rng.standard_normal((10, 3, 20))
+    epochs[:, 1] = 0.0
+    table = rng.standard_normal((10, 3))
+    table[:, 2] = 1.0
+    for container, label in (
+        (
+            DataContainer(
+                epochs,
+                dims=("obs", "channel", "time"),
+                coords={"channel": ["Fz", "Cz", "Pz"]},
+            ),
+            "Cz",
+        ),
+        (
+            DataContainer(
+                table, dims=("obs", "feature"), coords={"feature": ["a", "b", "c"]}
+            ),
+            "c",
+        ),
+    ):
+        rep = Report("T")
+        rep.add_container(container, show_dist=True)
+        messages = [finding["message"] for finding in rep.children[-1].findings]
+        assert f"Found 1 constant column(s): {label}." in messages
 
 
 def test_add_container_plot_exception():

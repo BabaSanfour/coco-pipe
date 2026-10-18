@@ -167,6 +167,17 @@ def test_check_constant_columns():
         assert result.message == f"Found 2 constant column(s): {names}."
     assert check_constant_columns(values[:1]) == []
     assert check_constant_columns(pd.DataFrame(values[:1])) == []
+    # beyond two axes the further ones are pooled per column: a dead channel
+    epochs = np.random.default_rng(0).standard_normal((4, 3, 5))
+    epochs[:, 1] = 0.0
+    (dead,) = check_constant_columns(epochs, names=["Fz", "Cz", "Pz"])
+    assert dead.message == "Found 1 constant column(s): Cz."
+    (series,) = check_constant_columns(np.zeros(4))
+    assert series.message == "Found 1 constant column(s): 0."
+    with pytest.raises(ValueError, match="2 labels for 3 columns"):
+        check_constant_columns(epochs, names=["Fz", "Cz"])
+    with pytest.raises(TypeError, match="names labels an array"):
+        check_constant_columns(frame, names=["x"] * 5)
     frame = pd.DataFrame({"A": [1, 1, 1], "B": [1, 2, 3], "C": ["x", "x", "x"]})
     (named,) = check_constant_columns(frame)
     assert "constant column(s): A" in named.message
