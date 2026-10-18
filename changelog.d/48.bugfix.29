@@ -1,0 +1,1 @@
+`compute_row_outlier_scores`, and the QC functions built on it, raise a `ValueError` naming the feature columns that hold text that is not a number; such values became NaN and were not scored. Numbers stored as text still score. In grouped subject QC, the `subject_outlier_burden` table names its group column after `group_by` (for example `measure`); it was always called `family`.

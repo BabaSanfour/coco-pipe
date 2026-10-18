@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from coco_pipe.io.quality import (
-    CheckResult,
     EpochDropRecord,
     QCResult,
     SubjectDropRecord,
@@ -85,25 +84,6 @@ def test_unknown_qc_flag_level_raises(flag):
     flag = {"code": "bad", **flag}
     with pytest.raises(ValueError, match=r"level must be one of.*code 'bad'"):
         resolve_qc_status([make_qc_flag("warn", "ok", "ok"), flag])
-    with pytest.raises(ValueError, match="level must be one of"):
-        CheckResult.from_flag_dict(flag)
-
-
-@pytest.mark.parametrize(
-    ("level", "status", "severity"),
-    [("pass", "OK", 0), ("warn", "WARN", 5), ("fail", "FAIL", 9)],
-)
-def test_check_result_from_flag(level, status, severity):
-    flag = make_qc_flag(
-        level, "feature_qc", "Feature QC.", value=3, threshold=2, scope="complexity"
-    )
-    result = CheckResult.from_flag_dict(flag)
-    assert result.check_name == "feature_qc"
-    assert result.status == status
-    assert result.severity == severity
-    assert result.metric_name == "complexity"
-    assert result.metric_value == 3
-    assert result.is_issue == (level != "pass")
 
 
 def test_qc_result_counts():
@@ -122,8 +102,6 @@ def test_qc_result_counts():
     assert result.retention_rate == pytest.approx(0.8)
     assert result.n_epochs_dropped == 1
     assert result.n_subjects_dropped == 1
-    # NaN/inf rows + extreme rows + observations dropped by QC
-    assert result.total_dropped == 2 + 1 + (10 - 8)
     summary = result.summary()
     assert summary["n_feature_columns_dropped"] == 2
     assert {"retention_rate", "n_rows_entering_qc", "epoch_drop_threshold"} <= set(
@@ -271,6 +249,16 @@ def test_row_outlier_scores():
         z_threshold=3.0,
     )
     assert missing["outlier_fraction"].tolist() == [0.0, 0.0, 0.0, 1.0]
+
+    # text used to become NaN and go unscored; numbers stored as text still score
+    text = pd.DataFrame({"f1": ["1.0", "1.1", "0.9", "50.0"], "f2": [1, 2, 3, 4]})
+    assert compute_row_outlier_scores(text, ["f1"], z_threshold=3.0)[
+        "outlier_fraction"
+    ].tolist() == [0.0, 0.0, 0.0, 1.0]
+    with pytest.raises(ValueError, match=r"\['f1'\] hold non-numeric values"):
+        compute_row_outlier_scores(
+            text.assign(f1=["1.0", "oops", "0.9", "50.0"]), ["f1", "f2"]
+        )
 
 
 def test_row_outlier_scores_per_group():
@@ -465,7 +453,7 @@ def test_drop_subject_outliers():
     assert result.subjects_dropped[0].subject_id == "sub-09"
     assert result.subject_outlier_burden is not None
 
-    # a subject's observations are averaged before it is scored
+    # each epoch is scored, then a subject's epoch scores are averaged
     X = np.random.default_rng(5).standard_normal((12, 8))
     X[-2:] = 1000.0
     subjects = [f"sub-{index:02d}" for index in range(6) for _ in range(2)]
@@ -529,12 +517,20 @@ def test_subject_column_named_like_a_feature():
         dims=("obs", "feature"),
         coords={"feature": ["subject", "f1"], "subject": np.repeat(list("ABC"), 4)},
     )
-    for group_by in (None, "feature"):
-        with pytest.raises(ValueError, match="names both the subject coordinate"):
-            drop_subject_outliers(container, group_by=group_by)
-    # a selection without that feature has no clash
-    _, result = drop_subject_outliers(container, feature_cols=["f1"])
-    assert result.n_subjects_in == 3
+    _, result = drop_subject_outliers(container, outlier_fraction_threshold=0.2)
+    assert [record.subject_id for record in result.subjects_dropped] == ["C"]
+    masks, result = drop_subject_outliers(
+        container, group_by="feature", outlier_fraction_threshold=0.2
+    )
+    assert sorted(masks) == ["f1", "subject"]
+    assert [record.subject_id for record in result.per_family_dropped["subject"]] == [
+        "C"
+    ]
+    # the grouped burden names its group column after group_by
+    assert result.subject_outlier_burden["feature"].unique().tolist() == [
+        "subject",
+        "f1",
+    ]
 
     frame = pd.DataFrame(X, columns=["f0", "f1"]).assign(subject=list("AAAABBBBCCCC"))
     with pytest.raises(ValueError, match="also in feature_cols"):

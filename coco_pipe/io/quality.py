@@ -121,15 +121,6 @@ class QCResult:
             return float("nan")
         return self.n_obs_out / self.n_obs_in
 
-    @property
-    def total_dropped(self) -> int:
-        """Return total rows dropped across all QC levels."""
-        return (
-            self.n_dropped_nan_inf
-            + self.n_dropped_extreme
-            + (self.n_obs_in - self.n_obs_out)
-        )
-
     def summary(self) -> dict[str, Any]:
         """Return a flat summary suitable for logs and report headers."""
         summary = {
@@ -193,20 +184,6 @@ class CheckResult:
     def is_issue(self) -> bool:
         """Return True if status is WARN or FAIL."""
         return self.status in {"WARN", "FAIL"}
-
-    @classmethod
-    def from_flag_dict(cls, flag: dict[str, Any]) -> CheckResult:
-        """Construct a CheckResult from a :func:`make_qc_flag` record."""
-        level_map = {"pass": "OK", "warn": "WARN", "fail": "FAIL"}
-        status = level_map[_flag_level(flag)]
-        return cls(
-            check_name=str(flag.get("code", "")),
-            status=status,
-            message=str(flag.get("message", "")),
-            severity={"OK": 0, "WARN": 5, "FAIL": 9}[status],
-            metric_name=str(flag.get("scope") or ""),
-            metric_value=flag.get("value"),
-        )
 
 
 def make_qc_flag(
@@ -349,11 +326,13 @@ def compute_row_outlier_scores(
     if len(feature_cols) == 0:
         raise ValueError("There are no features to score: feature_cols is empty.")
 
-    features = (
-        _require_feature_columns(df, feature_cols)
-        .apply(pd.to_numeric, errors="coerce")
-        .replace([np.inf, -np.inf], np.nan)
-    )
+    selected = _require_feature_columns(df, feature_cols)
+    features = selected.apply(pd.to_numeric, errors="coerce")
+    coerced = (features.isna() & selected.notna()).any(axis=0).to_numpy()
+    if coerced.any():
+        names = list(dict.fromkeys(features.columns[coerced]))
+        raise ValueError(f"Feature columns {names} hold non-numeric values.")
+    features = features.replace([np.inf, -np.inf], np.nan)
     values = features.to_numpy(dtype=float)
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)
@@ -420,15 +399,22 @@ def compute_subject_outlier_burden(
             f"{missing} row(s) have no '{subject_col}'; the subject outlier "
             "burden needs the subject of every row."
         )
-    scores = compute_row_outlier_scores(
-        df,
-        feature_cols,
-        z_threshold=z_threshold,
+    scores = compute_row_outlier_scores(df, feature_cols, z_threshold=z_threshold)
+    return _subject_burden(scores, df[subject_col].to_numpy(), subject_col)
+
+
+def _subject_burden(
+    scores: pd.DataFrame, subjects: np.ndarray, subject_col: str, suffix: str = ""
+) -> pd.DataFrame:
+    """Per-subject mean of the row scores ending in ``suffix`` (``_<group>``)."""
+    rows = pd.DataFrame(
+        {
+            "outlier_fraction": scores[f"outlier_fraction{suffix}"].to_numpy(),
+            "n_outlier_features": scores[f"n_outlier_features{suffix}"].to_numpy(),
+        }
     )
-    scores = scores.copy()
-    scores[subject_col] = df[subject_col].to_numpy()
     return (
-        scores.groupby(subject_col, sort=False)
+        rows.groupby(pd.Index(subjects, name=subject_col), sort=False)
         .agg(
             outlier_fraction=("outlier_fraction", "mean"),
             n_outlier_features=("n_outlier_features", "mean"),
@@ -503,14 +489,7 @@ def check_missingness(
     if df.size == 0:
         return CheckResult("Missingness", "WARN", "Dataset is empty.", 5)
 
-    if isinstance(df, np.ndarray):
-        missing_count = int(pd.isna(df).sum())
-        total = df.size
-    else:
-        missing_count = int(df.isna().sum().sum())
-        total = df.size
-
-    pct = missing_count / total
+    pct = int(np.count_nonzero(pd.isna(df))) / df.size
 
     if pct > threshold_fail:
         return CheckResult(
@@ -742,14 +721,14 @@ def drop_epoch_outliers(
         group_by=group_by,
         feature_schema=schema,
     )
+    ids = (
+        np.asarray(container.ids)
+        if container.ids is not None
+        else np.arange(n_obs_in).astype(str)
+    )
     if group_by is not None:
         family_masks: dict[str, np.ndarray] = {}
         per_family_dropped: dict[str, list[EpochDropRecord]] = {}
-        ids = (
-            np.asarray(container.ids)
-            if container.ids is not None
-            else np.arange(n_obs_in).astype(str)
-        )
         for column in scores.columns:
             prefix = "outlier_fraction_"
             if not column.startswith(prefix):
@@ -779,7 +758,7 @@ def drop_epoch_outliers(
             n_obs_out=int(combined_keep.sum()),
             n_subjects_in=n_subjects_in,
             n_subjects_out=_count_unique_subjects(
-                _filter_observations(container, combined_keep), subject_col
+                container, subject_col, keep=combined_keep
             ),
             epoch_drop_threshold=z_threshold,
             epoch_outlier_fraction_threshold=outlier_fraction_threshold,
@@ -798,11 +777,6 @@ def drop_epoch_outliers(
             f"Only {int(keep_mask.sum())} observation(s) remain after MAD rejection "
             f"(minimum required: {min_obs})."
         )
-    ids = (
-        np.asarray(container.ids)
-        if container.ids is not None
-        else np.arange(n_obs_in).astype(str)
-    )
     dropped = [
         EpochDropRecord(
             obs_index=index,
@@ -853,27 +827,19 @@ def drop_subject_outliers(
     n_obs_in = container.X.shape[0]
     subject_ids = np.asarray(_get_subject_ids(container, subject_col), dtype=object)
     n_subjects_in = len(set(subject_ids.tolist()))
-    feature_df = _container_to_feature_df(container, feature_cols).copy()
-    if subject_col in feature_df.columns:
-        raise ValueError(
-            f"'{subject_col}' names both the subject coordinate and a feature; "
-            "rename the feature or pass another subject_col."
-        )
+    feature_df = _container_to_feature_df(container, feature_cols)
     schema = (
         feature_schema if feature_schema is not None else container.feature_schema()
     )
-    feature_df[subject_col] = subject_ids
-    score_columns = [column for column in feature_df.columns if column != subject_col]
+    scores = compute_row_outlier_scores(
+        feature_df,
+        feature_df.columns.tolist(),
+        z_threshold=z_threshold,
+        descriptor_names=descriptor_names,
+        group_by=group_by,
+        feature_schema=schema,
+    )
     if group_by is not None:
-        scores = compute_row_outlier_scores(
-            feature_df,
-            score_columns,
-            z_threshold=z_threshold,
-            descriptor_names=descriptor_names,
-            group_by=group_by,
-            feature_schema=schema,
-        ).copy()
-        scores[subject_col] = subject_ids
         family_names = [
             column.removeprefix("outlier_fraction_")
             for column in scores.columns
@@ -883,18 +849,10 @@ def drop_subject_outliers(
         family_masks: dict[str, np.ndarray] = {}
         per_family_dropped: dict[str, list[SubjectDropRecord]] = {}
         for family in family_names:
-            fraction_col = f"outlier_fraction_{family}"
-            count_col = f"n_outlier_features_{family}"
-            family_burden = (
-                scores.groupby(subject_col, sort=False)
-                .agg(
-                    outlier_fraction=(fraction_col, "mean"),
-                    n_outlier_features=(count_col, "mean"),
-                    n_epochs=(fraction_col, "count"),
-                )
-                .reset_index()
+            family_burden = _subject_burden(
+                scores, subject_ids, subject_col, suffix=f"_{family}"
             )
-            family_burden["family"] = family
+            family_burden[group_by] = family
             burden_parts.append(family_burden)
             bad = family_burden["outlier_fraction"] > outlier_fraction_threshold
             bad_subjects = set(family_burden.loc[bad, subject_col].astype(str))
@@ -918,7 +876,7 @@ def drop_subject_outliers(
             n_obs_out=int(combined_keep.sum()),
             n_subjects_in=n_subjects_in,
             n_subjects_out=_count_unique_subjects(
-                _filter_observations(container, combined_keep), subject_col
+                container, subject_col, keep=combined_keep
             ),
             subject_drop_threshold=z_threshold,
             subject_outlier_fraction_threshold=outlier_fraction_threshold,
@@ -931,12 +889,7 @@ def drop_subject_outliers(
                 "group_by": group_by,
             },
         )
-    burden = compute_subject_outlier_burden(
-        feature_df,
-        score_columns,
-        subject_col=subject_col,
-        z_threshold=z_threshold,
-    )
+    burden = _subject_burden(scores, subject_ids, subject_col)
     bad_rows = burden["outlier_fraction"] > outlier_fraction_threshold
     bad_subjects = set(burden.loc[bad_rows, subject_col].astype(str))
     dropped = [
@@ -1100,12 +1053,18 @@ def _deduplicate_subject_records(
 def _count_unique_subjects(
     container: DataContainer,
     subject_col: str,
+    keep: np.ndarray | None = None,
 ) -> int | None:
-    """Number of subjects, or ``None`` when some observation's is unknown."""
+    """Number of subjects of the ``keep`` rows, ``None`` when some are unknown."""
     subjects = (container.coords or {}).get(subject_col)
-    if subjects is None or pd.isna(np.asarray(subjects)).any():
+    if subjects is None:
         return None
-    return len(set(_get_subject_ids(container, subject_col)))
+    subjects = np.asarray(subjects)
+    if keep is not None:
+        subjects = subjects[keep]
+    if pd.isna(subjects).any():
+        return None
+    return len({str(subject) for subject in subjects})
 
 
 def _require_subject_coord(container: DataContainer, subject_col: str) -> None:
