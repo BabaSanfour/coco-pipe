@@ -42,12 +42,13 @@ Install one or more extras together with the core package:
    pip install "coco-pipe[descriptors,dim-red,eeg]"
 
 Reading saved epochs (``*_epo.fif``) from a BIDS dataset needs mne-bids with
-PR #1679, which is not in a release yet. Until it is, install mne-bids from
-GitHub:
+PR `#1679 <https://github.com/mne-tools/mne-bids/pull/1679>`_, which is not
+merged yet: neither a release nor mne-bids ``main`` has it. Until it is,
+install the PR:
 
 .. code-block:: bash
 
-   pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
+   pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@refs/pull/1679/head"
 
 The ``DataContainer``
 =====================

@@ -70,7 +70,7 @@ def write_bids_epochs():
     from packaging.version import Version
 
     if Version(mne_bids.__version__) < Version("0.21.dev0"):
-        pytest.skip("reading saved FIF epochs needs mne-bids from main (#1679)")
+        pytest.skip("reading saved FIF epochs needs mne-bids PR #1679")
 
     def write(
         root,
