@@ -68,7 +68,8 @@ class QCResult:
     Fields are populated by ``run_qc`` and, for the Level-1 counts
     (``n_rows_entering_qc``, ``n_dropped_nan_inf``, ``n_dropped_extreme``),
     read from the container's ``meta`` dict written by
-    :func:`~coco_pipe.descriptors.load_descriptor_table`.
+    :func:`~coco_pipe.descriptors.load_descriptor_table`. These describe the
+    load, so every container the QC functions filter from it keeps them.
 
     ``family_qc`` is **not** populated by ``run_qc`` — the caller computes it
     via :func:`~coco_pipe.descriptors.qc.aggregate_family_qc` and attaches it
@@ -1073,22 +1074,11 @@ def _container_to_feature_df(
     return frame.loc[:, feature_cols]
 
 
-def _clean_filter_meta(meta: dict) -> dict:
-    """Remove stale per-load keys that must not bleed into filtered containers.
-
-    ``dropped_extreme_rows`` is written by ``load_descriptor_table`` and
-    reflects the *original* load, not the filtered slice.  Keeping it would
-    cause ``run_qc`` to double-count those rows.
-    """
-    meta.pop("dropped_extreme_rows", None)
-    return meta
-
-
 def _filter_observations(
     container: DataContainer,
     keep_mask: np.ndarray,
 ) -> DataContainer:
     keep_mask = np.asarray(keep_mask, dtype=bool)
     filtered = container.isel(**{container.dims[0]: keep_mask})
-    filtered.meta = _clean_filter_meta(copy.deepcopy(filtered.meta))
+    filtered.meta = copy.deepcopy(filtered.meta)
     return filtered

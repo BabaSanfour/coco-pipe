@@ -340,8 +340,8 @@ def test_drop_epoch_outliers_filters_rows_and_metadata():
     assert clean.coords["feature"].tolist() == container.coords["feature"].tolist()
     assert result.epochs_dropped[0].obs_index == 3
     assert result.epochs_dropped[0].mad_z_max > 3.0
-    # the load's drop count does not describe the filtered rows; meta is a copy
-    assert "dropped_extreme_rows" not in clean.meta
+    # the load's counts describe the load and stay; meta is a copy
+    assert clean.meta["dropped_extreme_rows"] == 7
     assert clean.meta["n_rows_entering_qc"] == 20
     container.meta["nested"].append(99)
     assert clean.meta["nested"] == [1, 2]
@@ -496,6 +496,18 @@ def test_run_qc_reports_counts_from_loading():
     assert (result.n_rows_entering_qc, result.n_dropped_nan_inf) == (15, 3)
     assert result.n_dropped_extreme == 2
     assert result.family_qc is None
+
+    # QC filtering keeps the load's counts: on the container run_qc returns,
+    # and for a run_qc after an earlier epoch QC
+    container.X[3] = 500.0
+    clean, _ = run_qc(container, subject_z_threshold=None)
+    assert clean.X.shape[0] == 9
+    assert clean.meta["dropped_extreme_rows"] == 2
+    earlier, _ = drop_epoch_outliers(container)
+    _, result = run_qc(earlier, epoch_z_threshold=None, subject_z_threshold=None)
+    assert result.n_obs_in == 9
+    assert (result.n_rows_entering_qc, result.n_dropped_nan_inf) == (15, 3)
+    assert result.n_dropped_extreme == 2
 
 
 def test_run_qc_inputs():
