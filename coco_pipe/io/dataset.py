@@ -480,6 +480,18 @@ class EmbeddingDataset(BaseDataset):
         )
 
 
+# Observation coordinates the loader sets from the files themselves.
+_LOADER_COORDS = (
+    "obs",
+    "epoch",
+    "recording_id",
+    "bad_channels",
+    "subject",
+    "session",
+    "run",
+)
+
+
 class _NoMatchingEvents(Exception):
     """A recording has none of the requested events."""
 
@@ -530,8 +542,12 @@ class BIDSDataset(BaseDataset):
         numbered from 1 in the order they first appear in the recordings.
     subject_metadata_df : DataFrame, optional
         Subject-level metadata to attach, in addition to ``participants.tsv``.
+        Neither may have a column named like a coordinate the loader sets
+        (``obs``, ``epoch``, ``recording_id``, ``bad_channels``, ``subject``,
+        ``session``, ``run``).
     subject_key : str, optional
-        Column of `subject_metadata_df` holding the subject ID.
+        Column of `subject_metadata_df` holding the subject ID. It matches
+        rows to subjects and is not attached itself.
     tmin, tmax : float
         Epoch limits in seconds around each event, with `event_id` on raw
         recordings.
@@ -758,7 +774,18 @@ class BIDSDataset(BaseDataset):
                 )
             for _, row in self.subject_metadata_df.iterrows():
                 sub = normalize_subject_value(row[self.subject_key])
-                meta_lookup.setdefault(sub, {}).update(row.to_dict())
+                # The key only matches rows to subjects: ``subject`` holds it.
+                values = row.drop(self.subject_key).to_dict()
+                meta_lookup.setdefault(sub, {}).update(values)
+        taken = sorted(
+            {column for row in meta_lookup.values() for column in row}
+            & set(_LOADER_COORDS)
+        )
+        if taken:
+            raise ValueError(
+                f"Subject metadata columns {taken} have the names of coordinates "
+                "the loader sets; rename them."
+            )
 
         def open_recording(bids_path: BIDSPath) -> mne.BaseEpochs | str | None:
             try:

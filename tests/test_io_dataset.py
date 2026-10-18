@@ -331,6 +331,49 @@ def test_bids_dataset_raw_recordings(tmp_path):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
 
 
+def test_bids_dataset_subject_metadata_keeps_the_loader_coordinates(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    raw = mne.io.RawArray(
+        np.zeros((2, 200)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
+    )
+    raw.set_meas_date(0)
+    for subject in ("01", "02"):
+        write_raw_bids(
+            raw,
+            BIDSPath(root=tmp_path, subject=subject, task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+
+    def load(meta, key="subject"):
+        return BIDSDataset(
+            tmp_path,
+            task="rest",
+            datatype="meg",
+            window_length=1.0,
+            subject_metadata_df=meta,
+            subject_key=key,
+        ).load()
+
+    # keyed on a column named like the coordinate: the key only matches rows
+    meta = pd.DataFrame({"subject": ["sub-01", "sub-02"], "age": [9, 10]})
+    container = load(meta)
+    assert container.coords["subject"].tolist() == ["01", "01", "02", "02"]
+    assert container.coords["age"].tolist() == [9, 9, 10, 10]
+
+    # any other such column would replace what the files say
+    with pytest.raises(ValueError, match=r"\['run'\] have the names"):
+        load(meta.assign(run=["9", "9"]))
+    participants = tmp_path / "participants.tsv"
+    table = pd.read_csv(participants, sep="\t").assign(session="x")
+    _tsv(participants, table)
+    with pytest.raises(ValueError, match=r"\['session'\] have the names"):
+        load(None, key=None)
+
+
 def test_bids_dataset_raw_fif_derivatives(tmp_path):
     import mne
     from mne_bids import BIDSPath
