@@ -442,14 +442,30 @@ def compute_subject_outlier_burden(
     )
 
 
+def _as_frame_or_array(data: QualityInput) -> QualityInput:
+    """DataFrames as they are; anything else, lists included, as an ndarray."""
+    return data if isinstance(data, pd.DataFrame) else np.asarray(data)
+
+
 def _numeric_values(data: QualityInput) -> np.ndarray:
     """Return finite-compatible numeric values for quality checks."""
     if isinstance(data, pd.DataFrame):
-        return data.select_dtypes(include=np.number).to_numpy(dtype=float, copy=False)
+        data = data.select_dtypes(include=np.number)
+        kinds = {dtype.kind for dtype in data.dtypes}
+    else:
+        data = np.asarray(data)
+        kinds = {data.dtype.kind}
+    if "c" in kinds:
+        raise TypeError(
+            "Complex values are not supported; pass np.abs(x), or the real and "
+            "imaginary parts separately."
+        )
+    if isinstance(data, pd.DataFrame):
+        return data.to_numpy(dtype=float, copy=False)
 
     # Handle ndarrays safely
-    arr = np.asarray(data)
-    if arr.dtype.kind in "iufc":
+    arr = data
+    if arr.dtype.kind in "iuf":
         return arr.astype(float, copy=False)
 
     # Attempt to convert object arrays to float (handles mixed numerics in objects)
@@ -469,7 +485,7 @@ def check_missingness(
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         The data to check.
     threshold_warn : float
         Ratio of NaNs to trigger a warning. Default 0.01 (1%).
@@ -487,7 +503,8 @@ def check_missingness(
     >>> check_missingness(data, threshold_warn=0.1)
     CheckResult(check_name='Missingness', status='FAIL', ...)
     """
-    if getattr(df, "size", 0) == 0:
+    df = _as_frame_or_array(df)
+    if df.size == 0:
         return CheckResult("Missingness", "WARN", "Dataset is empty.", 5)
 
     if isinstance(df, np.ndarray):
@@ -532,7 +549,7 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         The data to check.
 
     Returns
@@ -546,7 +563,8 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
     >>> check_constant_columns(df)
     [CheckResult(check_name='Constant Features', ...)]
     """
-    if getattr(df, "size", 0) == 0:
+    df = _as_frame_or_array(df)
+    if df.size == 0:
         return []
 
     if isinstance(df, np.ndarray):
@@ -556,7 +574,7 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
         names = list(range(df.shape[1]))
     else:
         numeric = df.select_dtypes(include=np.number)
-        values = numeric.to_numpy(dtype=float)
+        values = _numeric_values(numeric)
         names = numeric.columns.tolist()
     if values.ndim != 2 or values.size == 0:
         return []
@@ -583,7 +601,7 @@ def check_outliers_zscore(df: QualityInput, sigma: float = 5.0) -> CheckResult |
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         Data to check.
     sigma : float
         Z-score threshold. Default 5.0.
@@ -629,7 +647,7 @@ def check_flatline(signal: QualityInput, threshold: float = 1e-10) -> CheckResul
 
     Parameters
     ----------
-    signal : ndarray
+    signal : array-like
         1D signal array or flattened data.
     threshold : float
         Standard deviation threshold. Default 1e-10.
@@ -639,7 +657,8 @@ def check_flatline(signal: QualityInput, threshold: float = 1e-10) -> CheckResul
     CheckResult
         Result indicating if signal is flat.
     """
-    if getattr(signal, "size", None) == 0:
+    signal = _as_frame_or_array(signal)
+    if signal.size == 0:
         return CheckResult("Signal Quality", "WARN", "Signal is empty.", 5)
 
     values = _numeric_values(signal)

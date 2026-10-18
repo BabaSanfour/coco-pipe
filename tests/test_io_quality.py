@@ -207,6 +207,26 @@ def test_check_flatline():
     assert check_flatline(np.array(["a", "b"])).status == "OK"
 
 
+def test_checks_take_lists_and_refuse_complex_values():
+    # a list used to be an empty dataset for the missingness check
+    listed = check_missingness([1.0, np.nan, 3.0, np.nan], threshold_fail=0.4)
+    assert (listed.status, listed.metric_value) == ("FAIL", 0.5)
+    assert check_missingness([]).status == "WARN"
+    assert check_flatline([]).status == "WARN"
+    (constant,) = check_constant_columns([[1.0, 2.0], [1.0, 3.0]])
+    assert constant.message == "Found 1 constant column(s): 0."
+
+    # an imaginary part used to be dropped: this signal read as flat
+    signal = 1j * np.r_[np.random.default_rng(0).standard_normal(50), 100.0]
+    for check in (check_flatline, check_outliers_zscore):
+        with pytest.raises(TypeError, match="Complex values are not supported"):
+            check(signal)
+    for data in (signal.reshape(-1, 1), pd.DataFrame({"a": signal})):
+        with pytest.raises(TypeError, match="Complex values are not supported"):
+            check_constant_columns(data)
+    assert check_missingness(signal).status == "OK"
+
+
 # --- outlier scores --------------------------------------------------------------
 
 
