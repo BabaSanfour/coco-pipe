@@ -585,6 +585,8 @@ class BIDSDataset(BaseDataset):
         dtype: str = "float32",
         n_jobs: int = 1,
     ):
+        if mode not in {"epochs", "load_existing"}:
+            raise ValueError(f"mode must be 'epochs' or 'load_existing', got {mode!r}.")
         self.root = Path(root)
         self.task = task
         self.session = session

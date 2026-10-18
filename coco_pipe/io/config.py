@@ -70,9 +70,10 @@ class BIDSConfig(BaseDatasetConfig):
     runs: str | list[str] | None = None
     datatype: str = "eeg"
     suffix: str | None = None
-    loading_mode: str = Field(
+    loading_mode: Literal["epochs", "load_existing"] = Field(
         "epochs",
-        description="Loading strategy: 'epochs' or 'load_existing'.",
+        description="'epochs': cut raw recordings into epochs; 'load_existing': "
+        "read saved epochs.",
     )
     target_col: str | None = Field(
         None, description="Metadata coordinate to expose as target `y`."

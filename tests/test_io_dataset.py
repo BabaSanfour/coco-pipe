@@ -348,6 +348,9 @@ def test_bids_dataset_raw_recordings(tmp_path):
 
     with pytest.raises(RuntimeError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
+    # a mistyped mode does not fall back to cutting raw recordings
+    with pytest.raises(ValueError, match="mode must be 'epochs' or 'load_existing'"):
+        BIDSDataset(tmp_path, mode="load-existing")
 
 
 def test_bids_dataset_subject_metadata_keeps_the_loader_coordinates(tmp_path):

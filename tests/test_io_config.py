@@ -56,6 +56,7 @@ def test_dataset_config_picks_the_config_by_mode():
         lambda: TabularConfig(path="data.csv", subjects=["01"]),
         lambda: BIDSConfig(path="/root", windowlength=2.0),
         lambda: BIDSConfig(path="/root", subjects=5),
+        lambda: BIDSConfig(path="/root", loading_mode="load-existing"),
     ],
 )
 def test_configs_reject_invalid_values(build):

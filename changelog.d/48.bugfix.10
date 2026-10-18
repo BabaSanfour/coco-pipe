@@ -1,0 +1,1 @@
+`BIDSConfig.loading_mode` and the `mode` of `BIDSDataset` accept only `"epochs"` (cut raw recordings) and `"load_existing"` (read saved epochs). Any other value, such as the typo `"load-existing"`, silently cut raw recordings into windows instead of reading the saved epochs.
