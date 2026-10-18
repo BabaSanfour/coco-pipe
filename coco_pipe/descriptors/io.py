@@ -228,9 +228,10 @@ def load_descriptor_table(
             f"Descriptor columns not found in {table_path}: {missing_columns}."
         )
 
-    parsed = [
+    table_items = [
         parse_descriptor_feature_column(column, known_families) for column in raw_cols
     ]
+    parsed = table_items
     if descriptor_families:
         allowed = list(
             dict.fromkeys(str(value).strip() for value in descriptor_families)
@@ -260,6 +261,20 @@ def load_descriptor_table(
         from .naming import descriptor_subfamily
 
         excluded = {str(value).strip() for value in exclude_subfamilies}
+        # checked against the whole table, so one exclude list can serve loads
+        # of different families
+        present = list(
+            dict.fromkeys(
+                descriptor_subfamily(item["family"], item["feature"])
+                for item in table_items
+            )
+        )
+        unknown = sorted(excluded.difference(present))
+        if unknown:
+            raise ValueError(
+                f"exclude_subfamilies {unknown} not found in {table_path}; its "
+                f"sub-families are {present}."
+            )
         parsed = [
             item
             for item in parsed
