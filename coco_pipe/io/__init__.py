@@ -11,11 +11,9 @@ from ._serialization import (
     read_table,
     save_npz,
     save_object,
-    smart_reader,
     write_json,
 )
 from .config import (
-    BaseDatasetConfig,
     BIDSConfig,
     DatasetConfig,
     EmbeddingConfig,
@@ -57,7 +55,6 @@ from .utils import (
     compute_constant_feature_summary,
     compute_feature_missingness,
     normalize_subject_value,
-    row_quality_score,
 )
 
 if TYPE_CHECKING:
@@ -70,7 +67,6 @@ __all__ = [
     "ANALYSIS_MODES",
     "DESCRIPTOR_ONLY_ANALYSIS_MODES",
     "BIDSConfig",
-    "BaseDatasetConfig",
     "CheckResult",
     "DataContainer",
     "DatasetConfig",
@@ -102,13 +98,11 @@ __all__ = [
     "read_json",
     "read_table",
     "resolve_qc_status",
-    "row_quality_score",
     "run_qc",
     "save_embedding_derivative",
     "save_embedding_outputs",
     "save_npz",
     "save_object",
-    "smart_reader",
     "split_unit_sensor",
     "validate_embedding_derivative",
     "write_embedding_dataset_description",
