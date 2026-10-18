@@ -29,6 +29,18 @@ def test_prepare_target_binary_success():
     assert frame.attrs["positive_class"] == "b"
 
 
+def test_prepare_target_sample_ids():
+    coords = {"target_col": ["a", "b", "a", "b"], "patient_group_id": list("wxyz")}
+    spec = {"target_col": "target_col", "positive_class": "b"}
+    with_ids = DataContainer(
+        X=np.zeros((4, 2)), dims=("obs", "chan"), coords=coords, ids=[1, 2, 3, 4]
+    )
+    assert prepare_target(with_ids, spec)[3]["sample_id"].tolist() == list("1234")
+    # without ids, positions stand in
+    frame = prepare_target(_container(coords), spec)[3]
+    assert frame["sample_id"].tolist()[0] == "sample-000000"
+
+
 def test_prepare_target_multiclass_success():
     container = _container(
         {

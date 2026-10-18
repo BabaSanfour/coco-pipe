@@ -320,19 +320,6 @@ class DataContainer:
             path,
         )
 
-    def observation_frame(self) -> pd.DataFrame:
-        """Return observation-aligned coordinates and stable sample IDs."""
-        if "obs" not in self.dims:
-            raise ValueError("DataContainer has no 'obs' dimension.")
-        n_obs = self.data.sizes["obs"]
-        frame = pd.DataFrame(self._obs_coords(), index=np.arange(n_obs))
-        frame.columns = frame.columns.astype(str)
-        if self.ids is not None:
-            frame["sample_id"] = self.ids.astype(str)
-        elif "sample_id" not in frame:
-            frame["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
-        return frame
-
     def _obs_coords(self) -> dict[str, np.ndarray]:
         """Return the coordinates of the observation dimension."""
         return {
@@ -381,14 +368,16 @@ class DataContainer:
         cls,
         containers: Sequence["DataContainer"],
         fill_condition_from_meta: bool = True,
+        join: str = "exact",
     ) -> "DataContainer":
         """Concatenate containers along their observation axis.
 
-        All containers must use matching dimensions and non-observation
-        shapes. Observation-aligned coordinates are concatenated, filling
-        missing entries with ``None`` when a coordinate is absent from a
-        container. Non-observation coordinates are copied from the first
-        container.
+        All containers must use matching dimensions. A labelled dimension
+        (``channel``, ``feature``, ...) is matched by label, not by position:
+        each container is put in the label order of the first. An unlabelled
+        dimension must have the same size in every container.
+        Observation-aligned coordinates are concatenated, filling missing
+        entries with ``None`` when a coordinate is absent from a container.
 
         Parameters
         ----------
@@ -397,6 +386,10 @@ class DataContainer:
         fill_condition_from_meta : bool, default=True
             If no observation-level ``condition`` coordinate is available,
             create one from each container's ``meta["condition"]`` value.
+        join : {"exact", "inner"}, default="exact"
+            How the labels of the other dimensions must agree. ``"exact"``:
+            every container has the same labels, in any order. ``"inner"``:
+            only the labels all containers share are kept.
 
         Returns
         -------
@@ -412,15 +405,39 @@ class DataContainer:
             raise ValueError("Containers must include an 'obs' dimension.")
         if any(container.dims != base.dims for container in containers[1:]):
             raise ValueError("All containers must have matching dims.")
-        other_sizes = {dim: n for dim, n in base.data.sizes.items() if dim != "obs"}
+        if join not in {"exact", "inner"}:
+            raise ValueError("`join` must be 'exact' or 'inner'.")
+
+        arrays = [container.data for container in containers]
+        for dim in base.dims:
+            if dim == "obs" or dim not in base.data.indexes:
+                continue
+            if any(dim not in array.indexes for array in arrays):
+                raise ValueError(f"Some containers have no '{dim}' labels.")
+            labels = [array.indexes[dim].tolist() for array in arrays]
+            if join == "inner":
+                shared = set.intersection(*(set(values) for values in labels))
+                keep = [value for value in labels[0] if value in shared]
+                if not keep:
+                    raise ValueError(f"The containers share no '{dim}' label.")
+            elif any(set(values) != set(labels[0]) for values in labels[1:]):
+                raise ValueError(
+                    f"The containers have different '{dim}' labels; pass "
+                    "join='inner' to keep the labels they share."
+                )
+            else:
+                keep = labels[0]
+            arrays = [
+                array if values == keep else array.sel({dim: keep})
+                for array, values in zip(arrays, labels, strict=True)
+            ]
+        other_sizes = {dim: n for dim, n in arrays[0].sizes.items() if dim != "obs"}
         if any(
-            {dim: n for dim, n in container.data.sizes.items() if dim != "obs"}
-            != other_sizes
-            for container in containers[1:]
+            {dim: n for dim, n in array.sizes.items() if dim != "obs"} != other_sizes
+            for array in arrays[1:]
         ):
             raise ValueError("All containers must have matching non-obs dimensions.")
 
-        arrays = [container.data for container in containers]
         if fill_condition_from_meta and not any(
             "condition" in array.coords for array in arrays
         ):
@@ -508,7 +525,8 @@ class DataContainer:
         -------
         pandas.DataFrame
             DataFrame containing only one-dimensional observation-aligned
-            metadata columns.
+            metadata columns, in their own dtypes, with one row per
+            observation in order.
 
         Raises
         ------
@@ -530,9 +548,7 @@ class DataContainer:
         data.update(coords)
         if include_y and self.y is not None:
             data.setdefault(y_col, self.y)
-        return pd.DataFrame(
-            {name: values.astype(object) for name, values in data.items()}
-        )
+        return pd.DataFrame(data, index=pd.RangeIndex(self.data.sizes["obs"]))
 
     def isel(self, **indexers) -> "DataContainer":
         """
@@ -1475,6 +1491,8 @@ class DataContainer:
             return mask
 
         combined_parts: list[np.ndarray] = []
+        # Per output column, the coordinates of its feature (feature_family...).
+        part_feature_coords: list[dict[str, np.ndarray]] = []
         combined_feature_names: list[str] = []
         aggregate_failures: list[dict[str, Any]] = []
         base_agg: DataContainer | None = None
@@ -1556,6 +1574,13 @@ class DataContainer:
 
                 combined_parts.append(np.asarray(grouped.X))
                 combined_feature_names.extend(prefixed_names)
+                part_feature_coords.append(
+                    {
+                        name: coord.values
+                        for name, coord in grouped.data.coords.items()
+                        if coord.dims == ("feature",) and name != "feature"
+                    }
+                )
 
                 failures = grouped.meta.get("aggregate_failures", [])
                 for failure in failures:
@@ -1569,7 +1594,18 @@ class DataContainer:
         if base_agg is None:  # pragma: no cover - guarded above
             raise ValueError("aggregate_groups produced no aggregated outputs.")
 
-        new_coords = dict(base_agg.coords)
+        # Coordinates of the feature axis are rebuilt from every part: those of
+        # the first part alone would not fit the combined features.
+        new_coords = {
+            name: values
+            for name, values in base_agg.coords.items()
+            if base_agg.data.coords[name].dims != ("feature",)
+        }
+        shared = set.intersection(*(set(part) for part in part_feature_coords))
+        for name in sorted(shared):
+            new_coords[name] = np.concatenate(
+                [part[name] for part in part_feature_coords]
+            )
         new_coords["feature"] = np.asarray(combined_feature_names, dtype=object)
         meta = deepcopy(self.meta)
         unique_stats = list(

@@ -1,16 +1,16 @@
 """
 coco_pipe/io/load.py
 --------------------
-High-level data loading factory.
+High-level data loading from a dataset configuration.
 
 Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
 
 import logging
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
-import numpy as np
+import pandas as pd
 
 from .config import BIDSConfig, DatasetConfig, EmbeddingConfig, TabularConfig
 from .structures import DataContainer
@@ -34,381 +34,109 @@ def _resolve_dataset_class(name: str):
 
 
 def load_data(
-    path: str | Path | None = None,
-    mode: str = "auto",
-    # --- Tabular Arguments ---
-    target_col: str | None = None,
-    index_col: str | int | None = None,
-    sep: str = "\t",
-    header: int | list[int] | None = 0,
-    sheet_name: str | int | None = 0,
-    columns_to_dims: list[str] | None = None,
-    col_sep: str = "_",
-    meta_columns: list[str] | None = None,
-    clean: bool = False,
-    clean_kwargs: dict[str, Any] | None = None,
-    # --- BIDS Arguments ---
-    task: str | None = None,
-    session: str | list[str] | None = None,
-    runs: str | list[str] | None = None,
-    datatype: str = "eeg",
-    suffix: str | None = None,
-    loading_mode: str = "epochs",  # Maps to BIDSDataset `mode`
-    window_length: float | None = None,
-    stride: float | None = None,
-    event_id: dict[str, int] | str | list[str] | None = None,
-    tmin: float = -0.2,
-    tmax: float = 0.5,
-    baseline: tuple[float | None, float | None] | None = None,
-    units: str | None = None,
-    description: str | None = None,
-    subject_metadata_df: Any | None = None,
+    config: DatasetConfig | TabularConfig | BIDSConfig | EmbeddingConfig,
+    *,
+    subject_metadata_df: pd.DataFrame | None = None,
     subject_key: str | None = None,
-    # --- Embedding Arguments ---
-    pattern: str = "*.pkl",
-    dims: tuple[str, ...] = ("feature",),
-    coords: dict[str, list | np.ndarray] | None = None,
-    reader: Any | None = None,
-    id_fn: Any | None = None,
-    # --- Common Arguments ---
-    subjects: str | list[str] | int | list[int] | None = None,
-    config: DatasetConfig | BIDSConfig | TabularConfig | EmbeddingConfig | None = None,
-    **kwargs,
+    reader: Callable[[Any], Any] | None = None,
+    id_fn: Callable[[Any], str] | None = None,
 ) -> DataContainer:
     """
-    Universal data loader factory.
-    Dispatches to `BIDSDataset`, `TabularDataset`, or `EmbeddingDataset` based on
-    `mode`.
+    Load a dataset described by a configuration into a DataContainer.
+
+    The configuration says what to load and how:
+    :class:`~coco_pipe.io.config.TabularConfig` for a feature table,
+    :class:`~coco_pipe.io.config.BIDSConfig` for a BIDS M/EEG dataset and
+    :class:`~coco_pipe.io.config.EmbeddingConfig` for embedding files, each
+    validated when it is built. Only what a configuration cannot hold, tables
+    and functions, is passed here.
 
     Parameters
     ----------
-    path : str or Path, optional
-        Path to data source (file or directory). Required unless ``config`` is
-        given (in which case ``config.path`` is used).
-    mode : {"auto", "tabular", "bids", "embedding"}, default="auto"
-        Type of data to load.
-
-        - "auto": Infers type from file extension or directory structure. A
-          directory with ``dataset_description.json`` or ``sub-*`` entries is
-          treated as ``"bids"``; ``.csv``/``.tsv``/``.xls``/``.xlsx``/``.txt``
-          files as ``"tabular"``; everything else as ``"embedding"``.
-        - "tabular": uses `TabularDataset` (CSV, TSV, Excel, TXT).
-        - "bids": uses `BIDSDataset` (BIDS-compliant directories).
-        - "embedding": uses `EmbeddingDataset` (NPY, PKL, H5, JSON).
-    config : DatasetConfig or {Tabular,BIDS,Embedding}Config, optional
-        A pre-validated configuration object (see :mod:`coco_pipe.io.config`).
-        When provided, its fields drive the load and ``mode`` is taken from the
-        config; the matching keyword arguments below are ignored. When omitted,
-        the relevant keyword arguments are assembled into a config and validated
-        before dispatch. The non-serializable parameters ``reader``, ``id_fn``,
-        ``subject_metadata_df``, and ``subject_key`` are always passed through
-        directly and are never part of the config schema.
-
-    Tabular Arguments (mode="tabular")
-    ----------------------------------
-    target_col : str, optional
-        Name of the column to extract as target `y`. Removed from features `X`.
-    index_col : str or int, optional
-        Column to use as index (observation IDs).
-    sep : str, default='\\t'
-        Separator for text files (e.g. ',' for CSV).
-    header : int or list of int, default=0
-        Row number(s) to use as column names.
-    sheet_name : str or int, default=0
-        Sheet name or index for Excel files.
-    columns_to_dims : list of str, optional
-        If provided, attempts to reshape 2D feature columns into N-D dimensions.
-        Columns must follow: `dim1_dim2_..._feature`.
-    col_sep : str, default='_'
-        Separator used in column names for reshaping.
-    meta_columns : list of str, optional
-        Columns to extract as metadata coordinates instead of features.
-    clean : bool, default=False
-        Whether to perform automated cleaning (drop NaNs/Infs).
-    clean_kwargs : dict, optional
-        Arguments passed to `TabularDataset.clean`.
-
-    BIDS Arguments (mode="bids")
-    ----------------------------
-    task : str, optional
-        BIDS task name (e.g., 'rest', 'audiovisual').
-    session : str or List[str], optional
-        Session ID(s) to load. Defaults to all available.
-    datatype : str, default='eeg'
-        Data type folder (e.g., 'eeg', 'meg', 'ieeg').
-    suffix : str, optional
-        File suffix to load (e.g., 'eeg', 'epo').
-    loading_mode : str, default='epochs'
-        How to process the data. Renamed to ``loading_mode`` here (and in
-        ``BIDSConfig``) to avoid colliding with this function's ``mode``
-        argument; it is passed through as ``mode`` to ``BIDSDataset``.
-
-        - 'epochs': Splices continuous data into fixed-length windows.
-        - 'load_existing': Loads pre-computed epochs.
-    window_length : float, optional
-        Window length in seconds (for 'epochs' mode).
-    stride : float, optional
-        Stride in seconds (for 'epochs' mode).
+    config : DatasetConfig or {Tabular,BIDS,Embedding}Config
+        The dataset to load.
     subject_metadata_df : DataFrame, optional
-        External subject-level metadata to merge by subject during BIDS loading.
+        BIDS only: subject-level metadata attached to each observation, in
+        addition to ``participants.tsv``.
     subject_key : str, optional
-        Column in `subject_metadata_df` containing the BIDS subject identifier.
-    subjects : str or List[str], optional
-        Specific subject IDs to load (without 'sub-').
-    description : str, optional
-        The ``desc`` entity of the files to load.
-
-    Embedding Arguments (mode="embedding")
-    --------------------------------------
-    pattern : str, default=r'\\*.pkl'
-        Glob pattern to match files.
-    dims : tuple of str, default=('feature',)
-        Dimension labels of one observation; ``obs`` is added in front.
-    coords : dict, optional
-        Dictionary of coordinates for dimensions.
+        BIDS only: the column of `subject_metadata_df` holding the subject ID.
     reader : callable, optional
-        Custom file reader function.
+        Embeddings only: reads one file and returns its array or dict.
     id_fn : callable, optional
-        Custom subject ID extraction function.
-    subjects : int or list, optional
-        If int, loads first N subjects. If list, filters by ID.
+        Embeddings only: returns the subject ID of a file path.
 
     Returns
     -------
     DataContainer
-        Standardized data container with attributes:
-        - X: (N_obs, ...) data array
-        - y: Targets (if available)
-        - ids: Observation identifiers
-        - coords: Coordinate metadata
+
+    Raises
+    ------
+    TypeError
+        If ``config`` is not a dataset configuration, e.g. a path or a dict.
 
     Examples
     --------
-    Two equivalent ways to load. The keyword form is convenient for quick,
-    interactive use:
-
-    >>> container = load_data("features.csv", mode="tabular", target_col="y")
-
-    The **config-first** form is recommended for pipelines and reproducible
-    runs: a :class:`~coco_pipe.io.config.TabularConfig` /
-    :class:`~coco_pipe.io.config.BIDSConfig` /
-    :class:`~coco_pipe.io.config.EmbeddingConfig` is validated once and can be
-    serialized, version-controlled, and reused. It also keeps each mode's
-    options self-contained instead of mixing all three modes' keywords:
-
-    >>> from coco_pipe.io.config import TabularConfig
-    >>> cfg = TabularConfig(path="features.csv", target_col="y")
-    >>> container = load_data(config=cfg)
-
-    BIDS loading uses ``loading_mode`` (not ``mode``) to choose the windowing
-    strategy:
-
-    >>> container = load_data(
-    ...     "/data/bids",
-    ...     mode="bids",
-    ...     task="rest",
-    ...     loading_mode="epochs",
-    ...     window_length=2.0,
+    >>> from coco_pipe.io import BIDSConfig, TabularConfig, load_data
+    >>> table = load_data(TabularConfig(path="features.csv", target_col="y"))
+    >>> epochs = load_data(
+    ...     BIDSConfig(path="/data/bids", task="rest", window_length=2.0)
     ... )
     """
-    # 1. Resolve the validated dataset config (either passed in or built from
-    #    kwargs). Building it through pydantic validates types up front.
-    if config is not None:
-        dataset_cfg = config.dataset if isinstance(config, DatasetConfig) else config
-        path = Path(dataset_cfg.path)
-    else:
-        if path is None:
-            raise ValueError("`path` is required when `config` is not provided.")
-        path = Path(path)
-        if mode == "auto":
-            mode = _infer_mode(path)
-        dataset_cfg = _build_config(
-            path=path,
-            mode=mode,
-            target_col=target_col,
-            index_col=index_col,
-            sep=sep,
-            header=header,
-            sheet_name=sheet_name,
-            columns_to_dims=columns_to_dims,
-            col_sep=col_sep,
-            meta_columns=meta_columns,
-            clean=clean,
-            clean_kwargs=clean_kwargs,
-            task=task,
-            session=session,
-            runs=runs,
-            datatype=datatype,
-            suffix=suffix,
-            loading_mode=loading_mode,
-            window_length=window_length,
-            stride=stride,
-            event_id=event_id,
-            tmin=tmin,
-            tmax=tmax,
-            baseline=baseline,
-            units=units,
-            description=description,
-            pattern=pattern,
-            dims=dims,
-            coords=coords,
-            subjects=subjects,
+    cfg = config.dataset if isinstance(config, DatasetConfig) else config
+    if not isinstance(cfg, TabularConfig | BIDSConfig | EmbeddingConfig):
+        raise TypeError(
+            "load_data takes a dataset configuration (TabularConfig, BIDSConfig, "
+            f"EmbeddingConfig or a DatasetConfig holding one), got "
+            f"{type(config).__name__}; e.g. load_data(TabularConfig(path=...))."
         )
+    logger.info(f"Loading data from {cfg.path} using mode='{cfg.mode}'")
 
-    mode = dataset_cfg.mode
-    logger.info(f"Loading data from {path} using mode='{mode}'")
-
-    # 2. Dispatch using validated config fields. Non-serializable params
-    #    (reader/id_fn/subject_metadata_df/subject_key) are passed through
-    #    directly since they are not part of the config schema.
-    if mode == "tabular":
+    if cfg.mode == "tabular":
         return _resolve_dataset_class("TabularDataset")(
-            path=path,
-            target_col=dataset_cfg.target_col,
-            index_col=dataset_cfg.index_col,
-            sep=dataset_cfg.sep,
-            header=dataset_cfg.header,
-            sheet_name=dataset_cfg.sheet_name,
-            columns_to_dims=dataset_cfg.columns_to_dims,
-            col_sep=dataset_cfg.col_sep,
-            meta_columns=dataset_cfg.meta_columns,
-            clean=dataset_cfg.clean,
-            clean_kwargs=dataset_cfg.clean_kwargs,
-            select_kwargs=dataset_cfg.select_kwargs,
-            **kwargs,
+            path=cfg.path,
+            target_col=cfg.target_col,
+            index_col=cfg.index_col,
+            sep=cfg.sep,
+            header=cfg.header,
+            sheet_name=cfg.sheet_name,
+            columns_to_dims=cfg.columns_to_dims,
+            col_sep=cfg.col_sep,
+            meta_columns=cfg.meta_columns,
+            clean=cfg.clean,
+            clean_kwargs=cfg.clean_kwargs,
         ).load()
 
-    if mode == "bids":
-        # Note: config.loading_mode maps to BIDSDataset's `mode`.
+    if cfg.mode == "bids":
         return _resolve_dataset_class("BIDSDataset")(
-            root=path,
-            mode=dataset_cfg.loading_mode,
-            task=dataset_cfg.task,
-            session=dataset_cfg.session,
-            runs=dataset_cfg.runs,
-            datatype=dataset_cfg.datatype,
-            suffix=dataset_cfg.suffix,
-            target_col=dataset_cfg.target_col,
-            window_length=dataset_cfg.window_length,
-            stride=dataset_cfg.stride,
-            event_id=dataset_cfg.event_id,
-            tmin=dataset_cfg.tmin,
-            tmax=dataset_cfg.tmax,
-            baseline=dataset_cfg.baseline,
-            units=dataset_cfg.units,
-            description=dataset_cfg.description,
-            dtype=dataset_cfg.dtype,
-            n_jobs=dataset_cfg.n_jobs,
+            root=cfg.path,
+            mode=cfg.loading_mode,
+            task=cfg.task,
+            session=cfg.session,
+            runs=cfg.runs,
+            datatype=cfg.datatype,
+            suffix=cfg.suffix,
+            target_col=cfg.target_col,
+            window_length=cfg.window_length,
+            stride=cfg.stride,
+            event_id=cfg.event_id,
+            tmin=cfg.tmin,
+            tmax=cfg.tmax,
+            baseline=cfg.baseline,
+            units=cfg.units,
+            description=cfg.description,
+            dtype=cfg.dtype,
+            n_jobs=cfg.n_jobs,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
-            subjects=dataset_cfg.subjects,
-            **kwargs,
+            subjects=cfg.subjects,
         ).load()
 
-    if mode == "embedding":
-        return _resolve_dataset_class("EmbeddingDataset")(
-            path=path,
-            pattern=dataset_cfg.pattern,
-            dims=dataset_cfg.dims,
-            coords=dataset_cfg.coords,
-            reader=reader,
-            id_fn=id_fn,
-            subjects=dataset_cfg.subjects,
-            **kwargs,
-        ).load()
-
-    raise ValueError(
-        f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."
-    )
-
-
-def _infer_mode(path: Path) -> str:
-    """Infer the dataset mode from a path's structure or extension."""
-    if path.is_dir():
-        if (path / "dataset_description.json").exists() or any(path.glob("sub-*")):
-            return "bids"
-        return "embedding"
-    if path.suffix.lower() in [".csv", ".tsv", ".xls", ".xlsx", ".txt"]:
-        return "tabular"
-    return "embedding"
-
-
-def _build_config(
-    path: Path,
-    mode: str,
-    target_col,
-    index_col,
-    sep,
-    header,
-    sheet_name,
-    columns_to_dims,
-    col_sep,
-    meta_columns,
-    clean,
-    clean_kwargs,
-    task,
-    session,
-    runs,
-    datatype,
-    suffix,
-    loading_mode,
-    window_length,
-    stride,
-    event_id,
-    tmin,
-    tmax,
-    baseline,
-    units,
-    description,
-    pattern,
-    dims,
-    coords,
-    subjects,
-) -> TabularConfig | BIDSConfig | EmbeddingConfig:
-    """Construct and validate the mode-appropriate config from raw kwargs."""
-    if mode == "tabular":
-        return TabularConfig(
-            path=path,
-            subjects=subjects,
-            target_col=target_col,
-            index_col=index_col,
-            sep=sep,
-            header=header,
-            sheet_name=sheet_name,
-            columns_to_dims=columns_to_dims,
-            col_sep=col_sep,
-            meta_columns=meta_columns,
-            clean=clean,
-            clean_kwargs=clean_kwargs or {},
-        )
-    if mode == "bids":
-        return BIDSConfig(
-            path=path,
-            subjects=subjects,
-            task=task,
-            session=session,
-            runs=runs,
-            datatype=datatype,
-            suffix=suffix,
-            loading_mode=loading_mode,
-            target_col=target_col,
-            window_length=window_length,
-            stride=stride,
-            event_id=event_id,
-            tmin=tmin,
-            tmax=tmax,
-            baseline=baseline,
-            units=units,
-            description=description,
-        )
-    if mode == "embedding":
-        return EmbeddingConfig(
-            path=path,
-            subjects=subjects,
-            pattern=pattern,
-            dims=dims,
-            coords=coords,
-        )
-    raise ValueError(
-        f"Unknown mode: '{mode}'. Must be 'tabular', 'bids', or 'embedding'."
-    )
+    return _resolve_dataset_class("EmbeddingDataset")(
+        path=cfg.path,
+        pattern=cfg.pattern,
+        dims=cfg.dims,
+        coords=cfg.coords,
+        reader=reader,
+        id_fn=id_fn,
+        subjects=cfg.subjects,
+    ).load()

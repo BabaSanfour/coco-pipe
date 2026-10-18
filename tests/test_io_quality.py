@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from coco_pipe.io.quality import (
-    CheckResult,
     EpochDropRecord,
     QCResult,
     SubjectDropRecord,
@@ -78,20 +77,13 @@ def test_qc_flags_and_status():
 
 
 @pytest.mark.parametrize(
-    ("level", "status", "severity"),
-    [("pass", "OK", 0), ("warn", "WARN", 5), ("fail", "FAIL", 9)],
+    "flag", [{"level": "FAIL"}, {"level": "error"}, {"level": np.nan}, {}]
 )
-def test_check_result_from_flag(level, status, severity):
-    flag = make_qc_flag(
-        level, "feature_qc", "Feature QC.", value=3, threshold=2, scope="complexity"
-    )
-    result = CheckResult.from_flag_dict(flag)
-    assert result.check_name == "feature_qc"
-    assert result.status == status
-    assert result.severity == severity
-    assert result.metric_name == "complexity"
-    assert result.metric_value == 3
-    assert result.is_issue == (level != "pass")
+def test_unknown_qc_flag_level_raises(flag):
+    # an unknown or missing level used to count as a pass
+    flag = {"code": "bad", **flag}
+    with pytest.raises(ValueError, match=r"level must be one of.*code 'bad'"):
+        resolve_qc_status([make_qc_flag("warn", "ok", "ok"), flag])
 
 
 def test_qc_result_counts():
@@ -110,8 +102,6 @@ def test_qc_result_counts():
     assert result.retention_rate == pytest.approx(0.8)
     assert result.n_epochs_dropped == 1
     assert result.n_subjects_dropped == 1
-    # NaN/inf rows + extreme rows + observations dropped by QC
-    assert result.total_dropped == 2 + 1 + (10 - 8)
     summary = result.summary()
     assert summary["n_feature_columns_dropped"] == 2
     assert {"retention_rate", "n_rows_entering_qc", "epoch_drop_threshold"} <= set(
@@ -136,10 +126,39 @@ def test_check_missingness():
 
 def test_check_constant_columns():
     (array,) = check_constant_columns(np.array([[1, 2, 3], [1, 4, 3], [1, 5, 3]]))
-    assert "2 constant features" in array.message
+    assert "2 constant column(s): 0, 2" in array.message
+    # a column is constant when it holds two or more values, all equal; arrays
+    # and tables agree, and an all-missing column does not warn
+    nan = np.nan
+    values = np.array(
+        [
+            [0.1, 0.1, 0.5, nan, 0.1],
+            [0.1, 0.1, nan, nan, nan],
+            [0.1, nan, nan, nan, nan],
+        ]
+    )
+    frame = pd.DataFrame(values, columns=list("ABCDE"))
+    for data, names in ((values, "0, 1"), (frame, "A, B")):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            (result,) = check_constant_columns(data)
+        assert result.message == f"Found 2 constant column(s): {names}."
+    assert check_constant_columns(values[:1]) == []
+    assert check_constant_columns(pd.DataFrame(values[:1])) == []
+    # beyond two axes the further ones are pooled per column: a dead channel
+    epochs = np.random.default_rng(0).standard_normal((4, 3, 5))
+    epochs[:, 1] = 0.0
+    (dead,) = check_constant_columns(epochs, names=["Fz", "Cz", "Pz"])
+    assert dead.message == "Found 1 constant column(s): Cz."
+    (series,) = check_constant_columns(np.zeros(4))
+    assert series.message == "Found 1 constant column(s): 0."
+    with pytest.raises(ValueError, match="2 labels for 3 columns"):
+        check_constant_columns(epochs, names=["Fz", "Cz"])
+    with pytest.raises(TypeError, match="names labels an array"):
+        check_constant_columns(frame, names=["x"] * 5)
     frame = pd.DataFrame({"A": [1, 1, 1], "B": [1, 2, 3], "C": ["x", "x", "x"]})
     (named,) = check_constant_columns(frame)
-    assert "constant columns: A" in named.message
+    assert "constant column(s): A" in named.message
     many = pd.DataFrame({name: [1, 1] for name in "ABCD"} | {"E": [5, 6]})
     assert "..." in check_constant_columns(many)[0].message
     for nothing in (
@@ -177,6 +196,26 @@ def test_check_flatline():
     assert check_flatline(np.array(["a", "b"])).status == "OK"
 
 
+def test_checks_take_lists_and_refuse_complex_values():
+    # a list used to be an empty dataset for the missingness check
+    listed = check_missingness([1.0, np.nan, 3.0, np.nan], threshold_fail=0.4)
+    assert (listed.status, listed.metric_value) == ("FAIL", 0.5)
+    assert check_missingness([]).status == "WARN"
+    assert check_flatline([]).status == "WARN"
+    (constant,) = check_constant_columns([[1.0, 2.0], [1.0, 3.0]])
+    assert constant.message == "Found 1 constant column(s): 0."
+
+    # an imaginary part used to be dropped: this signal read as flat
+    signal = 1j * np.r_[np.random.default_rng(0).standard_normal(50), 100.0]
+    for check in (check_flatline, check_outliers_zscore):
+        with pytest.raises(TypeError, match="Complex values are not supported"):
+            check(signal)
+    for data in (signal.reshape(-1, 1), pd.DataFrame({"a": signal})):
+        with pytest.raises(TypeError, match="Complex values are not supported"):
+            check_constant_columns(data)
+    assert check_missingness(signal).status == "OK"
+
+
 # --- outlier scores --------------------------------------------------------------
 
 
@@ -211,6 +250,16 @@ def test_row_outlier_scores():
     )
     assert missing["outlier_fraction"].tolist() == [0.0, 0.0, 0.0, 1.0]
 
+    # text used to become NaN and go unscored; numbers stored as text still score
+    text = pd.DataFrame({"f1": ["1.0", "1.1", "0.9", "50.0"], "f2": [1, 2, 3, 4]})
+    assert compute_row_outlier_scores(text, ["f1"], z_threshold=3.0)[
+        "outlier_fraction"
+    ].tolist() == [0.0, 0.0, 0.0, 1.0]
+    with pytest.raises(ValueError, match=r"\['f1'\] hold non-numeric values"):
+        compute_row_outlier_scores(
+            text.assign(f1=["1.0", "oops", "0.9", "50.0"]), ["f1", "f2"]
+        )
+
 
 def test_row_outlier_scores_per_group():
     names = ["band_abs_alpha_ch-Fz", "complexity_entropy_ch-Fz"]
@@ -222,6 +271,9 @@ def test_row_outlier_scores_per_group():
     )
     assert by_name.loc[3, "outlier_fraction_band"] == 1.0
     assert by_name.loc[3, "outlier_fraction_complexity"] == 0.0
+    # each group has its own largest score
+    assert by_name.loc[3, "mad_z_max_band"] == by_name.loc[3, "mad_z_max"]
+    assert by_name.loc[3, "mad_z_max_complexity"] == 0.0
 
     # a schema with only `family` is completed from the names for `measure`
     schema = pd.DataFrame({"column": names, "family": ["connectivity", "band"]})
@@ -283,13 +335,9 @@ def test_subject_outlier_burden():
 
 def test_subject_outlier_burden_arguments():
     frame = pd.DataFrame({"participant": ["s1", "s2"], "value": [1.0, 2.0]})
-    empty = compute_subject_outlier_burden(frame, [], subject_col="participant")
-    assert empty.to_dict(orient="list") == {
-        "participant": ["s1", "s2"],
-        "outlier_fraction": [0.0, 0.0],
-        "n_outlier_features": [0.0, 0.0],
-        "n_epochs": [1, 1],
-    }
+    # no features used to give every subject a clean burden of 0
+    with pytest.raises(ValueError, match="no features to score"):
+        compute_subject_outlier_burden(frame, [], subject_col="participant")
     with pytest.raises(ValueError, match="Subject column"):
         compute_subject_outlier_burden(frame, ["value"])
     with pytest.raises(ValueError, match="z_threshold must be positive"):
@@ -322,8 +370,8 @@ def test_drop_epoch_outliers_filters_rows_and_metadata():
     assert clean.coords["feature"].tolist() == container.coords["feature"].tolist()
     assert result.epochs_dropped[0].obs_index == 3
     assert result.epochs_dropped[0].mad_z_max > 3.0
-    # the load's drop count does not describe the filtered rows; meta is a copy
-    assert "dropped_extreme_rows" not in clean.meta
+    # the load's counts describe the load and stay; meta is a copy
+    assert clean.meta["dropped_extreme_rows"] == 7
     assert clean.meta["n_rows_entering_qc"] == 20
     container.meta["nested"].append(99)
     assert clean.meta["nested"] == [1, 2]
@@ -349,6 +397,23 @@ def test_drop_epoch_outliers_per_group():
     assert masks["band"].all()
     assert result.per_family_dropped["connectivity"][0].obs_id == "0"
 
+    # a row dropped in both groups: each record carries its own group's score
+    X = X.copy()
+    X[0, 1] = 2.0  # band median 1.10, MAD 0.04
+    both = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "feature_family": ["connectivity", "band"]},
+        ids=np.arange(8).astype(str),
+    )
+    _, result = drop_epoch_outliers(
+        both, group_by="family", outlier_fraction_threshold=0.0
+    )
+    (band,) = result.per_family_dropped["band"]
+    (connectivity,) = result.per_family_dropped["connectivity"]
+    assert band.mad_z_max == pytest.approx(0.9 / (1.4826 * 0.04))
+    assert connectivity.mad_z_max > 10_000
+
     masks, result = drop_epoch_outliers(
         container, group_by="feature", outlier_fraction_threshold=0.0
     )
@@ -372,6 +437,9 @@ def test_drop_epoch_outliers_errors():
         ({"z_threshold": 0}, "z_threshold"),
         ({"group_by": "bogus"}, "group_by must be"),
         ({"min_obs": 0}, "min_obs"),
+        # no features passed QC silently, or crashed with group_by
+        ({"feature_cols": []}, "no features to score"),
+        ({"feature_cols": [], "group_by": "family"}, "no features to score"),
     ]:
         with pytest.raises(ValueError, match=match):
             drop_epoch_outliers(container, **kwargs)
@@ -385,7 +453,7 @@ def test_drop_subject_outliers():
     assert result.subjects_dropped[0].subject_id == "sub-09"
     assert result.subject_outlier_burden is not None
 
-    # a subject's observations are averaged before it is scored
+    # each epoch is scored, then a subject's epoch scores are averaged
     X = np.random.default_rng(5).standard_normal((12, 8))
     X[-2:] = 1000.0
     subjects = [f"sub-{index:02d}" for index in range(6) for _ in range(2)]
@@ -415,6 +483,94 @@ def test_drop_subject_outliers():
     assert result.per_family_dropped["band"][0].subject_id == "s4"
 
 
+def test_subject_column_must_exist():
+    # 3 subjects of 4 epochs, one bad epoch in sub-01
+    X = np.random.default_rng(0).standard_normal((12, 6))
+    X[5] += 50.0
+    subjects = [f"sub-{index:02d}" for index in range(3) for _ in range(4)]
+    container = _container(X, subjects)
+
+    _, result = drop_subject_outliers(container)
+    assert result.n_subjects_in == 3
+    assert [record.subject_id for record in result.subjects_dropped] == ["sub-01"]
+
+    # a misspelled column used to make every epoch its own subject
+    with pytest.raises(ValueError, match=r"'participant' not found.*'subject'"):
+        drop_subject_outliers(container, subject_col="participant")
+    with pytest.raises(ValueError, match="'participant' not found"):
+        run_qc(container, subject_col="participant")
+
+    # epoch QC only counts subjects, so it runs and reports them as unknown
+    clean, result = drop_epoch_outliers(container, subject_col="participant")
+    assert clean.X.shape[0] == 11
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, None)
+    _, result = run_qc(container, subject_z_threshold=None, subject_col="participant")
+    assert result.n_subjects_in is None
+
+    # a subject coordinate on another axis does not name the observations
+    misaligned = DataContainer(
+        X=np.zeros((3, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s1", "s2"]},
+    )
+    with pytest.raises(ValueError, match="must align with observations"):
+        drop_subject_outliers(misaligned)
+
+
+def test_subject_column_named_like_a_feature():
+    # the subject IDs used to overwrite the feature, which was then not scored
+    X = np.random.default_rng(0).standard_normal((12, 2))
+    X[8:, 0] += 50.0
+    container = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={"feature": ["subject", "f1"], "subject": np.repeat(list("ABC"), 4)},
+    )
+    _, result = drop_subject_outliers(container, outlier_fraction_threshold=0.2)
+    assert [record.subject_id for record in result.subjects_dropped] == ["C"]
+    masks, result = drop_subject_outliers(
+        container, group_by="feature", outlier_fraction_threshold=0.2
+    )
+    assert sorted(masks) == ["f1", "subject"]
+    assert [record.subject_id for record in result.per_family_dropped["subject"]] == [
+        "C"
+    ]
+    # the grouped burden names its group column after group_by
+    assert result.subject_outlier_burden["feature"].unique().tolist() == [
+        "subject",
+        "f1",
+    ]
+
+    frame = pd.DataFrame(X, columns=["f0", "f1"]).assign(subject=list("AAAABBBBCCCC"))
+    with pytest.raises(ValueError, match="also in feature_cols"):
+        compute_subject_outlier_burden(frame, ["subject", "f1"])
+
+
+@pytest.mark.parametrize("missing", [None, np.nan])
+def test_missing_subject_ids(missing):
+    # the epochs without a subject used to be pooled into a subject 'nan'
+    X = np.random.default_rng(0).standard_normal((12, 6))
+    X[8:] += 40.0
+    subjects = np.array(["A"] * 4 + ["B"] * 4 + [missing] * 4, dtype=object)
+    container = _container(X, subjects)
+    with pytest.raises(ValueError, match="4 observation\\(s\\) have no 'subject'"):
+        drop_subject_outliers(container)
+    with pytest.raises(ValueError, match="4 observation\\(s\\) have no 'subject'"):
+        run_qc(container, epoch_z_threshold=None)
+
+    # epoch QC needs no subjects; their count is unknown
+    clean, result = drop_epoch_outliers(container)
+    assert clean.X.shape[0] == 8
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, 2)
+
+    # ... and the burden used to leave those rows out
+    frame = pd.DataFrame(X, columns=[f"f{index}" for index in range(6)])
+    with pytest.raises(ValueError, match="4 row\\(s\\) have no 'subject'"):
+        compute_subject_outlier_burden(
+            frame.assign(subject=subjects), frame.columns.tolist()
+        )
+
+
 # --- run_qc -----------------------------------------------------------------------
 
 
@@ -431,11 +587,17 @@ def test_run_qc_combines_levels():
     assert result.retention_rate == pytest.approx(0.9)
     assert len(result.feature_missingness) == container.X.shape[1]
 
+    # a stage that did not run records no thresholds, in the fields, the
+    # thresholds dict and the summary alike
     _, no_epoch = run_qc(container, epoch_z_threshold=None)
     assert no_epoch.epoch_drop_threshold is None
     assert no_epoch.epoch_outlier_fraction_threshold is None
+    assert no_epoch.thresholds["epoch_outlier_fraction_threshold"] is None
+    assert no_epoch.summary()["epoch_outlier_fraction_threshold"] is None
     _, no_subject = run_qc(container, subject_z_threshold=None)
     assert no_subject.subject_drop_threshold is None
+    assert no_subject.thresholds["subject_outlier_fraction_threshold"] is None
+    assert no_subject.summary()["epoch_outlier_fraction_threshold"] == 0.30
     _, no_missing = run_qc(container, compute_missingness=False)
     assert no_missing.feature_missingness is None
 
@@ -454,18 +616,31 @@ def test_run_qc_reports_counts_from_loading():
     assert result.n_dropped_extreme == 2
     assert result.family_qc is None
 
+    # QC filtering keeps the load's counts: on the container run_qc returns,
+    # and for a run_qc after an earlier epoch QC
+    container.X[3] = 500.0
+    clean, _ = run_qc(container, subject_z_threshold=None)
+    assert clean.X.shape[0] == 9
+    assert clean.meta["dropped_extreme_rows"] == 2
+    earlier, _ = drop_epoch_outliers(container)
+    _, result = run_qc(earlier, epoch_z_threshold=None, subject_z_threshold=None)
+    assert result.n_obs_in == 9
+    assert (result.n_rows_entering_qc, result.n_dropped_nan_inf) == (15, 3)
+    assert result.n_dropped_extreme == 2
+
 
 def test_run_qc_inputs():
     off = {"epoch_z_threshold": None, "subject_z_threshold": None}
-    # without a subject coordinate, subjects come from the ids, else positions
-    by_ids = DataContainer(
+    # without a subject coordinate the subjects are unknown, never the ids
+    no_subjects = DataContainer(
         X=np.random.rand(4, 2),
         dims=("obs", "feature"),
         ids=np.array(["s1", "s1", "s2", "s2"]),
     )
-    assert run_qc(by_ids, **off)[1].n_subjects_in == 2
-    by_position = DataContainer(X=np.random.rand(4, 2), dims=("obs", "feature"))
-    assert run_qc(by_position, **off)[1].n_subjects_in == 4
+    _, result = run_qc(no_subjects, **off)
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, None)
+    with pytest.raises(ValueError, match="Subject column 'subject' not found"):
+        run_qc(no_subjects, epoch_z_threshold=None)
 
     container = _clean(n_subjects=6, n_features=4)
     cleaned, _ = run_qc(container, feature_cols=["f0", "f1"], **off)
@@ -500,6 +675,14 @@ def test_group_labels():
         },
     )
     assert group_labels(partial, "measure") == ["abs_alpha", "abs_beta"]
+
+    names = ["band_log_abs_alpha_ch-Fz", "band_rel_alpha_ch-Fz"]
+    subfamilies = DataContainer(
+        X=np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": names}
+    )
+    assert group_labels(subfamilies, "subfamily") == ["log_abs", "rel"]
+    with pytest.raises(ValueError, match=r"'subfamily', 'measure'.*got 'bogus'"):
+        group_labels(subfamilies, "bogus")
 
     channels = DataContainer(
         X=np.zeros((1, 2)), dims=("obs", "channel"), coords={"channel": ["Fz", "Cz"]}

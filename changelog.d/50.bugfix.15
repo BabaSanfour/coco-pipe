@@ -1,0 +1,1 @@
+Containers filtered by the QC functions keep all three load counts in `meta` (`n_rows_entering_qc`, `n_dropped_nan_inf`, `dropped_extreme_rows`). They used to lose `dropped_extreme_rows` alone, so the container returned by `run_qc`, or a `run_qc` after an earlier epoch QC, reported 0 extreme rows dropped at load while still reporting the other two counts.

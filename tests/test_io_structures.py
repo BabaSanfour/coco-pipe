@@ -349,22 +349,25 @@ def test_obs_table_exports_observation_vectors(sample_container):
         DataContainer(np.zeros((10, 10)), dims=("a", "b")).obs_table()
 
 
-def test_observation_frame():
+def test_obs_table_rows_and_dtypes():
     container = DataContainer(
         X=np.random.rand(3, 3),
         dims=("obs", "feature"),
-        coords={"feature": ["f0", "f1", "f2"], "subject": np.array(["a", "b", "c"])},
+        coords={
+            "feature": ["f0", "f1", "f2"],
+            "subject": np.array(["a", "b", "c"]),
+            "age": np.array([9.5, np.nan, 11.0]),
+        },
         ids=np.array(["o0", "o1", "o2"]),
     )
-    frame = container.observation_frame()
-    assert "feature" not in frame
-    assert list(frame["subject"]) == ["a", "b", "c"]
-    assert list(frame["sample_id"]) == ["o0", "o1", "o2"]
-
+    table = container.obs_table(include_ids=True, id_col="sample_id")
+    assert "feature" not in table
+    assert table["sample_id"].tolist() == ["o0", "o1", "o2"]
+    # coordinates keep their dtype: a numeric one stays numeric
+    assert pd.api.types.is_numeric_dtype(table["age"])
+    # one row per observation, also without any observation coordinate
     unnamed = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
-    assert unnamed.observation_frame()["sample_id"].iloc[0] == "sample-000000"
-    with pytest.raises(ValueError, match="no 'obs' dimension"):
-        DataContainer(X=np.zeros((2, 2)), dims=("a", "b")).observation_frame()
+    assert unnamed.obs_table().shape == (2, 0)
 
     wide = DataContainer(
         X=np.zeros((2, 2)),
@@ -374,7 +377,7 @@ def test_observation_frame():
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", pd.errors.PerformanceWarning)
-        assert wide.observation_frame().shape[1] == 151
+        assert wide.obs_table(include_ids=True).shape[1] == 151
 
 
 # --- save / load -------------------------------------------------------------
@@ -476,8 +479,43 @@ def test_concat_fills_missing_coordinates():
     assert "twod" not in combined.coords
 
 
+def test_concat_matches_other_dimensions_by_label():
+    def container(features, values, kinds):
+        return DataContainer(
+            X=np.array([values], dtype=float),
+            dims=("obs", "feature"),
+            coords={"feature": features, "feature_kind": kinds},
+        )
+
+    first = container(["alpha", "beta"], [1, 2], ["band", "band2"])
+    second = container(["beta", "alpha"], [20, 10], ["band2", "band"])
+    combined = DataContainer.concat([first, second], fill_condition_from_meta=False)
+    assert combined.coords["feature"].tolist() == ["alpha", "beta"]
+    assert combined.X.tolist() == [[1, 2], [10, 20]]
+    assert combined.coords["feature_kind"].tolist() == ["band", "band2"]
+
+    third = container(["beta", "gamma"], [200, 300], ["band2", "band3"])
+    with pytest.raises(ValueError, match="different 'feature' labels"):
+        DataContainer.concat([first, third])
+    inner = DataContainer.concat([first, second, third], join="inner")
+    assert inner.coords["feature"].tolist() == ["beta"]
+    assert inner.X[:, 0].tolist() == [2, 20, 200]
+
+
 def test_concat_errors():
     flat = DataContainer(np.zeros((2, 2)), dims=("obs", "feature"))
+    labelled = DataContainer(
+        np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": ["a", "b"]}
+    )
+    with pytest.raises(ValueError, match="must be 'exact' or 'inner'"):
+        DataContainer.concat([labelled, labelled], join="outer")
+    with pytest.raises(ValueError, match="have no 'feature' labels"):
+        DataContainer.concat([labelled, flat])
+    other = DataContainer(
+        np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": ["c", "d"]}
+    )
+    with pytest.raises(ValueError, match="share no 'feature' label"):
+        DataContainer.concat([labelled, other], join="inner")
     with pytest.raises(ValueError):
         DataContainer.concat([])
     no_obs = DataContainer(np.zeros((2, 2)), dims=("a", "b"))
@@ -777,3 +815,35 @@ def test_balance_errors():
     with_y = DataContainer(np.zeros((2, 1)), dims=("obs", "f"), y=np.array([0, 1]))
     with pytest.raises(ValueError, match="Covariate 'missing' not found"):
         with_y.balance(covariates=["missing"], target="y")
+
+
+def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():
+    # the first group has as many features as there are subjects: its
+    # coordinates must not end up on the observation axis
+    container = DataContainer(
+        X=np.arange(24, dtype=float).reshape(6, 4),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a1", "a2", "b1", "b2"],
+            "feature_kind": ["k1", "k2", "k3", "k4"],
+            "subject": ["s1", "s1", "s1", "s2", "s2", "s2"],
+        },
+    )
+    out = container.aggregate_groups(
+        "subject",
+        [
+            {"prefixes": "a", "stats": "mean"},
+            {"prefixes": "b", "stats": ["max", "min"]},
+        ],
+    )
+    assert out.data.coords["feature_kind"].dims == ("feature",)
+    pairs = zip(out.coords["feature"], out.coords["feature_kind"], strict=True)
+    assert dict(pairs) == {
+        "mean_a1": "k1",
+        "mean_a2": "k2",
+        "max_b1": "k3",
+        "max_b2": "k4",
+        "min_b1": "k3",
+        "min_b2": "k4",
+    }
+    assert out.X[:, 2].tolist() == [10.0, 22.0]  # max of b1 per subject

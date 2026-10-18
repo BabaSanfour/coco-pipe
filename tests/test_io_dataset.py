@@ -70,8 +70,16 @@ def test_tabular_dataset_reshapes_columns_into_dimensions(tmp_path):
     assert container.X[1, 1, 1] == 8.0
 
     unmatched = _tsv(tmp_path / "flat.tsv", pd.DataFrame({"A": [1], "B": [2]}))
-    with pytest.raises(ValueError, match="No columns matched"):
+    with pytest.raises(ValueError, match=r"2 column\(s\) do not split into 2 parts"):
         TabularDataset(unmatched, columns_to_dims=["d1", "d2"]).load()
+    # a column that does not fit is not dropped from the data in silence
+    extra = _tsv(tmp_path / "extra.tsv", frame.assign(age=[30, 40]))
+    with pytest.raises(ValueError, match=r"\['age'\]\); pass metadata columns"):
+        TabularDataset(extra, target_col="target", columns_to_dims=["f", "t"]).load()
+    with_meta = TabularDataset(
+        extra, target_col="target", columns_to_dims=["f", "t"], meta_columns=["age"]
+    ).load()
+    assert with_meta.coords["age"].tolist() == [30, 40]
     incomplete = _tsv(
         tmp_path / "gap.tsv", pd.DataFrame({"A_1": [1], "A_2": [2], "B_1": [3]})
     )
@@ -152,21 +160,32 @@ def test_embedding_dataset_selects_subjects(tmp_path):
     assert load(["sub-03"]).ids.tolist() == ["sub-03"]
 
 
-def test_embedding_dataset_errors(tmp_path, caplog):
+def test_embedding_dataset_records_files_it_cannot_load(tmp_path, caplog):
+    np.save(tmp_path / "s1.npy", np.ones((3, 4)))
+    np.save(tmp_path / "s2.npy", np.ones((3, 4)))
+    (tmp_path / "s3.npy").write_bytes(b"not a numpy file")
+
+    with caplog.at_level("WARNING"):
+        container = EmbeddingDataset(tmp_path, pattern="*.npy").load()
+
+    assert container.X.shape == (6, 4)
+    (failure,) = container.meta["load_failures"]
+    assert failure["path"].endswith("s3.npy") and failure["error"]
+    assert "Could not load s3.npy" in caplog.text
+
+
+def test_embedding_dataset_errors(tmp_path):
     with pytest.raises(FileNotFoundError, match="No files matched"):
         EmbeddingDataset(tmp_path, pattern="*.npy").load()
 
     np.save(tmp_path / "cube.npy", np.zeros((2, 2, 2)))
-    with pytest.raises(RuntimeError, match="No valid data"):
+    with pytest.raises(RuntimeError, match=r"the first being .*cube.npy .*fit"):
         EmbeddingDataset(tmp_path, pattern="*.npy", dims=("f",), reader=np.load).load()
-    assert "Shape mismatch" in caplog.text
 
     with open(tmp_path / "1.pkl", "wb") as f:
         pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
-    (tmp_path / "2.pkl").write_bytes(b"not a pickle")
     with pytest.raises(ValueError, match="Concatenation failed"):
         EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
-    assert "Failed to read 2.pkl" in caplog.text
 
 
 # --- BIDS ------------------------------------------------------------------------
@@ -329,6 +348,164 @@ def test_bids_dataset_raw_recordings(tmp_path):
 
     with pytest.raises(RuntimeError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
+    # a mistyped mode does not fall back to cutting raw recordings
+    with pytest.raises(ValueError, match="mode must be 'epochs' or 'load_existing'"):
+        BIDSDataset(tmp_path, mode="load-existing")
+
+
+def test_bids_dataset_subject_metadata_keeps_the_loader_coordinates(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    raw = mne.io.RawArray(
+        np.zeros((2, 200)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
+    )
+    raw.set_meas_date(0)
+    for subject in ("01", "02"):
+        write_raw_bids(
+            raw,
+            BIDSPath(root=tmp_path, subject=subject, task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+
+    def load(meta, key="subject"):
+        return BIDSDataset(
+            tmp_path,
+            task="rest",
+            datatype="meg",
+            window_length=1.0,
+            subject_metadata_df=meta,
+            subject_key=key,
+        ).load()
+
+    # keyed on a column named like the coordinate: the key only matches rows
+    meta = pd.DataFrame({"subject": ["sub-01", "sub-02"], "age": [9, 10]})
+    container = load(meta)
+    assert container.coords["subject"].tolist() == ["01", "01", "02", "02"]
+    assert container.coords["age"].tolist() == [9, 9, 10, 10]
+
+    # any other such column would replace what the files say
+    with pytest.raises(ValueError, match=r"\['run'\] have the names"):
+        load(meta.assign(run=["9", "9"]))
+    participants = tmp_path / "participants.tsv"
+    table = pd.read_csv(participants, sep="\t").assign(session="x")
+    _tsv(participants, table)
+    with pytest.raises(ValueError, match=r"\['session'\] have the names"):
+        load(None, key=None)
+
+
+def test_bids_dataset_records_the_units_of_each_channel_type(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    def write(root, types):
+        names = [f"{kind}{index}" for index, kind in enumerate(types)]
+        raw = mne.io.RawArray(
+            np.full((len(types), 200), 2e-12), mne.create_info(names, 100.0, types)
+        )
+        raw.set_meas_date(0)
+        write_raw_bids(
+            raw,
+            BIDSPath(root=root, subject="01", task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+
+    def load(root, units):
+        dataset = BIDSDataset(
+            root, task="rest", datatype="meg", window_length=1.0, units=units
+        )
+        return dataset.load()
+
+    # without units the data is in SI units, which meta names per channel type
+    write(tmp_path / "mixed", ["mag", "eeg"])
+    mixed = load(tmp_path / "mixed", None)
+    assert mixed.meta["units"] == {"mag": "T", "eeg": "V"}
+    assert mixed.X[0, 0, 0] == pytest.approx(2e-12)
+
+    write(tmp_path / "mag", ["mag", "mag"])
+    scaled = load(tmp_path / "mag", "fT")
+    assert scaled.meta["units"] == {"mag": "fT"}
+    assert scaled.X[0, 0, 0] == pytest.approx(2e3)
+
+
+def test_bids_dataset_raw_fif_derivatives(tmp_path):
+    import mne
+    from mne_bids import BIDSPath
+
+    # FIF is no BIDS format for EEG, but preprocessing derivatives are saved so
+    data = np.arange(2 * 300, dtype=float).reshape(2, 300) * 1e-6
+    for description, scale in (("base", 1.0), ("clean", 2.0)):
+        path = BIDSPath(
+            root=tmp_path,
+            subject="01",
+            task="rest",
+            description=description,
+            datatype="eeg",
+            suffix="eeg",
+            extension=".fif",
+            check=False,
+        ).mkdir()
+        raw = mne.io.RawArray(
+            data * scale, mne.create_info(["C1", "C2"], 100.0, "eeg"), verbose=False
+        )
+        raw.save(path.fpath, verbose=False)
+
+    container = BIDSDataset(
+        tmp_path, task="rest", description="base", window_length=1.0
+    ).load()
+    np.testing.assert_allclose(
+        container.X, data.reshape(2, 3, 100).transpose(1, 0, 2), rtol=1e-6
+    )
+    # two versions of one recording: the loader does not pick one itself
+    with pytest.raises(ValueError, match="Several files match recording"):
+        BIDSDataset(tmp_path, task="rest", window_length=1.0).load()
+
+
+def _save_split(inst, root, suffix):
+    """Save ``inst`` under ``root`` in parts of 2 MB, as MNE splits big files."""
+    from mne_bids import BIDSPath
+
+    path = BIDSPath(
+        root=root,
+        subject="01",
+        task="rest",
+        datatype="eeg",
+        suffix=suffix,
+        extension=".fif",
+        check=False,
+    ).mkdir()
+    inst.save(path.fpath, split_size="2MB", split_naming="bids", verbose=False)
+    assert len(list(path.fpath.parent.glob("*_split-*"))) > 1
+
+
+def test_bids_dataset_reads_a_raw_file_split_into_parts(tmp_path):
+    import mne
+
+    data = np.random.default_rng(0).normal(size=(4, 300_000)) * 1e-6
+    raw = mne.io.RawArray(data, mne.create_info(4, 100.0, "eeg"), verbose=False)
+    _save_split(raw, tmp_path, "eeg")
+
+    container = BIDSDataset(tmp_path, task="rest", window_length=1.0).load()
+
+    assert set(container.coords["recording_id"]) == {"sub-01_task-rest"}
+    assert len(container.X) == 3000
+
+
+def test_bids_dataset_reads_saved_epochs_split_into_parts(tmp_path, write_bids_epochs):
+    import mne
+
+    data = np.random.default_rng(0).normal(size=(4, 300_000)) * 1e-6
+    raw = mne.io.RawArray(data, mne.create_info(4, 100.0, "eeg"), verbose=False)
+    epochs = mne.make_fixed_length_epochs(raw, duration=1.0, preload=True)
+    _save_split(epochs, tmp_path, "epo")
+
+    container = _load_epochs(tmp_path)
+
+    assert len(container.X) == 3000
 
 
 def test_bids_dataset_reports_recordings_that_fail_to_load(

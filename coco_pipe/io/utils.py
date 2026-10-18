@@ -11,6 +11,8 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import numpy as np
 import pandas as pd
@@ -157,21 +159,47 @@ def split_column(name: str, sep: str, reverse: bool) -> tuple[str, str]:
     return left, right
 
 
+def _local_dataset(root: Path, uri: str, links: dict[str, str]) -> Path | None:
+    """Directory a dataset URI points to, or ``None`` when it is not local.
+
+    Handles the forms BIDS allows for a local dataset: a path relative to
+    ``root``, a ``file:`` URI, and a BIDS URI ``bids:<name>:`` resolved through
+    ``DatasetLinks``. Other schemes (``doi:``, ``https:``) are remote.
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme == "bids":
+        name, _, relative = parsed.path.partition(":")
+        target = links.get(name)
+        if not name or not isinstance(target, str):
+            return None
+        linked = _local_dataset(root, target, {})
+        return None if linked is None else linked / relative
+    if parsed.scheme == "file":
+        return Path(url2pathname(parsed.path))
+    if len(parsed.scheme) > 1:
+        return None
+    # no scheme, or a one-letter "scheme" that is a Windows drive (C:\data)
+    return root / uri
+
+
 def load_participants_tsv(root: Path) -> dict[str, dict[str, Any]]:
     """Return the rows of ``participants.tsv``, by normalized subject label.
 
-    A derivative dataset without one reads that of its first local source dataset
-    (a relative ``URL`` in ``SourceDatasets`` of ``dataset_description.json``).
+    A derivative dataset without one reads that of its first local source
+    dataset that has one, from the ``URL`` of each ``SourceDatasets`` entry in
+    ``dataset_description.json``: a relative path, a ``file:`` URI, or a BIDS URI
+    ``bids:<name>:`` named in ``DatasetLinks``.
     """
     root = Path(root)
     path = root / "participants.tsv"
     description = root / "dataset_description.json"
     if not path.exists() and description.exists():
-        sources = json.loads(description.read_text(encoding="utf-8"))
-        for source in sources.get("SourceDatasets", []):
-            url = source.get("URL", "")
-            if "://" not in url:
-                path = root / url / "participants.tsv"
+        info = json.loads(description.read_text(encoding="utf-8"))
+        links = info.get("DatasetLinks") or {}
+        for source in info.get("SourceDatasets", []):
+            source_root = _local_dataset(root, str(source.get("URL", "")), links)
+            if source_root is not None and (source_root / "participants.tsv").exists():
+                path = source_root / "participants.tsv"
                 break
     if not path.exists():
         return {}

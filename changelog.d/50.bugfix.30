@@ -1,0 +1,1 @@
+`load_data` raises a `TypeError` pointing to the dataset configurations when it is given something else, such as a path or a dict as it used to take; it failed with `AttributeError: 'str' object has no attribute 'path'`.

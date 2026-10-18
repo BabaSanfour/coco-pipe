@@ -1,0 +1,1 @@
+`CheckResult.from_flag_dict` and `QCResult.total_dropped`, which nothing used, are removed. The subject burden is computed in one place for `compute_subject_outlier_burden` and both `drop_subject_outliers` paths, subject counts no longer build a filtered container, and duplicated code in `drop_epoch_outliers` and `check_missingness` is gone; results are unchanged.

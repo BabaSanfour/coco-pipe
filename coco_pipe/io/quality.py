@@ -10,11 +10,14 @@ Four QC levels are defined:
 * **Level 4** — Compose levels 2 + 3 and record every decision in a
   :class:`QCResult` (:func:`run_qc`).
 
-The module also provides lower-level primitives used by the levels above:
-:func:`compute_row_outlier_scores` (MAD z-scores per row),
-:func:`compute_subject_outlier_burden` (per-subject mean epoch burden), and
-:func:`row_quality_score` (simple NaN/Inf/zero count per row, used for
-quality-weighted sampling).
+The module also provides the primitives the levels use,
+:func:`compute_row_outlier_scores` (MAD z-scores per row) and
+:func:`compute_subject_outlier_burden` (per-subject mean epoch burden), with
+:func:`group_labels` for the descriptor groups of ``group_by``; the data checks
+reports run, each returning a :class:`CheckResult` (:func:`check_missingness`,
+:func:`check_constant_columns`, :func:`check_outliers_zscore`,
+:func:`check_flatline`); and QC flag records (:func:`make_qc_flag`,
+:func:`resolve_qc_status`).
 """
 
 from __future__ import annotations
@@ -68,12 +71,17 @@ class QCResult:
     Fields are populated by ``run_qc`` and, for the Level-1 counts
     (``n_rows_entering_qc``, ``n_dropped_nan_inf``, ``n_dropped_extreme``),
     read from the container's ``meta`` dict written by
-    :func:`~coco_pipe.descriptors.load_descriptor_table`.
+    :func:`~coco_pipe.descriptors.load_descriptor_table`. These describe the
+    load, so every container the QC functions filter from it keeps them.
 
     ``family_qc`` is **not** populated by ``run_qc`` — the caller computes it
     via :func:`~coco_pipe.descriptors.qc.aggregate_family_qc` and attaches it
     afterwards (``result.family_qc = aggregate_family_qc(...)``), keeping the
     ``io`` layer free of ``descriptors`` imports.
+
+    ``n_subjects_in`` and ``n_subjects_out`` are ``None`` when the subjects are
+    unknown: the container has no ``subject_col`` coordinate, or it is missing
+    for some observations.
     """
 
     n_rows_entering_qc: int | None = None
@@ -81,8 +89,8 @@ class QCResult:
     n_dropped_extreme: int = 0
     n_obs_in: int = 0
     n_obs_out: int = 0
-    n_subjects_in: int = 0
-    n_subjects_out: int = 0
+    n_subjects_in: int | None = 0
+    n_subjects_out: int | None = 0
     epoch_drop_threshold: float | None = None
     epoch_outlier_fraction_threshold: float | None = None
     epochs_dropped: list[EpochDropRecord] = field(default_factory=list)
@@ -113,15 +121,6 @@ class QCResult:
             return float("nan")
         return self.n_obs_out / self.n_obs_in
 
-    @property
-    def total_dropped(self) -> int:
-        """Return total rows dropped across all QC levels."""
-        return (
-            self.n_dropped_nan_inf
-            + self.n_dropped_extreme
-            + (self.n_obs_in - self.n_obs_out)
-        )
-
     def summary(self) -> dict[str, Any]:
         """Return a flat summary suitable for logs and report headers."""
         summary = {
@@ -136,6 +135,7 @@ class QCResult:
             "n_subjects_dropped": self.n_subjects_dropped,
             "retention_rate": round(self.retention_rate, 4),
             "epoch_drop_threshold": self.epoch_drop_threshold,
+            "epoch_outlier_fraction_threshold": self.epoch_outlier_fraction_threshold,
             "subject_drop_threshold": self.subject_drop_threshold,
             "subject_outlier_fraction_threshold": (
                 self.subject_outlier_fraction_threshold
@@ -185,20 +185,6 @@ class CheckResult:
         """Return True if status is WARN or FAIL."""
         return self.status in {"WARN", "FAIL"}
 
-    @classmethod
-    def from_flag_dict(cls, flag: dict[str, Any]) -> CheckResult:
-        """Construct a CheckResult from a :func:`make_qc_flag` record."""
-        level_map = {"pass": "OK", "warn": "WARN", "fail": "FAIL"}
-        status = level_map.get(str(flag.get("level", "pass")), "OK")
-        return cls(
-            check_name=str(flag.get("code", "")),
-            status=status,
-            message=str(flag.get("message", "")),
-            severity={"OK": 0, "WARN": 5, "FAIL": 9}[status],
-            metric_name=str(flag.get("scope") or ""),
-            metric_value=flag.get("value"),
-        )
-
 
 def make_qc_flag(
     level: QCFlagLevel,
@@ -222,19 +208,32 @@ def make_qc_flag(
 
 
 def resolve_qc_status(flags: list[dict[str, Any]]) -> str:
-    """Return the worst status level from a list of QC flag dicts."""
-    levels = [str(flag.get("level", "pass")) for flag in flags]
-    valid_levels = [level if level in STATUS_ORDER else "pass" for level in levels]
+    """Return the worst status level from a list of QC flag dicts.
+
+    Raises ``ValueError`` for a flag whose level is not ``"pass"``, ``"warn"``
+    or ``"fail"``.
+    """
     return max(
-        valid_levels,
-        key=lambda status: STATUS_ORDER.get(status, 0),
+        (_flag_level(flag) for flag in flags),
+        key=STATUS_ORDER.__getitem__,
         default="pass",
     )
 
 
+def _flag_level(flag: dict[str, Any]) -> str:
+    level = flag.get("level")
+    if level not in STATUS_ORDER:
+        raise ValueError(
+            "QC flag level must be one of 'pass', 'warn' or 'fail', got "
+            f"{level!r} (code {flag.get('code')!r})."
+        )
+    return level
+
+
 def _validate_group_by(value: str) -> None:
     if value not in GROUP_BY_COLUMN:
-        raise ValueError("group_by must be one of 'family', 'measure', or 'feature'.")
+        choices = ", ".join(repr(choice) for choice in GROUP_BY_COLUMN)
+        raise ValueError(f"group_by must be one of {choices}; got {value!r}.")
 
 
 def _resolve_group_labels(
@@ -275,7 +274,8 @@ def group_labels(container: DataContainer, group_by: str = "family") -> list[str
     container
         Any container with a ``feature`` axis (e.g. one analysis unit).
     group_by
-        Grouping granularity: ``"family"``, ``"measure"``, or ``"feature"``.
+        Grouping granularity: ``"family"``, ``"subfamily"``, ``"measure"`` or
+        ``"feature"``.
 
     Returns
     -------
@@ -316,30 +316,23 @@ def compute_row_outlier_scores(
     taken over the finite, scored values of each row, so missing features neither
     count as outliers nor dilute them.
 
-    When ``group_by`` is set (``"family"``, ``"measure"``, or ``"feature"``) the
-    result also carries per-group ``outlier_fraction_<label>`` columns so a row
+    When ``group_by`` is set (``"family"``, ``"subfamily"``, ``"measure"`` or
+    ``"feature"``) the result also carries per-group ``outlier_fraction_<label>``,
+    ``n_outlier_features_<label>`` and ``mad_z_max_<label>`` columns so a row
     can be judged within each descriptor group rather than across all features.
     """
     if z_threshold <= 0:
         raise ValueError("z_threshold must be positive.")
+    if len(feature_cols) == 0:
+        raise ValueError("There are no features to score: feature_cols is empty.")
 
-    features = (
-        _require_feature_columns(df, feature_cols)
-        .apply(pd.to_numeric, errors="coerce")
-        .replace([np.inf, -np.inf], np.nan)
-    )
-    n_rows = len(features)
-    n_features = len(feature_cols)
-    if n_features == 0:
-        return pd.DataFrame(
-            {
-                "outlier_fraction": np.zeros(n_rows, dtype=float),
-                "n_outlier_features": np.zeros(n_rows, dtype=int),
-                "mad_z_max": np.zeros(n_rows, dtype=float),
-            },
-            index=df.index,
-        )
-
+    selected = _require_feature_columns(df, feature_cols)
+    features = selected.apply(pd.to_numeric, errors="coerce")
+    coerced = (features.isna() & selected.notna()).any(axis=0).to_numpy()
+    if coerced.any():
+        names = list(dict.fromkeys(features.columns[coerced]))
+        raise ValueError(f"Feature columns {names} hold non-numeric values.")
+    features = features.replace([np.inf, -np.inf], np.nan)
     values = features.to_numpy(dtype=float)
     medians = features.median(axis=0, skipna=True).to_numpy(dtype=float)
     deviations = np.abs(values - medians)
@@ -376,6 +369,9 @@ def compute_row_outlier_scores(
             label_count, scored[:, label_mask].sum(axis=1)
         )
         group_columns[f"n_outlier_features_{label}"] = label_count
+        group_columns[f"mad_z_max_{label}"] = np.fmax.reduce(
+            robust_z[:, label_mask], axis=1
+        )
     if group_columns:
         result = pd.concat(
             [result, pd.DataFrame(group_columns, index=df.index)], axis=1
@@ -392,15 +388,33 @@ def compute_subject_outlier_burden(
     """Aggregate row-level MAD outlier scores to one row per subject."""
     if subject_col not in df.columns:
         raise ValueError(f"Subject column '{subject_col}' not found.")
-    scores = compute_row_outlier_scores(
-        df,
-        feature_cols,
-        z_threshold=z_threshold,
+    if subject_col in feature_cols:
+        raise ValueError(
+            f"Subject column '{subject_col}' is also in feature_cols; subject "
+            "labels cannot be scored as a feature."
+        )
+    missing = int(df[subject_col].isna().sum())
+    if missing:
+        raise ValueError(
+            f"{missing} row(s) have no '{subject_col}'; the subject outlier "
+            "burden needs the subject of every row."
+        )
+    scores = compute_row_outlier_scores(df, feature_cols, z_threshold=z_threshold)
+    return _subject_burden(scores, df[subject_col].to_numpy(), subject_col)
+
+
+def _subject_burden(
+    scores: pd.DataFrame, subjects: np.ndarray, subject_col: str, suffix: str = ""
+) -> pd.DataFrame:
+    """Per-subject mean of the row scores ending in ``suffix`` (``_<group>``)."""
+    rows = pd.DataFrame(
+        {
+            "outlier_fraction": scores[f"outlier_fraction{suffix}"].to_numpy(),
+            "n_outlier_features": scores[f"n_outlier_features{suffix}"].to_numpy(),
+        }
     )
-    scores = scores.copy()
-    scores[subject_col] = df[subject_col].to_numpy()
     return (
-        scores.groupby(subject_col, sort=False)
+        rows.groupby(pd.Index(subjects, name=subject_col), sort=False)
         .agg(
             outlier_fraction=("outlier_fraction", "mean"),
             n_outlier_features=("n_outlier_features", "mean"),
@@ -410,14 +424,30 @@ def compute_subject_outlier_burden(
     )
 
 
+def _as_frame_or_array(data: QualityInput) -> QualityInput:
+    """DataFrames as they are; anything else, lists included, as an ndarray."""
+    return data if isinstance(data, pd.DataFrame) else np.asarray(data)
+
+
 def _numeric_values(data: QualityInput) -> np.ndarray:
     """Return finite-compatible numeric values for quality checks."""
     if isinstance(data, pd.DataFrame):
-        return data.select_dtypes(include=np.number).to_numpy(dtype=float, copy=False)
+        data = data.select_dtypes(include=np.number)
+        kinds = {dtype.kind for dtype in data.dtypes}
+    else:
+        data = np.asarray(data)
+        kinds = {data.dtype.kind}
+    if "c" in kinds:
+        raise TypeError(
+            "Complex values are not supported; pass np.abs(x), or the real and "
+            "imaginary parts separately."
+        )
+    if isinstance(data, pd.DataFrame):
+        return data.to_numpy(dtype=float, copy=False)
 
     # Handle ndarrays safely
-    arr = np.asarray(data)
-    if arr.dtype.kind in "iufc":
+    arr = data
+    if arr.dtype.kind in "iuf":
         return arr.astype(float, copy=False)
 
     # Attempt to convert object arrays to float (handles mixed numerics in objects)
@@ -437,7 +467,7 @@ def check_missingness(
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         The data to check.
     threshold_warn : float
         Ratio of NaNs to trigger a warning. Default 0.01 (1%).
@@ -455,17 +485,11 @@ def check_missingness(
     >>> check_missingness(data, threshold_warn=0.1)
     CheckResult(check_name='Missingness', status='FAIL', ...)
     """
-    if getattr(df, "size", 0) == 0:
+    df = _as_frame_or_array(df)
+    if df.size == 0:
         return CheckResult("Missingness", "WARN", "Dataset is empty.", 5)
 
-    if isinstance(df, np.ndarray):
-        missing_count = int(pd.isna(df).sum())
-        total = df.size
-    else:
-        missing_count = int(df.isna().sum().sum())
-        total = df.size
-
-    pct = missing_count / total
+    pct = int(np.count_nonzero(pd.isna(df))) / df.size
 
     if pct > threshold_fail:
         return CheckResult(
@@ -491,14 +515,23 @@ def check_missingness(
     )
 
 
-def check_constant_columns(df: QualityInput) -> list[CheckResult]:
+def check_constant_columns(
+    df: QualityInput, names: list[str] | None = None
+) -> list[CheckResult]:
     """
-    Check for columns/features with zero variance.
+    Check for columns/features that hold a single value.
+
+    A numeric column is constant when it has at least two non-missing values
+    and they are all equal. In an array the columns are the second axis, and
+    further axes (e.g. time in epochs x channels x time) are pooled within each
+    column, so a dead channel is a constant column; a 1-D array is one column.
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         The data to check.
+    names : list of str, optional
+        Labels of an array's columns, for the message; positions by default.
 
     Returns
     -------
@@ -511,39 +544,44 @@ def check_constant_columns(df: QualityInput) -> list[CheckResult]:
     >>> check_constant_columns(df)
     [CheckResult(check_name='Constant Features', ...)]
     """
-    if getattr(df, "size", 0) == 0:
+    df = _as_frame_or_array(df)
+    if df.size == 0:
         return []
 
     if isinstance(df, np.ndarray):
-        if df.ndim != 2:
+        values = _numeric_values(df)
+        if values.size == 0:
             return []
-        arr = _numeric_values(df)
-        if arr.size == 0 or arr.shape[0] == 0:
-            return []
-        stds = np.nanstd(arr, axis=0)
-        constant_indices = np.where(stds == 0)[0]
-        if len(constant_indices) > 0:
-            return [
-                CheckResult(
-                    "Constant Features",
-                    "WARN",
-                    f"Found {len(constant_indices)} constant features (zero variance).",
-                    3,
-                )
-            ]
+        if values.ndim == 1:
+            values = values[:, None]
+        if names is None:
+            names = list(range(values.shape[1]))
+        elif len(names) != values.shape[1]:
+            raise ValueError(
+                f"names has {len(names)} labels for {values.shape[1]} columns."
+            )
+        axes = tuple(axis for axis in range(values.ndim) if axis != 1)
+    else:
+        if names is not None:
+            raise TypeError("names labels an array; a DataFrame names its columns.")
+        numeric = df.select_dtypes(include=np.number)
+        values = _numeric_values(numeric)
+        names = numeric.columns.tolist()
+        axes = (0,)
+    if values.size == 0:
         return []
 
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    if len(numeric_cols) == 0:
-        return []
-
-    stds = df[numeric_cols].std()
-    constant_cols = stds[stds == 0].index.tolist()
+    # fmin/fmax skip NaN without warning; equality is exact, unlike a float std
+    n_present = np.count_nonzero(~np.isnan(values), axis=axes)
+    single_value = np.fmin.reduce(values, axis=axes) == np.fmax.reduce(
+        values, axis=axes
+    )
+    constant_cols = [names[i] for i in np.flatnonzero((n_present >= 2) & single_value)]
     if not constant_cols:
         return []
 
     msg = (
-        f"Found {len(constant_cols)} constant columns: "
+        f"Found {len(constant_cols)} constant column(s): "
         f"{', '.join(str(c) for c in constant_cols[:3])}"
         f"{'...' if len(constant_cols) > 3 else ''}."
     )
@@ -557,7 +595,7 @@ def check_outliers_zscore(df: QualityInput, sigma: float = 5.0) -> CheckResult |
 
     Parameters
     ----------
-    df : DataFrame or ndarray
+    df : DataFrame or array-like
         Data to check.
     sigma : float
         Z-score threshold. Default 5.0.
@@ -603,7 +641,7 @@ def check_flatline(signal: QualityInput, threshold: float = 1e-10) -> CheckResul
 
     Parameters
     ----------
-    signal : ndarray
+    signal : array-like
         1D signal array or flattened data.
     threshold : float
         Standard deviation threshold. Default 1e-10.
@@ -613,7 +651,8 @@ def check_flatline(signal: QualityInput, threshold: float = 1e-10) -> CheckResul
     CheckResult
         Result indicating if signal is flat.
     """
-    if getattr(signal, "size", None) == 0:
+    signal = _as_frame_or_array(signal)
+    if signal.size == 0:
         return CheckResult("Signal Quality", "WARN", "Signal is empty.", 5)
 
     values = _numeric_values(signal)
@@ -653,9 +692,11 @@ def drop_epoch_outliers(
     """Drop observations with a high fraction of MAD-based feature outliers.
 
     ``group_by=None`` makes one global drop decision across all features. When
-    set (``"family"``, ``"measure"``, or ``"feature"``) the decision is made per
-    descriptor group at that granularity and the returned dict is keyed by group
-    label.
+    set (``"family"``, ``"subfamily"``, ``"measure"`` or ``"feature"``) the
+    decision is made per descriptor group at that granularity and the returned
+    dict is keyed by group label. ``subject_col`` is only used to count
+    subjects; the counts are ``None`` when the container has no such coordinate
+    or it is missing for some observations.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -680,14 +721,14 @@ def drop_epoch_outliers(
         group_by=group_by,
         feature_schema=schema,
     )
+    ids = (
+        np.asarray(container.ids)
+        if container.ids is not None
+        else np.arange(n_obs_in).astype(str)
+    )
     if group_by is not None:
         family_masks: dict[str, np.ndarray] = {}
         per_family_dropped: dict[str, list[EpochDropRecord]] = {}
-        ids = (
-            np.asarray(container.ids)
-            if container.ids is not None
-            else np.arange(n_obs_in).astype(str)
-        )
         for column in scores.columns:
             prefix = "outlier_fraction_"
             if not column.startswith(prefix):
@@ -706,7 +747,7 @@ def drop_epoch_outliers(
                     obs_index=index,
                     obs_id=str(ids[index]),
                     outlier_fraction=float(fractions[index]),
-                    mad_z_max=float(scores.iloc[index]["mad_z_max"]),
+                    mad_z_max=float(scores.iloc[index][f"mad_z_max_{family}"]),
                 )
                 for index in np.flatnonzero(~keep)
             ]
@@ -717,7 +758,7 @@ def drop_epoch_outliers(
             n_obs_out=int(combined_keep.sum()),
             n_subjects_in=n_subjects_in,
             n_subjects_out=_count_unique_subjects(
-                _filter_observations(container, combined_keep), subject_col
+                container, subject_col, keep=combined_keep
             ),
             epoch_drop_threshold=z_threshold,
             epoch_outlier_fraction_threshold=outlier_fraction_threshold,
@@ -736,11 +777,6 @@ def drop_epoch_outliers(
             f"Only {int(keep_mask.sum())} observation(s) remain after MAD rejection "
             f"(minimum required: {min_obs})."
         )
-    ids = (
-        np.asarray(container.ids)
-        if container.ids is not None
-        else np.arange(n_obs_in).astype(str)
-    )
     dropped = [
         EpochDropRecord(
             obs_index=index,
@@ -779,9 +815,10 @@ def drop_subject_outliers(
     """Drop subjects with a high cohort-level feature outlier burden.
 
     ``group_by=None`` makes one global decision across all features. When set
-    (``"family"``, ``"measure"``, or ``"feature"``) the burden is computed per
-    descriptor group at that granularity and the returned dict is keyed by group
-    label.
+    (``"family"``, ``"subfamily"``, ``"measure"`` or ``"feature"``) the burden is
+    computed per descriptor group at that granularity and the returned dict is
+    keyed by group label. ``subject_col`` must name a coordinate of
+    ``container``; otherwise a ``ValueError`` is raised.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -790,22 +827,19 @@ def drop_subject_outliers(
     n_obs_in = container.X.shape[0]
     subject_ids = np.asarray(_get_subject_ids(container, subject_col), dtype=object)
     n_subjects_in = len(set(subject_ids.tolist()))
-    feature_df = _container_to_feature_df(container, feature_cols).copy()
+    feature_df = _container_to_feature_df(container, feature_cols)
     schema = (
         feature_schema if feature_schema is not None else container.feature_schema()
     )
-    feature_df[subject_col] = subject_ids
-    score_columns = [column for column in feature_df.columns if column != subject_col]
+    scores = compute_row_outlier_scores(
+        feature_df,
+        feature_df.columns.tolist(),
+        z_threshold=z_threshold,
+        descriptor_names=descriptor_names,
+        group_by=group_by,
+        feature_schema=schema,
+    )
     if group_by is not None:
-        scores = compute_row_outlier_scores(
-            feature_df,
-            score_columns,
-            z_threshold=z_threshold,
-            descriptor_names=descriptor_names,
-            group_by=group_by,
-            feature_schema=schema,
-        ).copy()
-        scores[subject_col] = subject_ids
         family_names = [
             column.removeprefix("outlier_fraction_")
             for column in scores.columns
@@ -815,18 +849,10 @@ def drop_subject_outliers(
         family_masks: dict[str, np.ndarray] = {}
         per_family_dropped: dict[str, list[SubjectDropRecord]] = {}
         for family in family_names:
-            fraction_col = f"outlier_fraction_{family}"
-            count_col = f"n_outlier_features_{family}"
-            family_burden = (
-                scores.groupby(subject_col, sort=False)
-                .agg(
-                    outlier_fraction=(fraction_col, "mean"),
-                    n_outlier_features=(count_col, "mean"),
-                    n_epochs=(fraction_col, "count"),
-                )
-                .reset_index()
+            family_burden = _subject_burden(
+                scores, subject_ids, subject_col, suffix=f"_{family}"
             )
-            family_burden["family"] = family
+            family_burden[group_by] = family
             burden_parts.append(family_burden)
             bad = family_burden["outlier_fraction"] > outlier_fraction_threshold
             bad_subjects = set(family_burden.loc[bad, subject_col].astype(str))
@@ -850,7 +876,7 @@ def drop_subject_outliers(
             n_obs_out=int(combined_keep.sum()),
             n_subjects_in=n_subjects_in,
             n_subjects_out=_count_unique_subjects(
-                _filter_observations(container, combined_keep), subject_col
+                container, subject_col, keep=combined_keep
             ),
             subject_drop_threshold=z_threshold,
             subject_outlier_fraction_threshold=outlier_fraction_threshold,
@@ -863,12 +889,7 @@ def drop_subject_outliers(
                 "group_by": group_by,
             },
         )
-    burden = compute_subject_outlier_burden(
-        feature_df,
-        score_columns,
-        subject_col=subject_col,
-        z_threshold=z_threshold,
-    )
+    burden = _subject_burden(scores, subject_ids, subject_col)
     bad_rows = burden["outlier_fraction"] > outlier_fraction_threshold
     bad_subjects = set(burden.loc[bad_rows, subject_col].astype(str))
     dropped = [
@@ -910,8 +931,14 @@ def run_qc(
     feature_cols: list[str] | None = None,
     compute_missingness: bool = True,
 ) -> tuple[DataContainer, QCResult]:
-    """Run epoch QC followed by subject QC and return a merged result."""
+    """Run epoch QC followed by subject QC and return a merged result.
+
+    Subject QC needs ``subject_col`` as a coordinate of ``container`` and
+    raises ``ValueError`` before any QC runs when it is missing.
+    """
     _validate_container(container)
+    if subject_z_threshold is not None:
+        _require_subject_coord(container, subject_col)
     n_obs_in = container.X.shape[0]
     n_subjects_in = _count_unique_subjects(container, subject_col)
     meta = container.meta or {}
@@ -952,6 +979,13 @@ def run_qc(
             clean_features.columns.tolist(),
         )
 
+    # a stage that did not run used no fraction threshold
+    epoch_fraction = (
+        epoch_outlier_fraction_threshold if epoch_z_threshold is not None else None
+    )
+    subject_fraction = (
+        subject_outlier_fraction_threshold if subject_z_threshold is not None else None
+    )
     return current, QCResult(
         n_rows_entering_qc=meta.get("n_rows_entering_qc"),
         n_dropped_nan_inf=int(meta.get("n_dropped_nan_inf", 0)),
@@ -961,25 +995,19 @@ def run_qc(
         n_subjects_in=n_subjects_in,
         n_subjects_out=_count_unique_subjects(current, subject_col),
         epoch_drop_threshold=epoch_z_threshold,
-        epoch_outlier_fraction_threshold=(
-            epoch_outlier_fraction_threshold if epoch_z_threshold is not None else None
-        ),
+        epoch_outlier_fraction_threshold=epoch_fraction,
         epochs_dropped=epochs_dropped,
         subject_drop_threshold=subject_z_threshold,
-        subject_outlier_fraction_threshold=(
-            subject_outlier_fraction_threshold
-            if subject_z_threshold is not None
-            else None
-        ),
+        subject_outlier_fraction_threshold=subject_fraction,
         subjects_dropped=subjects_dropped,
         subject_outlier_burden=subject_burden,
         feature_missingness=missingness,
         feature_columns_dropped=meta.get("dropped_feature_columns"),
         thresholds={
             "epoch_z_threshold": epoch_z_threshold,
-            "epoch_outlier_fraction_threshold": (epoch_outlier_fraction_threshold),
+            "epoch_outlier_fraction_threshold": epoch_fraction,
             "subject_z_threshold": subject_z_threshold,
-            "subject_outlier_fraction_threshold": (subject_outlier_fraction_threshold),
+            "subject_outlier_fraction_threshold": subject_fraction,
         },
     )
 
@@ -1025,24 +1053,44 @@ def _deduplicate_subject_records(
 def _count_unique_subjects(
     container: DataContainer,
     subject_col: str,
-) -> int:
-    return len(set(_get_subject_ids(container, subject_col)))
+    keep: np.ndarray | None = None,
+) -> int | None:
+    """Number of subjects of the ``keep`` rows, ``None`` when some are unknown."""
+    subjects = (container.coords or {}).get(subject_col)
+    if subjects is None:
+        return None
+    subjects = np.asarray(subjects)
+    if keep is not None:
+        subjects = subjects[keep]
+    if pd.isna(subjects).any():
+        return None
+    return len({str(subject) for subject in subjects})
+
+
+def _require_subject_coord(container: DataContainer, subject_col: str) -> None:
+    coords = container.coords or {}
+    if subject_col not in coords:
+        raise ValueError(
+            f"Subject column '{subject_col}' not found among the container's "
+            f"coordinates {sorted(coords)}."
+        )
+    missing = int(pd.isna(np.asarray(coords[subject_col])).sum())
+    if missing:
+        raise ValueError(
+            f"{missing} observation(s) have no '{subject_col}'; subject QC needs "
+            "the subject of every observation."
+        )
 
 
 def _get_subject_ids(
     container: DataContainer,
     subject_col: str,
 ) -> list[str]:
-    if subject_col in (container.coords or {}):
-        subjects = np.asarray(container.coords[subject_col])
-        if subjects.ndim != 1 or len(subjects) != container.X.shape[0]:
-            raise ValueError(
-                f"Coordinate '{subject_col}' must align with observations."
-            )
-        return [str(subject) for subject in subjects]
-    if container.ids is not None:
-        return [str(identifier) for identifier in container.ids]
-    return [str(index) for index in range(container.X.shape[0])]
+    _require_subject_coord(container, subject_col)
+    subjects = np.asarray(container.coords[subject_col])
+    if subjects.ndim != 1 or len(subjects) != container.X.shape[0]:
+        raise ValueError(f"Coordinate '{subject_col}' must align with observations.")
+    return [str(subject) for subject in subjects]
 
 
 def _container_to_feature_df(
@@ -1062,22 +1110,11 @@ def _container_to_feature_df(
     return frame.loc[:, feature_cols]
 
 
-def _clean_filter_meta(meta: dict) -> dict:
-    """Remove stale per-load keys that must not bleed into filtered containers.
-
-    ``dropped_extreme_rows`` is written by ``load_descriptor_table`` and
-    reflects the *original* load, not the filtered slice.  Keeping it would
-    cause ``run_qc`` to double-count those rows.
-    """
-    meta.pop("dropped_extreme_rows", None)
-    return meta
-
-
 def _filter_observations(
     container: DataContainer,
     keep_mask: np.ndarray,
 ) -> DataContainer:
     keep_mask = np.asarray(keep_mask, dtype=bool)
     filtered = container.isel(**{container.dims[0]: keep_mask})
-    filtered.meta = _clean_filter_meta(copy.deepcopy(filtered.meta))
+    filtered.meta = copy.deepcopy(filtered.meta)
     return filtered

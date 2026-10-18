@@ -22,7 +22,11 @@ def prepare_target(
     alphabetical class ordering from silently changing ROC-AUC, precision,
     recall, and F1 semantics.
     """
-    frame = container.observation_frame()
+    frame = container.obs_table(include_obs_coord=True)
+    if container.ids is not None:
+        frame["sample_id"] = container.ids.astype(str)
+    elif "sample_id" not in frame:
+        frame["sample_id"] = [f"sample-{index:06d}" for index in range(len(frame))]
     target_col = str(target_spec["target_col"])
     if target_col not in frame:
         raise KeyError(f"Target column '{target_col}' is not available.")

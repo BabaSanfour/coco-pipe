@@ -84,17 +84,45 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: BabaSanfour/coco-pipe
 
+  saved-epochs:
+    # BIDSDataset reads saved epochs with mne_bids.read_epochs_bids, which
+    # reads FIF epochs only with mne-bids PR #1679 (not merged): the matrix
+    # above, on released mne-bids, skips those tests.
+    name: Saved epochs (mne-bids PR #1679)
+    needs: quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package with mne-bids PR #1679
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[full,test]"
+          python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@refs/pull/1679/head"
+
+      - name: Run the tests that read saved epochs, none skipped
+        run: |
+          pytest tests/test_io_dataset.py tests/test_io_load.py tests/test_report_api.py -rs | tee pytest.log
+          ! grep -q "needs mne-bids PR #1679" pytest.log
+
   pytest:
     name: pytest
-    needs: test
+    needs: [test, saved-epochs]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require the full test matrix to pass
+      - name: Require the full test matrix and the saved-epoch tests to pass
         run: |
           result="${{ needs.test.result }}"
-          echo "test matrix result: $result"
-          test "$result" = "success"
+          saved="${{ needs.saved-epochs.result }}"
+          echo "test matrix result: $result, saved epochs: $saved"
+          test "$result" = "success" && test "$saved" = "success"
 
   foundation:
     name: Heavy foundation tests

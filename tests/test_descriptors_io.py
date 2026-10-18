@@ -288,9 +288,10 @@ def test_load_descriptor_table_errors(tmp_path):
     table = _save(df, tmp_path / "tbl.parquet", columns)
     with pytest.raises(ValueError):
         load_descriptor_table(table, target_col="missing")
-    # No features matched descriptor_families
-    with pytest.raises(RuntimeError):
-        load_descriptor_table(table, descriptor_families=["other"])
+    # A family the table lacks, alone or next to one it has
+    for families in (["other"], ["band", "other"]):
+        with pytest.raises(ValueError, match=r"\['other'\] not found.*\['band'\]"):
+            load_descriptor_table(table, descriptor_families=families)
 
     # No rows survived NaN/Inf filtering
     df["band_feat_ch-s1"] = [np.nan, np.inf]
@@ -366,6 +367,17 @@ def test_load_descriptor_table_exclude_subfamilies_partial(descriptor_files):
     features = [str(f) for f in container.coords["feature"]]
     assert all("sample_entropy" not in f for f in features)
     assert any("abs_alpha" in f for f in features)
+
+    # a misspelled name used to exclude nothing
+    with pytest.raises(ValueError, match=rf"\['{drop}x'\] not found.*'{drop}'"):
+        load_descriptor_table(table_path, exclude_subfamilies=[f"{drop}x"])
+    # names are checked against the whole table: a band sub-family can be
+    # excluded from a complexity-only load
+    band = descriptor_subfamily("band", "abs_alpha")
+    complexity = load_descriptor_table(
+        table_path, descriptor_families=["complexity"], exclude_subfamilies=[band]
+    )
+    assert set(complexity.coords["feature_family"].tolist()) == {"complexity"}
 
 
 def test_load_descriptor_table_exclude_all_subfamilies_raises(descriptor_files):

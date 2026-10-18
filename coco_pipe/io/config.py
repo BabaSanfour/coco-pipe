@@ -28,14 +28,14 @@ Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseDatasetConfig(BaseModel):
+    # A misspelled or unsupported setting is an error, not silently ignored.
+    model_config = ConfigDict(extra="forbid")
+
     path: Path = Field(..., description="Path to the data source (file or directory).")
-    subjects: int | list[str | int] | None = Field(
-        None, description="Specific subjects to load (int for top N, list for IDs)."
-    )
 
 
 class TabularConfig(BaseDatasetConfig):
@@ -56,23 +56,24 @@ class TabularConfig(BaseDatasetConfig):
     )
     clean: bool = False
     clean_kwargs: dict[str, Any] = Field(default_factory=dict)
-    select_kwargs: dict[str, Any] = Field(
-        default_factory=dict, description="Arguments for feature selection."
-    )
 
 
 class BIDSConfig(BaseDatasetConfig):
     """Configuration for BIDSDataset."""
 
     mode: Literal["bids"] = "bids"
+    subjects: str | list[str] | None = Field(
+        None, description="Subject labels to load, without 'sub-'."
+    )
     task: str | None = None
     session: str | list[str] | None = None
     runs: str | list[str] | None = None
     datatype: str = "eeg"
     suffix: str | None = None
-    loading_mode: str = Field(
+    loading_mode: Literal["epochs", "load_existing"] = Field(
         "epochs",
-        description="Loading strategy: 'epochs' or 'load_existing'.",
+        description="'epochs': cut raw recordings into epochs; 'load_existing': "
+        "read saved epochs.",
     )
     target_col: str | None = Field(
         None, description="Metadata coordinate to expose as target `y`."
@@ -97,6 +98,11 @@ class EmbeddingConfig(BaseDatasetConfig):
     """Configuration for EmbeddingDataset."""
 
     mode: Literal["embedding"] = "embedding"
+    subjects: int | list[str | int] | None = Field(
+        None,
+        description="An int loads the first N files; a list, the files whose ID "
+        "(``id_fn``) is in it.",
+    )
     pattern: str = "*.pkl"
     dims: tuple[str, ...] = ("feature",)
     coords: dict[str, list | Any] | None = None

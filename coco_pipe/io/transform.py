@@ -22,10 +22,28 @@ logger = logging.getLogger(__name__)
 
 
 def _rebuild_container(
-    old_container: DataContainer, new_X: np.ndarray
+    old_container: DataContainer, new_X: np.ndarray, names=None
 ) -> DataContainer:
-    """Helper to reconstruct DataContainer with new data and propagated metadata."""
-    return old_container.replace(X=new_X)
+    """Put ``new_X`` in the container, keeping all that still describes it.
+
+    With as many features as before, every coordinate is kept. With another
+    number (PCA, feature selection), the feature axis is labelled ``names``
+    and the coordinates of the old features are dropped.
+    """
+    if new_X.shape[1] == old_container.X.shape[1]:
+        return old_container.replace(X=new_X)
+    feature_dim = old_container.dims[1]
+    return old_container.with_features(
+        new_X, names=names, feature_dim=feature_dim, new_dim_name=feature_dim
+    )
+
+
+def _output_names(estimator: BaseEstimator):
+    """Return the estimator's output feature names, or None if it has none."""
+    try:
+        return np.asarray(estimator.get_feature_names_out())
+    except (AttributeError, ValueError, TypeError):
+        return None
 
 
 def _check_container(container: DataContainer):
@@ -86,6 +104,8 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
 
         self.estimator_ = clone(self.transformer)
         self.estimator_.fit(container.X, y)
+        # The labels inverse_transform gives back.
+        self.feature_labels_ = container.coords.get(container.dims[1])
         return self
 
     def transform(self, container: DataContainer) -> DataContainer:
@@ -96,7 +116,7 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
             raise RuntimeError("Transformer not fitted.")
 
         X_new = self.estimator_.transform(container.X)
-        return _rebuild_container(container, X_new)  # Use Helper
+        return _rebuild_container(container, X_new, _output_names(self.estimator_))
 
     def fit_transform(self, container: DataContainer, y=None):
         """
@@ -128,4 +148,4 @@ class SklearnWrapper(BaseEstimator, TransformerMixin):
             )
 
         X_orig = self.estimator_.inverse_transform(container.X)
-        return _rebuild_container(container, X_orig)  # Use Helper
+        return _rebuild_container(container, X_orig, self.feature_labels_)

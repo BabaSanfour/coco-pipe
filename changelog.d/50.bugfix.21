@@ -1,0 +1,1 @@
+`load_descriptor_table` raises a `ValueError` when `exclude_subfamilies` names a sub-family the table does not have, naming it and the table's sub-families. A misspelled name excluded nothing and every column loaded. Names are checked against the whole table, so one exclude list still serves loads of different `descriptor_families`.

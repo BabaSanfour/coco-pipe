@@ -21,6 +21,7 @@ from ._constants import (
     REQUIRED_ARRAYS,
     TOKEN_REQUIRED_ARRAYS,
 )
+from ._serialization import write_json
 from .structures import DataContainer
 
 
@@ -390,7 +391,13 @@ def embedding_observation_id(
     path: str | Path,
     window_position: int | None = None,
 ) -> str:
-    """Return the canonical recording/window ID for pooled or token artifacts."""
+    """Return the canonical recording/window ID for pooled or token artifacts.
+
+    A window is ``<recording>_epoch-<i>``, ``i`` being its position in the
+    recording, as the BIDS loader numbers it. A recording-level row holds one
+    condition of a recording, so its ID is ``<recording>_cond-<condition>``
+    when the metadata names the condition.
+    """
     path = Path(path)
     base = metadata.get("recording_id")
     if not base:
@@ -399,8 +406,10 @@ def embedding_observation_id(
             if base.endswith(suffix):
                 base = base.removesuffix(suffix)
                 break
-    epoch = "" if window_position is None else f"_epoch-{window_position:04d}"
-    return f"{base}{epoch}"
+    if window_position is not None:
+        return f"{base}_epoch-{window_position:04d}"
+    condition = metadata.get("condition")
+    return f"{base}_cond-{condition}" if condition else str(base)
 
 
 def load_embedding_derivatives(
@@ -630,7 +639,10 @@ def load_combined_embedding_table(
         raise ValueError(f"No embedding_* feature columns in {path}.")
     id_cols = [c for c in frame.columns if c not in feature_cols]
 
-    X = frame[feature_cols].to_numpy(dtype=float)
+    # Keep the table's float type: the merged tables are float32.
+    X = frame[feature_cols].to_numpy()
+    if not np.issubdtype(X.dtype, np.floating):
+        X = X.astype(np.float64)
     coords: dict[str, Any] = {
         "feature": np.asarray([str(c) for c in feature_cols], dtype=object)
     }
@@ -645,6 +657,11 @@ def load_combined_embedding_table(
                 + "_epoch-"
                 + frame["window_index"].astype(int).map("{:04d}".format)
             ).to_numpy(dtype=object)
+        elif "condition" in frame.columns:
+            # as embedding_observation_id: one condition of a recording
+            ids = (base + "_cond-" + frame["condition"].astype(str)).to_numpy(
+                dtype=object
+            )
         else:
             ids = base.to_numpy(dtype=object)
     else:
@@ -675,15 +692,15 @@ def write_embedding_manifest(
     root: str | Path,
     records: Iterable[Mapping[str, Any]],
 ) -> Path:
-    """Write a JSON run manifest indexing successful and failed artifacts."""
-    path = Path(root) / "run_manifest.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write a JSON run manifest indexing successful and failed artifacts.
+
+    The file is replaced atomically, so a reader never sees it half written.
+    """
     payload = {
         "created_at": datetime.now(UTC).isoformat(),
         "records": [_json_value(dict(record)) for record in records],
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return path
+    return write_json(Path(root) / "run_manifest.json", payload, sort_keys=True)
 
 
 def write_embedding_dataset_description(

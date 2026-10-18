@@ -205,6 +205,6 @@ print(f"Unstacked back to: {unstacked.shape} dims={unstacked.dims}")
 # For standard machine learning pipelines or EDA, you might want to export
 # your observation metadata to a Pandas DataFrame.
 
-df_obs = container_eeg.observation_frame()
+df_obs = container_eeg.obs_table(include_ids=True)
 print("Observation DataFrame (First 5 rows):")
 print(df_obs.head())

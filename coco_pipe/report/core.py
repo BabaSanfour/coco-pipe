@@ -365,7 +365,15 @@ class Report(ContainerElement):
                         if res_missing.is_issue:
                             sec.add_finding(res_missing)
 
-                        for res in check_constant_columns(container.X):
+                        # columns are the second dimension (features, channels)
+                        labels = (
+                            container.coords.get(container.dims[1])
+                            if container.coords and len(container.dims) > 1
+                            else None
+                        )
+                        if labels is not None:
+                            labels = [str(label) for label in labels]
+                        for res in check_constant_columns(container.X, names=labels):
                             sec.add_finding(res)
 
                     import matplotlib.pyplot as plt

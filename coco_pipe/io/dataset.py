@@ -16,6 +16,7 @@ import mne
 import numpy as np
 import pandas as pd
 from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
+from mne_bids.config import reader as mne_bids_reader
 
 from ._serialization import smart_reader
 from .structures import DataContainer
@@ -62,8 +63,6 @@ class TabularDataset(BaseDataset):
         Whether to perform automated cleaning (drop NaNs/Infs).
     clean_kwargs : dict, optional
         Arguments passed to `TabularDataset.clean`.
-    select_kwargs : dict, optional
-        Arguments for feature selection (not yet implemented in load directly).
 
     Examples
     --------
@@ -89,7 +88,6 @@ class TabularDataset(BaseDataset):
         meta_columns: list[str] | None = None,
         clean: bool = False,
         clean_kwargs: dict[str, Any] | None = None,
-        select_kwargs: dict[str, Any] | None = None,
     ):
         self.path = Path(path)
         self.target_col = target_col
@@ -104,8 +102,6 @@ class TabularDataset(BaseDataset):
 
         self.do_clean = clean
         self.clean_kwargs = clean_kwargs or {}
-        self.select_kwargs = select_kwargs or {}
-        self.strict_reshaping = True
 
     def load(self) -> DataContainer:
         if not self.path.exists():
@@ -185,21 +181,14 @@ class TabularDataset(BaseDataset):
                 else:
                     failed_cols.append(col)
 
+            # A column that does not fit would be dropped from the data:
+            # metadata columns belong in `meta_columns`.
             if failed_cols:
-                msg = (
-                    f"{len(failed_cols)} columns failed reshaping pattern "
-                    f"(sep='{self.col_sep}', expected {len(self.columns_to_dims)} "
-                    f"parts). Examples: {failed_cols[:5]}"
-                )
-                if self.strict_reshaping:
-                    logger.error(msg)
-                    # raise ValueError(msg) # Optional: strict mode could raise
-                logger.warning(msg)
-
-            if not parsed_cols:
                 raise ValueError(
-                    f"No columns matched the reshaping pattern with sep="
-                    f"'{self.col_sep}'."
+                    f"{len(failed_cols)} column(s) do not split into "
+                    f"{len(self.columns_to_dims)} parts with sep='{self.col_sep}' "
+                    f"(e.g. {failed_cols[:5]}); pass metadata columns in "
+                    "`meta_columns`."
                 )
 
             # Create MultiIndex to sort and structure
@@ -253,7 +242,6 @@ class TabularDataset(BaseDataset):
         mode: str = "any",
         sep: str = "_",
         reverse: bool = False,
-        verbose: bool = False,
         min_abs_value: float | None = None,
         min_abs_fraction: float = 0.0,
     ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
@@ -406,56 +394,47 @@ class EmbeddingDataset(BaseDataset):
 
         data_list = []
         ids_list = []
+        load_failures: list[dict[str, str]] = []
+
+        def fail(path: Path, error: str) -> None:
+            logger.warning(f"Could not load {path.name}: {error}")
+            load_failures.append({"path": str(path), "error": error})
 
         logger.info(f"Loading {len(files)} embedding files...")
 
         for fpath in files:
             try:
-                # Reader returns (N, ...) or Dict
+                # The reader returns an array, or a dict of arrays by segment.
                 content = self.reader(fpath)
-                sid = self.id_fn(fpath)
-
-                if isinstance(content, dict):
-                    # Dict {segment_id: array}
-                    for seg_k in sorted(content.keys()):
-                        arr = np.array(content[seg_k])  # Ensure array
-
-                        if arr.ndim == len(self.dims) + 1:
-                            data_list.append(arr)
-                            ids_list.extend(
-                                [f"{sid}_{seg_k}_{i}" for i in range(len(arr))]
-                            )
-                        elif arr.ndim == len(self.dims):
-                            data_list.append(arr[np.newaxis, ...])
-                            ids_list.append(f"{sid}_{seg_k}")
-                        else:
-                            logger.warning(
-                                f"Shape mismatch in {fpath.name} key {seg_k}: "
-                                f"{arr.shape} vs dims {self.dims}"
-                            )
-
-                else:
-                    # Single Array or List
-                    arr = np.array(content)
-
-                    if arr.ndim == len(self.dims) + 1:
-                        data_list.append(arr)
-                        ids_list.extend([f"{sid}_{i}" for i in range(len(arr))])
-                    elif arr.ndim == len(self.dims):
-                        data_list.append(arr[np.newaxis, ...])
-                        ids_list.append(sid)
-                    else:
-                        logger.warning(
-                            f"Shape mismatch in {fpath.name}: {arr.shape} vs dims "
-                            f"{self.dims}"
-                        )
-
             except Exception as e:
-                logger.error(f"Failed to read {fpath.name}: {e}")
+                fail(fpath, f"{type(e).__name__}: {e}")
                 continue
+            sid = self.id_fn(fpath)
+            parts = (
+                [(f"{sid}_{key}", content[key]) for key in sorted(content)]
+                if isinstance(content, dict)
+                else [(sid, content)]
+            )
+            for name, values in parts:
+                arr = np.asarray(values)
+                if arr.ndim == len(self.dims) + 1:
+                    data_list.append(arr)
+                    ids_list.extend(f"{name}_{i}" for i in range(len(arr)))
+                elif arr.ndim == len(self.dims):
+                    data_list.append(arr[np.newaxis, ...])
+                    ids_list.append(name)
+                else:
+                    fail(fpath, f"{name}: shape {arr.shape} does not fit {self.dims}")
 
         if not data_list:
-            raise RuntimeError("No valid data loaded.")
+            message = f"No valid data loaded from {self.path}"
+            if load_failures:
+                first = load_failures[0]
+                message += (
+                    f": {len(load_failures)} file(s) could not be loaded, the first "
+                    f"being {first['path']} ({first['error']})"
+                )
+            raise RuntimeError(message)
 
         try:
             X_final = np.concatenate(data_list, axis=0)
@@ -475,8 +454,24 @@ class EmbeddingDataset(BaseDataset):
         coords.update(self.coords_in)
 
         return DataContainer(
-            X=X_final, dims=final_dims, coords=coords, ids=np.array(ids_list)
+            X=X_final,
+            dims=final_dims,
+            coords=coords,
+            ids=np.array(ids_list),
+            meta={"load_failures": load_failures},
         )
+
+
+# Observation coordinates the loader sets from the files themselves.
+_LOADER_COORDS = (
+    "obs",
+    "epoch",
+    "recording_id",
+    "bad_channels",
+    "subject",
+    "session",
+    "run",
+)
 
 
 class _NoMatchingEvents(Exception):
@@ -529,15 +524,21 @@ class BIDSDataset(BaseDataset):
         numbered from 1 in the order they first appear in the recordings.
     subject_metadata_df : DataFrame, optional
         Subject-level metadata to attach, in addition to ``participants.tsv``.
+        Neither may have a column named like a coordinate the loader sets
+        (``obs``, ``epoch``, ``recording_id``, ``bad_channels``, ``subject``,
+        ``session``, ``run``).
     subject_key : str, optional
-        Column of `subject_metadata_df` holding the subject ID.
+        Column of `subject_metadata_df` holding the subject ID. It matches
+        rows to subjects and is not attached itself.
     tmin, tmax : float
         Epoch limits in seconds around each event, with `event_id` on raw
         recordings.
     baseline : tuple, optional
         Baseline interval, with `event_id` on raw recordings.
     units : str, optional
-        Units of the returned data (see :meth:`mne.Epochs.get_data`).
+        Units of the returned data (see :meth:`mne.Epochs.get_data`); ``None``
+        returns each channel type in its SI unit. ``meta['units']`` records the
+        unit of each channel type either way.
     description : str, optional
         The ``desc`` entity of the files to load.
     dtype : str, default="float32"
@@ -585,6 +586,8 @@ class BIDSDataset(BaseDataset):
         dtype: str = "float32",
         n_jobs: int = 1,
     ):
+        if mode not in {"epochs", "load_existing"}:
+            raise ValueError(f"mode must be 'epochs' or 'load_existing', got {mode!r}.")
         self.root = Path(root)
         self.task = task
         self.session = session
@@ -608,7 +611,13 @@ class BIDSDataset(BaseDataset):
         self.n_jobs = n_jobs
 
     def _find_recordings(self, saved: bool) -> dict[str, BIDSPath]:
-        """Return the ``BIDSPath`` of each recording to load, by recording ID."""
+        """Return the ``BIDSPath`` of each recording to load, by recording ID.
+
+        Only data files are searched for, those MNE-BIDS reads (BrainVision's
+        ``.vhdr``, not its ``.eeg`` and ``.vmrk``), so a recording is one path,
+        found with its extension. A file MNE split into parts is its first
+        part: MNE reads the others from it.
+        """
         paths = find_matching_paths(
             self.root,
             subjects=self.subjects,
@@ -618,11 +627,13 @@ class BIDSDataset(BaseDataset):
             descriptions=self.description,
             datatypes=self.datatype,
             suffixes=self.suffix or ("epo" if saved else self.datatype),
-            extensions=".fif" if saved else None,
+            extensions=".fif" if saved else sorted(mne_bids_reader),
             ignore_json=True,
         )
         recordings = {}
         for path in paths:
+            if path.split not in (None, "01"):
+                continue
             recording_id = BIDSPath(
                 subject=path.subject,
                 session=path.session,
@@ -630,17 +641,13 @@ class BIDSDataset(BaseDataset):
                 acquisition=path.acquisition,
                 run=path.run,
             ).basename
-            if not saved:
-                # Raw formats can have several files per recording (.vhdr, .eeg).
-                recordings.setdefault(recording_id, path.copy().update(extension=None))
-            elif recording_id in recordings:
+            if recording_id in recordings:
                 raise ValueError(
                     f"Several files match recording {recording_id}: "
                     f"{recordings[recording_id].basename} and {path.basename}. "
                     "Pass `description` to choose one."
                 )
-            else:
-                recordings[recording_id] = path
+            recordings[recording_id] = path
         return dict(sorted(recordings.items()))
 
     def _read_epochs(self, bids_path: BIDSPath, saved: bool) -> mne.BaseEpochs:
@@ -723,7 +730,8 @@ class BIDSDataset(BaseDataset):
               as marked in the file), 'subject', 'session', 'run' and the
               subject metadata.
             - dims: ('obs', 'channel', 'time').
-            - meta: 'sfreq', 'source', 'units', 'event_id',
+            - meta: 'sfreq', 'source', 'units' (the unit of each channel type
+              in X, e.g. ``{'eeg': 'V'}``), 'event_id',
               'skipped_no_matching_events' (recordings with none of the
               requested events, skipped without a warning), and 'load_failures' (the
               'recording_id' and 'error' of each recording that failed to load).
@@ -753,7 +761,18 @@ class BIDSDataset(BaseDataset):
                 )
             for _, row in self.subject_metadata_df.iterrows():
                 sub = normalize_subject_value(row[self.subject_key])
-                meta_lookup.setdefault(sub, {}).update(row.to_dict())
+                # The key only matches rows to subjects: ``subject`` holds it.
+                values = row.drop(self.subject_key).to_dict()
+                meta_lookup.setdefault(sub, {}).update(values)
+        taken = sorted(
+            {column for row in meta_lookup.values() for column in row}
+            & set(_LOADER_COORDS)
+        )
+        if taken:
+            raise ValueError(
+                f"Subject metadata columns {taken} have the names of coordinates "
+                "the loader sets; rename them."
+            )
 
         def open_recording(bids_path: BIDSPath) -> mne.BaseEpochs | str | None:
             try:
@@ -907,6 +926,18 @@ class BIDSDataset(BaseDataset):
                 )
             y = coords[self.target_col]
 
+        # As in mne.Epochs.get_data: SI units, unless a str is given, which MNE
+        # applies to the one channel type that has a unit.
+        si_units = mne.defaults.DEFAULTS["si_units"]
+        units = {
+            ch_type: si_units.get(ch_type)
+            for ch_type in dict.fromkeys(epochs.get_channel_types())
+        }
+        if self.units is not None:
+            units.update(
+                {ch_type: self.units for ch_type in units if ch_type in si_units}
+            )
+
         sfreq = epochs.info["sfreq"]
         return DataContainer(
             X=X,
@@ -917,7 +948,7 @@ class BIDSDataset(BaseDataset):
             meta={
                 "sfreq": sfreq,
                 "source": str(self.root),
-                "units": self.units,
+                "units": units,
                 "event_id": event_codes,
                 "load_failures": load_failures,
                 "skipped_no_matching_events": skipped,

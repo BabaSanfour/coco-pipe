@@ -808,19 +808,19 @@ def build_meta_dict(
     (e.g. eye-state derivation). Rows are aligned to *ids* when provided.
     """
     # 1. Fetch and format metadata frame
-    frame = container.observation_frame()
-    frame = frame.drop(columns=["feature"], errors="ignore")
-    if container.y is not None and "y" not in frame.columns:
-        frame["y"] = np.asarray(container.y)
-    if "sample_id" in frame.columns:
-        frame = frame.drop(columns=["obs_id"], errors="ignore")
-    frame = frame.rename(columns={"sample_id": "obs_id"})
+    frame = container.obs_table(include_y=True, include_obs_coord=True)
+    if container.ids is not None:
+        frame["obs_id"] = container.ids.astype(str)
 
     # 2. Align frame rows to match requested ids. Observation ids are not unique,
     # so use the same occurrence-disambiguated alignment as the eval path rather
     # than a naive obs_id lookup (which explodes or silently drops on duplicates).
-    if ids is not None and "obs_id" in frame.columns:
-        positions = occurrence_aligned_positions(frame["obs_id"].to_numpy(), ids)
+    if ids is not None:
+        positions = (
+            occurrence_aligned_positions(frame["obs_id"].to_numpy(), ids)
+            if "obs_id" in frame.columns
+            else None
+        )
         if positions is None:
             frame = pd.DataFrame()
         else:

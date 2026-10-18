@@ -506,10 +506,10 @@ The simplest path: render a :class:`DataContainer` as a report.
 
 .. code-block:: python
 
-   from coco_pipe.io import load_data
+   from coco_pipe.io import TabularConfig, load_data
    from coco_pipe.report import from_container
 
-   container = load_data("scores.csv", mode="tabular", target_col="label")
+   container = load_data(TabularConfig(path="scores.csv", sep=",", target_col="label"))
    report = from_container(
        container,
        title="Input Inspection",
@@ -524,7 +524,7 @@ columns — see :ref:`report-data-quality`), and a sample histogram.
 2.2 ``from_bids``
 ~~~~~~~~~~~~~~~~~
 
-Wraps :func:`coco_pipe.io.load_data` in BIDS mode + ``from_container``.
+Wraps ``BIDSDataset`` + ``from_container``.
 
 .. code-block:: python
 
@@ -539,7 +539,7 @@ Wraps :func:`coco_pipe.io.load_data` in BIDS mode + ``from_container``.
 2.3 ``from_tabular``
 ~~~~~~~~~~~~~~~~~~~~
 
-Wraps :func:`coco_pipe.io.load_data` in tabular mode + ``from_container``.
+Wraps ``TabularDataset`` + ``from_container``.
 
 .. code-block:: python
 

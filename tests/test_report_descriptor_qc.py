@@ -120,7 +120,7 @@ def test_generate_descriptor_dataset_report():
         flags_df = pd.DataFrame(
             [
                 {
-                    "level": "warning",
+                    "level": "warn",
                     "scope": "dataset",
                     "code": "variance_too_low",
                 }

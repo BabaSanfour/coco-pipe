@@ -1,0 +1,1 @@
+`load_combined_embedding_table` returns the embeddings in the table's own float type. It converted them to float64, so the float32 tables the merge step writes took twice their memory once loaded: for a real EEGPT eyes-closed epoch table (49,155 rows by 2,048 features), 768 MiB instead of 384 MiB, with peak memory 2.12 GiB instead of 1.39 GiB and no slower load.

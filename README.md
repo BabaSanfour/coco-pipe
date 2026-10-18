@@ -98,15 +98,16 @@ uv pip install -e ".[full,test]"
 ### Saved epochs and mne-bids
 
 `BIDSDataset` reads saved epochs (`*_epo.fif`) with `mne_bids.read_epochs_bids`,
-which reads FIF epochs from mne-bids PR #1679 on. Until that is in a release,
-install mne-bids from GitHub:
+which reads FIF epochs only with mne-bids PR
+[#1679](https://github.com/mne-tools/mne-bids/pull/1679). It is not merged
+yet, so neither a release nor mne-bids `main` has it; install the PR:
 
 ```bash
-pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
+pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@refs/pull/1679/head"
 ```
 
 With mne-bids 0.20, loading saved epochs fails and the tests that need it are
-skipped.
+skipped. CI runs them in a separate job with the PR installed.
 
 ---
 

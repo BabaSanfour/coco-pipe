@@ -1,0 +1,1 @@
+In grouped epoch QC (`drop_epoch_outliers(..., group_by=...)`), each group's drop record carries that group's largest robust z-score in `mad_z_max`. It carried the row's largest over all features, so a row dropped for its band features could report its connectivity score. `compute_row_outlier_scores` gains a `mad_z_max_<label>` column per group.
