@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import numpy as np
@@ -152,6 +153,13 @@ def test_embedding_observation_id_is_recording_and_epoch():
             2,
         )
         == "sub-01_run-01_epoch-0002"
+    )
+    # a recording-level row is one condition of the recording
+    assert (
+        embedding_observation_id(
+            {"recording_id": "sub-01_run-01", "condition": "EO"}, "x_embedding.npz"
+        )
+        == "sub-01_run-01_cond-EO"
     )
     # without a recording_id, pooled and token files of a recording agree
     pooled, tokens = "sub-01_run-01_embedding.npz", "sub-01_run-01_tokens.npz"
@@ -582,6 +590,11 @@ def test_load_combined_embedding_table_roundtrip(tmp_path):
     assert container.X.dtype == np.float32
     np.testing.assert_array_equal(container.X[:, 1], np.float32([1.0, 1.1, 1.2]))
     assert list(container.coords["feature"]) == ["embedding_0000", "embedding_0001"]
+    assert container.ids.tolist() == [
+        "sub-0001_run-01_cond-EO_baseline",
+        "sub-0001_run-02_cond-EO_baseline",
+        "sub-0002_run-01_cond-EO_baseline",
+    ]
     assert "subject" in container.coords
     assert container.meta["model_key"] == "cbramod"
     assert container.meta["source"] == "combined_table"
@@ -591,3 +604,31 @@ def test_load_combined_embedding_table_roundtrip(tmp_path):
     assert agg.X.shape[0] == 2
     with pytest.raises(FileNotFoundError):
         load_combined_embedding_table(tmp_path, "cbramod", "EO_baseline", "epoch")
+
+
+def test_recording_ids_of_two_conditions_are_unique(tmp_path):
+    paths = []
+    for condition in ("EO", "EC"):
+        result = SimpleNamespace(
+            window_embeddings=np.ones((2, 3), dtype=np.float32),
+            recording_embedding=np.ones(3, dtype=np.float32),
+            window_start=np.arange(2),
+            window_stop=np.arange(2) + 1,
+            window_index=np.arange(2) + (0 if condition == "EO" else 2),
+            metadata={
+                "recording_id": "sub-01_task-rest",
+                "condition": condition,
+                "model_key": "cbramod",
+            },
+            token_embeddings=None,
+        )
+        name = f"sub-01_task-rest_desc-cbramod{condition}_embedding.npz"
+        paths.append(save_embedding_derivative(result, tmp_path / name)[0])
+
+    recordings = load_embedding_derivatives(paths, representation="recording")
+    assert recordings.ids.tolist() == [
+        "sub-01_task-rest_cond-EO",
+        "sub-01_task-rest_cond-EC",
+    ]
+    epochs = load_embedding_derivatives(paths, representation="epoch")
+    assert len(set(epochs.ids)) == 4

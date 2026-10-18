@@ -390,7 +390,13 @@ def embedding_observation_id(
     path: str | Path,
     window_position: int | None = None,
 ) -> str:
-    """Return the canonical recording/window ID for pooled or token artifacts."""
+    """Return the canonical recording/window ID for pooled or token artifacts.
+
+    A window is ``<recording>_epoch-<i>``, ``i`` being its position in the
+    recording, as the BIDS loader numbers it. A recording-level row holds one
+    condition of a recording, so its ID is ``<recording>_cond-<condition>``
+    when the metadata names the condition.
+    """
     path = Path(path)
     base = metadata.get("recording_id")
     if not base:
@@ -399,8 +405,10 @@ def embedding_observation_id(
             if base.endswith(suffix):
                 base = base.removesuffix(suffix)
                 break
-    epoch = "" if window_position is None else f"_epoch-{window_position:04d}"
-    return f"{base}{epoch}"
+    if window_position is not None:
+        return f"{base}_epoch-{window_position:04d}"
+    condition = metadata.get("condition")
+    return f"{base}_cond-{condition}" if condition else str(base)
 
 
 def load_embedding_derivatives(
@@ -648,6 +656,11 @@ def load_combined_embedding_table(
                 + "_epoch-"
                 + frame["window_index"].astype(int).map("{:04d}".format)
             ).to_numpy(dtype=object)
+        elif "condition" in frame.columns:
+            # as embedding_observation_id: one condition of a recording
+            ids = (base + "_cond-" + frame["condition"].astype(str)).to_numpy(
+                dtype=object
+            )
         else:
             ids = base.to_numpy(dtype=object)
     else:
