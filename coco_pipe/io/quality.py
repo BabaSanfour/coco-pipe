@@ -76,8 +76,9 @@ class QCResult:
     afterwards (``result.family_qc = aggregate_family_qc(...)``), keeping the
     ``io`` layer free of ``descriptors`` imports.
 
-    ``n_subjects_in`` and ``n_subjects_out`` are ``None`` when the container
-    has no ``subject_col`` coordinate, so its subjects are unknown.
+    ``n_subjects_in`` and ``n_subjects_out`` are ``None`` when the subjects are
+    unknown: the container has no ``subject_col`` coordinate, or it is missing
+    for some observations.
     """
 
     n_rows_entering_qc: int | None = None
@@ -400,6 +401,12 @@ def compute_subject_outlier_burden(
     """Aggregate row-level MAD outlier scores to one row per subject."""
     if subject_col not in df.columns:
         raise ValueError(f"Subject column '{subject_col}' not found.")
+    missing = int(df[subject_col].isna().sum())
+    if missing:
+        raise ValueError(
+            f"{missing} row(s) have no '{subject_col}'; the subject outlier "
+            "burden needs the subject of every row."
+        )
     scores = compute_row_outlier_scores(
         df,
         feature_cols,
@@ -658,7 +665,8 @@ def drop_epoch_outliers(
     set (``"family"``, ``"measure"``, or ``"feature"``) the decision is made per
     descriptor group at that granularity and the returned dict is keyed by group
     label. ``subject_col`` is only used to count subjects; the counts are
-    ``None`` when the container has no such coordinate.
+    ``None`` when the container has no such coordinate or it is missing for
+    some observations.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -1036,7 +1044,9 @@ def _count_unique_subjects(
     container: DataContainer,
     subject_col: str,
 ) -> int | None:
-    if subject_col not in (container.coords or {}):
+    """Number of subjects, or ``None`` when some observation's is unknown."""
+    subjects = (container.coords or {}).get(subject_col)
+    if subjects is None or pd.isna(np.asarray(subjects)).any():
         return None
     return len(set(_get_subject_ids(container, subject_col)))
 
@@ -1047,6 +1057,12 @@ def _require_subject_coord(container: DataContainer, subject_col: str) -> None:
         raise ValueError(
             f"Subject column '{subject_col}' not found among the container's "
             f"coordinates {sorted(coords)}."
+        )
+    missing = int(pd.isna(np.asarray(coords[subject_col])).sum())
+    if missing:
+        raise ValueError(
+            f"{missing} observation(s) have no '{subject_col}'; subject QC needs "
+            "the subject of every observation."
         )
 
 

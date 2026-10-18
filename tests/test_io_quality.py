@@ -478,6 +478,31 @@ def test_subject_column_must_exist():
     assert result.n_subjects_in is None
 
 
+@pytest.mark.parametrize("missing", [None, np.nan])
+def test_missing_subject_ids(missing):
+    # the epochs without a subject used to be pooled into a subject 'nan'
+    X = np.random.default_rng(0).standard_normal((12, 6))
+    X[8:] += 40.0
+    subjects = np.array(["A"] * 4 + ["B"] * 4 + [missing] * 4, dtype=object)
+    container = _container(X, subjects)
+    with pytest.raises(ValueError, match="4 observation\\(s\\) have no 'subject'"):
+        drop_subject_outliers(container)
+    with pytest.raises(ValueError, match="4 observation\\(s\\) have no 'subject'"):
+        run_qc(container, epoch_z_threshold=None)
+
+    # epoch QC needs no subjects; their count is unknown
+    clean, result = drop_epoch_outliers(container)
+    assert clean.X.shape[0] == 8
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, 2)
+
+    # ... and the burden used to leave those rows out
+    frame = pd.DataFrame(X, columns=[f"f{index}" for index in range(6)])
+    with pytest.raises(ValueError, match="4 row\\(s\\) have no 'subject'"):
+        compute_subject_outlier_burden(
+            frame.assign(subject=subjects), frame.columns.tolist()
+        )
+
+
 # --- run_qc -----------------------------------------------------------------------
 
 
