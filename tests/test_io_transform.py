@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
 from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.transform import SklearnWrapper
@@ -99,3 +99,7 @@ def test_sklearn_wrapper_changes_the_number_of_features():
     restored = wrapper.inverse_transform(reduced)
     assert restored.X.shape == (20, 5)
     assert restored.coords["feature"].tolist() == list("abcde")
+
+    # a transformer without output names labels the new columns by position
+    first_two = SklearnWrapper(FunctionTransformer(lambda X: X[:, :2]))
+    assert first_two.fit_transform(container).coords["feature"].tolist() == [0, 1]

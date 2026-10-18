@@ -605,6 +605,17 @@ def test_load_combined_embedding_table_roundtrip(tmp_path):
         tmp_path, "cbramod", "EO_baseline", "recording", aggregate_by="subject"
     )
     assert agg.X.shape[0] == 2
+    # columns that are not float (e.g. integer codes) are read as float64
+    path = combined_embedding_table_path(
+        tmp_path, "cbramod", "EO_baseline", "recording"
+    )
+    table = pd.read_parquet(path)
+    table[["embedding_0000", "embedding_0001"]] = [[1, 2], [3, 4], [5, 6]]
+    table.to_parquet(path, index=False)
+    integers = load_combined_embedding_table(
+        tmp_path, "cbramod", "EO_baseline", "recording"
+    )
+    assert integers.X.dtype == np.float64
     with pytest.raises(FileNotFoundError):
         load_combined_embedding_table(tmp_path, "cbramod", "EO_baseline", "epoch")
 

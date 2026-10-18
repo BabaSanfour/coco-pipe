@@ -73,7 +73,8 @@ def test_load_data_takes_a_config_or_its_wrapper(tmp_path):
 
 
 def test_load_data_errors(tmp_path):
-    # settings belong to the config, which validates them
+    # settings belong to the config, which validates them; a loose keyword is
+    # refused (passed unpacked, as no such parameter exists)
     with pytest.raises(TypeError):
         load_data(_csv(tmp_path), mode="tabular")
     with pytest.raises(ValidationError):

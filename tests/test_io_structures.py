@@ -504,6 +504,18 @@ def test_concat_matches_other_dimensions_by_label():
 
 def test_concat_errors():
     flat = DataContainer(np.zeros((2, 2)), dims=("obs", "feature"))
+    labelled = DataContainer(
+        np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": ["a", "b"]}
+    )
+    with pytest.raises(ValueError, match="must be 'exact' or 'inner'"):
+        DataContainer.concat([labelled, labelled], join="outer")
+    with pytest.raises(ValueError, match="have no 'feature' labels"):
+        DataContainer.concat([labelled, flat])
+    other = DataContainer(
+        np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": ["c", "d"]}
+    )
+    with pytest.raises(ValueError, match="share no 'feature' label"):
+        DataContainer.concat([labelled, other], join="inner")
     with pytest.raises(ValueError):
         DataContainer.concat([])
     no_obs = DataContainer(np.zeros((2, 2)), dims=("a", "b"))

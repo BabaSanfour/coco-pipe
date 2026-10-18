@@ -507,6 +507,15 @@ def test_subject_column_must_exist():
     _, result = run_qc(container, subject_z_threshold=None, subject_col="participant")
     assert result.n_subjects_in is None
 
+    # a subject coordinate on another axis does not name the observations
+    misaligned = DataContainer(
+        X=np.zeros((3, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["a", "b"], "subject": ["s1", "s2"]},
+    )
+    with pytest.raises(ValueError, match="must align with observations"):
+        drop_subject_outliers(misaligned)
+
 
 def test_subject_column_named_like_a_feature():
     # the subject IDs used to overwrite the feature, which was then not scored
