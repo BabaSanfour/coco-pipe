@@ -21,6 +21,7 @@ from ._constants import (
     REQUIRED_ARRAYS,
     TOKEN_REQUIRED_ARRAYS,
 )
+from ._serialization import write_json
 from .structures import DataContainer
 
 
@@ -691,15 +692,15 @@ def write_embedding_manifest(
     root: str | Path,
     records: Iterable[Mapping[str, Any]],
 ) -> Path:
-    """Write a JSON run manifest indexing successful and failed artifacts."""
-    path = Path(root) / "run_manifest.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write a JSON run manifest indexing successful and failed artifacts.
+
+    The file is replaced atomically, so a reader never sees it half written.
+    """
     payload = {
         "created_at": datetime.now(UTC).isoformat(),
         "records": [_json_value(dict(record)) for record in records],
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return path
+    return write_json(Path(root) / "run_manifest.json", payload, sort_keys=True)
 
 
 def write_embedding_dataset_description(

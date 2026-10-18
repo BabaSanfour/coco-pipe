@@ -423,7 +423,10 @@ def test_write_manifest_and_discover(tmp_path):
         {"status": "success", "artifact_path": "sub-1_embedding.npz"},
         {"status": "success", "artifact_path": "/absolute/path.npz"},
     ]
-    write_embedding_manifest(tmp_path, records)
+    manifest = write_embedding_manifest(tmp_path, records)
+    # written in place of the old file in one step: no temporary file is left
+    assert json.loads(manifest.read_text())["records"] == records
+    assert [p.name for p in tmp_path.iterdir()] == ["run_manifest.json"]
 
     # Create the referenced files
     (tmp_path / "sub-1_embedding.npz").touch()

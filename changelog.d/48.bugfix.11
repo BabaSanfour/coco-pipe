@@ -1,0 +1,1 @@
+`write_embedding_manifest` replaces `run_manifest.json` atomically, through the same `write_json` the other io writers use: a reader, such as a resumed run looking for finished artifacts, never sees a half-written manifest. It wrote the file in place.
