@@ -10,11 +10,14 @@ Four QC levels are defined:
 * **Level 4** — Compose levels 2 + 3 and record every decision in a
   :class:`QCResult` (:func:`run_qc`).
 
-The module also provides lower-level primitives used by the levels above:
-:func:`compute_row_outlier_scores` (MAD z-scores per row),
-:func:`compute_subject_outlier_burden` (per-subject mean epoch burden), and
-:func:`row_quality_score` (simple NaN/Inf/zero count per row, used for
-quality-weighted sampling).
+The module also provides the primitives the levels use,
+:func:`compute_row_outlier_scores` (MAD z-scores per row) and
+:func:`compute_subject_outlier_burden` (per-subject mean epoch burden), with
+:func:`group_labels` for the descriptor groups of ``group_by``; the data checks
+reports run, each returning a :class:`CheckResult` (:func:`check_missingness`,
+:func:`check_constant_columns`, :func:`check_outliers_zscore`,
+:func:`check_flatline`); and QC flag records (:func:`make_qc_flag`,
+:func:`resolve_qc_status`).
 """
 
 from __future__ import annotations
