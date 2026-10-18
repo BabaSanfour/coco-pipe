@@ -800,3 +800,35 @@ def test_balance_errors():
     with_y = DataContainer(np.zeros((2, 1)), dims=("obs", "f"), y=np.array([0, 1]))
     with pytest.raises(ValueError, match="Covariate 'missing' not found"):
         with_y.balance(covariates=["missing"], target="y")
+
+
+def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():
+    # the first group has as many features as there are subjects: its
+    # coordinates must not end up on the observation axis
+    container = DataContainer(
+        X=np.arange(24, dtype=float).reshape(6, 4),
+        dims=("obs", "feature"),
+        coords={
+            "feature": ["a1", "a2", "b1", "b2"],
+            "feature_kind": ["k1", "k2", "k3", "k4"],
+            "subject": ["s1", "s1", "s1", "s2", "s2", "s2"],
+        },
+    )
+    out = container.aggregate_groups(
+        "subject",
+        [
+            {"prefixes": "a", "stats": "mean"},
+            {"prefixes": "b", "stats": ["max", "min"]},
+        ],
+    )
+    assert out.data.coords["feature_kind"].dims == ("feature",)
+    pairs = zip(out.coords["feature"], out.coords["feature_kind"], strict=True)
+    assert dict(pairs) == {
+        "mean_a1": "k1",
+        "mean_a2": "k2",
+        "max_b1": "k3",
+        "max_b2": "k4",
+        "min_b1": "k3",
+        "min_b2": "k4",
+    }
+    assert out.X[:, 2].tolist() == [10.0, 22.0]  # max of b1 per subject

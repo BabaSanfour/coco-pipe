@@ -1505,6 +1505,8 @@ class DataContainer:
             return mask
 
         combined_parts: list[np.ndarray] = []
+        # Per output column, the coordinates of its feature (feature_family...).
+        part_feature_coords: list[dict[str, np.ndarray]] = []
         combined_feature_names: list[str] = []
         aggregate_failures: list[dict[str, Any]] = []
         base_agg: DataContainer | None = None
@@ -1586,6 +1588,13 @@ class DataContainer:
 
                 combined_parts.append(np.asarray(grouped.X))
                 combined_feature_names.extend(prefixed_names)
+                part_feature_coords.append(
+                    {
+                        name: coord.values
+                        for name, coord in grouped.data.coords.items()
+                        if coord.dims == ("feature",) and name != "feature"
+                    }
+                )
 
                 failures = grouped.meta.get("aggregate_failures", [])
                 for failure in failures:
@@ -1599,7 +1608,18 @@ class DataContainer:
         if base_agg is None:  # pragma: no cover - guarded above
             raise ValueError("aggregate_groups produced no aggregated outputs.")
 
-        new_coords = dict(base_agg.coords)
+        # Coordinates of the feature axis are rebuilt from every part: those of
+        # the first part alone would not fit the combined features.
+        new_coords = {
+            name: values
+            for name, values in base_agg.coords.items()
+            if base_agg.data.coords[name].dims != ("feature",)
+        }
+        shared = set.intersection(*(set(part) for part in part_feature_coords))
+        for name in sorted(shared):
+            new_coords[name] = np.concatenate(
+                [part[name] for part in part_feature_coords]
+            )
         new_coords["feature"] = np.asarray(combined_feature_names, dtype=object)
         meta = deepcopy(self.meta)
         unique_stats = list(
