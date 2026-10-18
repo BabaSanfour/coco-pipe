@@ -74,3 +74,28 @@ def test_sklearn_wrapper_inverse_transform_non_2d():
     wrapper = SklearnWrapper(StandardScaler()).fit(_wrapper_container_2d())
     with pytest.raises(ValueError, match="2D"):
         wrapper.inverse_transform(_wrapper_container_3d())
+
+
+def test_sklearn_wrapper_changes_the_number_of_features():
+    rng = np.random.default_rng(0)
+    container = DataContainer(
+        rng.normal(size=(20, 5)),
+        dims=("obs", "feature"),
+        coords={"feature": list("abcde"), "feature_kind": ["band"] * 5},
+        y=np.repeat([0, 1], 10),
+        ids=[f"s{i}" for i in range(20)],
+    )
+
+    wrapper = SklearnWrapper(PCA(n_components=2))
+    reduced = wrapper.fit_transform(container)
+
+    assert reduced.X.shape == (20, 2)
+    assert reduced.coords["feature"].tolist() == ["pca0", "pca1"]
+    # the old features' coordinates no longer describe the columns
+    assert "feature_kind" not in reduced.coords
+    assert reduced.y.tolist() == container.y.tolist()
+    assert reduced.ids.tolist() == container.ids.tolist()
+
+    restored = wrapper.inverse_transform(reduced)
+    assert restored.X.shape == (20, 5)
+    assert restored.coords["feature"].tolist() == list("abcde")
