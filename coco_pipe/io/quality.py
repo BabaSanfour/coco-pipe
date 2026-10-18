@@ -252,7 +252,8 @@ def _flag_level(flag: dict[str, Any]) -> str:
 
 def _validate_group_by(value: str) -> None:
     if value not in GROUP_BY_COLUMN:
-        raise ValueError("group_by must be one of 'family', 'measure', or 'feature'.")
+        choices = ", ".join(repr(choice) for choice in GROUP_BY_COLUMN)
+        raise ValueError(f"group_by must be one of {choices}; got {value!r}.")
 
 
 def _resolve_group_labels(
@@ -293,7 +294,8 @@ def group_labels(container: DataContainer, group_by: str = "family") -> list[str
     container
         Any container with a ``feature`` axis (e.g. one analysis unit).
     group_by
-        Grouping granularity: ``"family"``, ``"measure"``, or ``"feature"``.
+        Grouping granularity: ``"family"``, ``"subfamily"``, ``"measure"`` or
+        ``"feature"``.
 
     Returns
     -------
@@ -334,8 +336,8 @@ def compute_row_outlier_scores(
     taken over the finite, scored values of each row, so missing features neither
     count as outliers nor dilute them.
 
-    When ``group_by`` is set (``"family"``, ``"measure"``, or ``"feature"``) the
-    result also carries per-group ``outlier_fraction_<label>``,
+    When ``group_by`` is set (``"family"``, ``"subfamily"``, ``"measure"`` or
+    ``"feature"``) the result also carries per-group ``outlier_fraction_<label>``,
     ``n_outlier_features_<label>`` and ``mad_z_max_<label>`` columns so a row
     can be judged within each descriptor group rather than across all features.
     """
@@ -708,11 +710,11 @@ def drop_epoch_outliers(
     """Drop observations with a high fraction of MAD-based feature outliers.
 
     ``group_by=None`` makes one global drop decision across all features. When
-    set (``"family"``, ``"measure"``, or ``"feature"``) the decision is made per
-    descriptor group at that granularity and the returned dict is keyed by group
-    label. ``subject_col`` is only used to count subjects; the counts are
-    ``None`` when the container has no such coordinate or it is missing for
-    some observations.
+    set (``"family"``, ``"subfamily"``, ``"measure"`` or ``"feature"``) the
+    decision is made per descriptor group at that granularity and the returned
+    dict is keyed by group label. ``subject_col`` is only used to count
+    subjects; the counts are ``None`` when the container has no such coordinate
+    or it is missing for some observations.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -836,10 +838,10 @@ def drop_subject_outliers(
     """Drop subjects with a high cohort-level feature outlier burden.
 
     ``group_by=None`` makes one global decision across all features. When set
-    (``"family"``, ``"measure"``, or ``"feature"``) the burden is computed per
-    descriptor group at that granularity and the returned dict is keyed by group
-    label. ``subject_col`` must name a coordinate of ``container``; otherwise
-    a ``ValueError`` is raised.
+    (``"family"``, ``"subfamily"``, ``"measure"`` or ``"feature"``) the burden is
+    computed per descriptor group at that granularity and the returned dict is
+    keyed by group label. ``subject_col`` must name a coordinate of
+    ``container``; otherwise a ``ValueError`` is raised.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)

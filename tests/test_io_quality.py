@@ -671,6 +671,14 @@ def test_group_labels():
     )
     assert group_labels(partial, "measure") == ["abs_alpha", "abs_beta"]
 
+    names = ["band_log_abs_alpha_ch-Fz", "band_rel_alpha_ch-Fz"]
+    subfamilies = DataContainer(
+        X=np.zeros((1, 2)), dims=("obs", "feature"), coords={"feature": names}
+    )
+    assert group_labels(subfamilies, "subfamily") == ["log_abs", "rel"]
+    with pytest.raises(ValueError, match=r"'subfamily', 'measure'.*got 'bogus'"):
+        group_labels(subfamilies, "bogus")
+
     channels = DataContainer(
         X=np.zeros((1, 2)), dims=("obs", "channel"), coords={"channel": ["Fz", "Cz"]}
     )
