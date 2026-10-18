@@ -69,6 +69,11 @@ def load_data(
     -------
     DataContainer
 
+    Raises
+    ------
+    TypeError
+        If ``config`` is not a dataset configuration, e.g. a path or a dict.
+
     Examples
     --------
     >>> from coco_pipe.io import BIDSConfig, TabularConfig, load_data
@@ -78,6 +83,12 @@ def load_data(
     ... )
     """
     cfg = config.dataset if isinstance(config, DatasetConfig) else config
+    if not isinstance(cfg, TabularConfig | BIDSConfig | EmbeddingConfig):
+        raise TypeError(
+            "load_data takes a dataset configuration (TabularConfig, BIDSConfig, "
+            f"EmbeddingConfig or a DatasetConfig holding one), got "
+            f"{type(config).__name__}; e.g. load_data(TabularConfig(path=...))."
+        )
     logger.info(f"Loading data from {cfg.path} using mode='{cfg.mode}'")
 
     if cfg.mode == "tabular":

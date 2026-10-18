@@ -73,10 +73,11 @@ def test_load_data_takes_a_config_or_its_wrapper(tmp_path):
 
 
 def test_load_data_errors(tmp_path):
-    # settings belong to the config, which validates them; a loose keyword is
-    # refused (passed unpacked, as no such parameter exists)
-    with pytest.raises(TypeError):
-        load_data(_csv(tmp_path), mode="tabular")
+    # settings belong to the config, which validates them: a path or a dict, as
+    # load_data used to take, is refused with a pointer to the configs
+    for not_a_config in (_csv(tmp_path), {"mode": "tabular", "path": _csv(tmp_path)}):
+        with pytest.raises(TypeError, match="takes a dataset configuration"):
+            load_data(not_a_config)
     with pytest.raises(ValidationError):
         TabularConfig(path=_csv(tmp_path), clean_kwargs="not_a_dict")
 
