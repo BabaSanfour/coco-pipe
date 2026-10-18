@@ -240,6 +240,9 @@ def test_row_outlier_scores_per_group():
     )
     assert by_name.loc[3, "outlier_fraction_band"] == 1.0
     assert by_name.loc[3, "outlier_fraction_complexity"] == 0.0
+    # each group has its own largest score
+    assert by_name.loc[3, "mad_z_max_band"] == by_name.loc[3, "mad_z_max"]
+    assert by_name.loc[3, "mad_z_max_complexity"] == 0.0
 
     # a schema with only `family` is completed from the names for `measure`
     schema = pd.DataFrame({"column": names, "family": ["connectivity", "band"]})
@@ -366,6 +369,23 @@ def test_drop_epoch_outliers_per_group():
     assert masks["connectivity"].tolist() == [False] + [True] * 7
     assert masks["band"].all()
     assert result.per_family_dropped["connectivity"][0].obs_id == "0"
+
+    # a row dropped in both groups: each record carries its own group's score
+    X = X.copy()
+    X[0, 1] = 2.0  # band median 1.10, MAD 0.04
+    both = DataContainer(
+        X=X,
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "feature_family": ["connectivity", "band"]},
+        ids=np.arange(8).astype(str),
+    )
+    _, result = drop_epoch_outliers(
+        both, group_by="family", outlier_fraction_threshold=0.0
+    )
+    (band,) = result.per_family_dropped["band"]
+    (connectivity,) = result.per_family_dropped["connectivity"]
+    assert band.mad_z_max == pytest.approx(0.9 / (1.4826 * 0.04))
+    assert connectivity.mad_z_max > 10_000
 
     masks, result = drop_epoch_outliers(
         container, group_by="feature", outlier_fraction_threshold=0.0

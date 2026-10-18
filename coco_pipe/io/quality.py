@@ -321,7 +321,8 @@ def compute_row_outlier_scores(
     count as outliers nor dilute them.
 
     When ``group_by`` is set (``"family"``, ``"measure"``, or ``"feature"``) the
-    result also carries per-group ``outlier_fraction_<label>`` columns so a row
+    result also carries per-group ``outlier_fraction_<label>``,
+    ``n_outlier_features_<label>`` and ``mad_z_max_<label>`` columns so a row
     can be judged within each descriptor group rather than across all features.
     """
     if z_threshold <= 0:
@@ -380,6 +381,9 @@ def compute_row_outlier_scores(
             label_count, scored[:, label_mask].sum(axis=1)
         )
         group_columns[f"n_outlier_features_{label}"] = label_count
+        group_columns[f"mad_z_max_{label}"] = np.fmax.reduce(
+            robust_z[:, label_mask], axis=1
+        )
     if group_columns:
         result = pd.concat(
             [result, pd.DataFrame(group_columns, index=df.index)], axis=1
@@ -705,7 +709,7 @@ def drop_epoch_outliers(
                     obs_index=index,
                     obs_id=str(ids[index]),
                     outlier_fraction=float(fractions[index]),
-                    mad_z_max=float(scores.iloc[index]["mad_z_max"]),
+                    mad_z_max=float(scores.iloc[index][f"mad_z_max_{family}"]),
                 )
                 for index in np.flatnonzero(~keep)
             ]
