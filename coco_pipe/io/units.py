@@ -118,8 +118,9 @@ def iter_analysis_units(
         ``"raw"`` or ``"descriptors"``.  Controls which container dimension is
         sliced for the ``"sensor"`` mode.
     descriptor_families:
-        Ordered list of feature families to include.  ``None`` means all
-        families present in the container.
+        Ordered list of feature families to include, in every mode including
+        ``"flat"``.  ``None`` means all families present in the container.
+        Ignored for non-descriptor inputs, which have no families.
 
     Returns
     -------
@@ -132,9 +133,7 @@ def iter_analysis_units(
     ------
     ValueError
         On unsupported *analysis_mode* / *input_mode* combinations, or when
-        no features match the requested families.
-    RuntimeError
-        When no features match in sensor mode.
+        *descriptor_families* names a family the container does not have.
     """
     units: list[tuple[dict[str, Any], Callable[[], DataContainer]]] = []
 
@@ -160,7 +159,9 @@ def iter_analysis_units(
             "Descriptor analysis requires a flat ('obs', 'feature') container."
         )
 
-    if analysis_mode == "flat":
+    if analysis_mode == "flat" and not (
+        input_mode == "descriptors" and descriptor_families
+    ):
         _add_unit("global", "all", "all", None, lambda: container)
         return _build(units)
 
@@ -181,8 +182,19 @@ def iter_analysis_units(
             return schema[column].fillna("unknown").astype(str).to_numpy()
 
         families = _schema_values("family")
-        wanted_families = list(dict.fromkeys(descriptor_families or families.tolist()))
-        family_mask = np.isin(families, [str(value) for value in wanted_families])
+        present = list(dict.fromkeys(families.tolist()))
+        wanted_families = (
+            list(dict.fromkeys(str(value) for value in descriptor_families))
+            if descriptor_families
+            else present
+        )
+        unknown = [family for family in wanted_families if family not in present]
+        if unknown:
+            raise ValueError(
+                f"descriptor_families {unknown} not found; the container's "
+                f"families are {present}."
+            )
+        family_mask = np.isin(families, wanted_families)
 
         def _add_masked_unit(
             unit_type: str,
@@ -204,6 +216,10 @@ def iter_analysis_units(
                     u_subfamily=subfamily,
                 )
 
+        if analysis_mode == "flat":
+            _add_masked_unit("global", "all", "all", None, family_mask)
+            return _build(units)
+
         if analysis_mode == "sensor":
             channels = _schema_values("channel")
             for sensor in dict.fromkeys(channels[family_mask].tolist()):
@@ -213,10 +229,6 @@ def iter_analysis_units(
                     sensor,
                     None,
                     family_mask & (channels == sensor),
-                )
-            if not units:
-                raise RuntimeError(
-                    "No descriptor features matched the requested families."
                 )
             return _build(units)
 

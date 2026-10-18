@@ -65,6 +65,41 @@ def test_flat_descriptor_units_respect_family_filter():
     assert [unit["unit_key"] for unit in units] == ["Fz"]
     assert units[0]["container"].X.shape == (5, 2)
 
+    (flat,) = iter_analysis_units(
+        _sparse_flat_descriptor_container(),
+        "flat",
+        "descriptors",
+        descriptor_families=["band"],
+    )
+    assert flat["container"].coords["feature_family"].tolist() == ["band", "band"]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "flat",
+        "sensor",
+        "family",
+        "subfamily",
+        "sensor_within_family",
+        "sensor_within_subfamily",
+        "feature",
+        "feature_within_family",
+        "descriptor",
+        "descriptor_sensor",
+    ],
+)
+@pytest.mark.parametrize("families", [["bnad"], ["band", "bnad"]])
+def test_unknown_descriptor_family_raises(mode, families):
+    # a misspelled family used to give no units, or quietly drop that family
+    with pytest.raises(ValueError, match=r"\['bnad'\] not found.*'complexity'"):
+        iter_analysis_units(
+            _sparse_flat_descriptor_container(),
+            mode,
+            "descriptors",
+            descriptor_families=families,
+        )
+
 
 def test_flat_descriptor_sensor_does_not_create_cartesian_units():
     units = iter_analysis_units(
@@ -113,14 +148,6 @@ def test_iter_analysis_units_flat():
             {},
             ValueError,
             id="unknown_mode",
-        ),
-        pytest.param(
-            _sparse_flat_descriptor_container(),
-            "sensor",
-            "descriptors",
-            {"descriptor_families": ["famC"]},
-            RuntimeError,
-            id="missing_descriptor_family",
         ),
     ],
 )
