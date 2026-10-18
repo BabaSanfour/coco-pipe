@@ -152,21 +152,32 @@ def test_embedding_dataset_selects_subjects(tmp_path):
     assert load(["sub-03"]).ids.tolist() == ["sub-03"]
 
 
-def test_embedding_dataset_errors(tmp_path, caplog):
+def test_embedding_dataset_records_files_it_cannot_load(tmp_path, caplog):
+    np.save(tmp_path / "s1.npy", np.ones((3, 4)))
+    np.save(tmp_path / "s2.npy", np.ones((3, 4)))
+    (tmp_path / "s3.npy").write_bytes(b"not a numpy file")
+
+    with caplog.at_level("WARNING"):
+        container = EmbeddingDataset(tmp_path, pattern="*.npy").load()
+
+    assert container.X.shape == (6, 4)
+    (failure,) = container.meta["load_failures"]
+    assert failure["path"].endswith("s3.npy") and failure["error"]
+    assert "Could not load s3.npy" in caplog.text
+
+
+def test_embedding_dataset_errors(tmp_path):
     with pytest.raises(FileNotFoundError, match="No files matched"):
         EmbeddingDataset(tmp_path, pattern="*.npy").load()
 
     np.save(tmp_path / "cube.npy", np.zeros((2, 2, 2)))
-    with pytest.raises(RuntimeError, match="No valid data"):
+    with pytest.raises(RuntimeError, match=r"the first being .*cube.npy .*fit"):
         EmbeddingDataset(tmp_path, pattern="*.npy", dims=("f",), reader=np.load).load()
-    assert "Shape mismatch" in caplog.text
 
     with open(tmp_path / "1.pkl", "wb") as f:
         pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
-    (tmp_path / "2.pkl").write_bytes(b"not a pickle")
     with pytest.raises(ValueError, match="Concatenation failed"):
         EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
-    assert "Failed to read 2.pkl" in caplog.text
 
 
 # --- BIDS ------------------------------------------------------------------------

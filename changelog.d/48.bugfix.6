@@ -1,0 +1,1 @@
+`EmbeddingDataset` (and `load_data` with an `EmbeddingConfig`) records the files it could not load in `meta["load_failures"]`, each with its path and error, as `BIDSDataset` does, and warns. A file that could not be read, or whose array does not fit `dims`, was skipped with only a log line, so a partial load looked complete. When nothing loads, the error names the first failure.

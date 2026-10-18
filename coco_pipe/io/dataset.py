@@ -407,56 +407,47 @@ class EmbeddingDataset(BaseDataset):
 
         data_list = []
         ids_list = []
+        load_failures: list[dict[str, str]] = []
+
+        def fail(path: Path, error: str) -> None:
+            logger.warning(f"Could not load {path.name}: {error}")
+            load_failures.append({"path": str(path), "error": error})
 
         logger.info(f"Loading {len(files)} embedding files...")
 
         for fpath in files:
             try:
-                # Reader returns (N, ...) or Dict
+                # The reader returns an array, or a dict of arrays by segment.
                 content = self.reader(fpath)
-                sid = self.id_fn(fpath)
-
-                if isinstance(content, dict):
-                    # Dict {segment_id: array}
-                    for seg_k in sorted(content.keys()):
-                        arr = np.array(content[seg_k])  # Ensure array
-
-                        if arr.ndim == len(self.dims) + 1:
-                            data_list.append(arr)
-                            ids_list.extend(
-                                [f"{sid}_{seg_k}_{i}" for i in range(len(arr))]
-                            )
-                        elif arr.ndim == len(self.dims):
-                            data_list.append(arr[np.newaxis, ...])
-                            ids_list.append(f"{sid}_{seg_k}")
-                        else:
-                            logger.warning(
-                                f"Shape mismatch in {fpath.name} key {seg_k}: "
-                                f"{arr.shape} vs dims {self.dims}"
-                            )
-
-                else:
-                    # Single Array or List
-                    arr = np.array(content)
-
-                    if arr.ndim == len(self.dims) + 1:
-                        data_list.append(arr)
-                        ids_list.extend([f"{sid}_{i}" for i in range(len(arr))])
-                    elif arr.ndim == len(self.dims):
-                        data_list.append(arr[np.newaxis, ...])
-                        ids_list.append(sid)
-                    else:
-                        logger.warning(
-                            f"Shape mismatch in {fpath.name}: {arr.shape} vs dims "
-                            f"{self.dims}"
-                        )
-
             except Exception as e:
-                logger.error(f"Failed to read {fpath.name}: {e}")
+                fail(fpath, f"{type(e).__name__}: {e}")
                 continue
+            sid = self.id_fn(fpath)
+            parts = (
+                [(f"{sid}_{key}", content[key]) for key in sorted(content)]
+                if isinstance(content, dict)
+                else [(sid, content)]
+            )
+            for name, values in parts:
+                arr = np.asarray(values)
+                if arr.ndim == len(self.dims) + 1:
+                    data_list.append(arr)
+                    ids_list.extend(f"{name}_{i}" for i in range(len(arr)))
+                elif arr.ndim == len(self.dims):
+                    data_list.append(arr[np.newaxis, ...])
+                    ids_list.append(name)
+                else:
+                    fail(fpath, f"{name}: shape {arr.shape} does not fit {self.dims}")
 
         if not data_list:
-            raise RuntimeError("No valid data loaded.")
+            message = f"No valid data loaded from {self.path}"
+            if load_failures:
+                first = load_failures[0]
+                message += (
+                    f": {len(load_failures)} file(s) could not be loaded, the first "
+                    f"being {first['path']} ({first['error']})"
+                )
+            raise RuntimeError(message)
 
         try:
             X_final = np.concatenate(data_list, axis=0)
@@ -476,7 +467,11 @@ class EmbeddingDataset(BaseDataset):
         coords.update(self.coords_in)
 
         return DataContainer(
-            X=X_final, dims=final_dims, coords=coords, ids=np.array(ids_list)
+            X=X_final,
+            dims=final_dims,
+            coords=coords,
+            ids=np.array(ids_list),
+            meta={"load_failures": load_failures},
         )
 
 
