@@ -141,6 +141,7 @@ class QCResult:
             "n_subjects_dropped": self.n_subjects_dropped,
             "retention_rate": round(self.retention_rate, 4),
             "epoch_drop_threshold": self.epoch_drop_threshold,
+            "epoch_outlier_fraction_threshold": self.epoch_outlier_fraction_threshold,
             "subject_drop_threshold": self.subject_drop_threshold,
             "subject_outlier_fraction_threshold": (
                 self.subject_outlier_fraction_threshold
@@ -1020,6 +1021,13 @@ def run_qc(
             clean_features.columns.tolist(),
         )
 
+    # a stage that did not run used no fraction threshold
+    epoch_fraction = (
+        epoch_outlier_fraction_threshold if epoch_z_threshold is not None else None
+    )
+    subject_fraction = (
+        subject_outlier_fraction_threshold if subject_z_threshold is not None else None
+    )
     return current, QCResult(
         n_rows_entering_qc=meta.get("n_rows_entering_qc"),
         n_dropped_nan_inf=int(meta.get("n_dropped_nan_inf", 0)),
@@ -1029,25 +1037,19 @@ def run_qc(
         n_subjects_in=n_subjects_in,
         n_subjects_out=_count_unique_subjects(current, subject_col),
         epoch_drop_threshold=epoch_z_threshold,
-        epoch_outlier_fraction_threshold=(
-            epoch_outlier_fraction_threshold if epoch_z_threshold is not None else None
-        ),
+        epoch_outlier_fraction_threshold=epoch_fraction,
         epochs_dropped=epochs_dropped,
         subject_drop_threshold=subject_z_threshold,
-        subject_outlier_fraction_threshold=(
-            subject_outlier_fraction_threshold
-            if subject_z_threshold is not None
-            else None
-        ),
+        subject_outlier_fraction_threshold=subject_fraction,
         subjects_dropped=subjects_dropped,
         subject_outlier_burden=subject_burden,
         feature_missingness=missingness,
         feature_columns_dropped=meta.get("dropped_feature_columns"),
         thresholds={
             "epoch_z_threshold": epoch_z_threshold,
-            "epoch_outlier_fraction_threshold": (epoch_outlier_fraction_threshold),
+            "epoch_outlier_fraction_threshold": epoch_fraction,
             "subject_z_threshold": subject_z_threshold,
-            "subject_outlier_fraction_threshold": (subject_outlier_fraction_threshold),
+            "subject_outlier_fraction_threshold": subject_fraction,
         },
     )
 

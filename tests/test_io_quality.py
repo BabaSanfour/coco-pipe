@@ -582,11 +582,17 @@ def test_run_qc_combines_levels():
     assert result.retention_rate == pytest.approx(0.9)
     assert len(result.feature_missingness) == container.X.shape[1]
 
+    # a stage that did not run records no thresholds, in the fields, the
+    # thresholds dict and the summary alike
     _, no_epoch = run_qc(container, epoch_z_threshold=None)
     assert no_epoch.epoch_drop_threshold is None
     assert no_epoch.epoch_outlier_fraction_threshold is None
+    assert no_epoch.thresholds["epoch_outlier_fraction_threshold"] is None
+    assert no_epoch.summary()["epoch_outlier_fraction_threshold"] is None
     _, no_subject = run_qc(container, subject_z_threshold=None)
     assert no_subject.subject_drop_threshold is None
+    assert no_subject.thresholds["subject_outlier_fraction_threshold"] is None
+    assert no_subject.summary()["epoch_outlier_fraction_threshold"] == 0.30
     _, no_missing = run_qc(container, compute_missingness=False)
     assert no_missing.feature_missingness is None
 

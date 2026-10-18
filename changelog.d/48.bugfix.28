@@ -1,0 +1,1 @@
+`run_qc` records no outlier-fraction threshold in `QCResult.thresholds` for a QC stage that did not run, as the dedicated fields already did: the dict held the epoch fraction (0.3) with epoch QC off, and the subject fraction with subject QC off. `QCResult.summary()`, which the QC report section shows, now includes `epoch_outlier_fraction_threshold` next to the subject one.
