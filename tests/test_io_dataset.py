@@ -396,6 +396,42 @@ def test_bids_dataset_subject_metadata_keeps_the_loader_coordinates(tmp_path):
         load(None, key=None)
 
 
+def test_bids_dataset_records_the_units_of_each_channel_type(tmp_path):
+    import mne
+    from mne_bids import BIDSPath, write_raw_bids
+
+    def write(root, types):
+        names = [f"{kind}{index}" for index, kind in enumerate(types)]
+        raw = mne.io.RawArray(
+            np.full((len(types), 200), 2e-12), mne.create_info(names, 100.0, types)
+        )
+        raw.set_meas_date(0)
+        write_raw_bids(
+            raw,
+            BIDSPath(root=root, subject="01", task="rest", datatype="meg"),
+            allow_preload=True,
+            format="FIF",
+            verbose=False,
+        )
+
+    def load(root, units):
+        dataset = BIDSDataset(
+            root, task="rest", datatype="meg", window_length=1.0, units=units
+        )
+        return dataset.load()
+
+    # without units the data is in SI units, which meta names per channel type
+    write(tmp_path / "mixed", ["mag", "eeg"])
+    mixed = load(tmp_path / "mixed", None)
+    assert mixed.meta["units"] == {"mag": "T", "eeg": "V"}
+    assert mixed.X[0, 0, 0] == pytest.approx(2e-12)
+
+    write(tmp_path / "mag", ["mag", "mag"])
+    scaled = load(tmp_path / "mag", "fT")
+    assert scaled.meta["units"] == {"mag": "fT"}
+    assert scaled.X[0, 0, 0] == pytest.approx(2e3)
+
+
 def test_bids_dataset_raw_fif_derivatives(tmp_path):
     import mne
     from mne_bids import BIDSPath

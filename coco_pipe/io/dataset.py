@@ -537,7 +537,9 @@ class BIDSDataset(BaseDataset):
     baseline : tuple, optional
         Baseline interval, with `event_id` on raw recordings.
     units : str, optional
-        Units of the returned data (see :meth:`mne.Epochs.get_data`).
+        Units of the returned data (see :meth:`mne.Epochs.get_data`); ``None``
+        returns each channel type in its SI unit. ``meta['units']`` records the
+        unit of each channel type either way.
     description : str, optional
         The ``desc`` entity of the files to load.
     dtype : str, default="float32"
@@ -729,7 +731,8 @@ class BIDSDataset(BaseDataset):
               as marked in the file), 'subject', 'session', 'run' and the
               subject metadata.
             - dims: ('obs', 'channel', 'time').
-            - meta: 'sfreq', 'source', 'units', 'event_id',
+            - meta: 'sfreq', 'source', 'units' (the unit of each channel type
+              in X, e.g. ``{'eeg': 'V'}``), 'event_id',
               'skipped_no_matching_events' (recordings with none of the
               requested events, skipped without a warning), and 'load_failures' (the
               'recording_id' and 'error' of each recording that failed to load).
@@ -924,6 +927,18 @@ class BIDSDataset(BaseDataset):
                 )
             y = coords[self.target_col]
 
+        # As in mne.Epochs.get_data: SI units, unless a str is given, which MNE
+        # applies to the one channel type that has a unit.
+        si_units = mne.defaults.DEFAULTS["si_units"]
+        units = {
+            ch_type: si_units.get(ch_type)
+            for ch_type in dict.fromkeys(epochs.get_channel_types())
+        }
+        if self.units is not None:
+            units.update(
+                {ch_type: self.units for ch_type in units if ch_type in si_units}
+            )
+
         sfreq = epochs.info["sfreq"]
         return DataContainer(
             X=X,
@@ -934,7 +949,7 @@ class BIDSDataset(BaseDataset):
             meta={
                 "sfreq": sfreq,
                 "source": str(self.root),
-                "units": self.units,
+                "units": units,
                 "event_id": event_codes,
                 "load_failures": load_failures,
                 "skipped_no_matching_events": skipped,
