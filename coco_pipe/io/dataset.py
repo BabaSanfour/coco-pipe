@@ -242,7 +242,6 @@ class TabularDataset(BaseDataset):
         mode: str = "any",
         sep: str = "_",
         reverse: bool = False,
-        verbose: bool = False,
         min_abs_value: float | None = None,
         min_abs_fraction: float = 0.0,
     ) -> tuple[pd.DataFrame, dict[str, list[str]]]:

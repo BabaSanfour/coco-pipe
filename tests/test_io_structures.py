@@ -349,22 +349,25 @@ def test_obs_table_exports_observation_vectors(sample_container):
         DataContainer(np.zeros((10, 10)), dims=("a", "b")).obs_table()
 
 
-def test_observation_frame():
+def test_obs_table_rows_and_dtypes():
     container = DataContainer(
         X=np.random.rand(3, 3),
         dims=("obs", "feature"),
-        coords={"feature": ["f0", "f1", "f2"], "subject": np.array(["a", "b", "c"])},
+        coords={
+            "feature": ["f0", "f1", "f2"],
+            "subject": np.array(["a", "b", "c"]),
+            "age": np.array([9.5, np.nan, 11.0]),
+        },
         ids=np.array(["o0", "o1", "o2"]),
     )
-    frame = container.observation_frame()
-    assert "feature" not in frame
-    assert list(frame["subject"]) == ["a", "b", "c"]
-    assert list(frame["sample_id"]) == ["o0", "o1", "o2"]
-
+    table = container.obs_table(include_ids=True, id_col="sample_id")
+    assert "feature" not in table
+    assert table["sample_id"].tolist() == ["o0", "o1", "o2"]
+    # coordinates keep their dtype: a numeric one stays numeric
+    assert pd.api.types.is_numeric_dtype(table["age"])
+    # one row per observation, also without any observation coordinate
     unnamed = DataContainer(X=np.zeros((2, 2)), dims=("obs", "feature"))
-    assert unnamed.observation_frame()["sample_id"].iloc[0] == "sample-000000"
-    with pytest.raises(ValueError, match="no 'obs' dimension"):
-        DataContainer(X=np.zeros((2, 2)), dims=("a", "b")).observation_frame()
+    assert unnamed.obs_table().shape == (2, 0)
 
     wide = DataContainer(
         X=np.zeros((2, 2)),
@@ -374,7 +377,7 @@ def test_observation_frame():
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", pd.errors.PerformanceWarning)
-        assert wide.observation_frame().shape[1] == 151
+        assert wide.obs_table(include_ids=True).shape[1] == 151
 
 
 # --- save / load -------------------------------------------------------------

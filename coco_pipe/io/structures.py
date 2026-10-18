@@ -320,19 +320,6 @@ class DataContainer:
             path,
         )
 
-    def observation_frame(self) -> pd.DataFrame:
-        """Return observation-aligned coordinates and stable sample IDs."""
-        if "obs" not in self.dims:
-            raise ValueError("DataContainer has no 'obs' dimension.")
-        n_obs = self.data.sizes["obs"]
-        frame = pd.DataFrame(self._obs_coords(), index=np.arange(n_obs))
-        frame.columns = frame.columns.astype(str)
-        if self.ids is not None:
-            frame["sample_id"] = self.ids.astype(str)
-        elif "sample_id" not in frame:
-            frame["sample_id"] = [f"sample-{idx:06d}" for idx in range(n_obs)]
-        return frame
-
     def _obs_coords(self) -> dict[str, np.ndarray]:
         """Return the coordinates of the observation dimension."""
         return {
@@ -538,7 +525,8 @@ class DataContainer:
         -------
         pandas.DataFrame
             DataFrame containing only one-dimensional observation-aligned
-            metadata columns.
+            metadata columns, in their own dtypes, with one row per
+            observation in order.
 
         Raises
         ------
@@ -560,9 +548,7 @@ class DataContainer:
         data.update(coords)
         if include_y and self.y is not None:
             data.setdefault(y_col, self.y)
-        return pd.DataFrame(
-            {name: values.astype(object) for name, values in data.items()}
-        )
+        return pd.DataFrame(data, index=pd.RangeIndex(self.data.sizes["obs"]))
 
     def isel(self, **indexers) -> "DataContainer":
         """
