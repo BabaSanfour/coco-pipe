@@ -415,6 +415,31 @@ def test_drop_subject_outliers():
     assert result.per_family_dropped["band"][0].subject_id == "s4"
 
 
+def test_subject_column_must_exist():
+    # 3 subjects of 4 epochs, one bad epoch in sub-01
+    X = np.random.default_rng(0).standard_normal((12, 6))
+    X[5] += 50.0
+    subjects = [f"sub-{index:02d}" for index in range(3) for _ in range(4)]
+    container = _container(X, subjects)
+
+    _, result = drop_subject_outliers(container)
+    assert result.n_subjects_in == 3
+    assert [record.subject_id for record in result.subjects_dropped] == ["sub-01"]
+
+    # a misspelled column used to make every epoch its own subject
+    with pytest.raises(ValueError, match=r"'participant' not found.*'subject'"):
+        drop_subject_outliers(container, subject_col="participant")
+    with pytest.raises(ValueError, match="'participant' not found"):
+        run_qc(container, subject_col="participant")
+
+    # epoch QC only counts subjects, so it runs and reports them as unknown
+    clean, result = drop_epoch_outliers(container, subject_col="participant")
+    assert clean.X.shape[0] == 11
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, None)
+    _, result = run_qc(container, subject_z_threshold=None, subject_col="participant")
+    assert result.n_subjects_in is None
+
+
 # --- run_qc -----------------------------------------------------------------------
 
 
@@ -457,15 +482,16 @@ def test_run_qc_reports_counts_from_loading():
 
 def test_run_qc_inputs():
     off = {"epoch_z_threshold": None, "subject_z_threshold": None}
-    # without a subject coordinate, subjects come from the ids, else positions
-    by_ids = DataContainer(
+    # without a subject coordinate the subjects are unknown, never the ids
+    no_subjects = DataContainer(
         X=np.random.rand(4, 2),
         dims=("obs", "feature"),
         ids=np.array(["s1", "s1", "s2", "s2"]),
     )
-    assert run_qc(by_ids, **off)[1].n_subjects_in == 2
-    by_position = DataContainer(X=np.random.rand(4, 2), dims=("obs", "feature"))
-    assert run_qc(by_position, **off)[1].n_subjects_in == 4
+    _, result = run_qc(no_subjects, **off)
+    assert (result.n_subjects_in, result.n_subjects_out) == (None, None)
+    with pytest.raises(ValueError, match="Subject column 'subject' not found"):
+        run_qc(no_subjects, epoch_z_threshold=None)
 
     container = _clean(n_subjects=6, n_features=4)
     cleaned, _ = run_qc(container, feature_cols=["f0", "f1"], **off)

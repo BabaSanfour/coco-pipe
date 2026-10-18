@@ -74,6 +74,9 @@ class QCResult:
     via :func:`~coco_pipe.descriptors.qc.aggregate_family_qc` and attaches it
     afterwards (``result.family_qc = aggregate_family_qc(...)``), keeping the
     ``io`` layer free of ``descriptors`` imports.
+
+    ``n_subjects_in`` and ``n_subjects_out`` are ``None`` when the container
+    has no ``subject_col`` coordinate, so its subjects are unknown.
     """
 
     n_rows_entering_qc: int | None = None
@@ -81,8 +84,8 @@ class QCResult:
     n_dropped_extreme: int = 0
     n_obs_in: int = 0
     n_obs_out: int = 0
-    n_subjects_in: int = 0
-    n_subjects_out: int = 0
+    n_subjects_in: int | None = 0
+    n_subjects_out: int | None = 0
     epoch_drop_threshold: float | None = None
     epoch_outlier_fraction_threshold: float | None = None
     epochs_dropped: list[EpochDropRecord] = field(default_factory=list)
@@ -655,7 +658,8 @@ def drop_epoch_outliers(
     ``group_by=None`` makes one global drop decision across all features. When
     set (``"family"``, ``"measure"``, or ``"feature"``) the decision is made per
     descriptor group at that granularity and the returned dict is keyed by group
-    label.
+    label. ``subject_col`` is only used to count subjects; the counts are
+    ``None`` when the container has no such coordinate.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -781,7 +785,8 @@ def drop_subject_outliers(
     ``group_by=None`` makes one global decision across all features. When set
     (``"family"``, ``"measure"``, or ``"feature"``) the burden is computed per
     descriptor group at that granularity and the returned dict is keyed by group
-    label.
+    label. ``subject_col`` must name a coordinate of ``container``; otherwise
+    a ``ValueError`` is raised.
     """
     _validate_container(container)
     _validate_fraction_threshold(outlier_fraction_threshold)
@@ -910,8 +915,14 @@ def run_qc(
     feature_cols: list[str] | None = None,
     compute_missingness: bool = True,
 ) -> tuple[DataContainer, QCResult]:
-    """Run epoch QC followed by subject QC and return a merged result."""
+    """Run epoch QC followed by subject QC and return a merged result.
+
+    Subject QC needs ``subject_col`` as a coordinate of ``container`` and
+    raises ``ValueError`` before any QC runs when it is missing.
+    """
     _validate_container(container)
+    if subject_z_threshold is not None:
+        _require_subject_coord(container, subject_col)
     n_obs_in = container.X.shape[0]
     n_subjects_in = _count_unique_subjects(container, subject_col)
     meta = container.meta or {}
@@ -1025,24 +1036,30 @@ def _deduplicate_subject_records(
 def _count_unique_subjects(
     container: DataContainer,
     subject_col: str,
-) -> int:
+) -> int | None:
+    if subject_col not in (container.coords or {}):
+        return None
     return len(set(_get_subject_ids(container, subject_col)))
+
+
+def _require_subject_coord(container: DataContainer, subject_col: str) -> None:
+    coords = container.coords or {}
+    if subject_col not in coords:
+        raise ValueError(
+            f"Subject column '{subject_col}' not found among the container's "
+            f"coordinates {sorted(coords)}."
+        )
 
 
 def _get_subject_ids(
     container: DataContainer,
     subject_col: str,
 ) -> list[str]:
-    if subject_col in (container.coords or {}):
-        subjects = np.asarray(container.coords[subject_col])
-        if subjects.ndim != 1 or len(subjects) != container.X.shape[0]:
-            raise ValueError(
-                f"Coordinate '{subject_col}' must align with observations."
-            )
-        return [str(subject) for subject in subjects]
-    if container.ids is not None:
-        return [str(identifier) for identifier in container.ids]
-    return [str(index) for index in range(container.X.shape[0])]
+    _require_subject_coord(container, subject_col)
+    subjects = np.asarray(container.coords[subject_col])
+    if subjects.ndim != 1 or len(subjects) != container.X.shape[0]:
+        raise ValueError(f"Coordinate '{subject_col}' must align with observations.")
+    return [str(subject) for subject in subjects]
 
 
 def _container_to_feature_df(
