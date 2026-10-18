@@ -52,6 +52,10 @@ def test_dataset_config_picks_the_config_by_mode():
         lambda: BIDSConfig(path="/root", n_jobs=0),
         lambda: DatasetConfig(dataset={"mode": "unknown", "path": "path"}),
         lambda: DatasetConfig(dataset={"path": "path"}),
+        # a table has no subjects; unknown settings are not ignored
+        lambda: TabularConfig(path="data.csv", subjects=["01"]),
+        lambda: BIDSConfig(path="/root", windowlength=2.0),
+        lambda: BIDSConfig(path="/root", subjects=5),
     ],
 )
 def test_configs_reject_invalid_values(build):

@@ -63,8 +63,6 @@ class TabularDataset(BaseDataset):
         Whether to perform automated cleaning (drop NaNs/Infs).
     clean_kwargs : dict, optional
         Arguments passed to `TabularDataset.clean`.
-    select_kwargs : dict, optional
-        Arguments for feature selection (not yet implemented in load directly).
 
     Examples
     --------
@@ -90,7 +88,6 @@ class TabularDataset(BaseDataset):
         meta_columns: list[str] | None = None,
         clean: bool = False,
         clean_kwargs: dict[str, Any] | None = None,
-        select_kwargs: dict[str, Any] | None = None,
     ):
         self.path = Path(path)
         self.target_col = target_col
@@ -105,8 +102,6 @@ class TabularDataset(BaseDataset):
 
         self.do_clean = clean
         self.clean_kwargs = clean_kwargs or {}
-        self.select_kwargs = select_kwargs or {}
-        self.strict_reshaping = True
 
     def load(self) -> DataContainer:
         if not self.path.exists():
@@ -186,21 +181,14 @@ class TabularDataset(BaseDataset):
                 else:
                     failed_cols.append(col)
 
+            # A column that does not fit would be dropped from the data:
+            # metadata columns belong in `meta_columns`.
             if failed_cols:
-                msg = (
-                    f"{len(failed_cols)} columns failed reshaping pattern "
-                    f"(sep='{self.col_sep}', expected {len(self.columns_to_dims)} "
-                    f"parts). Examples: {failed_cols[:5]}"
-                )
-                if self.strict_reshaping:
-                    logger.error(msg)
-                    # raise ValueError(msg) # Optional: strict mode could raise
-                logger.warning(msg)
-
-            if not parsed_cols:
                 raise ValueError(
-                    f"No columns matched the reshaping pattern with sep="
-                    f"'{self.col_sep}'."
+                    f"{len(failed_cols)} column(s) do not split into "
+                    f"{len(self.columns_to_dims)} parts with sep='{self.col_sep}' "
+                    f"(e.g. {failed_cols[:5]}); pass metadata columns in "
+                    "`meta_columns`."
                 )
 
             # Create MultiIndex to sort and structure

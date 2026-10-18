@@ -70,8 +70,16 @@ def test_tabular_dataset_reshapes_columns_into_dimensions(tmp_path):
     assert container.X[1, 1, 1] == 8.0
 
     unmatched = _tsv(tmp_path / "flat.tsv", pd.DataFrame({"A": [1], "B": [2]}))
-    with pytest.raises(ValueError, match="No columns matched"):
+    with pytest.raises(ValueError, match=r"2 column\(s\) do not split into 2 parts"):
         TabularDataset(unmatched, columns_to_dims=["d1", "d2"]).load()
+    # a column that does not fit is not dropped from the data in silence
+    extra = _tsv(tmp_path / "extra.tsv", frame.assign(age=[30, 40]))
+    with pytest.raises(ValueError, match=r"\['age'\]\); pass metadata columns"):
+        TabularDataset(extra, target_col="target", columns_to_dims=["f", "t"]).load()
+    with_meta = TabularDataset(
+        extra, target_col="target", columns_to_dims=["f", "t"], meta_columns=["age"]
+    ).load()
+    assert with_meta.coords["age"].tolist() == [30, 40]
     incomplete = _tsv(
         tmp_path / "gap.tsv", pd.DataFrame({"A_1": [1], "A_2": [2], "B_1": [3]})
     )

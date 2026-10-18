@@ -93,7 +93,6 @@ def load_data(
             meta_columns=cfg.meta_columns,
             clean=cfg.clean,
             clean_kwargs=cfg.clean_kwargs,
-            select_kwargs=cfg.select_kwargs,
         ).load()
 
     if cfg.mode == "bids":
