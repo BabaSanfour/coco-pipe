@@ -106,10 +106,10 @@ Run the standard quality suite over a container in one call. It returns the
    from coco_pipe.io import run_qc
 
    container, qc = run_qc(container, subject_col="subject")
-   print(qc)   # missingness, outlier, and flatline findings
+   print(qc.summary())   # rows in and out, drops, and thresholds
 
-The individual checks live in :mod:`coco_pipe.io.quality` and each returns a
-:class:`~coco_pipe.io.CheckResult`:
+The individual checks live in :mod:`coco_pipe.io.quality` and report their
+findings as :class:`~coco_pipe.io.CheckResult` objects:
 
 .. list-table::
    :header-rows: 1
@@ -118,13 +118,13 @@ The individual checks live in :mod:`coco_pipe.io.quality` and each returns a
    * - Check
      - What it flags
    * - :func:`coco_pipe.io.quality.check_missingness`
-     - Fraction of ``NaN`` values per feature.
+     - Fraction of missing values over the whole input.
    * - :func:`coco_pipe.io.quality.check_constant_columns`
      - Constant columns: two or more values, all equal.
    * - :func:`coco_pipe.io.quality.check_outliers_zscore`
-     - Z-score outliers above a threshold.
+     - Values whose z-score, over all values pooled, exceeds ``sigma``.
    * - :func:`coco_pipe.io.quality.check_flatline`
-     - Zero-variance (flatlined) signal arrays.
+     - Near-zero-variance (flatlined) signals.
 
 The same checks run automatically when a ``DataContainer`` is added to a
 :doc:`report <../report/index>`.

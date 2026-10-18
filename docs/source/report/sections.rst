@@ -624,8 +624,9 @@ reaches it, a later ``WARN`` does not downgrade.
 2. Built-in Checks
 ------------------
 
-All checks accept either a ``pd.DataFrame`` or a NumPy array and
-operate on numeric columns only.
+All checks accept a ``pd.DataFrame`` or an array-like (lists included).
+``check_missingness`` counts every column; the others use numeric values only
+and refuse complex ones.
 
 .. list-table::
    :header-rows: 1
@@ -633,13 +634,13 @@ operate on numeric columns only.
    * - Check
      - What it does
    * - :func:`~coco_pipe.io.quality.check_missingness`
-     - Fraction of NaN values. ``WARN`` ≥ ``threshold_warn`` (default 0.01), ``FAIL`` ≥ ``threshold_fail`` (default 0.20).
+     - Fraction of missing values over the whole input. ``WARN`` above ``threshold_warn`` (default 0.01), ``FAIL`` above ``threshold_fail`` (default 0.20).
    * - :func:`~coco_pipe.io.quality.check_constant_columns`
      - Numeric columns holding two or more values, all equal. An array's columns are its second axis, with further axes pooled (a dead channel in epochs x channels x time), named by ``names`` or position. Returns one ``WARN`` ``CheckResult`` naming them, or an empty list.
    * - :func:`~coco_pipe.io.quality.check_outliers_zscore`
-     - Z-score outlier detection. ``WARN`` when outlier fraction exceeds threshold.
+     - Z-scores of all finite values pooled together. ``WARN`` when the largest exceeds ``sigma`` (default 5); ``None`` otherwise.
    * - :func:`~coco_pipe.io.quality.check_flatline`
-     - Detect zero-variance signal arrays (e.g., flatlined EEG channels).
+     - ``FAIL`` when the standard deviation of the finite values is below ``threshold`` (default 1e-10), e.g. a flatlined EEG channel; ``WARN`` when there are none.
 
 .. code-block:: python
 
@@ -650,11 +651,12 @@ operate on numeric columns only.
 
    miss = check_missingness(df)
    constants = check_constant_columns(df)
-   outliers = check_outliers_zscore(df, threshold=3.0)
+   outliers = check_outliers_zscore(df, sigma=3.0)  # None when none exceed sigma
    flat = check_flatline(signal_array, threshold=1e-10)
 
    for result in [miss, *constants, outliers, flat]:
-       print(result.status, result.check_name, result.message)
+       if result is not None:
+           print(result.status, result.check_name, result.message)
 
 ---
 
