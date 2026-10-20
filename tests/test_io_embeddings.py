@@ -1,648 +1,409 @@
 import json
-from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
-from typing import ClassVar
 
 import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
+from mne_bids import BIDSPath, get_entities_from_fname
 
-from coco_pipe.decoding.foundation_models import FoundationEmbeddingResult
+from coco_pipe.decoding._specs import SignalMetadata
+from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
+from coco_pipe.decoding.registry import get_foundation_model_spec
+from coco_pipe.io import EMBEDDING_CONFIG_KEYS
 from coco_pipe.io.embeddings import (
-    combined_embedding_table_path,
-    discover_embedding_derivatives,
-    embedding_observation_id,
-    load_combined_embedding_table,
-    load_embedding_derivatives,
-    save_embedding_derivative,
-    save_embedding_outputs,
-    validate_embedding_derivative,
-    write_embedding_dataset_description,
+    embedding_path,
+    write_embedding_dataset,
     write_embedding_manifest,
+    write_recording_embeddings,
 )
+from coco_pipe.utils import stable_hash
 
 
-def _native_token_metadata(**metadata):
-    return {
-        **metadata,
-        "token_layout": "native",
-        "token_layout_version": 1,
-        "token_source": "test_native_output",
-        "token_axes": ["window", "token", "feature"],
-        "token_observation_axes": ["token"],
-        "token_feature_axis": "feature",
-    }
-
-
-def test_embedding_derivative_round_trip(tmp_path):
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
-        recording_embedding=np.arange(4, dtype=float),
-        window_start=np.array([0, 100, 200]),
-        window_stop=np.array([100, 200, 300]),
-        window_index=np.arange(3),
-        metadata={
-            "model_key": "cbramod",
-            "recording_id": "sub-01_ses-01_run-01",
-            "subject": "01",
-            "session": "01",
-            "patient_group_id": "p01",
-            "preprocessing_provenance": {"reference": "average"},
-        },
-    )
-    path = (
+def test_embedding_path_names_recording_and_dataset_files(tmp_path):
+    recording = embedding_path(
+        tmp_path,
+        "baseRandomEaCoral",
+        "window",
+        recording_id="sub-01_ses-02_task-rest_run-03",
+    ).fpath
+    assert recording == (
         tmp_path
         / "sub-01"
-        / "ses-01"
+        / "ses-02"
         / "eeg"
-        / "sub-01_ses-01_desc-cbramodMean_embedding.npz"
+        / "sub-01_ses-02_task-rest_run-03_desc-baseRandomEaCoral_windowembeddings.nc"
     )
-    save_embedding_derivative(result, path)
-
-    metadata = validate_embedding_derivative(path)
-    assert metadata["model_key"] == "cbramod"
-    assert json.loads(path.with_suffix(".json").read_text())["recording_id"].startswith(
-        "sub-01"
+    assert get_entities_from_fname(recording.name)["description"] == "baseRandomEaCoral"
+    assert embedding_path(tmp_path, "base", "token", task="rest").fpath == (
+        tmp_path / "task-rest_desc-base_tokenembeddings.nc"
+    )
+    assert embedding_path(tmp_path, "baseRa", "cov").fpath == (
+        tmp_path / "desc-baseRa_covembeddings.nc"
     )
 
-    recording = load_embedding_derivatives(tmp_path)
-    assert recording.X.shape == (1, 4)
-    assert recording.coords["patient_group_id"].tolist() == ["p01"]
 
-    epochs = load_embedding_derivatives(tmp_path, representation="epoch")
-    assert epochs.X.shape == (3, 4)
-    assert epochs.coords["window_index"].tolist() == [0, 1, 2]
-    assert epochs.meta["artifact_metadata"][str(path)] == metadata
-    assert epochs.meta["artifact_metadata"][str(path)]["preprocessing_provenance"] == {
-        "reference": "average"
-    }
-
-
-def test_token_derivative_round_trip(tmp_path):
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
-        recording_embedding=np.arange(4, dtype=float),
-        window_start=np.array([0, 100, 200]),
-        window_stop=np.array([100, 200, 300]),
-        window_index=np.arange(3),
-        metadata=_native_token_metadata(
-            model_key="cbramod",
-            recording_id="sub-01_ses-01_run-01",
-            subject="01",
-        ),
-        token_embeddings=np.arange(60, dtype=float).reshape(3, 5, 4),
-    )
-    token_path = tmp_path / "sub-01_desc-cbramod_tokens.npz"
-    save_embedding_derivative(result, token_path)
-
-    tokens = load_embedding_derivatives(
-        tmp_path, representation="token", model_key="cbramod"
-    )
-    assert tokens.X.shape == (3, 5, 4)
-    assert tokens.dims == ("obs", "token", "feature")
-    assert tokens.ids.tolist() == [
-        "sub-01_ses-01_run-01_epoch-0000",
-        "sub-01_ses-01_run-01_epoch-0001",
-        "sub-01_ses-01_run-01_epoch-0002",
-    ]
-    np.testing.assert_allclose(tokens.X[1], result.token_embeddings[1])
-
-    # A token payload must be saved to a *_tokens.npz path.
-    with pytest.raises(ValueError, match="token artifact must be saved"):
-        save_embedding_derivative(
-            result, tmp_path / "sub-01_desc-cbramod_embedding.npz"
-        )
+@pytest.mark.parametrize(
+    "label, view, kwargs",
+    [
+        ("base_x", "window", {}),
+        ("base x", "window", {}),
+        ("baseRä", "window", {}),
+        ("base", "tokens", {}),
+        ("base", "window", {"recording_id": "sub-01_task-rest_eeg"}),
+        ("base", "window", {"recording_id": "sub-01_task-rest_desc-base"}),
+        ("base", "window", {"recording_id": "task-rest"}),
+        ("base", "window", {"recording_id": "sub-01_task-rest", "task": "rest"}),
+    ],
+)
+def test_embedding_path_refuses_names_bids_cannot_hold(tmp_path, label, view, kwargs):
+    with pytest.raises(ValueError):
+        embedding_path(tmp_path, label, view, **kwargs)
 
 
-def test_native_four_dimensional_token_derivative_preserves_layout_and_dtype(tmp_path):
-    native = np.arange(2 * 3 * 4 * 5, dtype=np.float16).reshape(2, 3, 4, 5)
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.ones((2, 5)),
-        recording_embedding=np.ones(5),
-        window_start=np.array([0, 100]),
-        window_stop=np.array([100, 200]),
-        window_index=np.arange(2),
-        metadata={
-            "model_key": "reve",
-            "recording_id": "sub-01",
-            "token_layout": "native",
-            "token_layout_version": 1,
-            "token_source": "reve_backbone_output",
+class _TokenModel:
+    """Stands in for CBraMod: tokens are (window, channel, time_patch, feature)."""
+
+    def transform(self, X, *, return_tokens=False):
+        tokens = np.stack([X[..., :5], X[..., 5:]], axis=2)
+        pooled = tokens.mean(axis=(1, 2))
+        return (pooled, tokens) if return_tokens else pooled
+
+    def get_token_output_metadata(self):
+        return {
+            "token_source": "test_output",
             "token_axes": ["window", "channel", "time_patch", "feature"],
             "token_observation_axes": ["channel", "time_patch"],
             "token_feature_axis": "feature",
-        },
-        token_embeddings=native,
-    )
-    path = tmp_path / "sub-01_desc-reveNative_tokens.npz"
-
-    save_embedding_derivative(result, path)
-    loaded = load_embedding_derivatives(path, representation="token", model_key="reve")
-
-    assert loaded.dims == ("obs", "channel", "time_patch", "feature")
-    assert loaded.X.dtype == native.dtype
-    np.testing.assert_array_equal(loaded.X, native)
-
-
-def test_embedding_observation_id_is_recording_and_epoch():
-    assert (
-        embedding_observation_id(
-            {"recording_id": "sub-01_run-01", "condition": "EO"},
-            "unrelated_embedding.npz",
-            2,
-        )
-        == "sub-01_run-01_epoch-0002"
-    )
-    # a recording-level row is one condition of the recording
-    assert (
-        embedding_observation_id(
-            {"recording_id": "sub-01_run-01", "condition": "EO"}, "x_embedding.npz"
-        )
-        == "sub-01_run-01_cond-EO"
-    )
-    # without a recording_id, pooled and token files of a recording agree
-    pooled, tokens = "sub-01_run-01_embedding.npz", "sub-01_run-01_tokens.npz"
-    assert embedding_observation_id({}, pooled, 3) == embedding_observation_id(
-        {}, tokens, 3
-    )
-
-
-def test_save_embedding_outputs_writes_independent_pooled_and_token_artifacts(tmp_path):
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
-        recording_embedding=np.arange(4, dtype=float),
-        window_start=np.array([0, 100, 200]),
-        window_stop=np.array([100, 200, 300]),
-        window_index=np.arange(3),
-        metadata=_native_token_metadata(
-            model_key="cbramod",
-            recording_id="sub-01",
-            within_window_pooling="mean",
-            recording_pooling="mean",
-            normalize_embeddings=True,
-        ),
-        token_embeddings=np.arange(60, dtype=float).reshape(3, 5, 4),
-    )
-    embedding_path = tmp_path / "sub-01_desc-cbramod_embedding.npz"
-    requested_token_path = tmp_path / "independent_desc-cbramod_tokens.npz"
-
-    pooled_path, token_path = save_embedding_outputs(
-        result,
-        embedding_path,
-        token_path=requested_token_path,
-        pooled_metadata={
-            "model_key": "cbramod_pool-attention",
-            "source_model_key": "cbramod",
-        },
-    )
-
-    assert pooled_path == embedding_path
-    assert token_path == requested_token_path
-    token_metadata = validate_embedding_derivative(token_path)
-    pooled_metadata = validate_embedding_derivative(pooled_path)
-    assert pooled_metadata["model_key"] == "cbramod_pool-attention"
-    assert pooled_metadata["source_model_key"] == "cbramod"
-    assert token_metadata["model_key"] == "cbramod"
-    assert "source_model_key" not in token_metadata
-    assert "within_window_pooling" not in token_metadata
-    assert "recording_pooling" not in token_metadata
-    assert "normalize_embeddings" not in token_metadata
-    with np.load(pooled_path, allow_pickle=False) as payload:
-        assert "token_embeddings" not in payload.files
-    np.testing.assert_allclose(
-        load_embedding_derivatives(tmp_path, representation="epoch").X,
-        result.window_embeddings,
-    )
-    np.testing.assert_allclose(
-        load_embedding_derivatives(tmp_path, representation="token").X,
-        result.token_embeddings,
-    )
-
-    # Complete outputs resume, while a partial pair is safely repaired.
-    assert save_embedding_outputs(result, embedding_path, token_path=token_path) == (
-        pooled_path,
-        token_path,
-    )
-    token_path.with_suffix(".json").unlink()
-    assert save_embedding_outputs(result, embedding_path, token_path=token_path) == (
-        pooled_path,
-        token_path,
-    )
-    validate_embedding_derivative(token_path)
-
-    with pytest.raises(ValueError, match="token_path is required"):
-        save_embedding_outputs(result, tmp_path / "missing-token-path_embedding.npz")
-
-
-def test_manifest_discovery_partitions_by_kind(tmp_path):
-    """A manifest listing both kinds resolves each to the right artifacts."""
-
-    def _make(model_key, subject, *, tokens):
-        result = FoundationEmbeddingResult(
-            window_embeddings=np.ones((2, 4)),
-            recording_embedding=np.ones(4),
-            window_start=np.array([0, 100]),
-            window_stop=np.array([100, 200]),
-            window_index=np.array([0, 1]),
-            metadata=(
-                _native_token_metadata(
-                    model_key=model_key, recording_id=f"sub-{subject}"
-                )
-                if tokens
-                else {"model_key": model_key, "recording_id": f"sub-{subject}"}
-            ),
-            token_embeddings=np.ones((2, 5, 4)) if tokens else None,
-        )
-        suffix = "tokens" if tokens else "embedding"
-        path = tmp_path / f"sub-{subject}_desc-{model_key}_{suffix}.npz"
-        save_embedding_derivative(result, path)
-        return path
-
-    emb = _make("cbramod", "01", tokens=False)
-    tok = _make("cbramod", "01", tokens=True)
-    write_embedding_manifest(
-        tmp_path,
-        [
-            {"status": "success", "artifact_path": emb.name},
-            {"status": "success", "artifact_path": tok.name},
-        ],
-    )
-
-    assert discover_embedding_derivatives(tmp_path, kind="embedding") == [emb]
-    assert discover_embedding_derivatives(tmp_path, kind="token") == [tok]
-
-
-def test_loader_requires_one_model_space(tmp_path):
-    for model_key, subject in (("cbramod", "01"), ("reve", "02")):
-        result = FoundationEmbeddingResult(
-            window_embeddings=np.ones((1, 4)),
-            recording_embedding=np.ones(4),
-            window_start=np.array([0]),
-            window_stop=np.array([100]),
-            window_index=np.array([0]),
-            metadata={
-                "model_key": model_key,
-                "recording_id": f"sub-{subject}_ses-01_run-01",
-                "subject": subject,
-            },
-        )
-        save_embedding_derivative(
-            result,
-            tmp_path / f"sub-{subject}_desc-{model_key}_embedding.npz",
-        )
-
-    with pytest.raises(ValueError, match="multiple foundation models"):
-        load_embedding_derivatives(tmp_path)
-
-    selected = load_embedding_derivatives(tmp_path, model_key="reve")
-    assert selected.X.shape == (1, 4)
-    assert selected.meta["model_key"] == "reve"
-
-
-@dataclass
-class Record:
-    a: int
-
-
-def test_sidecar_converts_metadata_to_json(tmp_path):
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.ones((1, 2)),
-        recording_embedding=np.ones(2),
-        window_start=np.array([0]),
-        window_stop=np.array([10]),
-        window_index=np.array([0]),
-        metadata={
-            "model_key": "cbramod",
-            "opaque": object(),
-            "record": Record(1),
-            "array": np.array([1, 2]),
-            "count": np.int64(1),
-            "path": Path("foo/bar"),
-        },
-    )
-    path = tmp_path / "sub-01_desc-cbramod_embedding.npz"
-    save_embedding_derivative(result, path)
-    metadata = json.loads(path.with_suffix(".json").read_text())
-    assert metadata["opaque"].startswith("<builtins.object:")
-    assert metadata["record"] == {"a": 1}
-    assert (metadata["array"], metadata["count"]) == ([1, 2], 1)
-    assert metadata["path"] == "foo/bar"
-
-
-def test_validate_embedding_errors(tmp_path):
-    path = tmp_path / "missing.npz"
-    with pytest.raises(FileNotFoundError):
-        validate_embedding_derivative(path)
-
-    path.touch()
-    with pytest.raises(FileNotFoundError):
-        validate_embedding_derivative(path)
-
-    sidecar = tmp_path / "missing.json"
-    sidecar.write_text("not a dict")
-
-    # Missing arrays
-    np.savez(path, dummy=np.array([1]))
-    with pytest.raises(ValueError, match="missing arrays"):
-        validate_embedding_derivative(path)
-
-    # Bad window_embeddings shape
-    np.savez(
-        path,
-        window_embeddings=np.array([1]),
-        recording_embedding=np.array([1]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    with pytest.raises(ValueError, match="window_embeddings must be 2-D"):
-        validate_embedding_derivative(path)
-
-    # Bad recording_embedding shape
-    np.savez(
-        path,
-        window_embeddings=np.array([[1]]),
-        recording_embedding=np.array([[1]]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    with pytest.raises(ValueError, match="recording_embedding must match"):
-        validate_embedding_derivative(path)
-
-    # Bad length
-    np.savez(
-        path,
-        window_embeddings=np.array([[1]]),
-        recording_embedding=np.array([1]),
-        window_start=[1, 2],
-        window_stop=[1],
-        window_index=[1],
-    )
-    with pytest.raises(ValueError, match="length does not match"):
-        validate_embedding_derivative(path)
-
-    # Metadata not a dict
-    np.savez(
-        path,
-        window_embeddings=np.array([[1]]),
-        recording_embedding=np.array([1]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    sidecar.write_text("[]")
-    with pytest.raises(ValueError, match="Expected an object"):
-        validate_embedding_derivative(path)
-
-
-def test_save_embedding_errors(tmp_path):
-    class DummyResult:
-        window_embeddings = np.array([[1]])
-        recording_embedding = np.array([1])
-        window_start: ClassVar[list] = [0]
-        window_stop: ClassVar[list] = [1]
-        window_index: ClassVar[list] = [0]
-
-    with pytest.raises(ValueError, match=r"must end in \.npz"):
-        save_embedding_derivative(DummyResult(), tmp_path / "bad.txt")
-
-    # An embedding payload must be saved to an *_embedding.npz path.
-    with pytest.raises(ValueError, match="embedding artifact must be saved"):
-        save_embedding_derivative(DummyResult(), tmp_path / "test.npz")
-
-    path = tmp_path / "test_embedding.npz"
-    save_embedding_derivative(DummyResult(), path)
-    with pytest.raises(FileExistsError):
-        save_embedding_derivative(DummyResult(), path)
-
-
-def test_write_manifest_and_discover(tmp_path):
-    records = [
-        {"status": "success", "artifact_path": "sub-1_embedding.npz"},
-        {"status": "success", "artifact_path": "/absolute/path.npz"},
-    ]
-    manifest = write_embedding_manifest(tmp_path, records)
-    # written in place of the old file in one step: no temporary file is left
-    assert json.loads(manifest.read_text())["records"] == records
-    assert [p.name for p in tmp_path.iterdir()] == ["run_manifest.json"]
-
-    # Create the referenced files
-    (tmp_path / "sub-1_embedding.npz").touch()
-
-    paths = discover_embedding_derivatives(tmp_path)
-    assert len(paths) == 1
-    assert paths[0].name == "sub-1_embedding.npz"
-
-    # Filter by model key with missing sidecar should ignore it
-    paths = discover_embedding_derivatives(tmp_path, model_key="foo")
-    assert len(paths) == 0
-
-    # failed records, records without a path and unreadable manifests list nothing
-    empty = tmp_path / "empty"
-    write_embedding_manifest(empty, [{"status": "failed"}, {"status": "success"}])
-    assert discover_embedding_derivatives(empty) == []
-    (empty / "run_manifest.json").write_text("bad json")
-    assert discover_embedding_derivatives(empty) == []
-
-
-def test_discover_finds_model_variant_missing_from_manifest(tmp_path):
-    raw = tmp_path / "sub-1_embedding.npz"
-    aligned = tmp_path / "sub-1_proc-alignleace_embedding.npz"
-    raw.touch()
-    aligned.touch()
-    raw.with_suffix(".json").write_text(json.dumps({"model_key": "demo"}))
-    aligned.with_suffix(".json").write_text(
-        json.dumps({"model_key": "demo__align-leace"})
-    )
-    write_embedding_manifest(
-        tmp_path,
-        [{"status": "success", "artifact_path": str(raw)}],
-    )
-
-    assert discover_embedding_derivatives(tmp_path, model_key="demo__align-leace") == [
-        aligned
-    ]
-
-
-def test_load_embedding_errors(tmp_path):
-    with pytest.raises(ValueError, match="representation must be"):
-        load_embedding_derivatives([tmp_path], representation="bad")
-
-    with pytest.raises(FileNotFoundError):
-        load_embedding_derivatives([tmp_path / "none.npz"])
-
-    # Valid artifact 1
-    path1 = tmp_path / "1_embedding.npz"
-    sidecar1 = tmp_path / "1_embedding.json"
-    np.savez(
-        path1,
-        window_embeddings=np.array([[1, 2]]),
-        recording_embedding=np.array([1, 2]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    sidecar1.write_text('{"model_key": "M1"}')
-
-    # Valid artifact 2 with wrong dims
-    path2 = tmp_path / "2_embedding.npz"
-    sidecar2 = tmp_path / "2_embedding.json"
-    np.savez(
-        path2,
-        window_embeddings=np.array([[1]]),
-        recording_embedding=np.array([1]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    sidecar2.write_text('{"model_key": "M1"}')
-
-    with pytest.raises(ValueError, match="Embedding shapes differ"):
-        load_embedding_derivatives([path1, path2])
-
-    # Same dims but different model_key
-    path3 = tmp_path / "3_embedding.npz"
-    sidecar3 = tmp_path / "3_embedding.json"
-    np.savez(
-        path3,
-        window_embeddings=np.array([[1, 2]]),
-        recording_embedding=np.array([1, 2]),
-        window_start=[1],
-        window_stop=[1],
-        window_index=[1],
-    )
-    sidecar3.write_text('{"model_key": "M2"}')
-
-    with pytest.raises(
-        ValueError, match="multiple foundation models cannot be combined"
-    ):
-        load_embedding_derivatives([path1, path3])
-
-    with pytest.raises(ValueError, match="Requested model_key="):
-        load_embedding_derivatives([path1], model_key="M2")
-
-    # Aggregate by missing coordinate
-    with pytest.raises(KeyError):
-        load_embedding_derivatives([path1], aggregate_by="missing_coord")
-
-
-def test_write_dataset_description(tmp_path):
-    write_embedding_dataset_description(
-        tmp_path, "Test", "1.0", [{"Name": "Agent"}], [{"Name": "Source"}]
-    )
-    data = json.loads((tmp_path / "dataset_description.json").read_text())
-    assert data["Name"] == "Test"
-    assert data["SourceDatasets"][0]["Name"] == "Source"
-
-
-def test_load_embedding_derivatives_aggregate_by(tmp_path):
-    result = FoundationEmbeddingResult(
-        window_embeddings=np.arange(12, dtype=float).reshape(3, 4),
-        recording_embedding=np.arange(4, dtype=float),
-        window_start=np.array([0, 100, 200]),
-        window_stop=np.array([100, 200, 300]),
-        window_index=np.arange(3),
-        metadata={"model_key": "cbramod", "recording_id": "sub-01", "subject": "01"},
-    )
-    path = tmp_path / "sub-01" / "eeg" / "sub-01_desc-x_embedding.npz"
-    save_embedding_derivative(result, path)
-
-    # Three epochs, all subject "01" -> aggregating by subject yields one row.
-    agg = load_embedding_derivatives(
-        tmp_path, representation="epoch", aggregate_by="subject"
-    )
-    assert agg.X.shape[0] == 1
-    assert agg.meta["representation"] == "epoch"
-    # the old "window" name is no longer accepted
-    with pytest.raises(ValueError, match=r"epoch.*recording"):
-        load_embedding_derivatives(tmp_path, representation="window")
-    (tmp_path / "empty").mkdir()
-    with pytest.raises(FileNotFoundError):
-        load_embedding_derivatives(tmp_path / "empty")
-
-
-def _write_combined_table(tmp_path, model_key, condition, representation):
-    combined_dir = tmp_path / "combined"
-    combined_dir.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame(
-        {
-            "subject": ["sub-0001", "sub-0001", "sub-0002"],
-            "recording_id": ["sub-0001_run-01", "sub-0001_run-02", "sub-0002_run-01"],
-            "condition": [condition] * 3,
-            "model_key": [model_key] * 3,
-            # float32, as the merge step writes model embeddings
-            "embedding_0000": np.float32([0.1, 0.2, 0.3]),
-            "embedding_0001": np.float32([1.0, 1.1, 1.2]),
         }
-    )
-    path = combined_embedding_table_path(tmp_path, model_key, condition, representation)
-    frame.to_parquet(path, index=False)
-    return path
+
+    def get_embedding_info(self):
+        return get_foundation_model_spec("cbramod")
 
 
-def test_load_combined_embedding_table_roundtrip(tmp_path):
-    _write_combined_table(tmp_path, "cbramod", "EO_baseline", "recording")
-    container = load_combined_embedding_table(
-        tmp_path, "cbramod", "EO_baseline", "recording"
+def _extract(epochs, *, seed=0, channels=("T3", "Cz"), store_tokens=True, **settings):
+    """The extractor's result for windows numbered ``epochs``, 10 samples each."""
+    X = np.random.default_rng(seed).normal(size=(len(epochs), len(channels), 10))
+    extractor = FoundationEmbeddingExtractor(
+        "cbramod",
+        model=_TokenModel(),
+        resample=False,
+        store_tokens=store_tokens,
+        **settings,
     )
-    assert container.dims == ("obs", "feature")
-    assert container.X.shape == (3, 2)
-    # read back as stored, not doubled to float64
-    assert container.X.dtype == np.float32
-    np.testing.assert_array_equal(container.X[:, 1], np.float32([1.0, 1.1, 1.2]))
-    assert list(container.coords["feature"]) == ["embedding_0000", "embedding_0001"]
-    assert container.ids.tolist() == [
-        "sub-0001_run-01_cond-EO_baseline",
-        "sub-0001_run-02_cond-EO_baseline",
-        "sub-0002_run-01_cond-EO_baseline",
-    ]
-    assert "subject" in container.coords
-    assert container.meta["model_key"] == "cbramod"
-    assert container.meta["source"] == "combined_table"
-    agg = load_combined_embedding_table(
-        tmp_path, "cbramod", "EO_baseline", "recording", aggregate_by="subject"
+    starts = np.asarray(epochs) * 10
+    return extractor.extract(
+        X,
+        signal_metadata=SignalMetadata(sfreq=200.0, ch_names=list(channels)),
+        window_start=starts,
+        window_stop=starts + 10,
+        window_index=epochs,
     )
-    assert agg.X.shape[0] == 2
-    # columns that are not float (e.g. integer codes) are read as float64
-    path = combined_embedding_table_path(
-        tmp_path, "cbramod", "EO_baseline", "recording"
-    )
-    table = pd.read_parquet(path)
-    table[["embedding_0000", "embedding_0001"]] = [[1, 2], [3, 4], [5, 6]]
-    table.to_parquet(path, index=False)
-    integers = load_combined_embedding_table(
-        tmp_path, "cbramod", "EO_baseline", "recording"
-    )
-    assert integers.X.dtype == np.float64
-    with pytest.raises(FileNotFoundError):
-        load_combined_embedding_table(tmp_path, "cbramod", "EO_baseline", "epoch")
 
 
-def test_recording_ids_of_two_conditions_are_unique(tmp_path):
-    paths = []
-    for condition in ("EO", "EC"):
-        result = SimpleNamespace(
-            window_embeddings=np.ones((2, 3), dtype=np.float32),
-            recording_embedding=np.ones(3, dtype=np.float32),
-            window_start=np.arange(2),
-            window_stop=np.arange(2) + 1,
-            window_index=np.arange(2) + (0 if condition == "EO" else 2),
-            metadata={
-                "recording_id": "sub-01_task-rest",
-                "condition": condition,
-                "model_key": "cbramod",
-            },
-            token_embeddings=None,
+def _source(tmp_path, **entities):
+    entities = {"subject": "01", "session": "02", "run": "03", **entities}
+    return BIDSPath(
+        root=tmp_path / "preproc",
+        task="rest",
+        description="base",
+        suffix="epo",
+        extension=".fif",
+        datatype="eeg",
+        check=False,
+        **entities,
+    )
+
+
+def test_write_recording_embeddings_round_trip(tmp_path):
+    results = {"EO": _extract([1, 3], seed=1), "EC": _extract([0, 2, 4])}
+    paths = write_recording_embeddings(
+        results,
+        tmp_path / "out",
+        label="base",
+        source=_source(tmp_path),
+        source_dataset="preproc",
+        bad_channels=["Cz"],
+    )
+    recording = "sub-01_ses-02_task-rest_run-03"
+    assert {view: path.basename for view, path in paths.items()} == {
+        "window": f"{recording}_desc-base_windowembeddings.nc",
+        "token": f"{recording}_desc-base_tokenembeddings.nc",
+    }
+    # Windows in epoch order: EO's 1 and 3 between EC's 0, 2 and 4.
+    order = [2, 0, 3, 1, 4]
+    hashes = set()
+    for view, dims in (
+        ("window", ("window", "feature")),
+        ("token", ("window", "channel", "time_patch", "feature")),
+    ):
+        with xr.open_dataset(paths[view].fpath, engine="h5netcdf") as ds:
+            expected = np.concatenate(
+                [getattr(results[c], f"{view}_embeddings") for c in ("EO", "EC")]
+            )[order]
+            assert ds["embeddings"].dims == dims
+            assert ds["embeddings"].dtype == np.float32
+            np.testing.assert_array_equal(ds["embeddings"], expected.astype(np.float32))
+            assert ds["obs"].values.tolist() == [
+                f"{recording}_epoch-{number:04d}" for number in range(5)
+            ]
+            assert ds["condition"].values.tolist() == ["EC", "EO", "EC", "EO", "EC"]
+            assert ds["epoch"].values.tolist() == [0, 1, 2, 3, 4]
+            assert ds["start"].values.tolist() == [0, 10, 20, 30, 40]
+            assert ds["stop"].values.tolist() == [10, 20, 30, 40, 50]
+            for name, value in (
+                ("recording_id", recording),
+                ("subject", "01"),
+                ("session", "02"),
+                ("task", "rest"),
+                ("run", "03"),
+            ):
+                assert set(ds[name].values) == {value}
+            assert ds["recording"].values.tolist() == [recording]
+            assert ds["source"].values.tolist() == [
+                f"bids:preproc:sub-01/ses-02/eeg/{recording}_desc-base_epo.fif"
+            ]
+            assert ds["sfreq"].values.tolist() == [200.0]
+            assert ds["channels"].values.tolist() == ["T3,Cz"]
+            assert ds["bad_channels"].values.tolist() == ["Cz"]
+            assert ds["interpolated_channels"].values.tolist() == [""]
+            assert ds.attrs["model_key"] == "cbramod"
+            assert ds.attrs["description"] == "base"
+            config = json.loads(ds.attrs["config"])
+            assert config["ModelKey"] == "cbramod"
+            assert config["NormalizeEmbeddings"] is True
+            assert set(config) <= set(EMBEDDING_CONFIG_KEYS.values())
+            assert stable_hash(config, length=16) == ds.attrs["config_hash"]
+            hashes.add(ds.attrs["config_hash"])
+            if view == "token":
+                assert ds.attrs["token_source"] == "test_output"
+                assert ds.attrs["token_feature_axis"] == "feature"
+    assert len(hashes) == 1
+
+
+def test_recordings_of_one_configuration_share_config_hash(tmp_path):
+    def config_hash(subject, result):
+        paths = write_recording_embeddings(
+            {"EC": result},
+            tmp_path / "out",
+            label="base",
+            source=_source(tmp_path, subject=subject),
+            source_dataset="preproc",
         )
-        name = f"sub-01_task-rest_desc-cbramod{condition}_embedding.npz"
-        paths.append(save_embedding_derivative(result, tmp_path / name)[0])
+        with xr.open_dataset(paths["window"].fpath, engine="h5netcdf") as ds:
+            return ds.attrs["config_hash"]
 
-    recordings = load_embedding_derivatives(paths, representation="recording")
-    assert recordings.ids.tolist() == [
-        "sub-01_task-rest_cond-EO",
-        "sub-01_task-rest_cond-EC",
+    first = config_hash("01", _extract([0, 1]))
+    assert config_hash("02", _extract([0], seed=1, channels=("Fz",))) == first
+    assert config_hash("03", _extract([0], normalize_embeddings=False)) != first
+
+
+def _nan_at_first(result, view):
+    array = np.array(getattr(result, f"{view}_embeddings"))
+    array.flat[0] = np.nan
+    return replace(result, **{f"{view}_embeddings": array})
+
+
+@pytest.mark.parametrize(
+    "results, message",
+    [
+        (
+            lambda: {
+                "EC": _extract([0]),
+                "EO": _extract([1], normalize_embeddings=False),
+            },
+            "config_hash",
+        ),
+        (
+            lambda: {"EC": _extract([0]), "EO": _extract([1], store_tokens=False)},
+            "views",
+        ),
+        (
+            lambda: {
+                "EC": _extract([0]),
+                "EO": replace(
+                    _extract([1]),
+                    window_embeddings=_extract([1]).window_embeddings[:, :4],
+                ),
+            },
+            "views",
+        ),
+        (
+            lambda: {"EC": _extract([0]), "EO": _extract([1], channels=("T3", "Fz"))},
+            "channels",
+        ),
+        (lambda: {"EC": _nan_at_first(_extract([0]), "window")}, "non-finite"),
+        (lambda: {"EC": _nan_at_first(_extract([0]), "token")}, "non-finite"),
+        (lambda: {"EC": _extract([0, 1]), "EO": _extract([1])}, "more than once"),
+    ],
+)
+def test_write_recording_embeddings_refuses_before_writing(tmp_path, results, message):
+    with pytest.raises(ValueError, match=message):
+        write_recording_embeddings(
+            results(),
+            tmp_path / "out",
+            label="base",
+            source=_source(tmp_path),
+            source_dataset="preproc",
+        )
+    assert not (tmp_path / "out").exists()
+
+
+def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
+    def write(result):
+        return write_recording_embeddings(
+            {"EC": result},
+            tmp_path / "out",
+            label="base",
+            source=_source(tmp_path),
+            source_dataset="preproc",
+        )
+
+    path = write(_extract([0], store_tokens=False))["window"].fpath
+    before = path.read_bytes()
+
+    def fail(self, target, **kwargs):
+        Path(target).write_bytes(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(xr.Dataset, "to_netcdf", fail)
+    with pytest.raises(OSError, match="disk full"):
+        write(_extract([0], seed=1, store_tokens=False))
+    assert path.read_bytes() == before
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+
+
+def _embedding_dataset(tmp_path, labels=("base",)):
+    """A dataset with one recording's files and a top-level file per label."""
+    root = tmp_path / "coco-pipe-cbramod"
+    paths = write_recording_embeddings(
+        {"EC": _extract([0, 1])},
+        root,
+        label="base",
+        source=_source(tmp_path),
+        source_dataset="preproc",
+    )
+    for label in labels:
+        with xr.open_dataset(paths["window"].fpath, engine="h5netcdf") as ds:
+            ds = ds.load()
+        ds.attrs["description"] = label
+        ds.to_netcdf(
+            embedding_path(root, label, "window", task="rest").fpath,
+            engine="h5netcdf",
+        )
+    return root, paths["window"]
+
+
+def _write_dataset(root, **kwargs):
+    return write_embedding_dataset(
+        root,
+        kwargs.pop("descriptions", {"base": "pretrained, every epoch"}),
+        name="coco-pipe CBraMod embeddings",
+        dataset_links=kwargs.pop("dataset_links", {"preproc": "../preproc"}),
+        authors=["A. Author", "B. Author"],
+    )
+
+
+def test_write_embedding_dataset_writes_bids_files_and_sidecars(tmp_path):
+    root, recording_file = _embedding_dataset(tmp_path)
+    (root / ".bidsignore").write_text("extra/\n\n*.nc\n", encoding="utf-8")
+    descriptions = {"base": "pretrained, every epoch", "baseRandom": "random weights"}
+    written = _write_dataset(root, descriptions=descriptions)
+
+    description = json.loads((root / "dataset_description.json").read_text())
+    assert description["BIDSVersion"] == "1.10.1"
+    assert description["DatasetType"] == "derivative"
+    assert description["GeneratedBy"][0]["Name"] == "coco-pipe"
+    assert description["DatasetLinks"] == {"preproc": "../preproc"}
+    assert description["SourceDatasets"] == [{"URL": "../preproc"}]
+    table = pd.read_csv(root / "descriptions.tsv", sep="\t")
+    assert table.to_dict("list") == {
+        "desc_id": ["desc-base", "desc-baseRandom"],
+        "description": list(descriptions.values()),
+    }
+    assert "Description" in json.loads((root / "descriptions.json").read_text())
+    assert (root / ".bidsignore").read_text().splitlines() == [
+        "extra/",
+        "*.nc",
+        "*embeddings.nc",
+        "*embeddings.json",
+        "*.tar.zst",
+        "*_manifest.json",
     ]
-    epochs = load_embedding_derivatives(paths, representation="epoch")
-    assert len(set(epochs.ids)) == 4
+    assert "windowembeddings" in (root / "README.md").read_text()
+
+    sidecar = root / "task-rest_desc-base_windowembeddings.json"
+    with xr.open_dataset(recording_file.fpath, engine="h5netcdf") as ds:
+        assert json.loads(sidecar.read_text()) == {
+            "Description": "pretrained, every epoch: one vector per window.",
+            **json.loads(ds.attrs["config"]),
+            "ConfigHash": ds.attrs["config_hash"],
+        }
+    assert recording_file.find_matching_sidecar(extension=".json") == sidecar
+
+    before = {path: path.read_bytes() for path in written}
+    assert _write_dataset(root, descriptions=descriptions) == written
+    assert {path: path.read_bytes() for path in written} == before
+
+
+def _set_attrs(path, **attrs):
+    with xr.open_dataset(path, engine="h5netcdf") as ds:
+        ds = ds.load()
+    ds.attrs.update(attrs)
+    ds.to_netcdf(path, engine="h5netcdf")
+
+
+def _other_model(path):
+    config = {"ModelKey": "reve"}
+    _set_attrs(
+        path, config=json.dumps(config), config_hash=stable_hash(config, length=16)
+    )
+
+
+@pytest.mark.parametrize(
+    "change, kwargs, message",
+    [
+        (None, {"descriptions": {"baseX": "other"}}, "descriptions lacks"),
+        (None, {"descriptions": {"base": "one\ttwo"}}, "one line"),
+        (None, {"dataset_links": {"pre:proc": "../preproc"}}, "DatasetLinks"),
+        (None, {"dataset_links": {"raw": ".."}}, "dataset_links must name"),
+        (lambda path: _set_attrs(path, description="baseX"), {}, "holds the label"),
+        (lambda path: _set_attrs(path, config_hash="0" * 16), {}, "hash"),
+        (_other_model, {}, "one model"),
+    ],
+)
+def test_write_embedding_dataset_refuses_before_writing(
+    tmp_path, change, kwargs, message
+):
+    root, _ = _embedding_dataset(tmp_path, labels=("base", "baseRandom"))
+    kwargs.setdefault("descriptions", {"base": "pretrained", "baseRandom": "random"})
+    if change is not None:
+        change(root / "task-rest_desc-baseRandom_windowembeddings.nc")
+    with pytest.raises(ValueError, match=message):
+        _write_dataset(root, **kwargs)
+    assert not list(root.glob("*.json"))
+
+
+def test_each_label_has_its_own_manifest(tmp_path):
+    source = _source(tmp_path)
+    base = write_embedding_manifest(
+        tmp_path, "base", [{"recording_id": "a", "status": "failed", "path": source}]
+    )
+    random = write_embedding_manifest(
+        tmp_path, "baseRandom", [{"recording_id": "b", "status": "skipped"}]
+    )
+    assert base.name == "desc-base_manifest.json"
+    assert random.name == "desc-baseRandom_manifest.json"
+    write_embedding_manifest(tmp_path, "base", [])
+    assert json.loads(base.read_text())["records"] == []
+    assert json.loads(random.read_text())["records"] == [
+        {"recording_id": "b", "status": "skipped"}
+    ]
+    write_embedding_manifest(tmp_path, "base", [{"path": source}])
+    assert json.loads(base.read_text())["records"] == [
+        {"path": source.fpath.as_posix()}
+    ]
+    assert {p.name for p in tmp_path.iterdir()} == {base.name, random.name}
+    with pytest.raises(ValueError, match="BIDS label"):
+        write_embedding_manifest(tmp_path, "base_x", [])

@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from coco_pipe.io._serialization import (
+    atomic_path,
     load_object,
     read_json,
     read_table,
@@ -28,6 +29,17 @@ def test_json_round_trip(tmp_path, atomic):
     text = path.read_text(encoding="utf-8")
     assert text.index('"a"') < text.index('"b"')
     assert [p.name for p in path.parent.iterdir()] == ["payload.json"]
+
+
+def test_writers_of_one_file_do_not_share_a_temporary_file(tmp_path):
+    path = tmp_path / "dataset_description.json"
+    with atomic_path(path) as first:
+        first.write_text("first", encoding="utf-8")
+        with atomic_path(path) as second:
+            second.write_text("second", encoding="utf-8")
+        assert path.read_text(encoding="utf-8") == "second"
+    assert path.read_text(encoding="utf-8") == "first"
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]
 
 
 def test_object_round_trip(tmp_path):

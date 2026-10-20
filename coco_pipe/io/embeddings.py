@@ -3,29 +3,595 @@
 from __future__ import annotations
 
 import json
-import os
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import xarray as xr
+from mne_bids import BIDSPath, get_bids_path_from_fname, get_entities_from_fname
 
-from ._constants import (
-    ARTIFACT_SUFFIX,
-    EMBEDDING_COMBINED_TABLE_LABELS,
-    POOLED_ONLY_EMBEDDING_METADATA_KEYS,
-    REQUIRED_ARRAYS,
-    TOKEN_REQUIRED_ARRAYS,
-)
-from ._serialization import write_json
-from .structures import DataContainer
+from coco_pipe.utils import get_package_version, stable_hash
+
+from ._constants import EMBEDDING_CONFIG_KEYS, EMBEDDING_VIEWS
+from ._serialization import atomic_path, write_json
+
+_RECORDING_ENTITIES = frozenset({"subject", "session", "task", "acquisition", "run"})
+
+# descriptions.tsv came in BIDS 1.10; the validator (schema 1.2.7) does not
+# know 1.11 yet, and mne-bids 0.20 writes 1.9.0.
+_BIDS_VERSION = "1.10.1"
+_CODE_URL = "https://github.com/BabaSanfour/coco-pipe"
+_BIDSIGNORE = ("*embeddings.nc", "*embeddings.json", "*.tar.zst", "*_manifest.json")
+
+_VIEW_TEXT = {
+    "token": "the model's token tensor of each window, nothing pooled",
+    "window": "one vector per window",
+    "channel": "one vector per channel of each window, averaged over time patches",
+    "patch": "one vector per time patch of each window, averaged over channels",
+    "cov": "the tangent-space covariance of each window's tokens",
+}
+
+_VIEW_DIMS = {
+    "window": ("window", "feature"),
+    "channel": ("window", "channel", "feature"),
+    "patch": ("window", "time_patch", "feature"),
+    "cov": ("window", "feature"),
+}
+
+
+def _check_label(label: str) -> None:
+    """Refuse a ``desc`` label that is not a BIDS label."""
+    if not re.fullmatch(r"[A-Za-z0-9+]+", label):
+        raise ValueError(
+            f"label must be letters, digits and '+' (a BIDS label), got {label!r}."
+        )
+
+
+def embedding_path(
+    root: str | Path,
+    label: str,
+    view: str,
+    *,
+    recording_id: str | None = None,
+    task: str | None = None,
+    datatype: str = "eeg",
+) -> BIDSPath:
+    """Return the BIDS path of an embedding file.
+
+    A file is named ``<entities>_desc-<label>_<view>embeddings.nc``. With
+    ``recording_id`` it holds one recording and sits in its subject (and
+    session) folder; without it, it holds every recording and sits at the
+    dataset root, named by ``task`` when one is given.
+
+    Parameters
+    ----------
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label: the processing chain, e.g. ``"base"`` or
+        ``"baseRandomEaCoral"``. A BIDS label: letters, digits and ``+``.
+    view : str
+        One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
+    recording_id : str, optional
+        A recording's BIDS entities, as the BIDS loader's ``recording_id``
+        coordinate holds them, e.g. ``"sub-01_ses-01_task-rest_run-01"``.
+    task : str, optional
+        The task of a file holding every recording. A recording's file takes
+        its task from ``recording_id``.
+    datatype : str
+        The BIDS datatype folder of a recording's file, e.g. ``"eeg"``.
+
+    Returns
+    -------
+    BIDSPath
+        The file's path, without checks for BIDS suffixes; ``.fpath`` is the
+        file.
+
+    Raises
+    ------
+    ValueError
+        If ``label`` is not a BIDS label, ``view`` is not an embedding view,
+        ``recording_id`` is not a recording's entities, or both
+        ``recording_id`` and ``task`` are given.
+    """
+    _check_label(label)
+    if view not in EMBEDDING_VIEWS:
+        raise ValueError(f"view must be one of {EMBEDDING_VIEWS}, got {view!r}.")
+    if recording_id is None:
+        entities = {"task": task}
+    elif task is not None:
+        raise ValueError("A recording's file takes its task from recording_id.")
+    else:
+        parsed = get_entities_from_fname(recording_id, on_error="ignore")
+        entities = {key: value for key, value in parsed.items() if value is not None}
+        if (
+            "subject" not in entities
+            or not set(entities) <= _RECORDING_ENTITIES
+            or BIDSPath(**entities).basename != recording_id
+        ):
+            raise ValueError(
+                "recording_id must be a recording's BIDS entities (sub, ses, task, "
+                "acq, run), e.g. 'sub-01_ses-01_task-rest_run-01'; "
+                f"got {recording_id!r}."
+            )
+        entities["datatype"] = datatype
+    return BIDSPath(
+        root=root,
+        **entities,
+        description=label,
+        suffix=f"{view}embeddings",
+        extension=".nc",
+        check=False,
+    )
+
+
+def _recording_id(bids_path: BIDSPath) -> str:
+    """Name a recording by its entities, as the BIDS loader does."""
+    return BIDSPath(
+        subject=bids_path.subject,
+        session=bids_path.session,
+        task=bids_path.task,
+        acquisition=bids_path.acquisition,
+        run=bids_path.run,
+    ).basename
+
+
+def _channel_list(names: Sequence[str]) -> str:
+    """Join channel names with commas, as the BIDS loader's bad_channels."""
+    return ",".join(str(name) for name in names)
+
+
+def _view_dims(view: str, array: np.ndarray, metadata: Mapping[str, Any]) -> tuple:
+    """Return the dimension names of one view's array, checking its rank."""
+    if view != "token":
+        dims = _VIEW_DIMS[view]
+    else:
+        dims = tuple(metadata.get("token_axes") or ())
+        feature_axis = metadata.get("token_feature_axis")
+        if dims[:1] != ("window",) or len(set(dims)) != len(dims):
+            raise ValueError(
+                f"token_axes must be unique names starting with 'window', got {dims}."
+            )
+        if feature_axis not in dims[1:] or not metadata.get("token_source"):
+            raise ValueError(
+                "Token metadata must name token_source and a token_feature_axis "
+                "among token_axes."
+            )
+    if array.ndim != len(dims):
+        raise ValueError(
+            f"{view} embeddings have shape {array.shape}, expected axes {dims}."
+        )
+    return dims
+
+
+def _write_netcdf(dataset: xr.Dataset, path: Path) -> None:
+    """Write a dataset to a temporary sibling, then move it into place."""
+    with atomic_path(path) as tmp:
+        dataset.to_netcdf(tmp, engine="h5netcdf")
+
+
+def write_recording_embeddings(
+    results: Mapping[str, Any],
+    root: str | Path,
+    *,
+    label: str,
+    source: BIDSPath,
+    source_dataset: str,
+    bad_channels: Sequence[str] = (),
+) -> dict[str, BIDSPath]:
+    """Write one recording's embeddings, one file per view.
+
+    Each view the results hold (``window_embeddings``, ``token_embeddings``,
+    and so on, see :data:`~coco_pipe.io.EMBEDDING_VIEWS`) goes to its own
+    file, named by :func:`embedding_path` after the source recording. A file
+    holds every condition, its windows in epoch order. Nothing is written if
+    any check fails, and each file is written to a temporary name and then
+    moved into place, so an existing file is replaced whole or not at all.
+
+    Parameters
+    ----------
+    results : mapping of str to FoundationEmbeddingResult
+        The extractor's result for each condition of the recording. Its
+        ``window_index`` holds the epoch numbers.
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label: the processing chain, e.g. ``"base"``.
+    source : BIDSPath
+        The file the epochs were read from, with its ``root`` and
+        ``datatype``. Its entities name the recording, and the embedding
+        files go in the same datatype folder.
+    source_dataset : str
+        The name of the source dataset in ``DatasetLinks``, e.g.
+        ``"preproc"``, for the BIDS URI of ``source``.
+    bad_channels : sequence of str
+        The recording's bad channels.
+
+    Returns
+    -------
+    dict of str to BIDSPath
+        The path written for each view.
+
+    Raises
+    ------
+    ValueError
+        If the conditions come from different models or settings (their
+        ``config_hash``), differ in views, feature size or channels, hold
+        non-finite values or share epoch numbers, or if ``source`` lacks its
+        root, subject or datatype.
+
+    Notes
+    -----
+    The ``embeddings`` variable holds the view, as float32. Along ``window``
+    are the coordinates ``obs`` (``<recording_id>_epoch-NNNN``, as the BIDS
+    loader names observations), ``recording_id``, ``subject``, ``session``,
+    ``task``, ``run``, ``condition``, ``epoch``, ``start`` and ``stop``.
+    Along ``recording`` are its ``source`` (a BIDS URI), sampling rate,
+    channels, bad channels and the channels the model interpolated,
+    zero-filled or dropped. The attributes are ``model_key``, ``config``
+    (the extraction settings that are the same for every recording, as JSON
+    text, see :data:`~coco_pipe.io.EMBEDDING_CONFIG_KEYS`), ``config_hash``
+    (their hash) and ``description`` (the label); a token file adds
+    ``token_source`` and ``token_feature_axis``, the other token axes being
+    the observation axes. Other metadata in the results is not stored.
+    """
+    if not results:
+        raise ValueError("results must hold at least one condition.")
+    if source.root is None or source.subject is None or source.datatype is None:
+        raise ValueError("source must be a BIDSPath with root, subject and datatype.")
+    if not source_dataset or ":" in source_dataset:
+        raise ValueError(
+            f"source_dataset must be a DatasetLinks name, got {source_dataset!r}."
+        )
+    recording_id = _recording_id(source)
+    relative = source.fpath.relative_to(Path(source.root)).as_posix()
+
+    views: dict[str, list[np.ndarray]] = {}
+    windows: dict[str, list[np.ndarray]] = {
+        "condition": [],
+        "epoch": [],
+        "start": [],
+        "stop": [],
+    }
+    reference: dict[str, Any] | None = None
+    for condition, result in results.items():
+        if not isinstance(condition, str) or not condition:
+            raise ValueError(f"Conditions must be names, got {condition!r}.")
+        metadata = dict(result.metadata or {})
+        if not metadata.get("model_key"):
+            raise ValueError(f"Condition {condition!r} has no model_key in metadata.")
+        config = {
+            field: _json_value(metadata[key])
+            for key, field in EMBEDDING_CONFIG_KEYS.items()
+            if key in metadata
+        }
+        adaptation = metadata.get("channel_adaptation") or {}
+        try:
+            recording = {
+                "sfreq": float(metadata["input_sfreq"]),
+                "channels": _channel_list(metadata["original_channels"]),
+            }
+        except KeyError as exc:
+            raise ValueError(
+                f"Condition {condition!r} has no {exc} in metadata."
+            ) from None
+        for kind in ("interpolated", "zero_filled", "dropped"):
+            recording[f"{kind}_channels"] = _channel_list(
+                adaptation.get(f"{kind}_channels", ())
+            )
+        arrays = {
+            view: np.asarray(array, dtype=np.float32)
+            for view in EMBEDDING_VIEWS
+            if (array := getattr(result, f"{view}_embeddings", None)) is not None
+        }
+        if "window" not in arrays:
+            raise ValueError(f"Condition {condition!r} has no window embeddings.")
+        current = {
+            "config_hash": stable_hash(config, length=16),
+            "config": config,
+            "recording": recording,
+            "views": {
+                view: (_view_dims(view, array, metadata), array.shape[1:])
+                for view, array in arrays.items()
+            },
+            "token": {
+                key: metadata[key]
+                for key in ("token_source", "token_feature_axis")
+                if "token" in arrays
+            },
+        }
+        if reference is None:
+            reference = current
+        else:
+            for key, what in (
+                ("config_hash", "models or settings (config_hash)"),
+                ("views", "views or their shapes"),
+                ("recording", "channels or sampling rates"),
+                ("token", "token layouts"),
+            ):
+                if current[key] != reference[key]:
+                    raise ValueError(
+                        f"Conditions differ in {what}: {condition!r} has "
+                        f"{current[key]}, the first has {reference[key]}."
+                    )
+        n_windows = len(arrays["window"])
+        epochs = np.asarray(result.window_index, dtype=np.int64)
+        starts = np.asarray(result.window_start, dtype=np.int64)
+        stops = np.asarray(result.window_stop, dtype=np.int64)
+        for view, array in arrays.items():
+            if len(array) != n_windows:
+                raise ValueError(
+                    f"Condition {condition!r} has {len(array)} {view} rows for "
+                    f"{n_windows} windows."
+                )
+            if not np.isfinite(array).all():
+                raise ValueError(
+                    f"The {view} embeddings of condition {condition!r} hold "
+                    "non-finite values."
+                )
+            views.setdefault(view, []).append(array)
+        if not len(epochs) == len(starts) == len(stops) == n_windows:
+            raise ValueError(
+                f"Condition {condition!r} needs one epoch number, start and stop "
+                "per window."
+            )
+        windows["condition"].append(np.full(n_windows, condition, dtype=object))
+        windows["epoch"].append(epochs)
+        windows["start"].append(starts)
+        windows["stop"].append(stops)
+
+    columns = {key: np.concatenate(parts) for key, parts in windows.items()}
+    numbers, counts = np.unique(columns["epoch"], return_counts=True)
+    if (counts > 1).any():
+        raise ValueError(
+            f"Epoch numbers appear more than once in {recording_id}: "
+            f"{numbers[counts > 1].tolist()}."
+        )
+    order = np.argsort(columns["epoch"], kind="stable")
+    columns = {key: column[order] for key, column in columns.items()}
+    n_windows = len(order)
+    entities = {
+        "subject": source.subject,
+        "session": source.session or "",
+        "task": source.task or "",
+        "run": source.run or "",
+    }
+    coords = {
+        "obs": (
+            "window",
+            [f"{recording_id}_epoch-{number:04d}" for number in columns["epoch"]],
+        ),
+        "recording_id": ("window", np.full(n_windows, recording_id, dtype=object)),
+        **{
+            name: ("window", np.full(n_windows, value, dtype=object))
+            for name, value in entities.items()
+        },
+        **{key: ("window", column) for key, column in columns.items()},
+        "recording": [recording_id],
+        "source": ("recording", [f"bids:{source_dataset}:{relative}"]),
+        "bad_channels": ("recording", [_channel_list(bad_channels)]),
+        **{
+            key: ("recording", [value]) for key, value in reference["recording"].items()
+        },
+    }
+    attrs = {
+        "model_key": reference["config"]["ModelKey"],
+        "config_hash": reference["config_hash"],
+        "config": json.dumps(reference["config"]),
+        "description": label,
+    }
+    paths = {}
+    datasets = {}
+    for view, parts in views.items():
+        dims = reference["views"][view][0]
+        paths[view] = embedding_path(
+            root, label, view, recording_id=recording_id, datatype=source.datatype
+        )
+        datasets[view] = xr.Dataset(
+            {"embeddings": (dims, np.concatenate(parts)[order])},
+            coords=coords,
+            attrs={**attrs, **(reference["token"] if view == "token" else {})},
+        )
+    for view, dataset in datasets.items():
+        _write_netcdf(dataset, paths[view].mkdir().fpath)
+    return paths
+
+
+def _dataset_readme(name: str, views: Sequence[str]) -> str:
+    """The README of an embedding dataset: what its files hold and how."""
+    suffixes = "\n".join(
+        f"  - `{view}embeddings`: {_VIEW_TEXT[view]}." for view in views
+    )
+    return f"""# {name}
+
+Foundation-model embeddings of EEG epochs, written by coco-pipe
+({_CODE_URL}).
+
+## Files
+
+Files are named `<entities>_desc-<label>_<view>embeddings.nc`.
+
+- `desc` is the processing chain: the epochs' own label, then the weights
+  (`Random` for random weights), the pooling and the alignment, e.g.
+  `baseRandomEaCoral`. `descriptions.tsv` lists the labels.
+- The suffix is the representation:
+{suffixes}
+- Files under `sub-*/` hold one recording. Files at the top level hold every
+  recording; the JSON file of the same name gives the extraction settings,
+  which apply to every file of that label and suffix.
+- `desc-<label>_manifest.json` lists the recordings skipped or failed for a
+  label.
+
+## Format
+
+NetCDF-4 files, read with xarray (engine `h5netcdf`) or coco-pipe's
+`load_embeddings`. The variable `embeddings` holds the view as float32, along
+`window` and the view's own axes. Along `window`, the coordinates `obs`,
+`recording_id`, `subject`, `session`, `task`, `run`, `condition`, `epoch`,
+`start` and `stop` identify each epoch. Along `recording`, `source` gives
+each recording's source file as a BIDS URI (resolved through `DatasetLinks`
+in `dataset_description.json`), with its sampling rate and channels. The
+attribute `config` holds the extraction settings as JSON and `config_hash`
+their hash: files whose hashes differ were not made the same way.
+"""
+
+
+def write_embedding_dataset(
+    root: str | Path,
+    descriptions: Mapping[str, str],
+    *,
+    name: str,
+    dataset_links: Mapping[str, str],
+    authors: Sequence[str] = (),
+) -> list[Path]:
+    """Write the dataset files of an embedding derivative and its sidecars.
+
+    Writes ``dataset_description.json``, ``README.md``, ``descriptions.tsv``
+    and its ``descriptions.json``, and ``.bidsignore`` (keeping lines already
+    there). Each top-level embedding file (one holding every recording) gets
+    a JSON sidecar of the same name, holding the file's extraction settings
+    (its ``config`` attribute), its ``config_hash`` as ``ConfigHash`` and a
+    ``Description``. By BIDS inheritance a sidecar also applies to the
+    recording files of the same label and suffix. Every file is replaced
+    atomically and comes out the same whoever calls, so several jobs may
+    call this on one dataset.
+
+    Parameters
+    ----------
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    descriptions : mapping of str to str
+        What each ``desc`` label means, one row of ``descriptions.tsv`` each.
+        Every top-level embedding file's label must be here; a label without
+        files yet is listed all the same.
+    name : str
+        The dataset's ``Name``.
+    dataset_links : mapping of str to str
+        Each source dataset's name and location, e.g.
+        ``{"preproc": "../preproc"}``: the ``DatasetLinks`` that resolve the
+        BIDS URIs of the recordings' sources, also listed as
+        ``SourceDatasets``.
+    authors : sequence of str
+        The dataset's ``Authors``.
+
+    Returns
+    -------
+    list of Path
+        The files written.
+
+    Raises
+    ------
+    ValueError
+        If a label or link name is not valid, a description holds a tab or a
+        line break, or a top-level embedding file has a label not in
+        ``descriptions`` or other than the one it holds, an unknown view, no
+        ``config`` or one that does not match its ``config_hash``, sources in
+        a dataset ``dataset_links`` does not name, or another model than the
+        other files.
+    """
+    root = Path(root)
+    for label, text in descriptions.items():
+        _check_label(label)
+        if not text or any(char in text for char in "\t\r\n"):
+            raise ValueError(
+                f"The description of {label!r} must be one line of text, got {text!r}."
+            )
+    for link in dataset_links:
+        if not link or ":" in link:
+            raise ValueError(
+                f"DatasetLinks names cannot be empty or hold ':': {link!r}."
+            )
+
+    sidecars: dict[Path, dict[str, Any]] = {}
+    models = set()
+    for path in sorted(root.glob("*embeddings.nc")):
+        bids_path = get_bids_path_from_fname(path.name, check=False).update(root=root)
+        label = bids_path.description
+        view = bids_path.suffix.removesuffix("embeddings")
+        if view not in EMBEDDING_VIEWS:
+            raise ValueError(f"{path.name} names no embedding view.")
+        if label not in descriptions:
+            raise ValueError(
+                f"{path.name} has the label {label!r}, which descriptions lacks."
+            )
+        with xr.open_dataset(path, engine="h5netcdf") as dataset:
+            attrs = dict(dataset.attrs)
+            links = {str(uri).split(":")[1] for uri in dataset["source"].values}
+        if not {"config", "config_hash"} <= set(attrs):
+            raise ValueError(f"{path.name} has no config or config_hash attribute.")
+        if not links <= set(dataset_links):
+            raise ValueError(
+                f"The sources of {path.name} are in {sorted(links)}, which "
+                "dataset_links must name."
+            )
+        if attrs.get("description") != label:
+            raise ValueError(
+                f"{path.name} holds the label {attrs.get('description')!r}."
+            )
+        config = json.loads(attrs["config"])
+        if stable_hash(config, length=16) != attrs["config_hash"]:
+            raise ValueError(f"The config of {path.name} does not match its hash.")
+        models.add(config["ModelKey"])
+        sidecars[bids_path.copy().update(extension=".json").fpath] = {
+            "Description": f"{descriptions[label]}: {_VIEW_TEXT[view]}.",
+            **config,
+            "ConfigHash": attrs["config_hash"],
+        }
+    if len(models) > 1:
+        raise ValueError(
+            f"One dataset holds one model, but {root} has files of {sorted(models)}."
+        )
+
+    description = {
+        "Name": name,
+        "BIDSVersion": _BIDS_VERSION,
+        "DatasetType": "derivative",
+        **({"Authors": list(authors)} if authors else {}),
+        "GeneratedBy": [
+            {
+                "Name": "coco-pipe",
+                "Version": get_package_version("coco-pipe"),
+                "CodeURL": _CODE_URL,
+            }
+        ],
+        "SourceDatasets": [{"URL": url} for url in dataset_links.values()],
+        "DatasetLinks": dict(dataset_links),
+    }
+    table = "".join(f"desc-{label}\t{text}\n" for label, text in descriptions.items())
+    ignore = root / ".bidsignore"
+    kept = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
+    texts = {
+        root / "README.md": _dataset_readme(name, EMBEDDING_VIEWS),
+        root / "descriptions.tsv": f"desc_id\tdescription\n{table}",
+        ignore: "\n".join(dict.fromkeys(filter(None, [*kept, *_BIDSIGNORE]))) + "\n",
+    }
+    written = [write_json(root / "dataset_description.json", description)]
+    written.append(
+        write_json(
+            root / "descriptions.json",
+            {
+                "Description": "The desc labels of this dataset's files.",
+                "desc_id": {"Description": "The desc entity: a processing chain."},
+                "description": {"Description": "What the processing chain does."},
+            },
+        )
+    )
+    for path, text in texts.items():
+        with atomic_path(path) as tmp:
+            tmp.write_text(text, encoding="utf-8")
+        written.append(path)
+    for path, sidecar in sidecars.items():
+        written.append(write_json(path, sidecar))
+    return written
 
 
 def _json_value(value: Any) -> Any:
+    if isinstance(value, BIDSPath):
+        return value.fpath.as_posix()
     if is_dataclass(value):
         return _json_value(asdict(value))
     if isinstance(value, Mapping):
@@ -43,683 +609,42 @@ def _json_value(value: Any) -> Any:
     return f"<{type(value).__module__}.{type(value).__name__}: {value!s}>"
 
 
-def embedding_sidecar_path(path: str | Path) -> Path:
-    """Return the JSON sidecar paired with an embedding NPZ."""
-    return Path(path).with_suffix(".json")
-
-
-def validate_embedding_derivative(path: str | Path) -> dict[str, Any]:
-    """Validate arrays, shape consistency, and sidecar presence."""
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(path)
-    sidecar = embedding_sidecar_path(path)
-    if not sidecar.exists():
-        raise FileNotFoundError(f"Missing embedding sidecar: {sidecar}")
-    metadata: dict[str, Any] | None = None
-    with np.load(path, allow_pickle=False) as payload:
-        if (
-            "token_embeddings" in payload.files
-            and "window_embeddings" not in payload.files
-        ):
-            missing = TOKEN_REQUIRED_ARRAYS.difference(payload.files)
-            if missing:
-                raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
-            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
-            if not isinstance(metadata, dict):
-                raise ValueError(f"Expected an object in {sidecar}.")
-            tokens = np.asarray(payload["token_embeddings"])
-            if tokens.ndim < 3:
-                raise ValueError(
-                    "token_embeddings must contain a window axis and at least "
-                    "two native feature axes."
-                )
-            token_axes = metadata.get("token_axes")
-            if metadata.get("token_layout") == "native":
-                if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
-                    raise ValueError(
-                        "Native token metadata must name every saved tensor axis."
-                    )
-                if token_axes[0] != "window" or len(set(token_axes)) != len(token_axes):
-                    raise ValueError(
-                        "Native token axes must be unique and start with 'window'."
-                    )
-                observation_axes = metadata.get("token_observation_axes")
-                feature_axis = metadata.get("token_feature_axis")
-                source = metadata.get("token_source")
-                if not isinstance(source, str) or not source:
-                    raise ValueError(
-                        "Native token metadata must identify token_source."
-                    )
-                if not isinstance(observation_axes, list) or not observation_axes:
-                    raise ValueError(
-                        "Native token metadata must identify token_observation_axes."
-                    )
-                if not isinstance(feature_axis, str) or not feature_axis:
-                    raise ValueError(
-                        "Native token metadata must identify token_feature_axis."
-                    )
-                if set(token_axes) != {"window", *observation_axes, feature_axis}:
-                    raise ValueError(
-                        "Native token metadata must assign every non-window axis "
-                        "to token_observation_axes or token_feature_axis."
-                    )
-            for key in ("window_start", "window_stop", "window_index"):
-                if len(payload[key]) != len(tokens):
-                    raise ValueError(f"{key} length does not match token_embeddings.")
-        else:
-            missing = REQUIRED_ARRAYS.difference(payload.files)
-            if missing:
-                raise ValueError(f"{path} is missing arrays: {sorted(missing)}")
-            windows = np.asarray(payload["window_embeddings"])
-            recording = np.asarray(payload["recording_embedding"])
-            if windows.ndim != 2:
-                raise ValueError("window_embeddings must be 2-D.")
-            if recording.ndim != 1 or recording.shape[0] != windows.shape[1]:
-                raise ValueError(
-                    "recording_embedding must match the embedding dimension."
-                )
-            for key in ("window_start", "window_stop", "window_index"):
-                if len(payload[key]) != len(windows):
-                    raise ValueError(f"{key} length does not match window_embeddings.")
-    if metadata is None:
-        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
-        if not isinstance(metadata, dict):
-            raise ValueError(f"Expected an object in {sidecar}.")
-    return metadata
-
-
-def save_embedding_derivative(
-    result: Any,
-    path: str | Path,
-    metadata: Mapping[str, Any] | None = None,
-    overwrite: bool = False,
-) -> tuple[Path, Path]:
-    """Atomically write an embedding NPZ and matching JSON sidecar."""
-    path = Path(path)
-    if path.suffix != ".npz":
-        raise ValueError("Embedding derivative path must end in .npz.")
-    tokens = getattr(result, "token_embeddings", None)
-    kind = "token" if tokens is not None else "embedding"
-    expected_suffix = ARTIFACT_SUFFIX[kind]
-    if not path.name.endswith(expected_suffix):
-        raise ValueError(
-            f"A {kind} artifact must be saved to a '{expected_suffix}' path, "
-            f"got {path.name!r}."
-        )
-    sidecar = embedding_sidecar_path(path)
-    if not overwrite and (path.exists() or sidecar.exists()):
-        raise FileExistsError(f"Embedding derivative already exists: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_npz = path.with_name(f".{path.name}.tmp.npz")
-    tmp_json = sidecar.with_name(f".{sidecar.name}.tmp")
-
-    if tokens is not None:
-        tokens = np.asarray(tokens)
-        result_metadata = dict(getattr(result, "metadata", {}) or {})
-        override_metadata = dict(metadata or {})
-        token_axes = override_metadata.get(
-            "token_axes", result_metadata.get("token_axes")
-        )
-        if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
-            raise ValueError(
-                "Saving native tokens requires one explicit token_axes label per axis."
-            )
-        token_contract = {**result_metadata, **override_metadata}
-        observation_axes = token_contract.get("token_observation_axes")
-        feature_axis = token_contract.get("token_feature_axis")
-        source = token_contract.get("token_source")
-        if not isinstance(source, str) or not source:
-            raise ValueError("Saving native tokens requires token_source.")
-        if not isinstance(observation_axes, list) or not observation_axes:
-            raise ValueError("Saving native tokens requires token_observation_axes.")
-        if not isinstance(feature_axis, str) or not feature_axis:
-            raise ValueError("Saving native tokens requires token_feature_axis.")
-        if set(token_axes) != {"window", *observation_axes, feature_axis}:
-            raise ValueError(
-                "Every non-window token axis must be assigned as an observation "
-                "axis or the feature axis."
-            )
-        arrays: dict[str, list[str]] = {
-            "token_embeddings": token_axes,
-            "window_start": ["window"],
-            "window_stop": ["window"],
-            "window_index": ["window"],
-        }
-        saved = {
-            "token_embeddings": tokens,
-            "window_start": np.asarray(result.window_start),
-            "window_stop": np.asarray(result.window_stop),
-            "window_index": np.asarray(result.window_index),
-        }
-        extra_meta = {
-            "representation": "token",
-            "token_layout": "native",
-            "token_layout_version": 1,
-            "token_shape": list(tokens.shape),
-            "token_dtype": str(tokens.dtype),
-        }
-    else:
-        arrays = {
-            "window_embeddings": ["window", "embedding_feature"],
-            "recording_embedding": ["embedding_feature"],
-            "window_start": ["window"],
-            "window_stop": ["window"],
-            "window_index": ["window"],
-        }
-        saved = {
-            "window_embeddings": np.asarray(result.window_embeddings),
-            "recording_embedding": np.asarray(result.recording_embedding),
-            "window_start": np.asarray(result.window_start),
-            "window_stop": np.asarray(result.window_stop),
-            "window_index": np.asarray(result.window_index),
-        }
-        extra_meta = {}
-
-    payload_metadata = {
-        **dict(getattr(result, "metadata", {}) or {}),
-        **dict(metadata or {}),
-        **extra_meta,
-        "created_at": datetime.now(UTC).isoformat(),
-        "arrays": arrays,
-    }
-    np.savez_compressed(tmp_npz, **saved)
-    tmp_json.write_text(
-        json.dumps(_json_value(payload_metadata), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    os.replace(tmp_npz, path)
-    os.replace(tmp_json, sidecar)
-    validate_embedding_derivative(path)
-    return path, sidecar
-
-
-def save_embedding_outputs(
-    result: Any,
-    embedding_path: str | Path,
-    *,
-    token_path: str | Path | None = None,
-    metadata: Mapping[str, Any] | None = None,
-    pooled_metadata: Mapping[str, Any] | None = None,
-    overwrite: bool = False,
-) -> tuple[Path, Path | None]:
-    """Write independent pooled and optional token derivatives from *result*.
-
-    ``embedding_path`` and ``token_path`` are independent derivative locations.
-    When ``result.token_embeddings`` is present, ``token_path`` is required.
-    ``metadata`` applies to both outputs, while ``pooled_metadata`` applies only
-    to the pooled derivative. This keeps pooling-specific representation identity
-    out of pooling-independent native-token metadata. Complete outputs are left
-    untouched unless ``overwrite`` is true; a partial NPZ/sidecar pair is repaired.
-    """
-    embedding_path = Path(embedding_path)
-    embedding_suffix = ARTIFACT_SUFFIX["embedding"]
-    if not embedding_path.name.endswith(embedding_suffix):
-        raise ValueError(
-            f"Embedding output path must end in '{embedding_suffix}', "
-            f"got {embedding_path.name!r}."
-        )
-
-    def _complete(path: Path) -> bool:
-        return path.exists() and embedding_sidecar_path(path).exists()
-
-    def _repair_overwrite(path: Path) -> bool:
-        return overwrite or path.exists() or embedding_sidecar_path(path).exists()
-
-    token_embeddings = getattr(result, "token_embeddings", None)
-    if token_embeddings is not None and token_path is None:
-        raise ValueError("token_path is required when token embeddings are present.")
-    resolved_token_path = Path(token_path) if token_path is not None else None
-    if (
-        token_embeddings is not None
-        and resolved_token_path is not None
-        and (overwrite or not _complete(resolved_token_path))
-    ):
-        token_result = SimpleNamespace(
-            window_start=result.window_start,
-            window_stop=result.window_stop,
-            window_index=result.window_index,
-            metadata={
-                key: value
-                for key, value in dict(getattr(result, "metadata", {}) or {}).items()
-                if key not in POOLED_ONLY_EMBEDDING_METADATA_KEYS
-            },
-            token_embeddings=token_embeddings,
-        )
-        save_embedding_derivative(
-            token_result,
-            resolved_token_path,
-            metadata={
-                **{
-                    key: value
-                    for key, value in dict(metadata or {}).items()
-                    if key not in POOLED_ONLY_EMBEDDING_METADATA_KEYS
-                },
-                "artifact_kind": "window_tokens",
-            },
-            overwrite=_repair_overwrite(resolved_token_path),
-        )
-
-    pooled_result = SimpleNamespace(
-        window_embeddings=result.window_embeddings,
-        recording_embedding=result.recording_embedding,
-        window_start=result.window_start,
-        window_stop=result.window_stop,
-        window_index=result.window_index,
-        metadata=getattr(result, "metadata", None),
-        token_embeddings=None,
-    )
-    if overwrite or not _complete(embedding_path):
-        save_embedding_derivative(
-            pooled_result,
-            embedding_path,
-            metadata={
-                **dict(metadata or {}),
-                **dict(pooled_metadata or {}),
-                "artifact_kind": "pooled_embedding",
-            },
-            overwrite=_repair_overwrite(embedding_path),
-        )
-    return embedding_path, resolved_token_path if token_embeddings is not None else None
-
-
-def _manifest_artifacts(root: Path) -> list[Path]:
-    """Existing artifact paths recorded in ``run_manifest.json`` (any kind)."""
-    manifest = root / "run_manifest.json"
-    if not manifest.exists():
-        return []
-    try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return []
-    paths: list[Path] = []
-    for record in payload.get("records", []):
-        if record.get("status") != "success" or not record.get("artifact_path"):
-            continue
-        path = Path(record["artifact_path"])
-        if not path.is_absolute():
-            path = root / path
-        if path.exists():
-            paths.append(path)
-    return paths
-
-
-def discover_embedding_derivatives(
-    root: str | Path,
-    model_key: str | None = None,
-    *,
-    kind: str = "embedding",
-) -> list[Path]:
-    """Discover valid ``"embedding"`` or ``"token"`` NPZ artifacts under a root.
-
-    Artifact kind is identified by filename suffix (see :data:`ARTIFACT_SUFFIX`),
-    which ``save_embedding_derivative`` enforces. The run manifest (if present)
-    may index either kind. When a requested model is not in that manifest, a
-    recursive scan also finds independently materialized model variants.
-    """
-    if kind not in ARTIFACT_SUFFIX:
-        raise ValueError(f"kind must be one of {sorted(ARTIFACT_SUFFIX)}.")
-    root = Path(root)
-    suffix = ARTIFACT_SUFFIX[kind]
-    paths = sorted({p for p in _manifest_artifacts(root) if p.name.endswith(suffix)})
-    if not paths:
-        paths = sorted(root.rglob(f"*{suffix}"))
-    if model_key is None:
-        return paths
-
-    def select_model(candidates: Iterable[Path]) -> list[Path]:
-        selected = []
-        for path in candidates:
-            try:
-                metadata = json.loads(
-                    embedding_sidecar_path(path).read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                continue
-            if str(metadata.get("model_key", "")).lower() == model_key.lower():
-                selected.append(path)
-        return selected
-
-    selected = select_model(paths)
-    if selected:
-        return selected
-    return select_model(sorted(root.rglob(f"*{suffix}")))
-
-
-def embedding_observation_id(
-    metadata: Mapping[str, Any],
-    path: str | Path,
-    window_position: int | None = None,
-) -> str:
-    """Return the canonical recording/window ID for pooled or token artifacts.
-
-    A window is ``<recording>_epoch-<i>``, ``i`` being its position in the
-    recording, as the BIDS loader numbers it. A recording-level row holds one
-    condition of a recording, so its ID is ``<recording>_cond-<condition>``
-    when the metadata names the condition.
-    """
-    path = Path(path)
-    base = metadata.get("recording_id")
-    if not base:
-        base = path.name
-        for suffix in ("_embedding.npz", "_tokens.npz", ".npz"):
-            if base.endswith(suffix):
-                base = base.removesuffix(suffix)
-                break
-    if window_position is not None:
-        return f"{base}_epoch-{window_position:04d}"
-    condition = metadata.get("condition")
-    return f"{base}_cond-{condition}" if condition else str(base)
-
-
-def load_embedding_derivatives(
-    paths: Sequence[str | Path] | str | Path,
-    representation: str = "recording",
-    aggregate_by: str | None = None,
-    model_key: str | None = None,
-) -> DataContainer:
-    """Load embedding artifacts into a DataContainer.
-
-    ``representation`` selects both the on-disk array and the output rank:
-
-    * ``"recording"`` — the pooled ``recording_embedding`` (2-D ``obs x feature``)
-    * ``"epoch"`` — per-epoch ``window_embeddings`` (2-D ``obs x feature``)
-    * ``"token"`` — native per-epoch feature tensors from separate
-      ``*_tokens.npz`` artifacts (arbitrary rank, beginning with ``obs``)
-
-    A coarser ``"subject"`` level is produced by the merge step, not here (it
-    pools across recordings). Kinds are discovered by filename suffix (see
-    :data:`ARTIFACT_SUFFIX`); token and embedding artifacts are separate files
-    that join only by shared observation ID.
-    """
-    if representation not in {"epoch", "recording", "token"}:
-        raise ValueError("representation must be 'epoch', 'recording', or 'token'.")
-    is_recording = representation == "recording"
-    is_token = representation == "token"
-
-    if isinstance(paths, (str, Path)):
-        candidate = Path(paths)
-        if candidate.is_dir():
-            resolved = discover_embedding_derivatives(
-                candidate,
-                model_key=model_key,
-                kind="token" if is_token else "embedding",
-            )
-        else:
-            resolved = [candidate]
-    else:
-        resolved = [Path(path) for path in paths]
-    if not resolved:
-        raise FileNotFoundError("No embedding derivatives were found.")
-
-    rows: list[np.ndarray] = []
-    ids: list[str] = []
-    file_records: list[dict[str, Any]] = []
-    window_columns: dict[str, list[np.ndarray]] = {
-        "window_index": [],
-        "window_start": [],
-        "window_stop": [],
-    }
-    counts: list[int] = []
-    artifact_metadata: dict[str, dict[str, Any]] = {}
-    obs_shape: tuple[int, ...] | None = None
-    loaded_token_axes: tuple[str, ...] | None = None
-    token_feature_axis: str | None = None
-    for path in resolved:
-        metadata = validate_embedding_derivative(path)
-        artifact_metadata[str(path)] = metadata
-        with np.load(path, allow_pickle=False) as payload:
-            array_key = (
-                "token_embeddings"
-                if is_token
-                else "recording_embedding"
-                if is_recording
-                else "window_embeddings"
-            )
-            if array_key not in payload.files:
-                raise ValueError(
-                    f"{path} has no '{array_key}' array for representation "
-                    f"'{representation}'; wrong artifact kind for this path."
-                )
-            values = np.asarray(payload[array_key])
-            if is_token:
-                axes = metadata.get("token_axes")
-                if not isinstance(axes, list) or len(axes) != values.ndim:
-                    raise ValueError(
-                        "Token derivative has no explicit native axis contract: "
-                        f"{path}."
-                    )
-                current_axes = ("obs", *axes[1:])
-                if loaded_token_axes is None:
-                    loaded_token_axes = current_axes
-                    token_feature_axis = str(metadata.get("token_feature_axis", ""))
-                elif current_axes != loaded_token_axes:
-                    raise ValueError(
-                        f"Token axes differ: expected {loaded_token_axes}, got "
-                        f"{current_axes} in {path}."
-                    )
-            if is_recording:
-                values = values[None, :]
-            if obs_shape is None:
-                obs_shape = values.shape[1:]
-            elif values.shape[1:] != obs_shape:
-                raise ValueError(
-                    f"Embedding shapes differ: expected {obs_shape}, "
-                    f"got {values.shape[1:]} in {path}."
-                )
-            # NpzFile re-reads an array from the archive on every access.
-            rows.append(values)
-            counts.append(len(values))
-            file_records.append(
-                {
-                    **metadata,
-                    "artifact_path": str(path),
-                    "representation": representation,
-                }
-            )
-            if is_recording:
-                ids.append(embedding_observation_id(metadata, path))
-            else:
-                for name, column in window_columns.items():
-                    column.append(np.asarray(payload[name], dtype=int))
-                ids.extend(
-                    embedding_observation_id(metadata, path, int(position))
-                    for position in window_columns["window_index"][-1]
-                )
-
-    X = np.concatenate(rows)
-    model_keys = {
-        str(row.get("model_key", "")).strip().lower()
-        for row in file_records
-        if str(row.get("model_key", "")).strip()
-    }
-    if model_key is not None and model_keys != {model_key.strip().lower()}:
-        raise ValueError(
-            f"Requested model_key={model_key!r}, but artifacts contain "
-            f"{sorted(model_keys)}."
-        )
-    if len(model_keys) > 1:
-        raise ValueError(
-            "Embedding derivatives from multiple foundation models cannot be "
-            "combined as observations. Pass model_key to load one model at a time."
-        )
-    feature_dim = token_feature_axis if is_token else "feature"
-    if not feature_dim or (
-        is_token
-        and loaded_token_axes is not None
-        and feature_dim not in loaded_token_axes
-    ):
-        raise ValueError("Token metadata must identify token_feature_axis explicitly.")
-    feature_axis = loaded_token_axes.index(feature_dim) if is_token else 1
-    coords: dict[str, Any] = {
-        feature_dim: np.asarray(
-            [f"embedding_{idx:04d}" for idx in range(X.shape[feature_axis])],
-            dtype=object,
-        )
-    }
-    file_frame = pd.DataFrame(file_records)
-    metadata_frame = file_frame.loc[np.repeat(file_frame.index, counts)]
-    if not is_recording:
-        metadata_frame = metadata_frame.assign(
-            **{name: np.concatenate(column) for name, column in window_columns.items()}
-        )
-    for column in metadata_frame.columns:
-        values = file_frame[column] if column in file_frame else metadata_frame[column]
-        if values.map(lambda value: not isinstance(value, (list, dict))).all():
-            coords[column] = metadata_frame[column].to_numpy(dtype=object)
-    dims = loaded_token_axes if is_token else ("obs", "feature")
-    if dims is None:
-        raise RuntimeError("Token axes were not initialized.")
-    container = DataContainer(
-        X=X,
-        dims=dims,
-        coords=coords,
-        ids=np.asarray(ids, dtype=object),
-        meta={
-            "input_mode": "foundation_embeddings",
-            "representation": representation,
-            "model_key": next(iter(model_keys), None),
-            "artifacts": [str(path) for path in resolved],
-            "artifact_metadata": artifact_metadata,
-        },
-    )
-    if aggregate_by is not None:
-        if aggregate_by not in container.coords:
-            raise KeyError(f"aggregate_by coordinate not found: {aggregate_by}")
-        container = container.aggregate(by=aggregate_by, stats="mean")
-    return container
-
-
-def combined_embedding_table_path(
-    derivative_root: str | Path,
-    model_key: str,
-    condition: str,
-    representation: str = "recording",
-) -> Path:
-    """Path to the merged per-(model, condition) embedding table.
-
-    Mirrors the ``combined/<model>_<condition>_<representation>_embeddings.parquet``
-    layout written by the merge step. ``representation`` is one of
-    :data:`~coco_pipe.io.AGGREGATION_LEVELS`.
-    """
-    if representation not in EMBEDDING_COMBINED_TABLE_LABELS:
-        raise ValueError(
-            f"representation must be one of {sorted(EMBEDDING_COMBINED_TABLE_LABELS)}."
-        )
-    label = EMBEDDING_COMBINED_TABLE_LABELS[representation]
-    return (
-        Path(derivative_root) / "combined" / f"{model_key}_{condition}_{label}.parquet"
-    )
-
-
-def load_combined_embedding_table(
-    derivative_root: str | Path,
-    model_key: str,
-    condition: str,
-    representation: str = "recording",
-    aggregate_by: str | None = None,
-) -> DataContainer:
-    """Load one merged per-(model, condition) embedding table as a 2-D container.
-
-    This reads the single parquet the merge step already materialized instead of
-    rescanning every per-recording NPZ and filtering — one table read per
-    condition, the same access pattern descriptors use. ``representation`` is one
-    of :data:`~coco_pipe.io.AGGREGATION_LEVELS`. The table carries id columns
-    (subject/session/run/condition/recording_id/model_key[/window_index]) plus
-    ``embedding_*`` feature columns; the former become coords, the latter ``X``.
-    """
-    path = combined_embedding_table_path(
-        derivative_root, model_key, condition, representation
-    )
-    if not path.exists():
-        raise FileNotFoundError(f"Combined embedding table not found: {path}")
-    frame = pd.read_parquet(path)
-    feature_cols = [c for c in frame.columns if str(c).startswith("embedding_")]
-    if not feature_cols:
-        raise ValueError(f"No embedding_* feature columns in {path}.")
-    id_cols = [c for c in frame.columns if c not in feature_cols]
-
-    # Keep the table's float type: the merged tables are float32.
-    X = frame[feature_cols].to_numpy()
-    if not np.issubdtype(X.dtype, np.floating):
-        X = X.astype(np.float64)
-    coords: dict[str, Any] = {
-        "feature": np.asarray([str(c) for c in feature_cols], dtype=object)
-    }
-    for column in id_cols:
-        coords[column] = frame[column].to_numpy(dtype=object)
-
-    if "recording_id" in frame.columns:
-        base = frame["recording_id"].astype(str)
-        if representation == "epoch" and "window_index" in frame.columns:
-            ids = (
-                base
-                + "_epoch-"
-                + frame["window_index"].astype(int).map("{:04d}".format)
-            ).to_numpy(dtype=object)
-        elif "condition" in frame.columns:
-            # as embedding_observation_id: one condition of a recording
-            ids = (base + "_cond-" + frame["condition"].astype(str)).to_numpy(
-                dtype=object
-            )
-        else:
-            ids = base.to_numpy(dtype=object)
-    else:
-        ids = np.asarray([f"obs-{idx:06d}" for idx in range(len(frame))], dtype=object)
-
-    container = DataContainer(
-        X=X,
-        dims=("obs", "feature"),
-        coords=coords,
-        ids=ids,
-        meta={
-            "input_mode": "foundation_embeddings",
-            "representation": representation,
-            "model_key": model_key,
-            "condition": condition,
-            "source": "combined_table",
-            "artifacts": [str(path)],
-        },
-    )
-    if aggregate_by is not None:
-        if aggregate_by not in container.coords:
-            raise KeyError(f"aggregate_by coordinate not found: {aggregate_by}")
-        container = container.aggregate(by=aggregate_by, stats="mean")
-    return container
-
-
 def write_embedding_manifest(
     root: str | Path,
+    label: str,
     records: Iterable[Mapping[str, Any]],
 ) -> Path:
-    """Write a JSON run manifest indexing successful and failed artifacts.
+    """Write the run records of one label: its skipped and failed recordings.
 
-    The file is replaced atomically, so a reader never sees it half written.
+    Each label has its own file, ``desc-<label>_manifest.json`` at the
+    dataset root, written by the job that makes the label, so jobs writing
+    other labels of the dataset never replace it. Nothing reads it to find
+    embedding files. The file is replaced atomically.
+
+    Parameters
+    ----------
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label the records belong to.
+    records : iterable of mapping
+        One record per recording, e.g. its ``recording_id``, ``status`` and
+        ``reason``.
+
+    Returns
+    -------
+    Path
     """
+    _check_label(label)
+    path = BIDSPath(
+        root=root,
+        description=label,
+        suffix="manifest",
+        extension=".json",
+        check=False,
+    ).fpath
     payload = {
         "created_at": datetime.now(UTC).isoformat(),
         "records": [_json_value(dict(record)) for record in records],
     }
-    return write_json(Path(root) / "run_manifest.json", payload, sort_keys=True)
-
-
-def write_embedding_dataset_description(
-    root: str | Path,
-    name: str,
-    bids_version: str,
-    generated_by: Sequence[Mapping[str, Any]],
-    source_datasets: Sequence[Mapping[str, Any]] | None = None,
-) -> Path:
-    """Write a BIDS derivative dataset_description.json."""
-    path = Path(root) / "dataset_description.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "Name": name,
-        "BIDSVersion": bids_version,
-        "DatasetType": "derivative",
-        "GeneratedBy": [_json_value(item) for item in generated_by],
-    }
-    if source_datasets:
-        payload["SourceDatasets"] = [_json_value(item) for item in source_datasets]
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return path
+    return write_json(path, payload, sort_keys=True)

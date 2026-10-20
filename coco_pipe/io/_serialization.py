@@ -20,6 +20,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -135,12 +138,29 @@ def write_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(obj, indent=indent, sort_keys=sort_keys)
     if atomic:
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
+        with atomic_path(path) as tmp:
+            tmp.write_text(text, encoding="utf-8")
     else:
         path.write_text(text, encoding="utf-8")
     return path
+
+
+@contextmanager
+def atomic_path(path: Path) -> Iterator[Path]:
+    """Yield a temporary sibling of ``path`` to write, then move it onto ``path``.
+
+    Each call gets its own temporary name, so processes writing the same file
+    at once do not move each other's half-written file into place; the last
+    one to finish wins. On an error the temporary file is removed and
+    ``path`` is left as it was.
+    """
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def save_object(obj: Any, path: Path | str) -> Path:
