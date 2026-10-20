@@ -306,6 +306,15 @@ def test_load_errors(offline, monkeypatch):
         BrainDecodeBackend.load(
             "cbramod", spec, n_outputs=None, device="cpu", train_mode="qlora"
         )
+    with pytest.raises(ValueError, match="support pooling='mean'"):
+        BrainDecodeBackend.load(
+            "cbramod",
+            spec,
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+            pooling="flatten",
+        )
     with pytest.raises(ValueError, match="BrainDecodeBackend does not support"):
         BrainDecodeBackend.load(
             "reve",

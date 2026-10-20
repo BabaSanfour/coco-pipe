@@ -398,7 +398,6 @@ def test_backend_pooling_is_kept_separate_from_native_tokens():
         "cbramod",
         model=Fake3DModel(),
         normalize_embeddings=False,
-        pooling="flatten",
         resample=False,
         store_tokens=True,
     )

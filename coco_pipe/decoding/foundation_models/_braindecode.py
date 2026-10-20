@@ -66,7 +66,6 @@ class BrainDecodeBackend(BackendBase):
         device: str,
         train_mode: str,
         task: str,
-        pooling: str = "mean",
     ) -> None:
         self._metadata = metadata
         self._model = model
@@ -74,7 +73,6 @@ class BrainDecodeBackend(BackendBase):
         self._device = device
         self._train_mode = train_mode
         self._task = task
-        self._pooling = pooling
         self.signal_metadata_: SignalMetadata | None = None
 
     @classmethod
@@ -174,9 +172,9 @@ class BrainDecodeBackend(BackendBase):
         models_module = importlib.import_module(module_path)
         electrode_names = kw.pop("electrode_names", None)
         pooling = kw.pop("pooling", "mean")
-        if pooling not in {"mean", "flatten"}:
+        if pooling != "mean":
             raise ValueError(
-                "BrainDecode foundation models support pooling='mean' or 'flatten'."
+                f"braindecode models support pooling='mean', got {pooling!r}."
             )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
         n_times = int(
@@ -360,7 +358,6 @@ class BrainDecodeBackend(BackendBase):
             device=device,
             train_mode=train_mode,
             task=task,
-            pooling=pooling,
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
@@ -566,8 +563,6 @@ class BrainDecodeBackend(BackendBase):
                     tokens = captured_tokens[0]
                 if feats.ndim < 3:
                     pooled = feats
-                elif self._pooling == "flatten":
-                    pooled = feats.flatten(start_dim=1)
                 else:
                     pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
                 embedding_chunks.append(self._from_tensor(pooled))

@@ -164,7 +164,7 @@ def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19, pooling="mean"
     backbone.attention_pooling.side_effect = lambda out: out.mean(dim=2).mean(dim=1)
     pos_bank.return_value = torch.zeros(n_chans, 32)
 
-    feat_dim = meta.embedding_dim * (n_chans if pooling == "flatten" else 1)
+    feat_dim = meta.embedding_dim
 
     import torch.nn as nn
 
@@ -197,10 +197,16 @@ def test_transform_returns_ndarray():
     assert out.shape == (4, 512)
 
 
-def test_transform_flatten_keeps_per_channel_dim():
-    adapter = _make_fitted_adapter(pooling="flatten", n_chans=19)
-    out = adapter.transform(np.zeros((4, 19, 400), dtype=np.float32))
-    assert out.shape == (4, 19 * 512)
+def test_load_refuses_other_pooling():
+    with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
+        HuggingFaceBackend.load(
+            "reve",
+            get_estimator_spec("reve"),
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+            pooling="flatten",
+        )
 
 
 def test_transform_attention_pooling():
@@ -323,7 +329,7 @@ def test_configure_peft_raises_import_error_without_peft(monkeypatch):
         adapter.configure_peft({"r": 4})
 
 
-def test_load_qlora_and_flatten_pooling(monkeypatch):
+def test_load_qlora(monkeypatch):
     mock_model = _make_mock_backbone()
     mock_model.to.return_value = mock_model
     mock_pos = MagicMock()
@@ -347,14 +353,13 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
             n_outputs=2,
             device="cpu",
             train_mode="qlora",
-            pooling="flatten",
             electrode_names=["Fp1", "Fp2"],
         )
     # REVE cannot checkpoint gradients, which peft turns on by default
     mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
     # REVE has no "query"/"value" layers: every linear layer gets an adapter
     assert mock_get_peft.call_args.args[1].target_modules == "all-linear"
-    assert backend._feat_dim == 2048
+    assert backend._feat_dim == 1024
 
 
 def test_reve_skorch_module():

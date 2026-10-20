@@ -106,11 +106,10 @@ class HuggingFaceBackend(BackendBase):
         train_mode : str
             One of ``"frozen"``, ``"full"``, ``"lora"``, ``"qlora"``.
         pooling : str, default ``"mean"``
-            How to collapse the token dimension: ``"mean"`` (average over
-            channels and time -> ``embed_dim``), ``"flatten"`` (average over
-            time, concatenate channels -> ``embed_dim * n_chans``), or
-            ``"attention"`` (REVE's pretrained single-query attention read-out
-            over channels and time -> ``embed_dim``).
+            How to collapse the tokens into one vector of ``embed_dim``:
+            ``"mean"`` (average over channels and time) or ``"attention"``
+            (REVE's pretrained single-query attention read-out over channels
+            and time).
         electrode_names : list of str or None
             Channel names used by REVE's positional encoder. Falls back to
             generic ``["e0", "e1", …]`` when ``None``.
@@ -143,6 +142,10 @@ class HuggingFaceBackend(BackendBase):
         """
         if model_key != "reve":
             raise ValueError(f"HuggingFaceBackend does not support '{model_key}'.")
+        if pooling not in {"mean", "attention"}:
+            raise ValueError(
+                f"REVE supports pooling='mean' or 'attention', got {pooling!r}."
+            )
         return cls._load_reve(
             metadata,
             n_outputs=n_outputs,
@@ -245,13 +248,6 @@ class HuggingFaceBackend(BackendBase):
             "hidden_size",
             metadata.embedding_dim,
         )
-        if pooling == "flatten":
-            n_ch = (
-                len(electrode_names)
-                if electrode_names
-                else metadata.pretrained_n_chans or 19
-            )
-            feat_dim = feat_dim * n_ch
 
         if train_mode in ("lora", "qlora"):
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -343,10 +339,6 @@ class HuggingFaceBackend(BackendBase):
         pos = self._pos_bank(elec).unsqueeze(0).expand(len(x_tensor), -1, -1)
         # REVE's forward returns a raw tensor of per-patch embeddings with shape
         # (batch, channels, time_patches, embed_dim) -- not a HF ModelOutput.
-        # Pool over the time-patch axis to get a per-channel embedding
-        # (batch, channels, embed_dim); ``flatten`` pooling then keeps the
-        # per-channel layout (feat_dim == embed_dim * n_chans), ``mean`` averages
-        # across channels (feat_dim == embed_dim).
         out = self._backbone(x_tensor, pos)
         if self._pooling == "attention":
             # REVE's pretrained single-query attention read-out over the
@@ -357,15 +349,8 @@ class HuggingFaceBackend(BackendBase):
             base = base() if base is not None else self._backbone
             pooled = base.attention_pooling(out)
         else:
-            # Pool over the time-patch axis to get a per-channel embedding
-            # (batch, channels, embed_dim); ``flatten`` then keeps the
-            # per-channel layout (feat_dim == embed_dim * n_chans), ``mean``
-            # averages across channels (feat_dim == embed_dim).
-            hidden = out.mean(dim=2)
-            if self._pooling == "mean":
-                pooled = hidden.mean(dim=1)
-            else:
-                pooled = hidden.flatten(start_dim=1)
+            # average over time patches, then over channels -> (batch, embed_dim)
+            pooled = out.mean(dim=2).mean(dim=1)
         if return_tokens:
             return pooled, out
         return pooled if return_embeddings else self._head(pooled)
