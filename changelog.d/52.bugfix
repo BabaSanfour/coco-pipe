@@ -1,0 +1,1 @@
+`write_json` gives each write its own temporary file. Every writer of a file used the same temporary name, so with several processes writing one file, writes failed with `FileNotFoundError` (about 65 % of them with 4 processes).

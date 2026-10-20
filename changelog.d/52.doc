@@ -1,0 +1,1 @@
+The Data & IO guide describes the foundation-model embedding format: its views, file names and layout, the content of a file, and how to write and read it. The report guide's `from_embeddings` example used arguments the function never had, and the IO guide's `write_json` example passed its arguments in the wrong order.
