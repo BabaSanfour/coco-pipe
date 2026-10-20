@@ -114,6 +114,24 @@ def test_load_participants_tsv(tmp_path):
     assert lookup([{"URL": "doi:10.1/x"}, {"URL": "../../"}])["0001"] == {"age": 20}
     assert lookup([{"URL": "doi:10.1/x"}, {"URL": "bids:other:"}]) == {}
 
+    # sources of sources are followed: embeddings, then preproc, then raw
+    embeddings = root / "derivatives" / "coco-pipe-cbramod"
+    embeddings.mkdir()
+    (embeddings / "dataset_description.json").write_text(
+        json.dumps(
+            {
+                "DatasetType": "derivative",
+                "SourceDatasets": [{"URL": "bids:preproc:"}],
+                "DatasetLinks": {"preproc": "../preproc"},
+            }
+        )
+    )
+    lookup([{"URL": "../../"}])
+    assert load_participants_tsv(embeddings)["0001"] == {"age": 20}
+    # a loop of sources ends the search
+    lookup([{"URL": "../coco-pipe-cbramod"}])
+    assert load_participants_tsv(embeddings) == {}
+
     (root / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
     assert load_participants_tsv(root) == {}
 
@@ -122,7 +140,6 @@ def test_io_exposes_dataset_classes_lazily():
     from coco_pipe import io as coco_io
 
     assert coco_io.BIDSDataset is not None
-    assert coco_io.EmbeddingDataset is not None
     with pytest.raises(AttributeError, match="has no attribute 'invalid_attr'"):
         _ = coco_io.invalid_attr
 

@@ -18,9 +18,14 @@ import pandas as pd
 from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
 from mne_bids.config import reader as mne_bids_reader
 
-from ._serialization import smart_reader
-from .structures import DataContainer
-from .utils import load_participants_tsv, normalize_subject_value, split_column
+from ._constants import LOADED_LEVELS
+from .structures import DataContainer, aggregate_recordings
+from .utils import (
+    bids_recording_id,
+    load_subject_metadata,
+    normalize_subject_value,
+    split_column,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -319,149 +324,6 @@ class TabularDataset(BaseDataset):
         return X_clean, report
 
 
-class EmbeddingDataset(BaseDataset):
-    r"""
-    Generic Dataset for loading embedding files (Pickle, NPY, JSON, H5).
-
-    This class decouples file discovery (via patterns and IDs) from content reading.
-    It supports structured formats (e.g., Layers x Features) and user-supplied
-    metadata coordinates.
-
-    Parameters
-    ----------
-    path : str or Path
-        Directory searched for embedding files, or a single file.
-    pattern : str, default=r'\*.pkl'
-        Glob pattern to match files (e.g., ``*.npy``, ``sub-*_emb.pkl``).
-    dims : tuple of str, default=('feature',)
-        Dimension labels of one observation; ``obs`` is added in front.
-        Typically ('feature',) or ('layer', 'feature').
-    coords : dict, optional
-        Dictionary of coordinates for dimensions. E.g., {'layer': ['L1', 'L2']}.
-    reader : callable, optional
-        Custom function to read a Path and return a numpy array or dict.
-        If None, uses `smart_reader` based on file extension.
-    id_fn : callable, optional
-        Function returning the subject ID of a Path. Defaults to the file stem.
-    subjects : int or list, optional
-        If int, loads first N subjects. If list, loads specific subjects
-        (matched by `id_fn`).
-
-    Examples
-    --------
-    >>> # Load loose numpy files
-    >>> ds = EmbeddingDataset("./embeddings", pattern="*.npy", dims=("feature",))
-    >>> container = ds.load()
-    """
-
-    def __init__(
-        self,
-        path: str | Path,
-        pattern: str = "*.pkl",
-        dims: tuple[str, ...] = ("feature",),
-        coords: dict[str, list | np.ndarray] | None = None,
-        reader: Any | None = None,
-        id_fn: Any | None = None,
-        subjects: int | list[int] | None = None,
-    ):
-        self.path = Path(path)
-        self.subjects = subjects
-        self.dims = dims
-        self.coords_in = coords or {}
-        self.pattern = pattern
-        self.reader = reader if reader else smart_reader
-        self.id_fn = id_fn or (lambda path: path.stem)
-
-    def load(self) -> DataContainer:
-        files = (
-            [self.path]
-            if self.path.is_file()
-            else sorted(self.path.rglob(self.pattern))
-        )
-
-        if not files:
-            raise FileNotFoundError(
-                f"No files matched pattern '{self.pattern}' in {self.path}"
-            )
-
-        # Filter by subjects
-        if self.subjects is not None:
-            if isinstance(self.subjects, int):
-                files = files[: self.subjects]
-            else:
-                target_ids = {str(s) for s in self.subjects}
-                files = [f for f in files if self.id_fn(f) in target_ids]
-
-        data_list = []
-        ids_list = []
-        load_failures: list[dict[str, str]] = []
-
-        def fail(path: Path, error: str) -> None:
-            logger.warning(f"Could not load {path.name}: {error}")
-            load_failures.append({"path": str(path), "error": error})
-
-        logger.info(f"Loading {len(files)} embedding files...")
-
-        for fpath in files:
-            try:
-                # The reader returns an array, or a dict of arrays by segment.
-                content = self.reader(fpath)
-            except Exception as e:
-                fail(fpath, f"{type(e).__name__}: {e}")
-                continue
-            sid = self.id_fn(fpath)
-            parts = (
-                [(f"{sid}_{key}", content[key]) for key in sorted(content)]
-                if isinstance(content, dict)
-                else [(sid, content)]
-            )
-            for name, values in parts:
-                arr = np.asarray(values)
-                if arr.ndim == len(self.dims) + 1:
-                    data_list.append(arr)
-                    ids_list.extend(f"{name}_{i}" for i in range(len(arr)))
-                elif arr.ndim == len(self.dims):
-                    data_list.append(arr[np.newaxis, ...])
-                    ids_list.append(name)
-                else:
-                    fail(fpath, f"{name}: shape {arr.shape} does not fit {self.dims}")
-
-        if not data_list:
-            message = f"No valid data loaded from {self.path}"
-            if load_failures:
-                first = load_failures[0]
-                message += (
-                    f": {len(load_failures)} file(s) could not be loaded, the first "
-                    f"being {first['path']} ({first['error']})"
-                )
-            raise RuntimeError(message)
-
-        try:
-            X_final = np.concatenate(data_list, axis=0)
-        except ValueError as e:
-            shapes = [d.shape for d in data_list[:5]]
-            raise ValueError(f"Concatenation failed. Shapes vary? {shapes}") from e
-
-        # Obs Dim + User Dims
-        final_dims = ("obs", *self.dims)
-
-        # Build coordinates
-        coords = {}
-        if ids_list:
-            coords["obs"] = np.array(ids_list)
-
-        # Add user-provided coords (e.g. {'layer': ['L1', 'L2']})
-        coords.update(self.coords_in)
-
-        return DataContainer(
-            X=X_final,
-            dims=final_dims,
-            coords=coords,
-            ids=np.array(ids_list),
-            meta={"load_failures": load_failures},
-        )
-
-
 # Observation coordinates the loader sets from the files themselves.
 _LOADER_COORDS = (
     "obs",
@@ -470,7 +332,10 @@ _LOADER_COORDS = (
     "bad_channels",
     "subject",
     "session",
+    "task",
     "run",
+    "condition",
+    "epoch_count",
 )
 
 
@@ -526,7 +391,7 @@ class BIDSDataset(BaseDataset):
         Subject-level metadata to attach, in addition to ``participants.tsv``.
         Neither may have a column named like a coordinate the loader sets
         (``obs``, ``epoch``, ``recording_id``, ``bad_channels``, ``subject``,
-        ``session``, ``run``).
+        ``session``, ``task``, ``run``, ``condition``, ``epoch_count``).
     subject_key : str, optional
         Column of `subject_metadata_df` holding the subject ID. It matches
         rows to subjects and is not attached itself.
@@ -547,6 +412,10 @@ class BIDSDataset(BaseDataset):
         Number of threads reading recordings at the same time. Reading is
         mostly waiting on the file system, so threads help on network or
         cluster storage.
+    representation : {"epoch", "recording"}
+        ``"epoch"``: one row per epoch. ``"recording"``: one row per recording
+        and condition, the mean of its epochs (see
+        :func:`~coco_pipe.io.aggregate_recordings`).
 
     Notes
     -----
@@ -585,9 +454,15 @@ class BIDSDataset(BaseDataset):
         description: str | None = None,
         dtype: str = "float32",
         n_jobs: int = 1,
+        representation: str = "epoch",
     ):
         if mode not in {"epochs", "load_existing"}:
             raise ValueError(f"mode must be 'epochs' or 'load_existing', got {mode!r}.")
+        if representation not in LOADED_LEVELS:
+            raise ValueError(
+                f"representation must be one of {LOADED_LEVELS}, "
+                f"got {representation!r}."
+            )
         self.root = Path(root)
         self.task = task
         self.session = session
@@ -609,6 +484,7 @@ class BIDSDataset(BaseDataset):
         self.description = description
         self.dtype = dtype
         self.n_jobs = n_jobs
+        self.representation = representation
 
     def _find_recordings(self, saved: bool) -> dict[str, BIDSPath]:
         """Return the ``BIDSPath`` of each recording to load, by recording ID.
@@ -634,13 +510,7 @@ class BIDSDataset(BaseDataset):
         for path in paths:
             if path.split not in (None, "01"):
                 continue
-            recording_id = BIDSPath(
-                subject=path.subject,
-                session=path.session,
-                task=path.task,
-                acquisition=path.acquisition,
-                run=path.run,
-            ).basename
+            recording_id = bids_recording_id(path)
             if recording_id in recordings:
                 raise ValueError(
                     f"Several files match recording {recording_id}: "
@@ -727,8 +597,10 @@ class BIDSDataset(BaseDataset):
             - ids: Unique identifiers for each observation.
             - coords: 'channel', 'time', and one entry per observation for
               'obs', 'epoch', 'recording_id', 'bad_channels' (comma-separated,
-              as marked in the file), 'subject', 'session', 'run' and the
-              subject metadata.
+              as marked in the file), 'subject', 'session', 'task', 'run',
+              'condition' (the event name) and the subject metadata. At the
+              recording level, one row per recording and condition (see
+              :func:`~coco_pipe.io.aggregate_recordings`).
             - dims: ('obs', 'channel', 'time').
             - meta: 'sfreq', 'source', 'units' (the unit of each channel type
               in X, e.g. ``{'eeg': 'V'}``), 'event_id',
@@ -748,31 +620,12 @@ class BIDSDataset(BaseDataset):
         if not saved and self.window_length is None and self.event_id is None:
             raise ValueError("Raw recordings need `window_length` or `event_id`.")
 
-        meta_lookup = load_participants_tsv(self.root)
-        if self.subject_metadata_df is not None:
-            if self.subject_key is None:
-                raise ValueError(
-                    "subject_key must be provided when subject_metadata_df is used."
-                )
-            if self.subject_key not in self.subject_metadata_df.columns:
-                raise ValueError(
-                    f"subject_key '{self.subject_key}' not found "
-                    "in subject_metadata_df."
-                )
-            for _, row in self.subject_metadata_df.iterrows():
-                sub = normalize_subject_value(row[self.subject_key])
-                # The key only matches rows to subjects: ``subject`` holds it.
-                values = row.drop(self.subject_key).to_dict()
-                meta_lookup.setdefault(sub, {}).update(values)
-        taken = sorted(
-            {column for row in meta_lookup.values() for column in row}
-            & set(_LOADER_COORDS)
+        meta_lookup = load_subject_metadata(
+            [self.root],
+            self.subject_metadata_df,
+            self.subject_key,
+            reserved=_LOADER_COORDS,
         )
-        if taken:
-            raise ValueError(
-                f"Subject metadata columns {taken} have the names of coordinates "
-                "the loader sets; rename them."
-            )
 
         def open_recording(bids_path: BIDSPath) -> mne.BaseEpochs | str | None:
             try:
@@ -835,6 +688,7 @@ class BIDSDataset(BaseDataset):
                 stand_in.event_id = {
                     name: event_codes[name] for name in stand_in.event_id
                 }
+                names = {code: name for name, code in stand_in.event_id.items()}
                 bad_channels = ",".join(stand_in.info["bads"])
                 stand_in.info["bads"] = []
                 numbers = stand_in.metadata["epoch"].to_numpy()
@@ -846,7 +700,9 @@ class BIDSDataset(BaseDataset):
                         "bad_channels": bad_channels,
                         "subject": bids_path.subject,
                         "session": bids_path.session or "",
+                        "task": bids_path.task or "",
                         "run": bids_path.run or "",
+                        "condition": [names[c] for c in stand_in.events[:, 2]],
                         **meta_lookup.get(
                             normalize_subject_value(bids_path.subject), {}
                         ),
@@ -939,7 +795,7 @@ class BIDSDataset(BaseDataset):
             )
 
         sfreq = epochs.info["sfreq"]
-        return DataContainer(
+        container = DataContainer(
             X=X,
             y=y,
             ids=coords["obs"],
@@ -954,3 +810,6 @@ class BIDSDataset(BaseDataset):
                 "skipped_no_matching_events": skipped,
             },
         )
+        if self.representation == "recording":
+            container = aggregate_recordings(container)
+        return container

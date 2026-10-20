@@ -1,10 +1,8 @@
-import pickle
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
+from coco_pipe.io.dataset import BIDSDataset, TabularDataset
 
 
 def _tsv(path, frame):
@@ -120,72 +118,6 @@ def test_tabular_dataset_cleaning(tmp_path):
     assert TabularDataset.clean(pd.DataFrame())[0].empty
     with pytest.raises(ValueError):
         TabularDataset.clean(tiny, mode="invalid")
-
-
-# --- embeddings ------------------------------------------------------------------
-
-
-def test_embedding_dataset_stacks_files(tmp_path):
-    (tmp_path / "nested").mkdir()
-    np.save(tmp_path / "subjA.npy", np.arange(6).reshape(2, 3))
-    np.save(tmp_path / "nested" / "subjB.npy", np.ones(3))  # one observation
-    container = EmbeddingDataset(
-        tmp_path, pattern="*.npy", dims=("feature",), reader=np.load
-    ).load()
-    assert container.dims == ("obs", "feature")
-    # files are read in path order
-    assert container.ids.tolist() == ["subjB", "subjA_0", "subjA_1"]
-
-    # a dict holds one array per segment, of one or several observations
-    with open(tmp_path / "sub-dict.pkl", "wb") as f:
-        pickle.dump({"seg1": np.zeros((2, 3)), "seg2": [1, 2, 3]}, f)
-    segments = EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
-    assert segments.ids.tolist() == [
-        "sub-dict_seg1_0",
-        "sub-dict_seg1_1",
-        "sub-dict_seg2",
-    ]
-
-
-def test_embedding_dataset_selects_subjects(tmp_path):
-    for i in range(1, 4):
-        (tmp_path / f"sub-0{i}.pkl").touch()
-
-    def load(subjects):
-        return EmbeddingDataset(
-            tmp_path, dims=("f",), reader=lambda p: np.array([1, 2]), subjects=subjects
-        ).load()
-
-    assert load(2).ids.tolist() == ["sub-01", "sub-02"]
-    assert load(["sub-03"]).ids.tolist() == ["sub-03"]
-
-
-def test_embedding_dataset_records_files_it_cannot_load(tmp_path, caplog):
-    np.save(tmp_path / "s1.npy", np.ones((3, 4)))
-    np.save(tmp_path / "s2.npy", np.ones((3, 4)))
-    (tmp_path / "s3.npy").write_bytes(b"not a numpy file")
-
-    with caplog.at_level("WARNING"):
-        container = EmbeddingDataset(tmp_path, pattern="*.npy").load()
-
-    assert container.X.shape == (6, 4)
-    (failure,) = container.meta["load_failures"]
-    assert failure["path"].endswith("s3.npy") and failure["error"]
-    assert "Could not load s3.npy" in caplog.text
-
-
-def test_embedding_dataset_errors(tmp_path):
-    with pytest.raises(FileNotFoundError, match="No files matched"):
-        EmbeddingDataset(tmp_path, pattern="*.npy").load()
-
-    np.save(tmp_path / "cube.npy", np.zeros((2, 2, 2)))
-    with pytest.raises(RuntimeError, match=r"the first being .*cube.npy .*fit"):
-        EmbeddingDataset(tmp_path, pattern="*.npy", dims=("f",), reader=np.load).load()
-
-    with open(tmp_path / "1.pkl", "wb") as f:
-        pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
-    with pytest.raises(ValueError, match="Concatenation failed"):
-        EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
 
 
 # --- BIDS ------------------------------------------------------------------------
@@ -308,7 +240,9 @@ def test_bids_dataset_raw_recordings(tmp_path):
     from mne_bids import BIDSPath, write_raw_bids
 
     raw = mne.io.RawArray(
-        np.zeros((2, 300)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
+        np.random.default_rng(0).normal(size=(2, 300)) * 1e-12,
+        mne.create_info(["M1", "M2"], 100.0, "mag"),
+        verbose=False,
     )
     raw.set_meas_date(0)
     raw.set_annotations(
@@ -336,6 +270,8 @@ def test_bids_dataset_raw_recordings(tmp_path):
         "sub-01_task-rest",
         "sub-02_task-rest",
     }
+    # MNE names the event of fixed-length windows "1"
+    assert set(container.coords["condition"]) == {"1"}
 
     # epoched around events, with the codes passed in `event_id`
     codes = {"left": 3, "right": 10}
@@ -344,7 +280,29 @@ def test_bids_dataset_raw_recordings(tmp_path):
     ).load()
     assert container.meta["event_id"] == codes
     assert container.y.tolist() == [10, 3, 10] * 2
+    assert container.coords["condition"].tolist() == ["right", "left", "right"] * 2
+    assert container.coords["task"].tolist() == ["rest"] * 6
     assert container.coords["time"][0] == 0.0
+
+    # one row per recording and condition, as for embeddings
+    recordings = BIDSDataset(
+        tmp_path,
+        task="rest",
+        datatype="meg",
+        event_id=codes,
+        tmin=0.0,
+        tmax=0.2,
+        representation="recording",
+    ).load()
+    assert recordings.ids.tolist() == [
+        "sub-01_task-rest_cond-right",
+        "sub-01_task-rest_cond-left",
+        "sub-02_task-rest_cond-right",
+        "sub-02_task-rest_cond-left",
+    ]
+    assert recordings.coords["epoch_count"].tolist() == [2, 1, 2, 1]
+    assert recordings.y.tolist() == [10, 3, 10, 3]
+    np.testing.assert_allclose(recordings.X[0], container.X[[0, 2]].mean(axis=0))
 
     with pytest.raises(RuntimeError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()

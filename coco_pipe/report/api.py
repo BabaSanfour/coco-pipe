@@ -192,12 +192,13 @@ def from_embeddings(
     **kwargs,
 ) -> Report:
     """
-    Auto-generate a report from a directory of embeddings.
+    Auto-generate a report from an embedding file.
 
     Parameters
     ----------
     path : str or Path
-        Directory containing embedding files.
+        An embedding file written by coco-pipe: one holding every recording,
+        or one recording's.
     theme : str
         Report theme preset.
     raw_preview : bool
@@ -207,7 +208,8 @@ def from_embeddings(
     output_path : path-like, optional
         If given, save the rendered report to this path.
     **kwargs
-        Additional arguments passed to EmbeddingDataset.
+        Passed to :func:`~coco_pipe.io.load_embeddings`, e.g.
+        ``representation``, ``conditions`` or ``subjects``.
 
     Returns
     -------
@@ -215,13 +217,12 @@ def from_embeddings(
 
     Examples
     --------
-    >>> report = from_embeddings("/path/to/embeddings")
+    >>> report = from_embeddings("task-rest_desc-base_windowembeddings.nc")
     >>> report.save("report.html")
     """
-    from coco_pipe.io.dataset import EmbeddingDataset
+    from coco_pipe.io.embeddings import load_embeddings
 
-    ds = EmbeddingDataset(path=path, **kwargs)
-    container = ds.load()
+    container = load_embeddings(path, **kwargs)
     title = f"Embedding Report: {Path(path).name}"
     config = {
         "title": title,

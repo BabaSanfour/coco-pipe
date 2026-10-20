@@ -1,19 +1,16 @@
 """Tests for the shared serialization helpers."""
 
-import pickle
-
-import h5py
 import numpy as np
 import pandas as pd
 import pytest
 
 from coco_pipe.io._serialization import (
+    atomic_path,
     load_object,
     read_json,
     read_table,
     save_npz,
     save_object,
-    smart_reader,
     write_json,
 )
 
@@ -28,6 +25,17 @@ def test_json_round_trip(tmp_path, atomic):
     text = path.read_text(encoding="utf-8")
     assert text.index('"a"') < text.index('"b"')
     assert [p.name for p in path.parent.iterdir()] == ["payload.json"]
+
+
+def test_writers_of_one_file_do_not_share_a_temporary_file(tmp_path):
+    path = tmp_path / "dataset_description.json"
+    with atomic_path(path) as first:
+        first.write_text("first", encoding="utf-8")
+        with atomic_path(path) as second:
+            second.write_text("second", encoding="utf-8")
+        assert path.read_text(encoding="utf-8") == "second"
+    assert path.read_text(encoding="utf-8") == "first"
+    assert [p.name for p in tmp_path.iterdir()] == [path.name]
 
 
 def test_object_round_trip(tmp_path):
@@ -80,28 +88,3 @@ def test_read_table(tmp_path):
     (tmp_path / "features.tsv").touch()
     with pytest.raises(ValueError, match=r"Expected \.csv or \.parquet"):
         read_table(tmp_path / "features.tsv")
-
-
-def test_smart_reader(tmp_path):
-    with open(tmp_path / "test.pkl", "wb") as f:
-        pickle.dump({"a": 1}, f)
-    assert smart_reader(tmp_path / "test.pkl") == {"a": 1}
-    np.save(tmp_path / "test.npy", np.array([1, 2]))
-    assert smart_reader(tmp_path / "test.npy").tolist() == [1, 2]
-    (tmp_path / "test.json").write_text('{"key": "val"}')
-    assert smart_reader(tmp_path / "test.json") == {"key": "val"}
-
-    # an HDF5 file is read from "embeddings", "data", or its only dataset
-    for name in ("embeddings", "data", "random"):
-        with h5py.File(tmp_path / f"{name}.h5", "w") as f:
-            f.create_dataset(name, data=np.array([1, 2]))
-        assert smart_reader(tmp_path / f"{name}.h5").tolist() == [1, 2]
-    with h5py.File(tmp_path / "two.h5", "w") as f:
-        f.create_dataset("a", data=np.array([1]))
-        f.create_dataset("b", data=np.array([2]))
-    with pytest.raises(ValueError):
-        smart_reader(tmp_path / "two.h5")
-
-    (tmp_path / "test.xyz").touch()
-    with pytest.raises(ValueError, match="Unsupported extension"):
-        smart_reader(tmp_path / "test.xyz")

@@ -3,7 +3,6 @@
 Single home for the byte-level IO shared across coco-pipe:
 
 * tabular reads (CSV / parquet) — :func:`read_table`
-* opaque blob reads (pkl / npy / json / h5) — :func:`smart_reader`
 * JSON read / write — :func:`read_json`, :func:`write_json`
 * joblib object persistence — :func:`save_object`, :func:`load_object`
 * atomic NPZ writes — :func:`save_npz`
@@ -20,6 +19,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -79,40 +81,6 @@ def read_table(
     return df.dropna(axis=1, how="all") if drop_all_empty else df
 
 
-def smart_reader(path: Path) -> Any:
-    """Read an opaque embedding blob, dispatching on file extension.
-
-    Supports ``.pkl``, ``.npy``, ``.json``, and ``.h5``/``.hdf5``. HDF5 files
-    return the ``embeddings`` dataset, then ``data``, then the sole dataset if
-    only one is present; otherwise the structure is ambiguous and a custom
-    reader is required.
-    """
-    suffix = path.suffix.lower()
-    if suffix == ".pkl":
-        import pickle
-
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    elif suffix == ".npy":
-        return np.load(path)
-    elif suffix == ".json":
-        return read_json(path)
-    elif suffix in [".h5", ".hdf5"]:
-        import h5py
-
-        with h5py.File(path, "r") as f:
-            keys = list(f.keys())
-            if "embeddings" in keys:
-                return f["embeddings"][:]
-            if "data" in keys:
-                return f["data"][:]
-            if len(keys) == 1:
-                return f[keys[0]][:]
-            raise ValueError(f"Ambiguous HDF5 structure: {keys}. Use custom reader.")
-    else:
-        raise ValueError(f"Unsupported extension {suffix}, utilize custom reader.")
-
-
 def read_json(path: Path | str) -> Any:
     """Read and decode a UTF-8 JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -135,12 +103,29 @@ def write_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(obj, indent=indent, sort_keys=sort_keys)
     if atomic:
-        tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
+        with atomic_path(path) as tmp:
+            tmp.write_text(text, encoding="utf-8")
     else:
         path.write_text(text, encoding="utf-8")
     return path
+
+
+@contextmanager
+def atomic_path(path: Path) -> Iterator[Path]:
+    """Yield a temporary sibling of ``path`` to write, then move it onto ``path``.
+
+    Each call gets its own temporary name, so processes writing the same file
+    at once do not move each other's half-written file into place; the last
+    one to finish wins. On an error the temporary file is removed and
+    ``path`` is left as it was.
+    """
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def save_object(obj: Any, path: Path | str) -> Path:

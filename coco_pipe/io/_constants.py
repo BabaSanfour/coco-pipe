@@ -25,25 +25,71 @@ QualityInput = pd.DataFrame | np.ndarray
 STATUS_ORDER: dict[str, int] = {"pass": 0, "warn": 1, "fail": 2}
 """Ordinal ranking used by ``resolve_qc_status`` to pick the worst level."""
 
+EMBEDDING_VIEWS: tuple[str, ...] = ("token", "window", "channel", "patch", "cov")
+"""Representations of a foundation model's output, one BIDS suffix each.
+
+A view is stored under the suffix ``<view>embeddings``:
+
+- ``token``   — the model's token tensor, nothing pooled.
+- ``window``  — one vector per window, the tokens averaged over every axis.
+- ``channel`` — one vector per channel of a window, averaged over time patches.
+- ``patch``   — one vector per time patch of a window, averaged over channels.
+- ``cov``     — the tangent-space token covariance of each window (RA).
+"""
+
+EMBEDDING_CONFIG_KEYS: dict[str, str] = {
+    "model_key": "ModelKey",
+    "model_name": "ModelName",
+    "model_checkpoint": "Checkpoint",
+    "checkpoint_filename": "CheckpointFile",
+    "checkpoint_revisions": "CheckpointRevisions",
+    "weights": "Weights",
+    "seed": "Seed",
+    "backend": "Backend",
+    "pretrained_sfreq": "PretrainedSamplingFrequency",
+    "model_sfreq": "ModelSamplingFrequency",
+    "window_duration_seconds": "WindowDuration",
+    "window_n_times_model": "WindowSamples",
+    "within_window_pooling": "WindowPooling",
+    "normalize_embeddings": "NormalizeEmbeddings",
+    "expects_microvolts": "ExpectsMicrovolts",
+    "input_scale": "InputScale",
+    "input_normalization": "InputNormalization",
+    "input_reference": "InputReference",
+    "input_clip": "InputClip",
+    "finetune_input_scale": "FinetuneInputScale",
+    "expected_passband": "ExpectedPassband",
+    "expected_reference": "ExpectedReference",
+}
+"""The extraction settings an embedding file records: metadata key -> JSON key.
+
+They are the same for every recording a model embeds with one configuration:
+the model and its weights (``Weights`` is ``"pretrained"``, ``"random"`` with
+its ``Seed``, or ``"finetuned"``), the sampling rates the model was trained at
+and is fed (Hz), the window length (``WindowDuration`` in seconds,
+``WindowSamples`` fed to the model), the pooling and normalisation of window
+vectors, and how the input is scaled. Their keys are CamelCase, as BIDS
+recommends for JSON keys. Each embedding file stores them as the JSON text
+attribute ``config``, which is also the content of the dataset's sidecar for
+the file's label and suffix, and ``config_hash`` is their hash.
+"""
+
+LOADED_LEVELS: tuple[str, ...] = ("epoch", "recording")
+"""The levels the BIDS and embedding loaders return (their ``representation``)."""
+
 AGGREGATION_LEVELS: tuple[str, ...] = ("epoch", "recording", "subject")
 """Canonical observation-granularity ladder, coarsening left → right.
 
 - ``epoch``     — one row per analysis window/epoch (finest).
-- ``recording`` — one row per recording = ``(subject, session, run)``.
+- ``recording`` — one row per recording and condition: the rows of one
+  ``recording_id`` (its subject, session, task, acquisition and run) and one
+  ``condition``, averaged, named ``<recording_id>_cond-<condition>``
+  (:func:`~coco_pipe.io.aggregate_recordings`).
 - ``subject``   — one row per subject, pooled across that subject's recordings.
 
 The single shared vocabulary for descriptor tables, foundation-embedding
 representations, and raw-EEG aggregation, so every pipeline names the same
 granularity the same way.
-"""
-
-
-EMBEDDING_COMBINED_TABLE_LABELS: dict[str, str] = {
-    "epoch": "epoch_embeddings",
-    "recording": "recording_embeddings",
-    "subject": "subject_embeddings",
-}
-"""Maps a ``representation`` granularity to the combined embedding table filename.
 """
 
 
@@ -56,36 +102,6 @@ GROUP_BY_COLUMN: dict[str, str] = {
 """Maps a ``group_by`` granularity to the ``classify_descriptor_columns`` column
 that carries its label. Shared by the QC drop path and downstream callers so the
 set of valid ``group_by`` values lives in one place."""
-
-REQUIRED_ARRAYS = {
-    "window_embeddings",
-    "recording_embedding",
-    "window_start",
-    "window_stop",
-    "window_index",
-}
-
-TOKEN_REQUIRED_ARRAYS = {
-    "token_embeddings",
-    "window_start",
-    "window_stop",
-    "window_index",
-}
-
-ARTIFACT_SUFFIX = {"embedding": "_embedding.npz", "token": "_tokens.npz"}
-"""Filename suffix per embedding-derivative kind. Enforced at save time so the
-suffix is the authoritative marker of an artifact's kind for discovery/loading."""
-
-POOLED_ONLY_EMBEDDING_METADATA_KEYS = frozenset(
-    {
-        "within_window_pooling",
-        "recording_pooling",
-        "normalize_embeddings",
-        "embedding_shape",
-        "embedding_dtype",
-    }
-)
-"""Metadata that must not leak into pooling-independent native token artifacts."""
 
 ANALYSIS_MODES = (
     "flat",

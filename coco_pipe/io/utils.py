@@ -3,12 +3,14 @@
 This module is intentionally thin: heavy quality logic lives in
 :mod:`coco_pipe.io.quality`; data-structure definitions live in
 :mod:`coco_pipe.io.structures`.  Everything here is either a small utility
-(``load_participants_tsv``, ``normalize_subject_value``) or a sampling helper
+(``load_participants_tsv``, ``load_subject_metadata``,
+``normalize_subject_value``) or a sampling helper
 (``make_strata``, ``sample_indices``) with no dependency on the QC pipeline.
 """
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -182,32 +184,121 @@ def _local_dataset(root: Path, uri: str, links: dict[str, str]) -> Path | None:
     return root / uri
 
 
+def _find_participants_tsv(root: Path, seen: set[Path]) -> Path | None:
+    """Return the ``participants.tsv`` of a dataset or of its sources."""
+    path = root / "participants.tsv"
+    if path.exists():
+        return path
+    description = root / "dataset_description.json"
+    if not description.exists() or root.resolve() in seen:
+        return None
+    seen.add(root.resolve())
+    info = json.loads(description.read_text(encoding="utf-8"))
+    links = info.get("DatasetLinks") or {}
+    for source in info.get("SourceDatasets", []):
+        source_root = _local_dataset(root, str(source.get("URL", "")), links)
+        if source_root is not None:
+            found = _find_participants_tsv(source_root, seen)
+            if found is not None:
+                return found
+    return None
+
+
+def bids_recording_id(path: Any) -> str:
+    """Name a recording by its BIDS entities: subject, session, task, acquisition
+    and run, e.g. ``sub-01_ses-01_task-rest_run-01``.
+
+    ``path`` is a :class:`mne_bids.BIDSPath`. The BIDS loader's ``recording_id``
+    coordinate and the embedding files name recordings with it.
+    """
+    from mne_bids import BIDSPath
+
+    return BIDSPath(
+        subject=path.subject,
+        session=path.session,
+        task=path.task,
+        acquisition=path.acquisition,
+        run=path.run,
+    ).basename
+
+
 def load_participants_tsv(root: Path) -> dict[str, dict[str, Any]]:
     """Return the rows of ``participants.tsv``, by normalized subject label.
 
     A derivative dataset without one reads that of its first local source
-    dataset that has one, from the ``URL`` of each ``SourceDatasets`` entry in
-    ``dataset_description.json``: a relative path, a ``file:`` URI, or a BIDS URI
-    ``bids:<name>:`` named in ``DatasetLinks``.
+    dataset that has one, following ``SourceDatasets`` from dataset to
+    dataset (e.g. embeddings, then preprocessed data, then raw data): the
+    ``URL`` of each entry in ``dataset_description.json``, a relative path, a
+    ``file:`` URI, or a BIDS URI ``bids:<name>:`` named in ``DatasetLinks``.
     """
-    root = Path(root)
-    path = root / "participants.tsv"
-    description = root / "dataset_description.json"
-    if not path.exists() and description.exists():
-        info = json.loads(description.read_text(encoding="utf-8"))
-        links = info.get("DatasetLinks") or {}
-        for source in info.get("SourceDatasets", []):
-            source_root = _local_dataset(root, str(source.get("URL", "")), links)
-            if source_root is not None and (source_root / "participants.tsv").exists():
-                path = source_root / "participants.tsv"
-                break
-    if not path.exists():
+    path = _find_participants_tsv(Path(root), set())
+    if path is None:
         return {}
     table = pd.read_csv(path, sep="\t")
     if "participant_id" not in table:
         return {}
     table.index = table.pop("participant_id").map(normalize_subject_value)
     return table.to_dict("index")
+
+
+def load_subject_metadata(
+    roots: Iterable[Path],
+    subject_metadata_df: pd.DataFrame | None = None,
+    subject_key: str | None = None,
+    *,
+    reserved: Iterable[str] = (),
+) -> dict[str, dict[str, Any]]:
+    """Return each subject's metadata, by normalized subject label.
+
+    The rows of each dataset's ``participants.tsv`` (see
+    :func:`load_participants_tsv`), the first dataset's row for a subject in
+    two, then the rows of ``subject_metadata_df``, whose columns are added to
+    them or replace them.
+
+    Parameters
+    ----------
+    roots : iterable of Path
+        The datasets read.
+    subject_metadata_df : DataFrame, optional
+        More subject-level metadata.
+    subject_key : str, optional
+        The column of ``subject_metadata_df`` holding the subject ID. It matches
+        rows to subjects and is not returned itself.
+    reserved : iterable of str
+        The coordinates the loader sets, which no column may be named like.
+
+    Raises
+    ------
+    ValueError
+        If ``subject_metadata_df`` comes without ``subject_key`` or without that
+        column, or if a column has a ``reserved`` name.
+    """
+    lookup: dict[str, dict[str, Any]] = {}
+    for root in roots:
+        for subject, row in load_participants_tsv(root).items():
+            lookup.setdefault(subject, row)
+    if subject_metadata_df is not None:
+        if subject_key is None:
+            raise ValueError(
+                "subject_key must be provided when subject_metadata_df is used."
+            )
+        if subject_key not in subject_metadata_df.columns:
+            raise ValueError(
+                f"subject_key '{subject_key}' not found in subject_metadata_df."
+            )
+        for _, row in subject_metadata_df.iterrows():
+            subject = normalize_subject_value(row[subject_key])
+            # The key only matches rows to subjects: ``subject`` holds it.
+            lookup.setdefault(subject, {}).update(row.drop(subject_key).to_dict())
+    taken = sorted(
+        {column for row in lookup.values() for column in row} & set(reserved)
+    )
+    if taken:
+        raise ValueError(
+            f"Subject metadata columns {taken} have the names of coordinates the "
+            "loader sets; rename them."
+        )
+    return lookup
 
 
 def normalize_subject_value(value: object) -> str:

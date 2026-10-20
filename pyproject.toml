@@ -42,6 +42,7 @@ dependencies = [
   "seaborn",
   "scipy>=1.11.0",
   "xarray",
+  "h5netcdf[h5py]>=1.8.0",
   "pyriemann>=0.7",
   "pyyaml",
   "pydantic",

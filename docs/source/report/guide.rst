@@ -483,7 +483,7 @@ These are convenience entry points. Internally they call the same
    * - :func:`~coco_pipe.report.from_tabular`
      - Path to CSV / parquet / etc.                     Data overview from loaded container
    * - :func:`~coco_pipe.report.from_embeddings`
-     - ``X_emb`` array                                 Standalone embedding section
+     - Embedding file (``.nc``)                        Data overview from loaded container
    * - :func:`~coco_pipe.report.from_reductions`
      - list of scored :class:`DimReduction`             One section per reducer + optional comparison
    * - :func:`~coco_pipe.report.from_experiment_result`
@@ -555,18 +555,18 @@ Wraps ``TabularDataset`` + ``from_container``.
 2.4 ``from_embeddings``
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Standalone embedding plot — useful when you have an embedding array
-but no fitted :class:`DimReduction` to ship alongside.
+Wraps :func:`~coco_pipe.io.load_embeddings` + ``from_container``, for an
+embedding file written by coco-pipe. Extra arguments go to
+``load_embeddings``.
 
 .. code-block:: python
 
    from coco_pipe.report import from_embeddings
 
    report = from_embeddings(
-       X_emb=embedding,
-       labels=class_ids,
-       metadata={"subject": subject_ids},
-       title="UMAP embedding",
+       "derivatives/coco-pipe-cbramod/task-rest_desc-base_windowembeddings.nc",
+       representation="recording",
+       output_path="embedding_overview.html",
    )
 
 ---

@@ -11,16 +11,16 @@ TabularConfig
 BIDSConfig
     Configuration for BIDS-compliant datasets.
 EmbeddingConfig
-    Configuration for pre-computed embeddings.
+    Configuration for foundation-model embedding files.
 DatasetConfig
     Union container for any dataset configuration.
 
 These schemas mirror the keyword arguments accepted by
-:func:`coco_pipe.io.load.load_data` and the dataset classes in
-:mod:`coco_pipe.io.dataset`. Only serializable, scalar parameters live here;
-callables and in-memory tables (``reader``, ``id_fn``, ``subject_metadata_df``,
-``subject_key``) are passed to ``load_data`` directly and are intentionally not
-part of the config schema.
+:func:`coco_pipe.io.load.load_data`, the dataset classes in
+:mod:`coco_pipe.io.dataset` and :func:`coco_pipe.io.load_embeddings`. Only
+serializable, scalar parameters live here; in-memory tables
+(``subject_metadata_df``, ``subject_key``) are passed to ``load_data`` directly
+and are intentionally not part of the config schema.
 
 Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
@@ -92,20 +92,36 @@ class BIDSConfig(BaseDatasetConfig):
     description: str | None = Field(
         None, description="`desc` entity of the files to load."
     )
+    representation: Literal["epoch", "recording"] = Field(
+        "epoch",
+        description="'epoch': one row per epoch; 'recording': one row per "
+        "recording and condition, the mean of its epochs.",
+    )
 
 
 class EmbeddingConfig(BaseDatasetConfig):
-    """Configuration for EmbeddingDataset."""
+    """Configuration for :func:`~coco_pipe.io.load_embeddings`.
+
+    ``path`` is an embedding file written by coco-pipe: one holding every
+    recording, or one recording's.
+    """
 
     mode: Literal["embedding"] = "embedding"
-    subjects: int | list[str | int] | None = Field(
-        None,
-        description="An int loads the first N files; a list, the files whose ID "
-        "(``id_fn``) is in it.",
+    representation: Literal["epoch", "recording"] = Field(
+        "epoch",
+        description="'epoch': one row per window; 'recording': one row per "
+        "recording and condition, the mean of its windows.",
     )
-    pattern: str = "*.pkl"
-    dims: tuple[str, ...] = ("feature",)
-    coords: dict[str, list | Any] | None = None
+    conditions: str | list[str] | None = Field(
+        None, description="Conditions to load; every condition when omitted."
+    )
+    subjects: str | list[str] | None = Field(
+        None, description="Subject labels to load, without 'sub-'."
+    )
+    aggregate_by: str | None = Field(
+        None,
+        description="Coordinate to average the loaded rows by, e.g. 'subject'.",
+    )
 
 
 class DatasetConfig(BaseModel):

@@ -87,7 +87,7 @@ A list of scored ``DimReduction`` objects    :func:`~coco_pipe.report.from_reduc
 A :class:`~coco_pipe.io.DataContainer`       :func:`~coco_pipe.report.from_container`
 A BIDS dataset directory                     :func:`~coco_pipe.report.from_bids`
 A tabular file (CSV/parquet/…)               :func:`~coco_pipe.report.from_tabular`
-A raw embedding array                        :func:`~coco_pipe.report.from_embeddings`
+A coco-pipe embedding file                   :func:`~coco_pipe.report.from_embeddings`
 Multiple reports to combine                  :func:`~coco_pipe.report.merge_reports`
 Hand-built sections                          :class:`~coco_pipe.report.Report` +
                                              :mod:`~coco_pipe.report.elements`
