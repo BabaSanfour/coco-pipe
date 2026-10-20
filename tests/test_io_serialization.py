@@ -1,8 +1,5 @@
 """Tests for the shared serialization helpers."""
 
-import pickle
-
-import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,7 +11,6 @@ from coco_pipe.io._serialization import (
     read_table,
     save_npz,
     save_object,
-    smart_reader,
     write_json,
 )
 
@@ -92,28 +88,3 @@ def test_read_table(tmp_path):
     (tmp_path / "features.tsv").touch()
     with pytest.raises(ValueError, match=r"Expected \.csv or \.parquet"):
         read_table(tmp_path / "features.tsv")
-
-
-def test_smart_reader(tmp_path):
-    with open(tmp_path / "test.pkl", "wb") as f:
-        pickle.dump({"a": 1}, f)
-    assert smart_reader(tmp_path / "test.pkl") == {"a": 1}
-    np.save(tmp_path / "test.npy", np.array([1, 2]))
-    assert smart_reader(tmp_path / "test.npy").tolist() == [1, 2]
-    (tmp_path / "test.json").write_text('{"key": "val"}')
-    assert smart_reader(tmp_path / "test.json") == {"key": "val"}
-
-    # an HDF5 file is read from "embeddings", "data", or its only dataset
-    for name in ("embeddings", "data", "random"):
-        with h5py.File(tmp_path / f"{name}.h5", "w") as f:
-            f.create_dataset(name, data=np.array([1, 2]))
-        assert smart_reader(tmp_path / f"{name}.h5").tolist() == [1, 2]
-    with h5py.File(tmp_path / "two.h5", "w") as f:
-        f.create_dataset("a", data=np.array([1]))
-        f.create_dataset("b", data=np.array([2]))
-    with pytest.raises(ValueError):
-        smart_reader(tmp_path / "two.h5")
-
-    (tmp_path / "test.xyz").touch()
-    with pytest.raises(ValueError, match="Unsupported extension"):
-        smart_reader(tmp_path / "test.xyz")

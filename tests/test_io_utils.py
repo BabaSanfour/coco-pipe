@@ -122,7 +122,6 @@ def test_io_exposes_dataset_classes_lazily():
     from coco_pipe import io as coco_io
 
     assert coco_io.BIDSDataset is not None
-    assert coco_io.EmbeddingDataset is not None
     with pytest.raises(AttributeError, match="has no attribute 'invalid_attr'"):
         _ = coco_io.invalid_attr
 

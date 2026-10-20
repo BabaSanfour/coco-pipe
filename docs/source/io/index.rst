@@ -12,8 +12,8 @@ provides quality-control and persistence utilities around it.
 .. admonition:: Design Philosophy
 
    One in-memory contract, everywhere. Whether your data starts as a tabular
-   feature table, a BIDS M/EEG dataset, or an array of foundation-model
-   embeddings, it is loaded into the same :class:`~coco_pipe.io.DataContainer`,
+   feature table, a BIDS M/EEG dataset, or foundation-model embedding files,
+   it is loaded into the same :class:`~coco_pipe.io.DataContainer`,
    so feature extraction, reduction, decoding, visualization, and reporting all
    compose without bespoke glue code.
 
@@ -88,12 +88,20 @@ config, validated when it is built, which says what to load and how:
        BIDSConfig(path="/data/bids", task="rest", datatype="eeg", window_length=2.0)
    )
 
-   # Embedding files (NPY / PKL / H5 / JSON).
-   container = load_data(EmbeddingConfig(path="/data/embeddings", pattern="*.npy"))
+   # Foundation-model embeddings written by coco-pipe: one row per recording
+   # and condition, eyes-closed only.
+   container = load_data(
+       EmbeddingConfig(
+           path="derivatives/coco-pipe-cbramod/task-rest_desc-base_windowembeddings.nc",
+           representation="recording",
+           conditions="EC",
+       )
+   )
 
-Tables and functions, which a config cannot hold, are passed to ``load_data``
-directly: ``subject_metadata_df`` / ``subject_key`` for BIDS, ``reader`` /
-``id_fn`` for embeddings.
+Tables, which a config cannot hold, are passed to ``load_data`` directly:
+``subject_metadata_df`` / ``subject_key`` for BIDS. Embedding files are also
+read with :func:`~coco_pipe.io.load_embeddings`, which takes several files at
+once (see :func:`~coco_pipe.io.find_embeddings`).
 
 3. Quality Control
 ==================

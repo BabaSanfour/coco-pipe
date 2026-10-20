@@ -1,10 +1,8 @@
-import pickle
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.io.dataset import BIDSDataset, EmbeddingDataset, TabularDataset
+from coco_pipe.io.dataset import BIDSDataset, TabularDataset
 
 
 def _tsv(path, frame):
@@ -120,72 +118,6 @@ def test_tabular_dataset_cleaning(tmp_path):
     assert TabularDataset.clean(pd.DataFrame())[0].empty
     with pytest.raises(ValueError):
         TabularDataset.clean(tiny, mode="invalid")
-
-
-# --- embeddings ------------------------------------------------------------------
-
-
-def test_embedding_dataset_stacks_files(tmp_path):
-    (tmp_path / "nested").mkdir()
-    np.save(tmp_path / "subjA.npy", np.arange(6).reshape(2, 3))
-    np.save(tmp_path / "nested" / "subjB.npy", np.ones(3))  # one observation
-    container = EmbeddingDataset(
-        tmp_path, pattern="*.npy", dims=("feature",), reader=np.load
-    ).load()
-    assert container.dims == ("obs", "feature")
-    # files are read in path order
-    assert container.ids.tolist() == ["subjB", "subjA_0", "subjA_1"]
-
-    # a dict holds one array per segment, of one or several observations
-    with open(tmp_path / "sub-dict.pkl", "wb") as f:
-        pickle.dump({"seg1": np.zeros((2, 3)), "seg2": [1, 2, 3]}, f)
-    segments = EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
-    assert segments.ids.tolist() == [
-        "sub-dict_seg1_0",
-        "sub-dict_seg1_1",
-        "sub-dict_seg2",
-    ]
-
-
-def test_embedding_dataset_selects_subjects(tmp_path):
-    for i in range(1, 4):
-        (tmp_path / f"sub-0{i}.pkl").touch()
-
-    def load(subjects):
-        return EmbeddingDataset(
-            tmp_path, dims=("f",), reader=lambda p: np.array([1, 2]), subjects=subjects
-        ).load()
-
-    assert load(2).ids.tolist() == ["sub-01", "sub-02"]
-    assert load(["sub-03"]).ids.tolist() == ["sub-03"]
-
-
-def test_embedding_dataset_records_files_it_cannot_load(tmp_path, caplog):
-    np.save(tmp_path / "s1.npy", np.ones((3, 4)))
-    np.save(tmp_path / "s2.npy", np.ones((3, 4)))
-    (tmp_path / "s3.npy").write_bytes(b"not a numpy file")
-
-    with caplog.at_level("WARNING"):
-        container = EmbeddingDataset(tmp_path, pattern="*.npy").load()
-
-    assert container.X.shape == (6, 4)
-    (failure,) = container.meta["load_failures"]
-    assert failure["path"].endswith("s3.npy") and failure["error"]
-    assert "Could not load s3.npy" in caplog.text
-
-
-def test_embedding_dataset_errors(tmp_path):
-    with pytest.raises(FileNotFoundError, match="No files matched"):
-        EmbeddingDataset(tmp_path, pattern="*.npy").load()
-
-    np.save(tmp_path / "cube.npy", np.zeros((2, 2, 2)))
-    with pytest.raises(RuntimeError, match=r"the first being .*cube.npy .*fit"):
-        EmbeddingDataset(tmp_path, pattern="*.npy", dims=("f",), reader=np.load).load()
-
-    with open(tmp_path / "1.pkl", "wb") as f:
-        pickle.dump({"seg1": [1, 2], "seg2": [1, 2, 3]}, f)
-    with pytest.raises(ValueError, match="Concatenation failed"):
-        EmbeddingDataset(tmp_path, pattern="*.pkl", dims=("feature",)).load()
 
 
 # --- BIDS ------------------------------------------------------------------------

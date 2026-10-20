@@ -7,8 +7,6 @@ Author: Hamza Abdelhedi <hamza.abdelhedi@umontreal.ca>
 """
 
 import logging
-from collections.abc import Callable
-from typing import Any
 
 import pandas as pd
 
@@ -21,7 +19,7 @@ __all__ = ["load_data"]
 
 
 def __getattr__(name):
-    if name in {"TabularDataset", "BIDSDataset", "EmbeddingDataset"}:
+    if name in {"TabularDataset", "BIDSDataset"}:
         from . import dataset as dataset_mod
 
         return getattr(dataset_mod, name)
@@ -38,8 +36,6 @@ def load_data(
     *,
     subject_metadata_df: pd.DataFrame | None = None,
     subject_key: str | None = None,
-    reader: Callable[[Any], Any] | None = None,
-    id_fn: Callable[[Any], str] | None = None,
 ) -> DataContainer:
     """
     Load a dataset described by a configuration into a DataContainer.
@@ -47,9 +43,10 @@ def load_data(
     The configuration says what to load and how:
     :class:`~coco_pipe.io.config.TabularConfig` for a feature table,
     :class:`~coco_pipe.io.config.BIDSConfig` for a BIDS M/EEG dataset and
-    :class:`~coco_pipe.io.config.EmbeddingConfig` for embedding files, each
-    validated when it is built. Only what a configuration cannot hold, tables
-    and functions, is passed here.
+    :class:`~coco_pipe.io.config.EmbeddingConfig` for an embedding file (read
+    by :func:`~coco_pipe.io.load_embeddings`, its rows then averaged by
+    ``aggregate_by`` when given), each validated when it is built. Only what a
+    configuration cannot hold, tables, is passed here.
 
     Parameters
     ----------
@@ -60,10 +57,6 @@ def load_data(
         addition to ``participants.tsv``.
     subject_key : str, optional
         BIDS only: the column of `subject_metadata_df` holding the subject ID.
-    reader : callable, optional
-        Embeddings only: reads one file and returns its array or dict.
-    id_fn : callable, optional
-        Embeddings only: returns the subject ID of a file path.
 
     Returns
     -------
@@ -131,12 +124,14 @@ def load_data(
             subjects=cfg.subjects,
         ).load()
 
-    return _resolve_dataset_class("EmbeddingDataset")(
-        path=cfg.path,
-        pattern=cfg.pattern,
-        dims=cfg.dims,
-        coords=cfg.coords,
-        reader=reader,
-        id_fn=id_fn,
+    from .embeddings import load_embeddings
+
+    container = load_embeddings(
+        cfg.path,
+        representation=cfg.representation,
+        conditions=cfg.conditions,
         subjects=cfg.subjects,
-    ).load()
+    )
+    if cfg.aggregate_by is not None:
+        container = container.aggregate(by=cfg.aggregate_by)
+    return container

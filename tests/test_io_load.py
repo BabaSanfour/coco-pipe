@@ -1,5 +1,4 @@
 import importlib
-import pickle
 import sys
 
 import numpy as np
@@ -13,7 +12,9 @@ from coco_pipe.io.config import (
     EmbeddingConfig,
     TabularConfig,
 )
+from coco_pipe.io.embeddings import load_embeddings
 from coco_pipe.io.load import load_data
+from tests.fixtures.embeddings import extract, write_recording
 
 
 def _csv(tmp_path):
@@ -28,11 +29,17 @@ def test_load_data_reads_each_config(tmp_path):
     table = load_data(TabularConfig(path=_csv(tmp_path), sep=",", target_col="y"))
     assert table.dims == ("obs", "feature")
 
-    blobs = tmp_path / "blobs"
-    blobs.mkdir()
-    (blobs / "rec01_emb.pkl").write_bytes(pickle.dumps(np.ones((1, 4))))
-    for path in (blobs, blobs / "rec01_emb.pkl"):
-        assert load_data(EmbeddingConfig(path=path)).X.shape == (1, 4)
+    results = {"EC": extract([0, 2]), "EO": extract([1], seed=1)}
+    path = write_recording(tmp_path, results)["window"].fpath
+    windows = load_data(EmbeddingConfig(path=path))
+    np.testing.assert_array_equal(windows.X, load_embeddings(path).X)
+    subject = load_data(
+        EmbeddingConfig(path=path, conditions="EC", aggregate_by="subject")
+    )
+    assert subject.ids.tolist() == ["01"]
+    np.testing.assert_allclose(
+        subject.X[0], results["EC"].window_embeddings.mean(axis=0), rtol=1e-6
+    )
 
 
 def test_load_data_bids_saved_epochs(tmp_path, write_bids_epochs):
@@ -84,10 +91,9 @@ def test_load_data_errors(tmp_path):
 
 def test_io_import_is_lightweight(monkeypatch):
     module_names = [
-        "coco_pipe.io",
-        "coco_pipe.io.load",
-        "coco_pipe.io.structures",
-        "coco_pipe.io.utils",
+        name
+        for name in sys.modules
+        if name == "coco_pipe.io" or name.startswith("coco_pipe.io.")
     ]
     cached_modules = {name: sys.modules.get(name) for name in module_names}
     for module_name in module_names:

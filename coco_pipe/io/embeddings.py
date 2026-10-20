@@ -10,14 +10,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import h5netcdf
 import numpy as np
 import xarray as xr
-from mne_bids import BIDSPath, get_bids_path_from_fname, get_entities_from_fname
+from mne_bids import (
+    BIDSPath,
+    find_matching_paths,
+    get_bids_path_from_fname,
+    get_entities_from_fname,
+)
 
 from coco_pipe.utils import get_package_version, stable_hash
 
 from ._constants import EMBEDDING_CONFIG_KEYS, EMBEDDING_VIEWS
 from ._serialization import atomic_path, write_json
+from .structures import DataContainer
 
 _RECORDING_ENTITIES = frozenset({"subject", "session", "task", "acquisition", "run"})
 
@@ -42,6 +49,11 @@ _VIEW_DIMS = {
     "cov": ("window", "feature"),
 }
 
+_REPRESENTATIONS = ("epoch", "recording")
+# h5py reads a long list of indices slowly: 43,741 rows of an 87,000-window
+# file took 0.97 s as one list and 0.08 s as lists of 1,024 (2026-10-20).
+_READ_ROWS = 1024
+
 
 def _check_label(label: str) -> None:
     """Refuse a ``desc`` label that is not a BIDS label."""
@@ -49,6 +61,12 @@ def _check_label(label: str) -> None:
         raise ValueError(
             f"label must be letters, digits and '+' (a BIDS label), got {label!r}."
         )
+
+
+def _check_view(view: str) -> None:
+    """Refuse a view that is not one of the embedding views."""
+    if view not in EMBEDDING_VIEWS:
+        raise ValueError(f"view must be one of {EMBEDDING_VIEWS}, got {view!r}.")
 
 
 def embedding_path(
@@ -99,8 +117,7 @@ def embedding_path(
         ``recording_id`` and ``task`` are given.
     """
     _check_label(label)
-    if view not in EMBEDDING_VIEWS:
-        raise ValueError(f"view must be one of {EMBEDDING_VIEWS}, got {view!r}.")
+    _check_view(view)
     if recording_id is None:
         entities = {"task": task}
     elif task is not None:
@@ -221,8 +238,9 @@ def write_recording_embeddings(
     ValueError
         If the conditions come from different models or settings (their
         ``config_hash``), differ in views, feature size or channels, hold
-        non-finite values or share epoch numbers, or if ``source`` lacks its
-        root, subject or datatype.
+        non-finite values or share epoch numbers, if a channel axis does not
+        match ``model_channels``, or if ``source`` lacks its root, subject or
+        datatype.
 
     Notes
     -----
@@ -232,7 +250,9 @@ def write_recording_embeddings(
     ``task``, ``run``, ``condition``, ``epoch``, ``start`` and ``stop``.
     Along ``recording`` are its ``source`` (a BIDS URI), sampling rate,
     channels, bad channels and the channels the model interpolated,
-    zero-filled or dropped. The attributes are ``model_key``, ``config``
+    zero-filled or dropped. A view with a ``channel`` axis names it with the
+    ``channel`` coordinate: the channels the model saw (``model_channels``).
+    The attributes are ``model_key``, ``config``
     (the extraction settings that are the same for every recording, as JSON
     text, see :data:`~coco_pipe.io.EMBEDDING_CONFIG_KEYS`), ``config_hash``
     (their hash) and ``description`` (the label); a token file adds
@@ -294,6 +314,9 @@ def write_recording_embeddings(
             "config_hash": stable_hash(config, length=16),
             "config": config,
             "recording": recording,
+            "model_channels": [
+                str(name) for name in metadata.get("model_channels", ())
+            ],
             "views": {
                 view: (_view_dims(view, array, metadata), array.shape[1:])
                 for view, array in arrays.items()
@@ -311,6 +334,7 @@ def write_recording_embeddings(
                 ("config_hash", "models or settings (config_hash)"),
                 ("views", "views or their shapes"),
                 ("recording", "channels or sampling rates"),
+                ("model_channels", "the channels the model saw"),
                 ("token", "token layouts"),
             ):
                 if current[key] != reference[key]:
@@ -387,13 +411,22 @@ def write_recording_embeddings(
     paths = {}
     datasets = {}
     for view, parts in views.items():
-        dims = reference["views"][view][0]
+        dims, shape = reference["views"][view]
+        view_coords = coords
+        if "channel" in dims:
+            channels = reference["model_channels"]
+            if len(channels) != shape[dims.index("channel") - 1]:
+                raise ValueError(
+                    f"The {view} embeddings have {shape[dims.index('channel') - 1]} "
+                    f"channels, but model_channels names {len(channels)}."
+                )
+            view_coords = {**coords, "channel": channels}
         paths[view] = embedding_path(
             root, label, view, recording_id=recording_id, datatype=source.datatype
         )
         datasets[view] = xr.Dataset(
             {"embeddings": (dims, np.concatenate(parts)[order])},
-            coords=coords,
+            coords=view_coords,
             attrs={**attrs, **(reference["token"] if view == "token" else {})},
         )
     for view, dataset in datasets.items():
@@ -648,3 +681,444 @@ def write_embedding_manifest(
         "records": [_json_value(dict(record)) for record in records],
     }
     return write_json(path, payload, sort_keys=True)
+
+
+def find_embeddings(
+    root: str | Path,
+    label: str,
+    view: str,
+    *,
+    subjects: str | Sequence[str] | None = None,
+) -> list[BIDSPath]:
+    """Return the per-recording embedding files of one label and view.
+
+    The files are found on disk with :func:`mne_bids.find_matching_paths`,
+    never through a manifest. The files at the dataset root, which hold every
+    recording, are not returned.
+
+    Parameters
+    ----------
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label, matched whole: ``"base"`` does not find the
+        ``"baseRandom"`` files.
+    view : str
+        One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
+    subjects : str or sequence of str, optional
+        The subject labels to find, without ``sub-``; every subject when
+        omitted.
+
+    Returns
+    -------
+    list of BIDSPath
+        The files, sorted by path; empty when none match.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``root`` is not a directory.
+    ValueError
+        If ``label`` is not a BIDS label or ``view`` is not an embedding view.
+    """
+    _check_label(label)
+    _check_view(view)
+    if not Path(root).is_dir():
+        raise FileNotFoundError(f"No embedding dataset at {root}.")
+    return find_matching_paths(
+        root,
+        subjects=subjects,
+        descriptions=re.escape(label),
+        suffixes=f"{view}embeddings",
+        extensions=".nc",
+        ignore_nosub=True,
+        check=False,
+    )
+
+
+def _read_header(path: Path) -> dict[str, Any]:
+    """Return what :func:`load_embeddings` checks of a file, without its data."""
+    try:
+        suffix = get_bids_path_from_fname(path.name, check=False).suffix or ""
+    except KeyError:
+        suffix = ""
+    view = suffix.removesuffix("embeddings")
+    if not suffix.endswith("embeddings") or view not in EMBEDDING_VIEWS:
+        raise ValueError(
+            f"{path.name} is not an embedding file "
+            "(<entities>_desc-<label>_<view>embeddings.nc)."
+        )
+    with xr.open_dataset(path, engine="h5netcdf", cache=False) as dataset:
+        attrs = dict(dataset.attrs)
+        variable = dataset["embeddings"]
+        dims = variable.dims
+        header = {
+            "path": path,
+            "view": view,
+            "axes": dims,
+            "shape": variable.shape[1:],
+            "dtype": variable.dtype,
+            "attrs": attrs,
+            "token": {
+                key: attrs.get(key)
+                for key in ("token_source", "token_feature_axis")
+                if view == "token"
+            },
+            "windows": {
+                name: coord.values
+                for name, coord in dataset.coords.items()
+                if coord.dims == ("window",)
+            },
+            "recordings": {
+                name: coord.values.tolist()
+                for name, coord in dataset.coords.items()
+                if coord.dims == ("recording",)
+            },
+            "channel": (
+                dataset["channel"].values.tolist()
+                if "channel" in dataset.coords
+                else None
+            ),
+        }
+    for key in ("model_key", "config_hash", "description", "config"):
+        if not attrs.get(key):
+            raise ValueError(f"{path.name} has no {key} attribute.")
+        header[key] = attrs[key]
+    if stable_hash(json.loads(header["config"]), length=16) != header["config_hash"]:
+        raise ValueError(f"The config of {path.name} does not match its hash.")
+    token = header["token"]
+    if view == "token":
+        valid = (
+            dims[:1] == ("window",)
+            and token["token_source"]
+            and token["token_feature_axis"] in dims[1:]
+        )
+    else:
+        valid = dims == _VIEW_DIMS[view]
+    if not valid:
+        raise ValueError(f"{path.name} has axes {dims}, which its view cannot have.")
+    if "channel" in dims and header["channel"] is None:
+        raise ValueError(f"{path.name} has a channel axis without channel names.")
+    if not {"obs", "recording_id", "subject", "condition"} <= set(header["windows"]):
+        raise ValueError(f"{path.name} lacks coordinates along window.")
+    return header
+
+
+def _read_headers(
+    source: str | Path | BIDSPath | Sequence[str | Path | BIDSPath],
+) -> list[dict[str, Any]]:
+    """Read the headers of files to combine, checking they can be combined.
+
+    Each header's ``order`` puts its channels in the first file's order, or
+    is None when they already are.
+    """
+    items = [source] if isinstance(source, str | Path | BIDSPath) else list(source)
+    if not items:
+        raise ValueError("source names no embedding file.")
+    headers = [
+        _read_header(Path(item.fpath if isinstance(item, BIDSPath) else item))
+        for item in items
+    ]
+    first = headers[0]
+    first["order"] = None
+    for header in headers[1:]:
+        for key, what in (
+            ("model_key", "model"),
+            ("config_hash", "settings (config_hash)"),
+            ("description", "label"),
+            ("view", "view"),
+            ("axes", "axes"),
+            ("shape", "shape"),
+            ("token", "token layout"),
+        ):
+            if header[key] != first[key]:
+                raise ValueError(
+                    f"{header['path'].name} differs from {first['path'].name} in "
+                    f"{what}: {header[key]} against {first[key]}."
+                )
+        for table in ("windows", "recordings"):
+            if set(header[table]) != set(first[table]):
+                raise ValueError(
+                    f"{header['path'].name} has other coordinates than "
+                    f"{first['path'].name}."
+                )
+        header["order"] = None
+        if header["channel"] != first["channel"]:
+            if sorted(header["channel"]) != sorted(first["channel"]):
+                raise ValueError(
+                    f"{header['path'].name} has the channels {header['channel']}, "
+                    f"{first['path'].name} has {first['channel']}."
+                )
+            header["order"] = [header["channel"].index(c) for c in first["channel"]]
+    return headers
+
+
+def _check_unique(obs: np.ndarray) -> None:
+    """Refuse observations that appear more than once."""
+    names, counts = np.unique(obs, return_counts=True)
+    if (counts > 1).any():
+        raise ValueError(
+            f"Observations appear more than once: {names[counts > 1][:5].tolist()}."
+        )
+
+
+def _copy_rows(
+    header: Mapping[str, Any], rows: np.ndarray, out: Any, start: int
+) -> None:
+    """Copy rows of a file's embeddings to ``out[start:]``, a block at a time.
+
+    Refuses non-finite values and puts the channels in the first file's
+    order.
+    """
+    if not len(rows):
+        return
+    axes = header["axes"]
+    with xr.open_dataset(header["path"], engine="h5netcdf", cache=False) as dataset:
+        variable = dataset["embeddings"]
+        for begin in range(0, len(rows), _READ_ROWS):
+            block = rows[begin : begin + _READ_ROWS]
+            index = (
+                slice(block[0], block[-1] + 1)
+                if block[-1] - block[0] == len(block) - 1
+                else block
+            )
+            values = variable.isel(window=index).values
+            if not np.isfinite(values).all():
+                raise ValueError(f"{header['path'].name} holds non-finite values.")
+            if header["order"] is not None:
+                values = np.take(values, header["order"], axis=axes.index("channel"))
+            out[start + begin : start + begin + len(block)] = values
+
+
+def load_embeddings(
+    source: str | Path | BIDSPath | Sequence[str | Path | BIDSPath],
+    *,
+    representation: str = "epoch",
+    conditions: str | Sequence[str] | None = None,
+    subjects: str | Sequence[str] | None = None,
+) -> DataContainer:
+    """Load embedding files into a DataContainer.
+
+    The files are read one at a time into one float32 array, so memory holds
+    the result and a block of 1,024 windows of one file. Only the windows of
+    ``conditions`` and ``subjects`` are read.
+
+    Parameters
+    ----------
+    source : path-like or BIDSPath, or a sequence of them
+        Embedding files of one model, label and view: one file holding every
+        recording, or recordings' files (see :func:`find_embeddings`).
+    representation : {"epoch", "recording"}
+        ``"epoch"``: one row per window. ``"recording"``: one row per
+        recording and condition, the mean of its windows.
+    conditions : str or sequence of str, optional
+        The conditions to load; every condition when omitted.
+    subjects : str or sequence of str, optional
+        The subjects to load, labels without ``sub-``; every subject when
+        omitted. A subject no file holds is not an error.
+
+    Returns
+    -------
+    DataContainer
+        ``X`` is float32, with the file's axes and ``window`` renamed
+        ``obs``: ``("obs", "feature")`` for window and cov files, and
+        ``channel``, ``time_patch`` or the model's token axes before
+        ``feature`` for the others. ``ids`` is ``obs``. Along ``obs`` are
+        the file's window coordinates (``recording_id``, ``subject``,
+        ``session``, ``task``, ``run``, ``condition``, ``epoch``, ``start``,
+        ``stop``) and each recording's ``bad_channels``; ``session`` and
+        ``run`` are dropped when no recording has one. A channel axis keeps
+        its ``channel`` names. ``meta`` holds ``model_key``, ``config``,
+        ``config_hash``, ``description`` (the label), ``view``,
+        ``representation``, ``files``, ``recordings`` (each loaded
+        recording's row of the files' recording table) and, for tokens,
+        ``token_source`` and ``token_feature_axis``.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` names no file or a file that is not an embedding file;
+        if the files differ in model, settings (``config_hash``), label,
+        view, axes, shape, token layout or channel names; if a condition is
+        in no file, no window is selected, an observation appears twice or a
+        value is not finite.
+
+    Notes
+    -----
+    The recording level is the mean of the window vectors as stored, which
+    are L2-normalised when the extractor normalises them; its ``obs`` is
+    ``<recording_id>_cond-<condition>`` and ``epoch_count`` holds the number
+    of windows. Channel axes that hold the same channels in another order
+    are put in the first file's order.
+    """
+    if representation not in _REPRESENTATIONS:
+        raise ValueError(
+            f"representation must be one of {_REPRESENTATIONS}, got {representation!r}."
+        )
+    wanted = {}
+    for name, values in (("condition", conditions), ("subject", subjects)):
+        if isinstance(values, str):
+            values = [values]
+        wanted[name] = None if values is None else set(values)
+
+    headers = _read_headers(source)
+    first = headers[0]
+    held = {str(c) for header in headers for c in header["windows"]["condition"]}
+    if wanted["condition"] is not None and wanted["condition"] - held:
+        raise ValueError(
+            f"No file holds the conditions {sorted(wanted['condition'] - held)}; "
+            f"they hold {sorted(held)}."
+        )
+    for header in headers:
+        keep = np.ones(len(header["windows"]["obs"]), dtype=bool)
+        for name, values in wanted.items():
+            if values is not None:
+                keep &= np.isin(header["windows"][name], list(values))
+        header["rows"] = np.flatnonzero(keep)
+    total = sum(len(header["rows"]) for header in headers)
+    if not total:
+        raise ValueError(
+            f"No window of the files matches conditions={conditions!r} and "
+            f"subjects={subjects!r}."
+        )
+
+    columns = {
+        name: np.concatenate([h["windows"][name][h["rows"]] for h in headers])
+        for name in first["windows"]
+    }
+    obs = columns.pop("obs")
+    _check_unique(obs)
+    loaded = set(columns["recording_id"].tolist())
+    recordings = [
+        {
+            "recording_id": recording_id,
+            **{
+                name: values[index]
+                for name, values in header["recordings"].items()
+                if name != "recording"
+            },
+        }
+        for header in headers
+        for index, recording_id in enumerate(header["recordings"]["recording"])
+        if recording_id in loaded
+    ]
+    bad_channels = {row["recording_id"]: row["bad_channels"] for row in recordings}
+    columns["bad_channels"] = np.array(
+        [bad_channels[recording_id] for recording_id in columns["recording_id"]]
+    )
+    for name in ("session", "run"):
+        if name in columns and not columns[name].astype(bool).any():
+            del columns[name]
+
+    X = np.empty((total, *first["shape"]), dtype=np.float32)
+    start = 0
+    for header in headers:
+        _copy_rows(header, header["rows"], X, start)
+        start += len(header["rows"])
+
+    meta = {
+        "model_key": first["model_key"],
+        "config": json.loads(first["config"]),
+        "config_hash": first["config_hash"],
+        "description": first["description"],
+        "view": first["view"],
+        "representation": representation,
+        "files": [header["path"].as_posix() for header in headers],
+        "recordings": recordings,
+        **first["token"],
+    }
+    coords = {
+        "obs": obs,
+        "ids": ("obs", obs),
+        **{name: ("obs", values) for name, values in columns.items()},
+        **({"channel": first["channel"]} if first["channel"] else {}),
+    }
+    container = DataContainer(
+        xr.DataArray(X, dims=("obs", *first["axes"][1:]), coords=coords, attrs=meta)
+    )
+    if representation == "recording":
+        container = container.aggregate(
+            by=[
+                f"{recording_id}_cond-{condition}"
+                for recording_id, condition in zip(
+                    columns["recording_id"], columns["condition"], strict=True
+                )
+            ]
+        )
+    return container
+
+
+def consolidate_embeddings(
+    files: Sequence[str | Path | BIDSPath],
+    root: str | Path,
+) -> BIDSPath:
+    """Write recordings' embedding files as one file at the dataset root.
+
+    The file is named by :func:`embedding_path` from the files' label and
+    view, with their task when they all have the same one. It holds their
+    windows in the order of ``files``, their recording tables and their
+    attributes, and reads back with :func:`load_embeddings` as the files
+    do. The files are copied one at a time, so memory holds one of them; the
+    embeddings keep their dtype. The file is written to a temporary name and
+    then moved into place, so nothing is left if a check fails.
+
+    Parameters
+    ----------
+    files : sequence of path-like or BIDSPath
+        Embedding files of one model, label and view, e.g. from
+        :func:`find_embeddings`.
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+
+    Returns
+    -------
+    BIDSPath
+        The file written.
+
+    Raises
+    ------
+    ValueError
+        As :func:`load_embeddings`: if ``files`` is empty or names a file
+        that is not an embedding file, if the files cannot be combined, if
+        an observation appears twice or a value is not finite.
+    """
+    headers = _read_headers(files)
+    first = headers[0]
+    windows = {
+        name: np.concatenate([header["windows"][name] for header in headers])
+        for name in first["windows"]
+    }
+    _check_unique(windows["obs"])
+    recordings = {
+        name: [value for header in headers for value in header["recordings"][name]]
+        for name in first["recordings"]
+    }
+    tasks = set(windows["task"].tolist()) if "task" in windows else set()
+    task = tasks.pop() if len(tasks) == 1 else None
+    path = embedding_path(root, first["description"], first["view"], task=task or None)
+    coords = {
+        **{name: ("window", values) for name, values in windows.items()},
+        "recording": recordings.pop("recording"),
+        **{name: ("recording", values) for name, values in recordings.items()},
+        **({"channel": first["channel"]} if first["channel"] else {}),
+    }
+    Path(root).mkdir(parents=True, exist_ok=True)
+    with atomic_path(path.fpath) as tmp:
+        xr.Dataset(coords=coords, attrs=first["attrs"]).to_netcdf(
+            tmp, engine="h5netcdf"
+        )
+        with h5netcdf.File(tmp, "a") as file:
+            for dim, size in zip(first["axes"][1:], first["shape"], strict=True):
+                if dim not in file.dimensions:
+                    file.dimensions[dim] = size
+            out = file.create_variable(
+                "embeddings",
+                first["axes"],
+                np.result_type(*(header["dtype"] for header in headers)),
+            )
+            start = 0
+            for header in headers:
+                rows = np.arange(len(header["windows"]["obs"]))
+                _copy_rows(header, rows, out, start)
+                start += len(rows)
+    return path

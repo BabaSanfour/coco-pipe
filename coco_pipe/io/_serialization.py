@@ -3,7 +3,6 @@
 Single home for the byte-level IO shared across coco-pipe:
 
 * tabular reads (CSV / parquet) — :func:`read_table`
-* opaque blob reads (pkl / npy / json / h5) — :func:`smart_reader`
 * JSON read / write — :func:`read_json`, :func:`write_json`
 * joblib object persistence — :func:`save_object`, :func:`load_object`
 * atomic NPZ writes — :func:`save_npz`
@@ -80,40 +79,6 @@ def read_table(
 
     df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
     return df.dropna(axis=1, how="all") if drop_all_empty else df
-
-
-def smart_reader(path: Path) -> Any:
-    """Read an opaque embedding blob, dispatching on file extension.
-
-    Supports ``.pkl``, ``.npy``, ``.json``, and ``.h5``/``.hdf5``. HDF5 files
-    return the ``embeddings`` dataset, then ``data``, then the sole dataset if
-    only one is present; otherwise the structure is ambiguous and a custom
-    reader is required.
-    """
-    suffix = path.suffix.lower()
-    if suffix == ".pkl":
-        import pickle
-
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    elif suffix == ".npy":
-        return np.load(path)
-    elif suffix == ".json":
-        return read_json(path)
-    elif suffix in [".h5", ".hdf5"]:
-        import h5py
-
-        with h5py.File(path, "r") as f:
-            keys = list(f.keys())
-            if "embeddings" in keys:
-                return f["embeddings"][:]
-            if "data" in keys:
-                return f["data"][:]
-            if len(keys) == 1:
-                return f[keys[0]][:]
-            raise ValueError(f"Ambiguous HDF5 structure: {keys}. Use custom reader.")
-    else:
-        raise ValueError(f"Unsupported extension {suffix}, utilize custom reader.")
 
 
 def read_json(path: Path | str) -> Any:

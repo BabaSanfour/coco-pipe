@@ -21,12 +21,6 @@ from .config import (
     EmbeddingConfig,
     TabularConfig,
 )
-from .embeddings import (
-    embedding_path,
-    write_embedding_dataset,
-    write_embedding_manifest,
-    write_recording_embeddings,
-)
 from .load import load_data
 from .provenance import fingerprint_container
 from .quality import (
@@ -54,8 +48,14 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .dataset import BIDSDataset as BIDSDataset
-    from .dataset import EmbeddingDataset as EmbeddingDataset
     from .dataset import TabularDataset as TabularDataset
+    from .embeddings import consolidate_embeddings as consolidate_embeddings
+    from .embeddings import embedding_path as embedding_path
+    from .embeddings import find_embeddings as find_embeddings
+    from .embeddings import load_embeddings as load_embeddings
+    from .embeddings import write_embedding_dataset as write_embedding_dataset
+    from .embeddings import write_embedding_manifest as write_embedding_manifest
+    from .embeddings import write_recording_embeddings as write_recording_embeddings
 
 __all__ = [
     "AGGREGATION_LEVELS",
@@ -79,7 +79,6 @@ __all__ = [
     "compute_subject_outlier_burden",
     "drop_epoch_outliers",
     "drop_subject_outliers",
-    "embedding_path",
     "fingerprint_container",
     "group_labels",
     "iter_analysis_units",
@@ -94,14 +93,21 @@ __all__ = [
     "save_npz",
     "save_object",
     "split_unit_sensor",
-    "write_embedding_dataset",
-    "write_embedding_manifest",
     "write_json",
-    "write_recording_embeddings",
 ]
 
-_LAZY_DATASET_EXPORTS = ["BIDSDataset", "EmbeddingDataset", "TabularDataset"]
-__all__.extend(_LAZY_DATASET_EXPORTS)
+_LAZY_DATASET_EXPORTS = ["BIDSDataset", "TabularDataset"]
+# They import mne-bids and h5netcdf, which `import coco_pipe.io` does not need.
+_LAZY_EMBEDDING_EXPORTS = [
+    "consolidate_embeddings",
+    "embedding_path",
+    "find_embeddings",
+    "load_embeddings",
+    "write_embedding_dataset",
+    "write_embedding_manifest",
+    "write_recording_embeddings",
+]
+__all__.extend(_LAZY_DATASET_EXPORTS + _LAZY_EMBEDDING_EXPORTS)
 
 
 def __getattr__(name):
@@ -111,4 +117,8 @@ def __getattr__(name):
         from .load import _resolve_dataset_class
 
         return _resolve_dataset_class(name)
+    if name in _LAZY_EMBEDDING_EXPORTS:
+        from . import embeddings
+
+        return getattr(embeddings, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

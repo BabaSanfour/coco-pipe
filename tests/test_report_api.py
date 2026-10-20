@@ -19,6 +19,7 @@ from coco_pipe.report.api import (
     merge_reports,
 )
 from coco_pipe.report.core import Report
+from tests.fixtures.embeddings import extract, write_recording
 from tests.fixtures.synthetic_result import make_synthetic_result
 
 ASSETS = {"plotly": "", "tailwind": "", "pako": ""}
@@ -59,9 +60,9 @@ def test_dataset_reports_load_their_source(tmp_path, write_bids_epochs):
     tabular = from_tabular(tmp_path / "data.tsv")
     assert tabular.title == "Tabular Report: data.tsv"
 
-    np.save(tmp_path / "emb.npy", np.ones((4, 3)))
-    embeddings = from_embeddings(tmp_path / "emb.npy")
-    assert embeddings.title == "Embedding Report: emb.npy"
+    path = write_recording(tmp_path, {"EC": extract([0, 1])})["window"].fpath
+    embeddings = from_embeddings(path, conditions="EC")
+    assert embeddings.title == f"Embedding Report: {path.name}"
 
     for report in (bids, tabular, embeddings):
         assert "Dimensions" in report.render()
