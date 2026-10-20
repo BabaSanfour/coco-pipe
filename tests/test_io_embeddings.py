@@ -551,7 +551,7 @@ def _set_nan(dataset):
     [
         (lambda tp: [], {}, "no embedding file"),
         (lambda tp: [tp / "sub-01_task-rest_epo.fif"], {}, "not an embedding file"),
-        (lambda tp: _one(tp), {"representation": "subject"}, "representation"),
+        (_one, {"representation": "subject"}, "representation"),
         (
             lambda tp: [_one(tp), _one(tp, subject="02", normalize_embeddings=False)],
             {},
@@ -572,8 +572,8 @@ def _set_nan(dataset):
             "channels",
         ),
         (lambda tp: [_one(tp), _one(tp)], {}, "more than once"),
-        (lambda tp: _one(tp), {"conditions": ["EC", "EO"]}, "conditions"),
-        (lambda tp: _one(tp), {"subjects": "02"}, "No window"),
+        (_one, {"conditions": ["EC", "EO"]}, "conditions"),
+        (_one, {"subjects": "02"}, "No window"),
         (lambda tp: _rewrite(_one(tp), _set_nan), {}, "non-finite"),
     ],
 )

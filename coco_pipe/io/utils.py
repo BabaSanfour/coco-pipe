@@ -12,7 +12,7 @@ import json
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
@@ -20,13 +20,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
-if TYPE_CHECKING:
-    from .structures import DataContainer
-
 logger = logging.getLogger(__name__)
-
-LOADED_LEVELS = ("epoch", "recording")
-"""The levels the BIDS and embedding loaders return (``representation``)."""
 
 
 def make_strata(
@@ -208,36 +202,6 @@ def _find_participants_tsv(root: Path, seen: set[Path]) -> Path | None:
             if found is not None:
                 return found
     return None
-
-
-def aggregate_recordings(container: "DataContainer") -> "DataContainer":
-    """Average a container's rows per recording and condition.
-
-    The ``recording`` level of :data:`~coco_pipe.io.AGGREGATION_LEVELS`, the
-    same for raw epochs and embeddings: one row per ``recording_id`` and
-    ``condition``, the mean of its rows, named
-    ``<recording_id>_cond-<condition>``, with ``epoch_count`` the number of
-    rows averaged. Coordinates with one value per row kept (the subject, its
-    metadata, ``y`` when it is the same) are kept.
-
-    Raises
-    ------
-    ValueError
-        If the container has no ``recording_id`` or ``condition`` coordinate.
-    """
-    missing = [c for c in ("recording_id", "condition") if c not in container.coords]
-    if missing:
-        raise ValueError(f"The recording level needs the coordinates {missing}.")
-    return container.aggregate(
-        by=[
-            f"{recording_id}_cond-{condition}"
-            for recording_id, condition in zip(
-                container.coords["recording_id"],
-                container.coords["condition"],
-                strict=True,
-            )
-        ]
-    )
 
 
 def bids_recording_id(path: Any) -> str:

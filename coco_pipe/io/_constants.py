@@ -74,6 +74,9 @@ attribute ``config``, which is also the content of the dataset's sidecar for
 the file's label and suffix, and ``config_hash`` is their hash.
 """
 
+LOADED_LEVELS: tuple[str, ...] = ("epoch", "recording")
+"""The levels the BIDS and embedding loaders return (their ``representation``)."""
+
 AGGREGATION_LEVELS: tuple[str, ...] = ("epoch", "recording", "subject")
 """Canonical observation-granularity ladder, coarsening left → right.
 

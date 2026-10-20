@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from coco_pipe.descriptors import DescriptorPipeline
-from coco_pipe.io.structures import DataContainer
+from coco_pipe.io.structures import DataContainer, aggregate_recordings
 
 
 @pytest.fixture
@@ -847,3 +847,16 @@ def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():
         "min_b2": "k4",
     }
     assert out.X[:, 2].tolist() == [10.0, 22.0]  # max of b1 per subject
+
+
+def test_aggregate_recordings_needs_recordings_and_conditions():
+    container = DataContainer(
+        np.arange(6.0).reshape(3, 2),
+        dims=("obs", "feature"),
+        coords={"recording_id": ["a", "a", "b"], "condition": ["EC", "EC", "EC"]},
+    )
+    recordings = aggregate_recordings(container)
+    assert recordings.ids.tolist() == ["a_cond-EC", "b_cond-EC"]
+    np.testing.assert_array_equal(recordings.X, [[1.0, 2.0], [4.0, 5.0]])
+    with pytest.raises(ValueError, match=r"\['condition'\]"):
+        aggregate_recordings(DataContainer(container.data.drop_vars("condition")))

@@ -37,11 +37,10 @@ from .quality import (
     resolve_qc_status,
     run_qc,
 )
-from .structures import DataContainer
+from .structures import DataContainer, aggregate_recordings
 from .transform import SklearnWrapper
 from .units import iter_analysis_units, split_unit_sensor
 from .utils import (
-    aggregate_recordings,
     compute_constant_feature_summary,
     compute_feature_missingness,
     normalize_subject_value,

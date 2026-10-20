@@ -4,9 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.utils import (
-    aggregate_recordings,
     compute_constant_feature_summary,
     compute_feature_missingness,
     load_participants_tsv,
@@ -204,16 +202,3 @@ def test_compute_constant_feature_summary():
     assert bool(summary.loc["zeros", "is_constant"])
     with pytest.raises(ValueError, match="tol must be non-negative"):
         compute_constant_feature_summary(frame, ["constant"], tol=-1)
-
-
-def test_aggregate_recordings_needs_recordings_and_conditions():
-    container = DataContainer(
-        np.arange(6.0).reshape(3, 2),
-        dims=("obs", "feature"),
-        coords={"recording_id": ["a", "a", "b"], "condition": ["EC", "EC", "EC"]},
-    )
-    recordings = aggregate_recordings(container)
-    assert recordings.ids.tolist() == ["a_cond-EC", "b_cond-EC"]
-    np.testing.assert_array_equal(recordings.X, [[1.0, 2.0], [4.0, 5.0]])
-    with pytest.raises(ValueError, match=r"\['condition'\]"):
-        aggregate_recordings(DataContainer(container.data.drop_vars("condition")))

@@ -23,12 +23,10 @@ from mne_bids import (
 
 from coco_pipe.utils import get_package_version, stable_hash
 
-from ._constants import EMBEDDING_CONFIG_KEYS, EMBEDDING_VIEWS
+from ._constants import EMBEDDING_CONFIG_KEYS, EMBEDDING_VIEWS, LOADED_LEVELS
 from ._serialization import atomic_path, write_json
-from .structures import DataContainer
+from .structures import DataContainer, aggregate_recordings
 from .utils import (
-    LOADED_LEVELS,
-    aggregate_recordings,
     bids_recording_id,
     load_subject_metadata,
     normalize_subject_value,

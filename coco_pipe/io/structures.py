@@ -1631,3 +1631,33 @@ class DataContainer:
             coords=new_coords,
             meta=meta,
         )
+
+
+def aggregate_recordings(container: DataContainer) -> DataContainer:
+    """Average a container's rows per recording and condition.
+
+    The ``recording`` level of :data:`~coco_pipe.io.AGGREGATION_LEVELS`, the
+    same for raw epochs and embeddings: one row per ``recording_id`` and
+    ``condition``, the mean of its rows, named
+    ``<recording_id>_cond-<condition>``, with ``epoch_count`` the number of
+    rows averaged. Coordinates with one value per recording and condition (the
+    subject, its metadata, ``y`` when it is the same) are kept.
+
+    Raises
+    ------
+    ValueError
+        If the container has no ``recording_id`` or ``condition`` coordinate.
+    """
+    missing = [c for c in ("recording_id", "condition") if c not in container.coords]
+    if missing:
+        raise ValueError(f"The recording level needs the coordinates {missing}.")
+    return container.aggregate(
+        by=[
+            f"{recording_id}_cond-{condition}"
+            for recording_id, condition in zip(
+                container.coords["recording_id"],
+                container.coords["condition"],
+                strict=True,
+            )
+        ]
+    )

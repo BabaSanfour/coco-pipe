@@ -18,10 +18,9 @@ import pandas as pd
 from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
 from mne_bids.config import reader as mne_bids_reader
 
-from .structures import DataContainer
+from ._constants import LOADED_LEVELS
+from .structures import DataContainer, aggregate_recordings
 from .utils import (
-    LOADED_LEVELS,
-    aggregate_recordings,
     bids_recording_id,
     load_subject_metadata,
     normalize_subject_value,
