@@ -240,7 +240,9 @@ def test_bids_dataset_raw_recordings(tmp_path):
     from mne_bids import BIDSPath, write_raw_bids
 
     raw = mne.io.RawArray(
-        np.zeros((2, 300)), mne.create_info(["M1", "M2"], 100.0, "mag"), verbose=False
+        np.random.default_rng(0).normal(size=(2, 300)) * 1e-12,
+        mne.create_info(["M1", "M2"], 100.0, "mag"),
+        verbose=False,
     )
     raw.set_meas_date(0)
     raw.set_annotations(
@@ -268,6 +270,8 @@ def test_bids_dataset_raw_recordings(tmp_path):
         "sub-01_task-rest",
         "sub-02_task-rest",
     }
+    # MNE names the event of fixed-length windows "1"
+    assert set(container.coords["condition"]) == {"1"}
 
     # epoched around events, with the codes passed in `event_id`
     codes = {"left": 3, "right": 10}
@@ -276,7 +280,29 @@ def test_bids_dataset_raw_recordings(tmp_path):
     ).load()
     assert container.meta["event_id"] == codes
     assert container.y.tolist() == [10, 3, 10] * 2
+    assert container.coords["condition"].tolist() == ["right", "left", "right"] * 2
+    assert container.coords["task"].tolist() == ["rest"] * 6
     assert container.coords["time"][0] == 0.0
+
+    # one row per recording and condition, as for embeddings
+    recordings = BIDSDataset(
+        tmp_path,
+        task="rest",
+        datatype="meg",
+        event_id=codes,
+        tmin=0.0,
+        tmax=0.2,
+        representation="recording",
+    ).load()
+    assert recordings.ids.tolist() == [
+        "sub-01_task-rest_cond-right",
+        "sub-01_task-rest_cond-left",
+        "sub-02_task-rest_cond-right",
+        "sub-02_task-rest_cond-left",
+    ]
+    assert recordings.coords["epoch_count"].tolist() == [2, 1, 2, 1]
+    assert recordings.y.tolist() == [10, 3, 10, 3]
+    np.testing.assert_allclose(recordings.X[0], container.X[[0, 2]].mean(axis=0))
 
     with pytest.raises(RuntimeError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()

@@ -12,6 +12,7 @@ from typing import Any
 
 import h5netcdf
 import numpy as np
+import pandas as pd
 import xarray as xr
 from mne_bids import (
     BIDSPath,
@@ -25,6 +26,13 @@ from coco_pipe.utils import get_package_version, stable_hash
 from ._constants import EMBEDDING_CONFIG_KEYS, EMBEDDING_VIEWS
 from ._serialization import atomic_path, write_json
 from .structures import DataContainer
+from .utils import (
+    LOADED_LEVELS,
+    aggregate_recordings,
+    bids_recording_id,
+    load_subject_metadata,
+    normalize_subject_value,
+)
 
 _RECORDING_ENTITIES = frozenset({"subject", "session", "task", "acquisition", "run"})
 
@@ -49,7 +57,6 @@ _VIEW_DIMS = {
     "cov": ("window", "feature"),
 }
 
-_REPRESENTATIONS = ("epoch", "recording")
 # h5py reads a long list of indices slowly: 43,741 rows of an 87,000-window
 # file took 0.97 s as one list and 0.08 s as lists of 1,024 (2026-10-20).
 _READ_ROWS = 1024
@@ -144,17 +151,6 @@ def embedding_path(
         extension=".nc",
         check=False,
     )
-
-
-def _recording_id(bids_path: BIDSPath) -> str:
-    """Name a recording by its entities, as the BIDS loader does."""
-    return BIDSPath(
-        subject=bids_path.subject,
-        session=bids_path.session,
-        task=bids_path.task,
-        acquisition=bids_path.acquisition,
-        run=bids_path.run,
-    ).basename
 
 
 def _channel_list(names: Sequence[str]) -> str:
@@ -267,7 +263,7 @@ def write_recording_embeddings(
         raise ValueError(
             f"source_dataset must be a DatasetLinks name, got {source_dataset!r}."
         )
-    recording_id = _recording_id(source)
+    recording_id = bids_recording_id(source)
     relative = source.fpath.relative_to(Path(source.root)).as_posix()
 
     views: dict[str, list[np.ndarray]] = {}
@@ -542,37 +538,25 @@ def write_embedding_dataset(
     sidecars: dict[Path, dict[str, Any]] = {}
     models = set()
     for path in sorted(root.glob("*embeddings.nc")):
-        bids_path = get_bids_path_from_fname(path.name, check=False).update(root=root)
-        label = bids_path.description
-        view = bids_path.suffix.removesuffix("embeddings")
-        if view not in EMBEDDING_VIEWS:
-            raise ValueError(f"{path.name} names no embedding view.")
+        header = _read_header(path)
+        label = header["description"]
         if label not in descriptions:
             raise ValueError(
                 f"{path.name} has the label {label!r}, which descriptions lacks."
             )
-        with xr.open_dataset(path, engine="h5netcdf") as dataset:
-            attrs = dict(dataset.attrs)
-            links = {str(uri).split(":")[1] for uri in dataset["source"].values}
-        if not {"config", "config_hash"} <= set(attrs):
-            raise ValueError(f"{path.name} has no config or config_hash attribute.")
+        links = {str(uri).split(":")[1] for uri in header["recordings"]["source"]}
         if not links <= set(dataset_links):
             raise ValueError(
                 f"The sources of {path.name} are in {sorted(links)}, which "
                 "dataset_links must name."
             )
-        if attrs.get("description") != label:
-            raise ValueError(
-                f"{path.name} holds the label {attrs.get('description')!r}."
-            )
-        config = json.loads(attrs["config"])
-        if stable_hash(config, length=16) != attrs["config_hash"]:
-            raise ValueError(f"The config of {path.name} does not match its hash.")
+        config = json.loads(header["config"])
         models.add(config["ModelKey"])
-        sidecars[bids_path.copy().update(extension=".json").fpath] = {
-            "Description": f"{descriptions[label]}: {_VIEW_TEXT[view]}.",
+        sidecar = header["name"].copy().update(root=root, extension=".json")
+        sidecars[sidecar.fpath] = {
+            "Description": f"{descriptions[label]}: {_VIEW_TEXT[header['view']]}.",
             **config,
-            "ConfigHash": attrs["config_hash"],
+            "ConfigHash": header["config_hash"],
         }
     if len(models) > 1:
         raise ValueError(
@@ -739,21 +723,30 @@ def find_embeddings(
 def _read_header(path: Path) -> dict[str, Any]:
     """Return what :func:`load_embeddings` checks of a file, without its data."""
     try:
-        suffix = get_bids_path_from_fname(path.name, check=False).suffix or ""
+        name = get_bids_path_from_fname(path.name, check=False)
     except KeyError:
-        suffix = ""
+        name = None
+    suffix = (name.suffix if name else None) or ""
     view = suffix.removesuffix("embeddings")
     if not suffix.endswith("embeddings") or view not in EMBEDDING_VIEWS:
         raise ValueError(
             f"{path.name} is not an embedding file "
             "(<entities>_desc-<label>_<view>embeddings.nc)."
         )
+    # A recording's file sits below sub-<label>/ in its dataset; a file holding
+    # every recording, at the dataset root.
+    root = path.parent
+    if name.subject is not None:
+        folders = [f for f in path.parents if f.name == f"sub-{name.subject}"]
+        root = folders[0].parent if folders else None
     with xr.open_dataset(path, engine="h5netcdf", cache=False) as dataset:
         attrs = dict(dataset.attrs)
         variable = dataset["embeddings"]
         dims = variable.dims
         header = {
             "path": path,
+            "name": name,
+            "root": root,
             "view": view,
             "axes": dims,
             "shape": variable.shape[1:],
@@ -786,6 +779,8 @@ def _read_header(path: Path) -> dict[str, Any]:
         header[key] = attrs[key]
     if stable_hash(json.loads(header["config"]), length=16) != header["config_hash"]:
         raise ValueError(f"The config of {path.name} does not match its hash.")
+    if name.description != header["description"]:
+        raise ValueError(f"{path.name} holds the label {header['description']!r}.")
     token = header["token"]
     if view == "token":
         valid = (
@@ -896,6 +891,8 @@ def load_embeddings(
     representation: str = "epoch",
     conditions: str | Sequence[str] | None = None,
     subjects: str | Sequence[str] | None = None,
+    subject_metadata_df: pd.DataFrame | None = None,
+    subject_key: str | None = None,
 ) -> DataContainer:
     """Load embedding files into a DataContainer.
 
@@ -916,6 +913,11 @@ def load_embeddings(
     subjects : str or sequence of str, optional
         The subjects to load, labels without ``sub-``; every subject when
         omitted. A subject no file holds is not an error.
+    subject_metadata_df : DataFrame, optional
+        Subject-level metadata to attach, in addition to ``participants.tsv``.
+    subject_key : str, optional
+        The column of ``subject_metadata_df`` holding the subject ID. It
+        matches rows to subjects and is not attached itself.
 
     Returns
     -------
@@ -926,8 +928,12 @@ def load_embeddings(
         ``feature`` for the others. ``ids`` is ``obs``. Along ``obs`` are
         the file's window coordinates (``recording_id``, ``subject``,
         ``session``, ``task``, ``run``, ``condition``, ``epoch``, ``start``,
-        ``stop``) and each recording's ``bad_channels``; ``session`` and
-        ``run`` are dropped when no recording has one. A channel axis keeps
+        ``stop``), each recording's ``bad_channels`` and each subject's
+        metadata: the columns of ``participants.tsv``, found in the files'
+        dataset or, following ``SourceDatasets``, in a dataset it comes from
+        (see :func:`~coco_pipe.io.utils.load_participants_tsv`), and those of
+        ``subject_metadata_df``. ``session`` and ``run`` are dropped when no
+        recording has one. A channel axis keeps
         its ``channel`` names. ``meta`` holds ``model_key``, ``config``,
         ``config_hash``, ``description`` (the label), ``view``,
         ``representation``, ``files``, ``recordings`` (each loaded
@@ -941,7 +947,9 @@ def load_embeddings(
         if the files differ in model, settings (``config_hash``), label,
         view, axes, shape, token layout or channel names; if a condition is
         in no file, no window is selected, an observation appears twice or a
-        value is not finite.
+        value is not finite; if ``subject_metadata_df`` comes without
+        ``subject_key``, or a subject metadata column is named like a
+        coordinate the loader sets.
 
     Notes
     -----
@@ -951,9 +959,9 @@ def load_embeddings(
     of windows. Channel axes that hold the same channels in another order
     are put in the first file's order.
     """
-    if representation not in _REPRESENTATIONS:
+    if representation not in LOADED_LEVELS:
         raise ValueError(
-            f"representation must be one of {_REPRESENTATIONS}, got {representation!r}."
+            f"representation must be one of {LOADED_LEVELS}, got {representation!r}."
         )
     wanted = {}
     for name, values in (("condition", conditions), ("subject", subjects)):
@@ -1009,6 +1017,19 @@ def load_embeddings(
     for name in ("session", "run"):
         if name in columns and not columns[name].astype(bool).any():
             del columns[name]
+    lookup = load_subject_metadata(
+        dict.fromkeys(h["root"] for h in headers if h["root"] is not None),
+        subject_metadata_df,
+        subject_key,
+        reserved={*first["windows"], "bad_channels", "epoch_count", "ids", "y"},
+    )
+    if lookup:
+        subject_labels, index = np.unique(columns["subject"], return_inverse=True)
+        table = pd.DataFrame(
+            [lookup.get(normalize_subject_value(s), {}) for s in subject_labels]
+        )
+        for name in table.columns:
+            columns[name] = table[name].to_numpy()[index]
 
     X = np.empty((total, *first["shape"]), dtype=np.float32)
     start = 0
@@ -1037,14 +1058,7 @@ def load_embeddings(
         xr.DataArray(X, dims=("obs", *first["axes"][1:]), coords=coords, attrs=meta)
     )
     if representation == "recording":
-        container = container.aggregate(
-            by=[
-                f"{recording_id}_cond-{condition}"
-                for recording_id, condition in zip(
-                    columns["recording_id"], columns["condition"], strict=True
-                )
-            ]
-        )
+        container = aggregate_recordings(container)
     return container
 
 

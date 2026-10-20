@@ -18,19 +18,6 @@ logger = logging.getLogger(__name__)
 __all__ = ["load_data"]
 
 
-def __getattr__(name):
-    if name in {"TabularDataset", "BIDSDataset"}:
-        from . import dataset as dataset_mod
-
-        return getattr(dataset_mod, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def _resolve_dataset_class(name: str):
-    """Resolve dataset classes lazily while remaining patch-friendly in tests."""
-    return globals().get(name) or __getattr__(name)
-
-
 def load_data(
     config: DatasetConfig | TabularConfig | BIDSConfig | EmbeddingConfig,
     *,
@@ -53,10 +40,11 @@ def load_data(
     config : DatasetConfig or {Tabular,BIDS,Embedding}Config
         The dataset to load.
     subject_metadata_df : DataFrame, optional
-        BIDS only: subject-level metadata attached to each observation, in
-        addition to ``participants.tsv``.
+        BIDS and embeddings: subject-level metadata attached to each
+        observation, in addition to ``participants.tsv``.
     subject_key : str, optional
-        BIDS only: the column of `subject_metadata_df` holding the subject ID.
+        BIDS and embeddings: the column of `subject_metadata_df` holding the
+        subject ID.
 
     Returns
     -------
@@ -84,8 +72,11 @@ def load_data(
         )
     logger.info(f"Loading data from {cfg.path} using mode='{cfg.mode}'")
 
+    # The dataset classes import MNE, which `import coco_pipe.io` does not need.
+    from .dataset import BIDSDataset, TabularDataset
+
     if cfg.mode == "tabular":
-        return _resolve_dataset_class("TabularDataset")(
+        return TabularDataset(
             path=cfg.path,
             target_col=cfg.target_col,
             index_col=cfg.index_col,
@@ -100,7 +91,7 @@ def load_data(
         ).load()
 
     if cfg.mode == "bids":
-        return _resolve_dataset_class("BIDSDataset")(
+        return BIDSDataset(
             root=cfg.path,
             mode=cfg.loading_mode,
             task=cfg.task,
@@ -119,6 +110,7 @@ def load_data(
             description=cfg.description,
             dtype=cfg.dtype,
             n_jobs=cfg.n_jobs,
+            representation=cfg.representation,
             subject_metadata_df=subject_metadata_df,
             subject_key=subject_key,
             subjects=cfg.subjects,
@@ -131,6 +123,8 @@ def load_data(
         representation=cfg.representation,
         conditions=cfg.conditions,
         subjects=cfg.subjects,
+        subject_metadata_df=subject_metadata_df,
+        subject_key=subject_key,
     )
     if cfg.aggregate_by is not None:
         container = container.aggregate(by=cfg.aggregate_by)

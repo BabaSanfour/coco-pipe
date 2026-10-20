@@ -92,6 +92,11 @@ class BIDSConfig(BaseDatasetConfig):
     description: str | None = Field(
         None, description="`desc` entity of the files to load."
     )
+    representation: Literal["epoch", "recording"] = Field(
+        "epoch",
+        description="'epoch': one row per epoch; 'recording': one row per "
+        "recording and condition, the mean of its epochs.",
+    )
 
 
 class EmbeddingConfig(BaseDatasetConfig):

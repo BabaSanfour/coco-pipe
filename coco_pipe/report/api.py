@@ -208,8 +208,8 @@ def from_embeddings(
     output_path : path-like, optional
         If given, save the rendered report to this path.
     **kwargs
-        Passed to :func:`~coco_pipe.io.load_embeddings`: ``representation``,
-        ``conditions``, ``subjects``.
+        Passed to :func:`~coco_pipe.io.load_embeddings`, e.g.
+        ``representation``, ``conditions`` or ``subjects``.
 
     Returns
     -------

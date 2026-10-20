@@ -40,6 +40,11 @@ def test_load_data_reads_each_config(tmp_path):
     np.testing.assert_allclose(
         subject.X[0], results["EC"].window_embeddings.mean(axis=0), rtol=1e-6
     )
+    meta = pd.DataFrame({"Study ID": [1], "age": [9]})
+    aged = load_data(
+        EmbeddingConfig(path=path), subject_metadata_df=meta, subject_key="Study ID"
+    )
+    assert aged.coords["age"].tolist() == [9, 9, 9]
 
 
 def test_load_data_bids_saved_epochs(tmp_path, write_bids_epochs):
@@ -138,3 +143,8 @@ def test_load_data_passes_the_array_type_and_threads(tmp_path):
     assert default.X.dtype == np.float32
     assert wide.X.dtype == np.float64
     np.testing.assert_allclose(wide.X, default.X, rtol=1e-6)
+    recordings = load_data(BIDSConfig(representation="recording", **options))
+    assert recordings.ids.tolist() == [
+        "sub-01_task-rest_cond-1",
+        "sub-02_task-rest_cond-1",
+    ]

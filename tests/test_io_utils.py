@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.utils import (
+    aggregate_recordings,
     compute_constant_feature_summary,
     compute_feature_missingness,
     load_participants_tsv,
@@ -114,6 +116,24 @@ def test_load_participants_tsv(tmp_path):
     assert lookup([{"URL": "doi:10.1/x"}, {"URL": "../../"}])["0001"] == {"age": 20}
     assert lookup([{"URL": "doi:10.1/x"}, {"URL": "bids:other:"}]) == {}
 
+    # sources of sources are followed: embeddings, then preproc, then raw
+    embeddings = root / "derivatives" / "coco-pipe-cbramod"
+    embeddings.mkdir()
+    (embeddings / "dataset_description.json").write_text(
+        json.dumps(
+            {
+                "DatasetType": "derivative",
+                "SourceDatasets": [{"URL": "bids:preproc:"}],
+                "DatasetLinks": {"preproc": "../preproc"},
+            }
+        )
+    )
+    lookup([{"URL": "../../"}])
+    assert load_participants_tsv(embeddings)["0001"] == {"age": 20}
+    # a loop of sources ends the search
+    lookup([{"URL": "../coco-pipe-cbramod"}])
+    assert load_participants_tsv(embeddings) == {}
+
     (root / "participants.tsv").write_text("age\t30\n", encoding="utf-8")
     assert load_participants_tsv(root) == {}
 
@@ -184,3 +204,16 @@ def test_compute_constant_feature_summary():
     assert bool(summary.loc["zeros", "is_constant"])
     with pytest.raises(ValueError, match="tol must be non-negative"):
         compute_constant_feature_summary(frame, ["constant"], tol=-1)
+
+
+def test_aggregate_recordings_needs_recordings_and_conditions():
+    container = DataContainer(
+        np.arange(6.0).reshape(3, 2),
+        dims=("obs", "feature"),
+        coords={"recording_id": ["a", "a", "b"], "condition": ["EC", "EC", "EC"]},
+    )
+    recordings = aggregate_recordings(container)
+    assert recordings.ids.tolist() == ["a_cond-EC", "b_cond-EC"]
+    np.testing.assert_array_equal(recordings.X, [[1.0, 2.0], [4.0, 5.0]])
+    with pytest.raises(ValueError, match=r"\['condition'\]"):
+        aggregate_recordings(DataContainer(container.data.drop_vars("condition")))

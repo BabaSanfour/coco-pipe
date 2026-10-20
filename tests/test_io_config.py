@@ -17,6 +17,7 @@ def test_configs_mirror_their_loaders():
     assert (bids.datatype, bids.loading_mode) == ("eeg", "epochs")
     assert (bids.tmin, bids.tmax, bids.baseline) == (-0.2, 0.5, None)
     assert (bids.dtype, bids.n_jobs) == ("float32", 1)
+    assert bids.representation == "epoch"
     bids = BIDSConfig(
         path="/root",
         task="rest",
@@ -57,6 +58,7 @@ def test_dataset_config_picks_the_config_by_mode():
         lambda: BIDSConfig(path="/root", windowlength=2.0),
         lambda: BIDSConfig(path="/root", subjects=5),
         lambda: BIDSConfig(path="/root", loading_mode="load-existing"),
+        lambda: BIDSConfig(path="/root", representation="subject"),
         # the view comes from the file; the old file pattern is gone
         lambda: EmbeddingConfig(path="/emb.nc", representation="token"),
         lambda: EmbeddingConfig(path="/emb", pattern="*.npy"),

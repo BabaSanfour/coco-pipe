@@ -98,10 +98,22 @@ config, validated when it is built, which says what to load and how:
        )
    )
 
-Tables, which a config cannot hold, are passed to ``load_data`` directly:
-``subject_metadata_df`` / ``subject_key`` for BIDS. Embedding files are also
-read with :func:`~coco_pipe.io.load_embeddings`, which takes several files at
-once (see :func:`~coco_pipe.io.find_embeddings`).
+BIDS and embedding containers name their rows alike: ``obs`` is
+``<recording_id>_epoch-NNNN``, so an epoch and the embedding extracted from it
+share an ID, and both carry ``recording_id``, ``subject``, ``task``,
+``condition`` (the event name) and ``epoch``. With
+``representation="recording"`` both return one row per recording and
+condition, the mean of its rows, named ``<recording_id>_cond-<condition>``
+(:func:`~coco_pipe.io.aggregate_recordings`).
+
+They also carry each subject's ``participants.tsv`` columns along ``obs``. A
+derivative dataset without that file reads it from the dataset it comes from,
+following ``SourceDatasets`` (embeddings, then preprocessed data, then raw
+data). More subject-level columns, which a config cannot hold, are passed to
+``load_data`` directly as ``subject_metadata_df``, with ``subject_key`` naming
+its subject column. Embedding files are also read with
+:func:`~coco_pipe.io.load_embeddings`, which takes several files at once (see
+:func:`~coco_pipe.io.find_embeddings`).
 
 3. Quality Control
 ==================

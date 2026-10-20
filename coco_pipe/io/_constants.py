@@ -78,7 +78,10 @@ AGGREGATION_LEVELS: tuple[str, ...] = ("epoch", "recording", "subject")
 """Canonical observation-granularity ladder, coarsening left → right.
 
 - ``epoch``     — one row per analysis window/epoch (finest).
-- ``recording`` — one row per recording = ``(subject, session, run)``.
+- ``recording`` — one row per recording and condition: the rows of one
+  ``recording_id`` (its subject, session, task, acquisition and run) and one
+  ``condition``, averaged, named ``<recording_id>_cond-<condition>``
+  (:func:`~coco_pipe.io.aggregate_recordings`).
 - ``subject``   — one row per subject, pooled across that subject's recordings.
 
 The single shared vocabulary for descriptor tables, foundation-embedding

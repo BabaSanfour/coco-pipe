@@ -656,3 +656,53 @@ def test_consolidate_embeddings_refuses_and_leaves_no_file(tmp_path, files, mess
     with pytest.raises(ValueError, match=message):
         consolidate_embeddings(files(tmp_path), root)
     assert not [path for path in root.glob("*") if path.is_file()]
+
+
+def test_load_embeddings_attaches_subject_metadata(tmp_path):
+    # The embeddings' source is preproc, whose source is raw: participants.tsv
+    # is two datasets away, as in a real derivative tree.
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pd.DataFrame(
+        {"participant_id": ["sub-01", "sub-02"], "age": [9, 10], "group": ["a", "b"]}
+    ).to_csv(raw / "participants.tsv", sep="\t", index=False)
+    preproc = tmp_path / "preproc"
+    preproc.mkdir()
+    (preproc / "dataset_description.json").write_text(
+        json.dumps({"DatasetType": "derivative", "SourceDatasets": [{"URL": "../raw"}]})
+    )
+    write_recording(tmp_path, {"EC": extract([0, 1]), "EO": extract([2], seed=1)})
+    write_recording(tmp_path, {"EC": extract([0], seed=2)}, subject="03")
+    root = tmp_path / "out"
+    write_embedding_dataset(
+        root,
+        {"base": "Pretrained"},
+        name="test",
+        dataset_links={"preproc": "../preproc"},
+    )
+    files = find_embeddings(root, "base", "window")
+    whole = consolidate_embeddings(files, root)
+
+    for source in (files, whole):
+        windows = load_embeddings(source)
+        # sub-03 has no row in participants.tsv
+        np.testing.assert_array_equal(windows.coords["age"], [9, 9, 9, np.nan])
+        assert windows.coords["group"][:3].tolist() == ["a", "a", "a"]
+        assert pd.isna(windows.coords["group"][3])
+
+    meta = pd.DataFrame({"id": ["sub-03", "01"], "age": [11, 8], "iq": [100, 90]})
+    windows = load_embeddings(whole, subject_metadata_df=meta, subject_key="id")
+    assert windows.coords["age"].tolist() == [8, 8, 8, 11]
+    assert windows.coords["iq"].tolist() == [90, 90, 90, 100]
+    assert "id" not in windows.coords
+    recordings = load_embeddings(
+        whole, representation="recording", subject_metadata_df=meta, subject_key="id"
+    )
+    assert recordings.coords["age"].tolist() == [8, 8, 11]
+
+    with pytest.raises(ValueError, match=r"\['condition'\] have the names"):
+        load_embeddings(
+            whole, subject_metadata_df=meta.assign(condition="x"), subject_key="id"
+        )
+    with pytest.raises(ValueError, match="subject_key must be provided"):
+        load_embeddings(whole, subject_metadata_df=meta)

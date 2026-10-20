@@ -41,6 +41,7 @@ from .structures import DataContainer
 from .transform import SklearnWrapper
 from .units import iter_analysis_units, split_unit_sensor
 from .utils import (
+    aggregate_recordings,
     compute_constant_feature_summary,
     compute_feature_missingness,
     normalize_subject_value,
@@ -73,6 +74,7 @@ __all__ = [
     "SklearnWrapper",
     "SubjectDropRecord",
     "TabularConfig",
+    "aggregate_recordings",
     "compute_constant_feature_summary",
     "compute_feature_missingness",
     "compute_row_outlier_scores",
@@ -112,11 +114,9 @@ __all__.extend(_LAZY_DATASET_EXPORTS + _LAZY_EMBEDDING_EXPORTS)
 
 def __getattr__(name):
     if name in _LAZY_DATASET_EXPORTS:
-        # Delegate to load's lazy resolver so dataset-class resolution (and
-        # test monkeypatching) lives in a single place.
-        from .load import _resolve_dataset_class
+        from . import dataset
 
-        return _resolve_dataset_class(name)
+        return getattr(dataset, name)
     if name in _LAZY_EMBEDDING_EXPORTS:
         from . import embeddings
 
