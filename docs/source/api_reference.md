@@ -83,6 +83,8 @@ The most commonly used classes and functions, grouped by module.
 
    coco_pipe.io.DataContainer
    coco_pipe.io.load_data
+   coco_pipe.io.load_embeddings
+   coco_pipe.io.write_recording_embeddings
 ```
 
 ### Transforms and Diagnostics
