@@ -29,7 +29,6 @@ def test_extractor_normalizes_channels_pools_and_records_provenance():
         "cbramod",
         model=FakeFoundationModel(),
         normalize_embeddings=False,
-        recording_pooling="mean",
         resample=False,
     )
     result = extractor.extract(
@@ -37,10 +36,7 @@ def test_extractor_normalizes_channels_pools_and_records_provenance():
         signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["T3", "T4"]),
         metadata={"recording_id": "r1"},
     )
-    assert result.window_embeddings.shape == (4, 2)
-    np.testing.assert_allclose(
-        result.recording_embedding, result.window_embeddings.mean(axis=0)
-    )
+    np.testing.assert_allclose(result.window_embeddings, X.mean(axis=-1))
     assert result.metadata["model_channels"] == ["T7", "T8"]
     assert result.metadata["recording_id"] == "r1"
     assert result.metadata["input_sfreq"] == 200.0

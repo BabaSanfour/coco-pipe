@@ -500,9 +500,9 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
         recordings.X,
         np.stack(
             [
-                first["EC"].recording_embedding,
-                first["EO"].recording_embedding,
-                second["EC"].recording_embedding,
+                first["EC"].window_embeddings.mean(axis=0),
+                first["EO"].window_embeddings.mean(axis=0),
+                second["EC"].window_embeddings.mean(axis=0),
             ]
         ),
         rtol=1e-6,

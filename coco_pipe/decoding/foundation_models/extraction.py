@@ -234,7 +234,7 @@ def normalize_inclusive_endpoint(
 
 @dataclass
 class FoundationEmbeddingResult:
-    """Window- and recording-level embeddings plus extraction provenance.
+    """Window embeddings plus extraction provenance.
 
     ``token_embeddings`` holds the native backbone feature tensor, without
     reshaping or normalization, and is populated only when the extractor is
@@ -242,7 +242,6 @@ class FoundationEmbeddingResult:
     """
 
     window_embeddings: np.ndarray
-    recording_embedding: np.ndarray
     window_start: np.ndarray
     window_stop: np.ndarray
     window_index: np.ndarray
@@ -260,7 +259,6 @@ class FoundationEmbeddingExtractor:
         backend: str = "auto",
         device: str = "auto",
         pooling: str = "mean",
-        recording_pooling: str = "mean",
         normalize_embeddings: bool = True,
         resample: bool = True,
         cache_embeddings: bool = False,
@@ -269,8 +267,6 @@ class FoundationEmbeddingExtractor:
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
     ) -> None:
-        if recording_pooling not in {"mean", "median", "max"}:
-            raise ValueError("recording_pooling must be mean, median, or max.")
         if batch_size is not None and batch_size <= 0:
             raise ValueError("batch_size must be a positive integer or None.")
         if store_tokens and cache_embeddings:
@@ -279,7 +275,6 @@ class FoundationEmbeddingExtractor:
         self.backend = backend
         self.device = device
         self.pooling = pooling
-        self.recording_pooling = recording_pooling
         self.normalize_embeddings = normalize_embeddings
         self.resample = resample
         self.cache_embeddings = cache_embeddings
@@ -436,7 +431,7 @@ class FoundationEmbeddingExtractor:
         window_index: Sequence[int] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> FoundationEmbeddingResult:
-        """Extract one embedding per input window and one pooled recording vector.
+        """Extract one embedding per input window.
 
         ``window_index`` is the number of each window in its recording; by
         default the windows are numbered in the order given.
@@ -499,12 +494,6 @@ class FoundationEmbeddingExtractor:
             raise ValueError(
                 "Foundation backend must return one 2-D embedding row per window."
             )
-        reducer = {
-            "mean": np.mean,
-            "median": np.median,
-            "max": np.max,
-        }[self.recording_pooling]
-        recording = reducer(embeddings, axis=0)
         starts = np.asarray(
             window_start if window_start is not None else np.arange(len(X)),
             dtype=int,
@@ -553,7 +542,6 @@ class FoundationEmbeddingExtractor:
                 **prepared.channel_adaptation(),
             },
             "within_window_pooling": self.pooling,
-            "recording_pooling": self.recording_pooling,
             "normalize_embeddings": self.normalize_embeddings,
             "expects_microvolts": bool(spec.expects_microvolts),
             "input_scale": float(spec.input_scale),
@@ -575,9 +563,6 @@ class FoundationEmbeddingExtractor:
             "window_duration_seconds": float(
                 X.shape[-1] / float(signal_metadata.sfreq)
             ),
-            "windowing_source": "upstream_epochs",
-            "remainder_policy": "defined_by_upstream_epoching",
-            "padding_policy": "defined_by_upstream_epoching",
         }
         if tokens is not None:
             token_metadata = model.get_token_output_metadata()
@@ -598,7 +583,6 @@ class FoundationEmbeddingExtractor:
             )
         return FoundationEmbeddingResult(
             window_embeddings=embeddings,
-            recording_embedding=np.asarray(recording),
             window_start=starts,
             window_stop=stops,
             window_index=(
