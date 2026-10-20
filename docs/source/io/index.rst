@@ -146,6 +146,12 @@ named by the BIDS suffix ``<view>embeddings``:
      - ``window``, ``feature``
      - The tangent-space covariance of each window's tokens.
 
+Window vectors are L2-normalised when the extraction setting
+``NormalizeEmbeddings`` says so. Channel and patch views are the tokens
+averaged and are never normalised, whatever that setting says: an analysis
+normalises them at load as it needs, per channel or, after ``flatten``, as one
+vector.
+
 The ``desc`` entity names the processing that produced the file, e.g. ``base``,
 ``baseRandom`` or ``baseEaCoral``; it is any BIDS label (letters, digits and
 ``+``). A file keeps its source recording's entities, so one recording's files

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import warnings
 from collections.abc import Mapping, Sequence
@@ -232,6 +233,42 @@ def normalize_inclusive_endpoint(
     raise ValueError(reason)
 
 
+#: The token axis each pooled view keeps; it averages the other observation axes.
+_VIEW_AXES = {"channel": "channel", "patch": "time_patch"}
+
+
+def _pooled_views(token_metadata: Mapping[str, Any]) -> list[str]:
+    """Return the pooled views the token axes allow.
+
+    A view keeps one observation axis and averages the others, so it needs
+    that axis and at least one more (LUNA's tokens, one per time patch, are
+    already its patch view), with the feature axis last.
+    """
+    axes = token_metadata["token_axes"]
+    if axes[-1] != token_metadata["token_feature_axis"]:
+        return []
+    observation = axes[1:-1]
+    return [
+        view
+        for view, axis in _VIEW_AXES.items()
+        if axis in observation and len(observation) > 1
+    ]
+
+
+def _pool_tokens(
+    tokens: np.ndarray, token_metadata: Mapping[str, Any], view: str
+) -> np.ndarray:
+    """Average tokens over the observation axes a view does not keep.
+
+    Returns ``(window, <the view's axis>, feature)``.
+    """
+    axes = token_metadata["token_axes"]
+    kept = axes.index(_VIEW_AXES[view])
+    return tokens.mean(
+        axis=tuple(index for index in range(1, len(axes) - 1) if index != kept)
+    )
+
+
 @dataclass
 class FoundationEmbeddingResult:
     """Window embeddings plus extraction provenance.
@@ -239,6 +276,14 @@ class FoundationEmbeddingResult:
     ``token_embeddings`` holds the native backbone feature tensor, without
     reshaping or normalization, and is populated only when the extractor is
     built with ``store_tokens=True``.
+
+    ``channel_embeddings`` (window, channel, feature) holds each channel's
+    tokens averaged over time patches, and ``patch_embeddings`` (window,
+    time_patch, feature) each time patch's tokens averaged over channels. Each
+    is populated when the backend's tokens have its axis and another one to
+    average over (CBraMod and REVE have both), unless the extractor caches
+    window embeddings. They are not normalized, whatever
+    ``normalize_embeddings`` says.
     """
 
     window_embeddings: np.ndarray
@@ -247,6 +292,8 @@ class FoundationEmbeddingResult:
     window_index: np.ndarray
     metadata: dict[str, Any]
     token_embeddings: np.ndarray | None = None
+    channel_embeddings: np.ndarray | None = None
+    patch_embeddings: np.ndarray | None = None
 
 
 class FoundationEmbeddingExtractor:
@@ -295,8 +342,9 @@ class FoundationEmbeddingExtractor:
         model: Any,
         model_input: np.ndarray,
         *,
-        return_tokens: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        token_metadata: Mapping[str, Any] | None = None,
+        views: Sequence[str] = (),
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
         """Forward windows through the backbone, mini-batched along axis 0.
 
         Transformer backbones (e.g. LaBraM) build an attention map per window, so
@@ -308,6 +356,11 @@ class FoundationEmbeddingExtractor:
         Each chunk is written straight into a pre-allocated destination rather
         than collected and concatenated, so peak host memory is one output array
         plus one chunk instead of two full copies of the output.
+
+        ``views`` are returned with the pooled rows, from each chunk's tokens
+        (described by ``token_metadata``): ``"token"`` the tokens as they are,
+        ``"channel"`` and ``"patch"`` the tokens averaged (``_pool_tokens``).
+        A chunk's tokens are dropped once its views are taken.
         """
         batch_size = self.batch_size
         n_windows = len(model_input)
@@ -321,14 +374,28 @@ class FoundationEmbeddingExtractor:
         )
 
         embeddings: np.ndarray | None = None
-        tokens: np.ndarray | None = None
+        outputs: dict[str, np.ndarray] = {}
         filled = 0
         for batch in batches:
-            if return_tokens:
-                embedding_part, token_part = model.transform(batch, return_tokens=True)
-                token_part = np.asarray(token_part)
+            if views:
+                embedding_part, tokens = model.transform(batch, return_tokens=True)
+                tokens = np.asarray(tokens)
+                token_axes = token_metadata["token_axes"]
+                if len(token_axes) != tokens.ndim:
+                    raise ValueError(
+                        "Backend token metadata must name every native tensor axis: "
+                        f"axes={token_axes!r}, shape={tokens.shape}."
+                    )
+                parts = {
+                    view: (
+                        tokens
+                        if view == "token"
+                        else _pool_tokens(tokens, token_metadata, view)
+                    )
+                    for view in views
+                }
             else:
-                embedding_part, token_part = model.transform(batch), None
+                embedding_part, parts = model.transform(batch), {}
             embedding_part = np.asarray(embedding_part)
 
             if embeddings is None:
@@ -337,23 +404,19 @@ class FoundationEmbeddingExtractor:
                 )
             embeddings[filled : filled + len(embedding_part)] = embedding_part
 
-            if token_part is not None:
-                if tokens is None:
-                    tokens = np.empty(
-                        (n_windows, *token_part.shape[1:]), dtype=token_part.dtype
+            for view, part in parts.items():
+                if view not in outputs:
+                    outputs[view] = np.empty(
+                        (n_windows, *part.shape[1:]), dtype=part.dtype
                     )
-                tokens[filled : filled + len(token_part)] = token_part
+                outputs[view][filled : filled + len(part)] = part
 
             filled += len(embedding_part)
 
         if filled != n_windows:
             embeddings = embeddings[:filled]
-            if tokens is not None:
-                tokens = tokens[:filled]
-
-        if return_tokens:
-            return embeddings, tokens
-        return embeddings
+            outputs = {view: array[:filled] for view, array in outputs.items()}
+        return embeddings, outputs
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
@@ -365,21 +428,20 @@ class FoundationEmbeddingExtractor:
         return np.divide(x, norms, out=np.zeros_like(x), where=norms != 0)
 
     def _embed_windows(
-        self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Extract backend-pooled rows and optional unmodified native tokens."""
-        transformed = self._transform_batched(
-            model, model_input, return_tokens=return_tokens
+        self,
+        model: Any,
+        model_input: np.ndarray,
+        *,
+        token_metadata: Mapping[str, Any] | None = None,
+        views: Sequence[str] = (),
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        """Extract backend-pooled rows, normalized if asked, and token views."""
+        embeddings, outputs = self._transform_batched(
+            model, model_input, token_metadata=token_metadata, views=views
         )
-        if return_tokens:
-            embeddings, tokens = transformed
-        else:
-            embeddings = transformed
         if self.normalize_embeddings:
             embeddings = self._l2_normalize(embeddings)
-        if not return_tokens:
-            return embeddings
-        return embeddings, tokens
+        return embeddings, outputs
 
     def _backbone_fingerprint(self, prepared: Any) -> str:
         """Stable identity of the deterministic window->embedding mapping."""
@@ -412,7 +474,7 @@ class FoundationEmbeddingExtractor:
         ]
         missing = [i for i, key in enumerate(keys) if key not in self._embedding_cache]
         if missing:
-            computed = self._embed_windows(model, model_input[missing])
+            computed, _ = self._embed_windows(model, model_input[missing])
             if computed.ndim != 2 or len(computed) != len(missing):
                 raise ValueError(
                     "Foundation backend must return one 2-D embedding row per window."
@@ -481,15 +543,31 @@ class FoundationEmbeddingExtractor:
                 "as extraction does not filter automatically.",
                 stacklevel=2,
             )
-        tokens = None
+        token_metadata = None
+        if self.store_tokens:
+            token_metadata = model.get_token_output_metadata()
+        elif not self.cache_embeddings and hasattr(model, "get_token_output_metadata"):
+            # without documented tokens, window embeddings only
+            with contextlib.suppress(NotImplementedError):
+                token_metadata = model.get_token_output_metadata()
+        views = []
+        if token_metadata is not None:
+            if not isinstance(token_metadata.get("token_axes"), list):
+                raise ValueError(
+                    "Backend token metadata must list the token axes, got "
+                    f"{token_metadata.get('token_axes')!r}."
+                )
+            views = (["token"] if self.store_tokens else []) + _pooled_views(
+                token_metadata
+            )
+        outputs = {}
         if self.cache_embeddings:
             embeddings = self._embed_windows_cached(model, model_input, prepared)
-        elif self.store_tokens:
-            embeddings, tokens = self._embed_windows(
-                model, model_input, return_tokens=True
-            )
         else:
-            embeddings = self._embed_windows(model, model_input)
+            embeddings, outputs = self._embed_windows(
+                model, model_input, token_metadata=token_metadata, views=views
+            )
+        tokens = outputs.get("token")
         if embeddings.ndim != 2 or len(embeddings) != len(X):
             raise ValueError(
                 "Foundation backend must return one 2-D embedding row per window."
@@ -565,13 +643,6 @@ class FoundationEmbeddingExtractor:
             ),
         }
         if tokens is not None:
-            token_metadata = model.get_token_output_metadata()
-            token_axes = token_metadata.get("token_axes")
-            if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
-                raise ValueError(
-                    "Backend token metadata must name every native tensor axis: "
-                    f"axes={token_axes!r}, shape={tokens.shape}."
-                )
             payload.update(token_metadata)
             payload.update(
                 {
@@ -592,4 +663,6 @@ class FoundationEmbeddingExtractor:
             ),
             metadata=payload,
             token_embeddings=tokens,
+            channel_embeddings=outputs.get("channel"),
+            patch_embeddings=outputs.get("patch"),
         )

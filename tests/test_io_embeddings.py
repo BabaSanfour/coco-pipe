@@ -130,6 +130,8 @@ def test_write_recording_embeddings_round_trip(tmp_path):
     assert {view: path.basename for view, path in paths.items()} == {
         "window": f"{recording}_desc-base_windowembeddings.nc",
         "token": f"{recording}_desc-base_tokenembeddings.nc",
+        "channel": f"{recording}_desc-base_channelembeddings.nc",
+        "patch": f"{recording}_desc-base_patchembeddings.nc",
     }
     # Windows in epoch order: EO's 1 and 3 between EC's 0, 2 and 4.
     order = [2, 0, 3, 1, 4]
@@ -137,6 +139,8 @@ def test_write_recording_embeddings_round_trip(tmp_path):
     for view, dims in (
         ("window", ("window", "feature")),
         ("token", ("window", "channel", "time_patch", "feature")),
+        ("channel", ("window", "channel", "feature")),
+        ("patch", ("window", "time_patch", "feature")),
     ):
         with xr.open_dataset(paths[view].fpath, engine="h5netcdf") as ds:
             expected = np.concatenate(
@@ -179,6 +183,7 @@ def test_write_recording_embeddings_round_trip(tmp_path):
             if view == "token":
                 assert ds.attrs["token_source"] == "test_output"
                 assert ds.attrs["token_feature_axis"] == "feature"
+            if "channel" in dims:
                 assert ds["channel"].values.tolist() == ["T7", "Cz"]
             else:
                 assert "channel" not in ds.coords
@@ -272,8 +277,8 @@ def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
             source_dataset="preproc",
         )
 
-    path = write(extract([0], store_tokens=False))["window"].fpath
-    before = path.read_bytes()
+    paths = [path.fpath for path in write(extract([0], store_tokens=False)).values()]
+    before = [path.read_bytes() for path in paths]
 
     def fail(self, target, **kwargs):
         Path(target).write_bytes(b"partial")
@@ -282,8 +287,8 @@ def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
     monkeypatch.setattr(xr.Dataset, "to_netcdf", fail)
     with pytest.raises(OSError, match="disk full"):
         write(extract([0], seed=1, store_tokens=False))
-    assert path.read_bytes() == before
-    assert [p.name for p in path.parent.iterdir()] == [path.name]
+    assert [path.read_bytes() for path in paths] == before
+    assert sorted(paths[0].parent.iterdir()) == sorted(paths)
 
 
 def _embedding_dataset(tmp_path, labels=("base",)):
@@ -438,7 +443,7 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
             getattr(first["EO"], f"{view}_embeddings"),
             getattr(second["EC"], f"{view}_embeddings"),
         ]
-        if view == "token":
+        if view in ("token", "channel"):
             # The second recording's channels are Cz, T7: put in T7, Cz order.
             arrays[2] = arrays[2][:, ::-1]
         return np.concatenate(arrays)[list(order)].astype(np.float32)
@@ -480,6 +485,17 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
     assert tokens.coords["channel"].tolist() == ["T7", "Cz"]
     np.testing.assert_array_equal(tokens.X, expected("token"))
     assert tokens.meta["token_feature_axis"] == "feature"
+
+    for view, dims in (
+        ("channel", ("obs", "channel", "feature")),
+        ("patch", ("obs", "time_patch", "feature")),
+    ):
+        loaded = load_embeddings(find_embeddings(root, "base", view))
+        assert loaded.dims == dims
+        np.testing.assert_array_equal(loaded.X, expected(view))
+        assert loaded.meta["view"] == view
+        if "channel" in dims:
+            assert loaded.coords["channel"].tolist() == ["T7", "Cz"]
 
     files = find_embeddings(root, "base", "window")
     eyes_open = load_embeddings(files, conditions="EO")

@@ -43,8 +43,14 @@ _BIDSIGNORE = ("*embeddings.nc", "*embeddings.json", "*.tar.zst", "*_manifest.js
 _VIEW_TEXT = {
     "token": "the model's token tensor of each window, nothing pooled",
     "window": "one vector per window",
-    "channel": "one vector per channel of each window, averaged over time patches",
-    "patch": "one vector per time patch of each window, averaged over channels",
+    "channel": (
+        "one vector per channel of each window, averaged over time patches, "
+        "not normalised"
+    ),
+    "patch": (
+        "one vector per time patch of each window, averaged over channels, "
+        "not normalised"
+    ),
     "cov": "the tangent-space covariance of each window's tokens",
 }
 

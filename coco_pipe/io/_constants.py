@@ -34,6 +34,9 @@ A view is stored under the suffix ``<view>embeddings``:
 - ``window``  — one vector per window, the tokens averaged over every axis.
 - ``channel`` — one vector per channel of a window, averaged over time patches.
 - ``patch``   — one vector per time patch of a window, averaged over channels.
+
+Window vectors are normalised when ``NormalizeEmbeddings`` says so; channel and
+patch views never are.
 - ``cov``     — the tangent-space token covariance of each window (RA).
 """
 

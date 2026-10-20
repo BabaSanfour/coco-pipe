@@ -13,6 +13,7 @@ from coco_pipe.decoding.foundation_models import (
 )
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
+from tests.fixtures.embeddings import extract
 
 
 class FakeFoundationModel:
@@ -401,11 +402,31 @@ def test_backend_pooling_is_kept_separate_from_native_tokens():
         resample=False,
         store_tokens=True,
     )
-    flat, tokens = ex._embed_windows(
-        Fake3DModel(), np.zeros((3, 3, 10)), return_tokens=True
+    res = ex.extract(
+        np.zeros((3, 3, 10)),
+        signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["C3", "C4", "Cz"]),
     )
-    np.testing.assert_allclose(flat, tokens.reshape(3, -1))
-    np.testing.assert_array_equal(tokens, raw)
+    np.testing.assert_allclose(res.window_embeddings, raw.reshape(3, -1))
+    np.testing.assert_array_equal(res.token_embeddings, raw)
+    # one token axis: nothing to average for a channel or patch view
+    assert res.channel_embeddings is None
+    assert res.patch_embeddings is None
+
+
+def test_channel_and_patch_views_average_the_tokens():
+    full = extract([0, 1, 2])
+    tokens = full.token_embeddings  # (window, channel, time_patch, feature)
+    np.testing.assert_allclose(full.channel_embeddings, tokens.mean(axis=2))
+    np.testing.assert_allclose(full.patch_embeddings, tokens.mean(axis=1))
+    # the same without keeping the tokens or in chunks, and never normalized
+    for lean in (
+        extract([0, 1, 2], store_tokens=False),
+        extract([0, 1, 2], store_tokens=False, batch_size=2),
+    ):
+        assert lean.token_embeddings is None
+        assert lean.metadata["normalize_embeddings"]
+        np.testing.assert_array_equal(lean.channel_embeddings, full.channel_embeddings)
+        np.testing.assert_array_equal(lean.patch_embeddings, full.patch_embeddings)
 
 
 def test_store_tokens_incompatible_with_cache():
