@@ -385,6 +385,34 @@ def test_labram_interpolates_missing_channels(offline):
     ]
 
 
+def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
+    backend, X = _load("luna")
+    module = backend._model.freq_embed
+    upstream = type(module).forward
+    x = torch.from_numpy(X)
+    with torch.no_grad():
+        clean = module(x)
+    assert torch.equal(clean, upstream(module, x).detach())
+
+    rfft = torch.fft.rfft
+
+    def noisy(signal, *args, **kwargs):
+        spectrum = rfft(signal, *args, **kwargs)
+        noise = torch.zeros_like(spectrum)
+        noise[..., -1] = -1e-7j
+        return spectrum + noise
+
+    monkeypatch.setattr(torch.fft, "rfft", noisy)
+    with torch.no_grad():
+        assert torch.equal(module(x), clean)
+        assert not torch.equal(upstream(module, x), clean)
+
+
+def test_luna_refuses_windows_it_cannot_patch(offline):
+    with pytest.raises(ValueError, match="multiple"):
+        _load("luna", n_times=512)
+
+
 def test_labram_tokens_follow_their_channel(offline):
     plain, X = _load("labram", interpolate_channels=False)
     order = np.random.default_rng(0).permutation(len(DEFAULT_CHANNELS))

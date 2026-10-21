@@ -17,6 +17,7 @@ import importlib
 import importlib.util
 import warnings
 from functools import partial
+from types import MethodType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -42,6 +43,29 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
 _INTERPOLATED_CLASS: dict[str, str] = {
     "labram": "InterpolatedLaBraM",
 }
+
+
+def _luna_frequency_features(self, x):
+    """LUNA's frequency embedding, its DC and Nyquist bins made real.
+
+    As braindecode's ``_FrequencyFeatureEmbedder.forward``, except that the
+    imaginary part of those bins is set to 0: GPU FFTs leave rounding noise
+    there, whose sign flips their phase between pi and -pi.
+    """
+    import torch
+    import torch.nn.functional as F
+    from einops import rearrange
+
+    batch, n_chans, n_times = x.shape
+    if n_times % self.patch_size:
+        x = F.pad(x, (0, self.patch_size - n_times % self.patch_size))
+    spectrum = torch.fft.rfft(x.view(batch, n_chans, -1, self.patch_size), dim=-1)
+    real = torch.zeros(spectrum.shape[-1], dtype=torch.bool, device=x.device)
+    real[0] = True
+    real[-1] = self.patch_size % 2 == 0
+    spectrum = torch.complex(spectrum.real, torch.where(real, 0.0, spectrum.imag))
+    features = torch.cat((spectrum.abs(), spectrum.angle()), dim=-1)
+    return rearrange(self.frequency_to_embed(features), "B C t D -> B (C t) D")
 
 
 class BrainDecodeBackend(BackendBase):
@@ -334,6 +358,15 @@ class BrainDecodeBackend(BackendBase):
                 # embedding of its name, so a subset of the pretraining channels
                 # is fed as is.
                 model.forward = partial(model.forward, ch_names=list(electrode_names))
+            if model_key == "luna":
+                if n_times % model.patch_size:
+                    raise ValueError(
+                        f"LUNA cuts windows into patches of {model.patch_size} "
+                        f"samples, so n_times must be a multiple of it, got {n_times}."
+                    )
+                model.freq_embed.forward = MethodType(
+                    _luna_frequency_features, model.freq_embed
+                )
 
             if train_mode == "frozen":
                 for param in model.parameters():
