@@ -79,7 +79,9 @@ def offline(monkeypatch, tmp_path):
     return calls
 
 
-def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
+def _load(
+    model_key, train_mode="frozen", n_outputs=2, channels=DEFAULT_CHANNELS, **kwargs
+):
     spec = get_estimator_spec(model_key)
     if model_key == "labram":
         kwargs.setdefault("interpolate_channels", True)
@@ -92,19 +94,19 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
         n_outputs=n_outputs,
         device="cpu",
         train_mode=train_mode,
-        electrode_names=list(DEFAULT_CHANNELS),
+        electrode_names=list(channels),
         sfreq=spec.pretrained_sfreq,
         **kwargs,
     )
     backend.signal_metadata_ = SignalMetadata(
-        sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
+        sfreq=spec.pretrained_sfreq, ch_names=list(channels)
     )
     n_times = (
         spec.pretrained_n_times
         or kwargs.get("n_times")
         or round(spec.pretrained_sfreq * 2)
     )
-    X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
+    X = np.random.default_rng(0).normal(size=(4, len(channels), n_times))
     return backend, X.astype(np.float32)
 
 
@@ -274,19 +276,50 @@ def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
 
 
 def test_labram_interpolates_missing_channels(offline):
-    backend, _ = _load("labram")
+    backend, X = _load("labram")
     adaptation = backend.get_channel_adaptation()
     names = {name.upper() for name in DEFAULT_CHANNELS}
     assert {name.upper() for name in adaptation["source_channels"]} == names
     assert {name.upper() for name in adaptation["direct_channels"]} <= names
     assert adaptation["interpolated_channels"]
     assert adaptation["interpolation_method"]
+    # its tokens cover the 128 target channels, so they stay one axis
+    _, tokens = backend.transform(X, return_tokens=True)
+    assert tokens.shape == (4, 128 * 15, 200)
+    assert backend.get_token_output_metadata()["token_axes"] == [
+        "window",
+        "patch_token",
+        "feature",
+    ]
 
     # without interpolation the 19 channels go in as they are, found by name
     plain, X = _load("labram", interpolate_channels=False)
     assert not plain.get_channel_adaptation().get("interpolated_channels")
     _, tokens = plain.transform(X, return_tokens=True)
-    assert tokens.shape == (4, len(DEFAULT_CHANNELS) * 15, 200)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 15, 200)
+    assert plain.get_token_output_metadata()["token_axes"] == [
+        "window",
+        "channel",
+        "time_patch",
+        "feature",
+    ]
+
+
+def test_labram_tokens_follow_their_channel(offline):
+    # LaBraM's position embedding follows the channel names and its attention
+    # has no position bias, so moving channels with their names moves their
+    # tokens: along the channel axis only if the tokens are channel-major.
+    plain, X = _load("labram", interpolate_channels=False)
+    order = np.random.default_rng(0).permutation(len(DEFAULT_CHANNELS))
+    moved, _ = _load(
+        "labram",
+        interpolate_channels=False,
+        channels=[DEFAULT_CHANNELS[index] for index in order],
+    )
+    moved._model.load_state_dict(plain._model.state_dict())
+    _, tokens = plain.transform(X, return_tokens=True)
+    _, moved_tokens = moved.transform(X[:, order], return_tokens=True)
+    np.testing.assert_allclose(moved_tokens, tokens[:, order], rtol=1e-4, atol=1e-4)
 
 
 def test_eegpt_refuses_a_partly_loaded_checkpoint(offline, tmp_path, monkeypatch):

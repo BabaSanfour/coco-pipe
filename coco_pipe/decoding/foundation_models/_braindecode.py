@@ -572,6 +572,9 @@ class BrainDecodeBackend(BackendBase):
                             f"{self._metadata.display_name} exposes only a pooled "
                             "feature tensor; native token extraction is unavailable."
                         )
+                    if self._metadata.name == "labram" and not self._uses_interpolation:
+                        # one token per channel and time patch, channel-major
+                        tokens = tokens.unflatten(1, (tensor.shape[1], -1))
                     token_chunks.append(self._from_tensor(tokens))
         embeddings = np.concatenate(embedding_chunks, axis=0)
         if return_tokens:
@@ -579,7 +582,12 @@ class BrainDecodeBackend(BackendBase):
         return embeddings
 
     def get_token_output_metadata(self) -> dict[str, object]:
-        """Describe the upstream feature tensor without changing its layout."""
+        """Describe the upstream feature tensor.
+
+        LaBraM's tokens, one per channel and time patch in a flat axis, are split
+        into those two axes, unless the model interpolates channels: its tokens
+        then cover its target channels, not the input ones, and stay flat.
+        """
         layouts = {
             "cbramod": {
                 "token_source": "return_features.features",
@@ -595,8 +603,8 @@ class BrainDecodeBackend(BackendBase):
             },
             "labram": {
                 "token_source": "return_features.features",
-                "token_axes": ["window", "patch_token", "feature"],
-                "token_observation_axes": ["patch_token"],
+                "token_axes": ["window", "channel", "time_patch", "feature"],
+                "token_observation_axes": ["channel", "time_patch"],
                 "token_feature_axis": "feature",
             },
             "luna": {
@@ -630,6 +638,12 @@ class BrainDecodeBackend(BackendBase):
                 f"{self._metadata.display_name} does not expose a documented "
                 "native token representation."
             )
+        if self._metadata.name == "labram" and self._uses_interpolation:
+            metadata = {
+                **metadata,
+                "token_axes": ["window", "patch_token", "feature"],
+                "token_observation_axes": ["patch_token"],
+            }
         return metadata
 
     def checkpoint_components(self) -> dict:

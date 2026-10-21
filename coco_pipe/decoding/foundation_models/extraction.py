@@ -281,9 +281,9 @@ class FoundationEmbeddingResult:
     tokens averaged over time patches, and ``patch_embeddings`` (window,
     time_patch, feature) each time patch's tokens averaged over channels. Each
     is populated when the backend's tokens have its axis and another one to
-    average over (CBraMod and REVE have both), unless the extractor caches
-    window embeddings. They are not normalized, whatever
-    ``normalize_embeddings`` says.
+    average over (CBraMod, REVE and LaBraM without channel interpolation have
+    both), unless the extractor caches window embeddings. They are not
+    normalized, whatever ``normalize_embeddings`` says.
     """
 
     window_embeddings: np.ndarray
