@@ -184,7 +184,9 @@ of the same label and view.
 **File contents.** Every file, one recording's or every recording's, has the
 same layout:
 
-- ``embeddings``: float32 (float16 is read too), with the axes of its view.
+- ``embeddings``: float32, with the axes of its view. Token files are float16
+  when written with ``token_dtype="float16"``, half the size; both are read as
+  float32.
 - Along ``window``: ``obs`` (``<recording_id>_epoch-NNNN``), ``recording_id``,
   ``subject``, ``session``, ``task``, ``run``, ``condition``, ``epoch`` (the
   epoch's number in its source file), ``start`` and ``stop`` (samples). Windows
