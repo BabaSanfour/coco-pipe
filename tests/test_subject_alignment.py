@@ -91,6 +91,57 @@ def test_euclidean_alignment_centers_and_whitens_each_subject():
         )
 
 
+def _subject_tokens(n_subjects=4, per=20, axes=(3, 5), d=6, seed=0):
+    rng = np.random.default_rng(seed)
+    groups = np.repeat([f"s{i}" for i in range(n_subjects)], per)
+    tokens = np.concatenate(
+        [
+            rng.standard_normal(d) * 5
+            + rng.standard_normal((per, *axes, d)) @ rng.standard_normal((d, d))
+            for _ in range(n_subjects)
+        ]
+    )
+    return tokens.astype(np.float32), groups
+
+
+def test_euclidean_alignment_of_tokens_takes_all_their_tokens():
+    tokens, groups = _subject_tokens()
+    d = tokens.shape[-1]
+    whitened = EuclideanAlign("coral", shrinkage=False).fit_transform(
+        tokens, groups=groups
+    )
+    assert whitened.shape == tokens.shape and whitened.dtype == np.float32
+    for sid in np.unique(groups):
+        rows = whitened[groups == sid].reshape(-1, d).astype(np.float64)
+        np.testing.assert_allclose(rows.mean(0), 0.0, atol=1e-5)
+        np.testing.assert_allclose(rows.T @ rows / len(rows), np.eye(d), atol=1e-4)
+
+    exact = tokens.astype(np.float64)
+    constrained = exact - exact.mean(-1, keepdims=True)
+    whitened = EuclideanAlign("coral", shrinkage=False).fit_transform(
+        constrained[groups == "s0"], groups=groups[groups == "s0"]
+    )
+    rows = whitened.reshape(-1, d)
+    np.testing.assert_allclose(
+        np.linalg.eigvalsh(rows.T @ rows / len(rows)), [0] + [1] * (d - 1), atol=1e-9
+    )
+
+    np.testing.assert_allclose(
+        EuclideanAlign("mean").fit_transform(exact, groups=groups).mean(axis=(1, 2)),
+        EuclideanAlign("mean").fit_transform(exact.mean(axis=(1, 2)), groups=groups),
+        atol=1e-12,
+    )
+
+    seen = groups != "s0"
+    fitted = EuclideanAlign("coral").fit(tokens[seen], groups=groups[seen])
+    np.testing.assert_allclose(
+        fitted.transform(tokens, groups=groups)[~seen],
+        EuclideanAlign("coral").fit_transform(tokens[~seen], groups=groups[~seen]),
+    )
+    with pytest.raises(ValueError, match="expects"):
+        EuclideanAlign("mean").fit(tokens[0, 0, 0], groups=groups[:d])
+
+
 def test_riemann_alignment_returns_finite_tangent_vectors():
     pytest.importorskip("pyriemann")
     rng = np.random.default_rng(2)

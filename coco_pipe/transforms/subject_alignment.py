@@ -147,7 +147,12 @@ def _inv_sqrt_cov(xc: np.ndarray, *, shrinkage: bool = True) -> np.ndarray:
 
 
 class EuclideanAlign(SubjectAlignment):
-    """Per-subject mean or CORAL alignment, including unseen subjects."""
+    """Per-subject mean or CORAL alignment, including unseen subjects.
+
+    ``X`` is ``(window, feature)`` or tokens ``(window, ..., feature)``: a
+    subject's mean, and for ``"coral"`` its feature covariance, are taken over
+    all its tokens. The output keeps the shape and float dtype of ``X``.
+    """
 
     def __init__(self, mode: str = "coral", *, shrinkage: bool = True):
         if mode not in {"coral", "mean"}:
@@ -160,13 +165,23 @@ class EuclideanAlign(SubjectAlignment):
             self.set_transform_request(groups=True)
 
     def _stats(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        xs = np.asarray(xs, dtype=np.float64).reshape(-1, xs.shape[-1])
         mu = xs.mean(0)
         if self.mode == "mean":
             return mu, None
         return mu, _inv_sqrt_cov(xs - mu, shrinkage=self.shrinkage)
 
+    @staticmethod
+    def _check(X) -> np.ndarray:
+        x = np.asarray(X)
+        if x.ndim < 2:
+            raise ValueError(
+                f"EuclideanAlign expects (window, ..., feature), got {x.shape}."
+            )
+        return x
+
     def fit(self, X, y=None, groups=None):
-        x = np.asarray(X, dtype=np.float64)
+        x = self._check(X)
         subject = _require_groups(groups, len(x))
         self.mu_ = {}
         self.w_ = {}
@@ -175,15 +190,16 @@ class EuclideanAlign(SubjectAlignment):
             self.mu_[sid] = mu
             if w is not None:
                 self.w_[sid] = w
-        self.n_features_in_ = x.shape[1]
+        self.n_features_in_ = x.shape[-1]
         return self
 
     def transform(self, X, groups=None):
         if not hasattr(self, "mu_"):
             raise RuntimeError("EuclideanAlign.transform called before fit.")
-        x = np.asarray(X, dtype=np.float64)
+        x = self._check(X)
         subject = _require_groups(groups, len(x))
-        out = np.empty_like(x)
+        dtype = x.dtype if np.issubdtype(x.dtype, np.floating) else np.float64
+        out = np.empty(x.shape, dtype=dtype)
         for sid in np.unique(subject):
             rows = subject == sid
             if sid in self.mu_:
