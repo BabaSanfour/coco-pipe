@@ -30,7 +30,7 @@ def test_load_data_reads_each_config(tmp_path):
     assert table.dims == ("obs", "feature")
 
     results = {"EC": extract([0, 2]), "EO": extract([1], seed=1)}
-    path = write_recording(tmp_path, results)["window"].fpath
+    path = write_recording(tmp_path, results)["base", "window"].fpath
     windows = load_data(EmbeddingConfig(path=path))
     np.testing.assert_array_equal(windows.X, load_embeddings(path).X)
     subject = load_data(

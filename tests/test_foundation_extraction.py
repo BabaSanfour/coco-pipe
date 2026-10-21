@@ -429,6 +429,43 @@ def test_channel_and_patch_views_average_the_tokens():
         np.testing.assert_array_equal(lean.patch_embeddings, full.patch_embeddings)
 
 
+def test_extra_poolings_pool_the_same_tokens():
+    full = extract([0, 1, 2], extra_poolings="max")
+    maxima = full.token_embeddings.max(axis=(1, 2))
+    np.testing.assert_allclose(
+        full.extra_window_embeddings["max"],
+        maxima / np.linalg.norm(maxima, axis=1, keepdims=True),
+    )
+    assert list(full.extra_window_embeddings) == ["max"]
+    np.testing.assert_array_equal(
+        full.window_embeddings, extract([0, 1, 2]).window_embeddings
+    )
+    assert extract([0]).extra_window_embeddings == {}
+    raw = extract([0, 1, 2], extra_poolings=["max"], normalize_embeddings=False)
+    np.testing.assert_array_equal(raw.extra_window_embeddings["max"], maxima)
+    # the same without keeping the tokens or in chunks
+    for lean in (
+        extract([0, 1, 2], extra_poolings=["max"], store_tokens=False),
+        extract([0, 1, 2], extra_poolings=["max"], store_tokens=False, batch_size=2),
+    ):
+        np.testing.assert_array_equal(
+            lean.extra_window_embeddings["max"], full.extra_window_embeddings["max"]
+        )
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"extra_poolings": ["mean"]}, "other than 'mean'"),
+        ({"extra_poolings": ["max", "max"]}, "once each"),
+        ({"extra_poolings": ["max"], "cache_embeddings": True}, "incompatible"),
+    ],
+)
+def test_extra_poolings_refused(settings, message):
+    with pytest.raises(ValueError, match=message):
+        FoundationEmbeddingExtractor("cbramod", **settings)
+
+
 def test_store_tokens_incompatible_with_cache():
     with pytest.raises(ValueError, match="store_tokens is incompatible"):
         FoundationEmbeddingExtractor(

@@ -204,10 +204,14 @@ def write_recording_embeddings(
 
     Each view the results hold (``window_embeddings``, ``token_embeddings``,
     and so on, see :data:`~coco_pipe.io.EMBEDDING_VIEWS`) goes to its own
-    file, named by :func:`embedding_path` after the source recording. A file
-    holds every condition, its windows in epoch order. Nothing is written if
-    any check fails, and each file is written to a temporary name and then
-    moved into place, so an existing file is replaced whole or not at all.
+    file, named by :func:`embedding_path` after the source recording. The
+    window vectors of each other pooling (``extra_window_embeddings``, e.g.
+    REVE's attention read-out) go to a window file of their own label, the
+    label followed by the pooling's name (``baseAttention``), whose settings
+    name that pooling. A file holds every condition, its windows in epoch
+    order. Nothing is written if any check fails, and each file is written to
+    a temporary name and then moved into place, so an existing file is
+    replaced whole or not at all.
 
     Parameters
     ----------
@@ -230,17 +234,18 @@ def write_recording_embeddings(
 
     Returns
     -------
-    dict of str to BIDSPath
-        The path written for each view.
+    dict of (str, str) to BIDSPath
+        The path written for each label and view, e.g.
+        ``paths["base", "window"]``.
 
     Raises
     ------
     ValueError
         If the conditions come from different models or settings (their
-        ``config_hash``), differ in views, feature size or channels, hold
-        non-finite values or share epoch numbers, if a channel axis does not
-        match ``model_channels``, or if ``source`` lacks its root, subject or
-        datatype.
+        ``config_hash``), differ in views, poolings, feature size or channels,
+        hold non-finite values or share epoch numbers, if a channel axis does
+        not match ``model_channels``, if a pooling's name is not letters and
+        digits, or if ``source`` lacks its root, subject or datatype.
 
     Notes
     -----
@@ -271,6 +276,7 @@ def write_recording_embeddings(
     relative = source.fpath.relative_to(Path(source.root)).as_posix()
 
     views: dict[str, list[np.ndarray]] = {}
+    poolings: dict[str, list[np.ndarray]] = {}
     windows: dict[str, list[np.ndarray]] = {
         "condition": [],
         "epoch": [],
@@ -310,6 +316,19 @@ def write_recording_embeddings(
         }
         if "window" not in arrays:
             raise ValueError(f"Condition {condition!r} has no window embeddings.")
+        pooled = {
+            pooling: np.asarray(array, dtype=np.float32)
+            for pooling, array in (
+                getattr(result, "extra_window_embeddings", None) or {}
+            ).items()
+        }
+        for pooling in pooled:
+            if not (
+                isinstance(pooling, str) and pooling.isascii() and pooling.isalnum()
+            ):
+                raise ValueError(
+                    f"Pooling names must be letters and digits, got {pooling!r}."
+                )
         current = {
             "config_hash": stable_hash(config, length=16),
             "config": config,
@@ -320,6 +339,10 @@ def write_recording_embeddings(
             "views": {
                 view: (_view_dims(view, array, metadata), array.shape[1:])
                 for view, array in arrays.items()
+            },
+            "poolings": {
+                pooling: (_view_dims("window", array, metadata), array.shape[1:])
+                for pooling, array in pooled.items()
             },
             "token": {
                 key: metadata[key]
@@ -333,6 +356,7 @@ def write_recording_embeddings(
             for key, what in (
                 ("config_hash", "models or settings (config_hash)"),
                 ("views", "views or their shapes"),
+                ("poolings", "poolings or their shapes"),
                 ("recording", "channels or sampling rates"),
                 ("model_channels", "the channels the model saw"),
                 ("token", "token layouts"),
@@ -346,7 +370,11 @@ def write_recording_embeddings(
         epochs = np.asarray(result.window_index, dtype=np.int64)
         starts = np.asarray(result.window_start, dtype=np.int64)
         stops = np.asarray(result.window_stop, dtype=np.int64)
-        for view, array in arrays.items():
+        named = {
+            **arrays,
+            **{f"{pooling} window": array for pooling, array in pooled.items()},
+        }
+        for view, array in named.items():
             if len(array) != n_windows:
                 raise ValueError(
                     f"Condition {condition!r} has {len(array)} {view} rows for "
@@ -357,7 +385,10 @@ def write_recording_embeddings(
                     f"The {view} embeddings of condition {condition!r} hold "
                     "non-finite values."
                 )
+        for view, array in arrays.items():
             views.setdefault(view, []).append(array)
+        for pooling, array in pooled.items():
+            poolings.setdefault(pooling, []).append(array)
         if not len(epochs) == len(starts) == len(stops) == n_windows:
             raise ValueError(
                 f"Condition {condition!r} needs one epoch number, start and stop "
@@ -421,16 +452,36 @@ def write_recording_embeddings(
                     f"channels, but model_channels names {len(channels)}."
                 )
             view_coords = {**coords, "channel": channels}
-        paths[view] = embedding_path(
+        paths[label, view] = embedding_path(
             root, label, view, recording_id=recording_id, datatype=source.datatype
         )
-        datasets[view] = xr.Dataset(
+        datasets[label, view] = xr.Dataset(
             {"embeddings": (dims, np.concatenate(parts)[order])},
             coords=view_coords,
             attrs={**attrs, **(reference["token"] if view == "token" else {})},
         )
-    for view, dataset in datasets.items():
-        _write_netcdf(dataset, paths[view].mkdir().fpath)
+    for pooling, parts in poolings.items():
+        pooled_label = label + pooling[0].upper() + pooling[1:]
+        config = {**reference["config"], "WindowPooling": pooling}
+        paths[pooled_label, "window"] = embedding_path(
+            root,
+            pooled_label,
+            "window",
+            recording_id=recording_id,
+            datatype=source.datatype,
+        )
+        datasets[pooled_label, "window"] = xr.Dataset(
+            {"embeddings": (_VIEW_DIMS["window"], np.concatenate(parts)[order])},
+            coords=coords,
+            attrs={
+                **attrs,
+                "config_hash": stable_hash(config, length=16),
+                "config": json.dumps(config),
+                "description": pooled_label,
+            },
+        )
+    for key, dataset in datasets.items():
+        _write_netcdf(dataset, paths[key].mkdir().fpath)
     return paths
 
 

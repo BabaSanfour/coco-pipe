@@ -272,6 +272,14 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             f"{type(self).__name__} does not expose a native token representation."
         )
 
+    def pool_tokens(self, tokens: np.ndarray, pooling: str) -> np.ndarray:
+        """Pool the tokens of ``transform`` into one vector per window.
+
+        Backends with more than one pooling (REVE: mean and attention) override
+        this, so that every pooling comes from one forward pass.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no pooling but its own.")
+
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Run a full forward pass and return predictions.

@@ -239,6 +239,27 @@ def test_transform_return_tokens_preserves_native_reve_output():
     ]
 
 
+def test_pool_tokens_pools_the_tokens_of_one_forward_pass():
+    import torch
+
+    adapter = _make_fitted_adapter(n_chans=2)
+    native = torch.randn(3, 2, 4, 512, generator=torch.Generator().manual_seed(0))
+    adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
+    # a read-out unlike the mean
+    adapter._backbone.attention_pooling.side_effect = lambda out: out.amax(dim=(1, 2))
+
+    pooled, tokens = adapter.transform(
+        np.zeros((3, 2, 400), dtype=np.float32), return_tokens=True
+    )
+    np.testing.assert_array_equal(adapter.pool_tokens(tokens, "mean"), pooled)
+    np.testing.assert_array_equal(
+        adapter.pool_tokens(tokens, "attention"), native.amax(dim=(1, 2)).numpy()
+    )
+    assert adapter._backbone.call_count == 1
+    with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
+        adapter.pool_tokens(tokens, "max")
+
+
 def test_reve_input_depends_on_whether_the_backbone_is_trained():
     adapter = _make_fitted_adapter(n_outputs=2)
     X = np.random.default_rng(0).normal(scale=30.0, size=(3, 19, 400))

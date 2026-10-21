@@ -152,6 +152,12 @@ averaged and are never normalised, whatever that setting says: an analysis
 normalises them at load as it needs, per channel or, after ``flatten``, as one
 vector.
 
+An extractor built with ``extra_poolings`` (``("attention",)`` for REVE's
+attention read-out) pools the same tokens again, in the same forward pass. The
+writer puts those window vectors in a window file of their own label, the
+label followed by the pooling's name (``baseAttention``), whose
+``WindowPooling`` setting names that pooling.
+
 The ``desc`` entity names the processing that produced the file, e.g. ``base``,
 ``baseRandom`` or ``baseEaCoral``; it is any BIDS label (letters, digits and
 ``+``). A file keeps its source recording's entities, so one recording's files

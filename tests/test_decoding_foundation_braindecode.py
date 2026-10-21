@@ -136,6 +136,8 @@ def test_backbones_embed_and_expose_their_tokens(offline, model_key):
     feature_axis = layout["token_axes"].index(layout["token_feature_axis"])
     assert tokens.shape[feature_axis] == spec.embedding_dim
     assert "model" in backend.checkpoint_components()
+    with pytest.raises(NotImplementedError, match="no pooling but its own"):
+        backend.pool_tokens(tokens, "attention")
 
 
 @pytest.mark.parametrize("model_key", ["cbramod", "bendr"])

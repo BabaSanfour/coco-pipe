@@ -340,20 +340,41 @@ class HuggingFaceBackend(BackendBase):
         # REVE's forward returns a raw tensor of per-patch embeddings with shape
         # (batch, channels, time_patches, embed_dim) -- not a HF ModelOutput.
         out = self._backbone(x_tensor, pos)
-        if self._pooling == "attention":
+        pooled = self._pool(out, self._pooling)
+        if return_tokens:
+            return pooled, out
+        return pooled if return_embeddings else self._head(pooled)
+
+    def _pool(self, out, pooling: str):
+        """Collapse ``(batch, channel, time_patch, embed_dim)`` tokens."""
+        if pooling == "attention":
             # REVE's pretrained single-query attention read-out over the
             # flattened channel+time tokens -> (batch, embed_dim). Under
             # LoRA/QLoRA the backbone is a PeftModel wrapping the Reve module,
             # so reach the base model that owns the method.
             base = getattr(self._backbone, "get_base_model", None)
             base = base() if base is not None else self._backbone
-            pooled = base.attention_pooling(out)
-        else:
-            # average over time patches, then over channels -> (batch, embed_dim)
-            pooled = out.mean(dim=2).mean(dim=1)
-        if return_tokens:
-            return pooled, out
-        return pooled if return_embeddings else self._head(pooled)
+            return base.attention_pooling(out)
+        # average over time patches, then over channels -> (batch, embed_dim)
+        return out.mean(dim=2).mean(dim=1)
+
+    def pool_tokens(self, tokens: np.ndarray, pooling: str) -> np.ndarray:
+        """Pool the tokens of ``transform`` by ``"mean"`` or ``"attention"``."""
+        import torch
+
+        if pooling not in {"mean", "attention"}:
+            raise ValueError(
+                f"REVE supports pooling='mean' or 'attention', got {pooling!r}."
+            )
+        batch_size = self._eval_batch_size()
+        chunks = []
+        with self._no_grad():
+            for start in range(0, len(tokens), batch_size):
+                # the tokens' own dtype: the values the forward pass pooled
+                batch = torch.from_numpy(tokens[start : start + batch_size])
+                pooled = self._pool(batch.to(self._device), pooling)
+                chunks.append(self._from_tensor(pooled))
+        return np.concatenate(chunks)
 
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False
