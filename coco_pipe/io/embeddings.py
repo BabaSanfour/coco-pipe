@@ -199,7 +199,8 @@ def write_recording_embeddings(
     source: BIDSPath,
     source_dataset: str,
     bad_channels: Sequence[str] = (),
-) -> dict[str, BIDSPath]:
+    token_dtype: str = "float32",
+) -> dict[tuple[str, str], BIDSPath]:
     """Write one recording's embeddings, one file per view.
 
     Each view the results hold (``window_embeddings``, ``token_embeddings``,
@@ -231,6 +232,9 @@ def write_recording_embeddings(
         ``"preproc"``, for the BIDS URI of ``source``.
     bad_channels : sequence of str
         The recording's bad channels.
+    token_dtype : {"float32", "float16"}
+        The dtype of the token file; ``"float16"`` halves its size. The other
+        views are float32.
 
     Returns
     -------
@@ -245,11 +249,13 @@ def write_recording_embeddings(
         ``config_hash``), differ in views, poolings, feature size or channels,
         hold non-finite values or share epoch numbers, if a channel axis does
         not match ``model_channels``, if a pooling's name is not letters and
-        digits, or if ``source`` lacks its root, subject or datatype.
+        digits, if ``source`` lacks its root, subject or datatype, or if
+        ``token_dtype`` is not ``"float32"`` or ``"float16"``.
 
     Notes
     -----
-    The ``embeddings`` variable holds the view, as float32. Along ``window``
+    The ``embeddings`` variable holds the view, as float32 (tokens as
+    ``token_dtype``; values beyond float16's range are refused). Along ``window``
     are the coordinates ``obs`` (``<recording_id>_epoch-NNNN``, as the BIDS
     loader names observations), ``recording_id``, ``subject``, ``session``,
     ``task``, ``run``, ``condition``, ``epoch``, ``start`` and ``stop``.
@@ -266,6 +272,10 @@ def write_recording_embeddings(
     """
     if not results:
         raise ValueError("results must hold at least one condition.")
+    if token_dtype not in ("float32", "float16"):
+        raise ValueError(
+            f"token_dtype must be 'float32' or 'float16', got {token_dtype!r}."
+        )
     if source.root is None or source.subject is None or source.datatype is None:
         raise ValueError("source must be a BIDSPath with root, subject and datatype.")
     if not source_dataset or ":" in source_dataset:
@@ -309,11 +319,14 @@ def write_recording_embeddings(
             recording[f"{kind}_channels"] = _channel_list(
                 adaptation.get(f"{kind}_channels", ())
             )
-        arrays = {
-            view: np.asarray(array, dtype=np.float32)
-            for view in EMBEDDING_VIEWS
-            if (array := getattr(result, f"{view}_embeddings", None)) is not None
-        }
+        with np.errstate(over="ignore"):
+            arrays = {
+                view: np.asarray(
+                    array, dtype=token_dtype if view == "token" else "float32"
+                )
+                for view in EMBEDDING_VIEWS
+                if (array := getattr(result, f"{view}_embeddings", None)) is not None
+            }
         if "window" not in arrays:
             raise ValueError(f"Condition {condition!r} has no window embeddings.")
         pooled = {
@@ -383,7 +396,13 @@ def write_recording_embeddings(
             if not np.isfinite(array).all():
                 raise ValueError(
                     f"The {view} embeddings of condition {condition!r} hold "
-                    "non-finite values."
+                    "non-finite values"
+                    + (
+                        f" as {token_dtype}"
+                        if view == "token" and token_dtype == "float16"
+                        else ""
+                    )
+                    + "."
                 )
         for view, array in arrays.items():
             views.setdefault(view, []).append(array)

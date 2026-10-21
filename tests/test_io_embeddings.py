@@ -227,6 +227,40 @@ def test_extra_poolings_get_window_files_of_their_own_label(tmp_path):
     )
 
 
+def test_tokens_can_be_written_as_float16(tmp_path):
+    result = extract([0, 1])
+
+    def write(results, token_dtype):
+        return write_recording_embeddings(
+            results,
+            tmp_path / "out",
+            label="base",
+            source=source_path(tmp_path),
+            source_dataset="preproc",
+            token_dtype=token_dtype,
+        )
+
+    paths = write({"EC": result}, "float16")
+    half = result.token_embeddings.astype(np.float16)
+    with xr.open_dataset(paths["base", "token"].fpath, engine="h5netcdf") as ds:
+        assert ds["embeddings"].dtype == np.float16
+        np.testing.assert_array_equal(ds["embeddings"], half)
+    for view in ("window", "channel", "patch"):
+        with xr.open_dataset(paths["base", view].fpath, engine="h5netcdf") as ds:
+            assert ds["embeddings"].dtype == np.float32
+    loaded = load_embeddings(paths["base", "token"].fpath)
+    assert loaded.X.dtype == np.float32
+    np.testing.assert_array_equal(loaded.X, half.astype(np.float32))
+
+    before = {path: path.fpath.read_bytes() for path in paths.values()}
+    large = replace(result, token_embeddings=np.full_like(half, 1e5, dtype=np.float32))
+    with pytest.raises(ValueError, match="non-finite values as float16"):
+        write({"EC": large}, "float16")
+    assert {path: path.fpath.read_bytes() for path in paths.values()} == before
+    with pytest.raises(ValueError, match="token_dtype must be"):
+        write({"EC": result}, "float64")
+
+
 def test_recordings_of_one_configuration_share_config_hash(tmp_path):
     def config_hash(subject, result):
         paths = write_recording_embeddings(
