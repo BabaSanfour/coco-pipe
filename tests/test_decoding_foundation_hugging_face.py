@@ -1,6 +1,8 @@
 """Tests for HuggingFaceBackend (REVE). All network I/O is mocked."""
 
+import copy
 import warnings
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -195,6 +197,89 @@ def test_transform_returns_ndarray():
     out = adapter.transform(X)
     assert isinstance(out, np.ndarray)
     assert out.shape == (4, 512)
+
+
+def _tiny_backbone_class():
+    import torch
+
+    class TinyBackbone(torch.nn.Module):
+        """A backbone with a config, rebuilt from it as transformers does."""
+
+        dtype = torch.float32
+
+        def __init__(self, config):
+            super().__init__()
+            self.config = config
+            self.layer = torch.nn.Linear(4, 4)
+
+        @classmethod
+        def _from_config(cls, config, dtype=None):
+            return cls(config)
+
+    return TinyBackbone
+
+
+def test_random_weights_rebuild_the_backbone_from_the_seed():
+    import torch
+
+    TinyBackbone = _tiny_backbone_class()
+    config = SimpleNamespace(hidden_size=512)
+    pos_bank = torch.nn.Linear(3, 32)
+    checkpoint = TinyBackbone(config)
+    calls = []
+
+    def from_pretrained(repo_id, **kwargs):
+        calls.append(kwargs)
+        return pos_bank if "positions" in repo_id else copy.deepcopy(checkpoint)
+
+    def backbone(**weights):
+        with (
+            patch(
+                "transformers.AutoModel.from_pretrained", side_effect=from_pretrained
+            ),
+            patch.object(HuggingFaceBackend, "is_available", return_value=True),
+        ):
+            loaded = HuggingFaceBackend.load(
+                "reve",
+                get_estimator_spec("reve"),
+                n_outputs=None,
+                device="cpu",
+                train_mode="frozen",
+                electrode_names=["Cz"],
+                **weights,
+            )
+        assert loaded._pos_bank is pos_bank  # always the checkpoint's
+        return loaded._backbone.state_dict()
+
+    state = torch.random.get_rng_state()
+    random = backbone(pretrained=False, seed=0)
+    assert torch.equal(state, torch.random.get_rng_state())
+    assert not any({"pretrained", "seed"} & set(call) for call in calls)
+    pretrained, again = backbone(), backbone(pretrained=False, seed=0)
+    other = backbone(pretrained=False, seed=1)
+    for key, value in random.items():
+        assert torch.equal(value, again[key])
+        assert not torch.equal(value, pretrained[key])
+        assert not torch.equal(value, other[key])
+
+
+@pytest.mark.parametrize(
+    "weights, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"pretrained": False, "seed": 0, "train_mode": "qlora"}, "QLoRA quantizes"),
+    ],
+)
+def test_random_weights_refused(weights, message):
+    with pytest.raises(ValueError, match=message):
+        HuggingFaceBackend.load(
+            "reve",
+            get_estimator_spec("reve"),
+            n_outputs=None,
+            device="cpu",
+            **{"train_mode": "frozen", **weights},
+        )
 
 
 def test_load_refuses_other_pooling():

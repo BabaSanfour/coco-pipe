@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase, resolve_revision
+from ._base import BackendBase, check_weights, resolve_revision, seeded
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -89,6 +89,8 @@ class HuggingFaceBackend(BackendBase):
         lora_alpha: int = 32,
         lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
+        pretrained: bool = True,
+        seed: int | None = None,
         **kw,
     ) -> HuggingFaceBackend:
         """Load a pretrained HuggingFace model and return an initialised backend.
@@ -127,6 +129,12 @@ class HuggingFaceBackend(BackendBase):
             ``to_out``).
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
+        pretrained : bool, default True
+            ``False`` keeps the checkpoint's architecture and draws new backbone
+            weights from ``seed``; the position bank stays the checkpoint's.
+            Not with ``train_mode="qlora"``, which quantizes pretrained weights.
+        seed : int or None
+            The seed of random weights; only with ``pretrained=False``.
         **kw
             Extra keyword arguments forwarded to ``AutoModel.from_pretrained``.
 
@@ -138,10 +146,17 @@ class HuggingFaceBackend(BackendBase):
         Raises
         ------
         ValueError
-            If ``model_key`` is not ``"reve"``.
+            If ``model_key`` is not ``"reve"``, or the weights asked for are not
+            pretrained or random with a seed.
         """
         if model_key != "reve":
             raise ValueError(f"HuggingFaceBackend does not support '{model_key}'.")
+        check_weights(pretrained, seed)
+        if not pretrained and train_mode == "qlora":
+            raise ValueError(
+                "QLoRA quantizes pretrained weights; random weights take "
+                "train_mode 'frozen', 'full' or 'lora'."
+            )
         if pooling not in {"mean", "attention"}:
             raise ValueError(
                 f"REVE supports pooling='mean' or 'attention', got {pooling!r}."
@@ -159,6 +174,7 @@ class HuggingFaceBackend(BackendBase):
             lora_alpha=lora_alpha,
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
+            seed=None if pretrained else seed,
             **kw,
         )
 
@@ -177,9 +193,10 @@ class HuggingFaceBackend(BackendBase):
         lora_alpha: int,
         lora_target_modules: str | list[str],
         lora_dropout: float,
+        seed: int | None = None,
         **kw,
     ) -> HuggingFaceBackend:
-        """Load REVE from HuggingFace."""
+        """Load REVE from HuggingFace, with random backbone weights from ``seed``."""
         import torch
         import torch.nn as nn
         from transformers import AutoModel
@@ -242,6 +259,13 @@ class HuggingFaceBackend(BackendBase):
             )
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
+        if seed is not None:
+            # The checkpoint's architecture, from its own class and config, with
+            # new weights drawn from the seed.
+            with seeded(seed):
+                backbone = type(backbone)._from_config(
+                    backbone.config, dtype=backbone.dtype
+                )
         pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
         feat_dim: int = getattr(
             backbone.config,
