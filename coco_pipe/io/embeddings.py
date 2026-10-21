@@ -61,6 +61,20 @@ _VIEW_DIMS = {
     "cov": ("window", "feature"),
 }
 
+#: The coordinates along ``window`` that every embedding file holds.
+_WINDOW_COORDS = (
+    "obs",
+    "recording_id",
+    "subject",
+    "session",
+    "task",
+    "run",
+    "condition",
+    "epoch",
+    "start",
+    "stop",
+)
+
 # h5py reads a long list of indices slowly: 43,741 rows of an 87,000-window
 # file took 0.97 s as one list and 0.08 s as lists of 1,024 (2026-10-20).
 _READ_ROWS = 1024
@@ -1210,4 +1224,132 @@ def consolidate_embeddings(
                 rows = np.arange(len(header["windows"]["obs"]))
                 _copy_rows(header, rows, out, start)
                 start += len(rows)
+    return path
+
+
+def write_transformed_embeddings(
+    source: DataContainer,
+    embeddings: np.ndarray,
+    root: str | Path,
+    *,
+    label: str,
+    transform: Mapping[str, Any],
+    view: str | None = None,
+    token_dtype: str = "float32",
+) -> BIDSPath:
+    """Write transformed embeddings as one file holding every recording.
+
+    ``source`` is what :func:`load_embeddings` returned for one label and
+    view, one row per window, and ``embeddings`` its transform, row for row:
+    of the same shape for a transform that keeps it (``EuclideanAlign``,
+    ``LeaceEraser``), or ``(window, feature)`` with ``view="cov"`` for
+    ``RiemannAlign``'s tangent vectors. The file keeps the windows, the
+    recordings and the channels of ``source``; its settings are those of
+    ``source`` with ``Transform`` added, so its ``config_hash`` differs. It is
+    named by :func:`embedding_path`, with the task of the windows when they
+    share one, and written to a temporary name, then moved into place.
+
+    Parameters
+    ----------
+    source : DataContainer
+        Embeddings read by :func:`load_embeddings`, one row per window.
+    embeddings : np.ndarray
+        The transformed embeddings, one row per row of ``source``.
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label of the file, e.g. ``"baseEaCoralCh"``.
+    transform : mapping
+        What made ``embeddings``, recorded as the setting ``Transform``, e.g.
+        ``{"name": aligner.name, **aligner.get_params()}``.
+    view : str, optional
+        The view of the file; that of ``source`` by default.
+    token_dtype : {"float32", "float16"}
+        The dtype of a token file; other views are float32.
+
+    Returns
+    -------
+    BIDSPath
+        The file written.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` is not one row per window of an embedding file, or is
+        already transformed, if ``embeddings`` does not have one row per
+        window, has axes its view cannot have or holds non-finite values, or
+        if ``label`` is not a BIDS label.
+    """
+    meta = dict(source.meta)
+    if meta.get("representation") != "epoch" or "config" not in meta:
+        raise ValueError(
+            "source must be one row per window of an embedding file, as "
+            "load_embeddings returns with representation='epoch'."
+        )
+    if "Transform" in meta["config"]:
+        raise ValueError("source is already transformed.")
+    if token_dtype not in ("float32", "float16"):
+        raise ValueError(
+            f"token_dtype must be 'float32' or 'float16', got {token_dtype!r}."
+        )
+    view = view or meta["view"]
+    _check_view(view)
+    dtype = token_dtype if view == "token" else "float32"
+    with np.errstate(over="ignore"):
+        array = np.asarray(embeddings, dtype=dtype)
+    if len(array) != len(source.X):
+        raise ValueError(
+            f"embeddings has {len(array)} rows for {len(source.X)} windows."
+        )
+    if view == meta["view"]:
+        dims = ("window", *source.dims[1:])
+    elif view in _VIEW_DIMS:
+        dims = _VIEW_DIMS[view]
+    else:
+        raise ValueError(f"A transform cannot make {view} embeddings.")
+    if array.ndim != len(dims) or (view != "token" and dims != _VIEW_DIMS[view]):
+        raise ValueError(
+            f"{view} embeddings have shape {array.shape}, expected axes {dims}."
+        )
+    if not np.isfinite(array).all():
+        raise ValueError(f"embeddings hold non-finite values as {dtype}.")
+    config = {**meta["config"], "Transform": _json_value(dict(transform))}
+    coords = source.coords
+    n_windows = len(array)
+    windows = {
+        name: coords[name] if name in coords else np.full(n_windows, "", dtype=object)
+        for name in _WINDOW_COORDS
+    }
+    loaded = set(windows["recording_id"].tolist())
+    recordings = [row for row in meta["recordings"] if row["recording_id"] in loaded]
+    tasks = set(windows["task"].tolist())
+    path = embedding_path(
+        root, label, view, task=tasks.pop() if len(tasks) == 1 else None
+    )
+    dataset = xr.Dataset(
+        {"embeddings": (dims, array)},
+        coords={
+            **{name: ("window", values) for name, values in windows.items()},
+            "recording": [row["recording_id"] for row in recordings],
+            **{
+                name: ("recording", [row[name] for row in recordings])
+                for name in recordings[0]
+                if name != "recording_id"
+            },
+            **({"channel": coords["channel"]} if "channel" in dims else {}),
+        },
+        attrs={
+            "model_key": meta["model_key"],
+            "config_hash": stable_hash(config, length=16),
+            "config": json.dumps(config),
+            "description": label,
+            **(
+                {key: meta[key] for key in ("token_source", "token_feature_axis")}
+                if view == "token"
+                else {}
+            ),
+        },
+    )
+    Path(root).mkdir(parents=True, exist_ok=True)
+    _write_netcdf(dataset, path.fpath)
     return path

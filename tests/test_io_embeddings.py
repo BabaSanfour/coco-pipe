@@ -18,7 +18,9 @@ from coco_pipe.io.embeddings import (
     write_embedding_dataset,
     write_embedding_manifest,
     write_recording_embeddings,
+    write_transformed_embeddings,
 )
+from coco_pipe.transforms.subject_alignment import EuclideanAlign
 from coco_pipe.utils import stable_hash
 from tests.fixtures.embeddings import extract, source_path, write_recording
 
@@ -259,6 +261,96 @@ def test_tokens_can_be_written_as_float16(tmp_path):
     assert {path: path.fpath.read_bytes() for path in paths.values()} == before
     with pytest.raises(ValueError, match="token_dtype must be"):
         write({"EC": result}, "float64")
+
+
+def _aligned_tokens(tmp_path):
+    write_recording(tmp_path, {"EC": extract([0, 2], seed=1), "EO": extract([1, 3])})
+    write_recording(tmp_path, {"EC": extract([0, 1], seed=2)}, subject="02")
+    tokens = load_embeddings(find_embeddings(tmp_path / "out", "base", "token"))
+    aligner = EuclideanAlign("coral", channel_axis=1)
+    aligned = aligner.fit_transform(tokens.X, groups=tokens.coords["subject"])
+    return tokens, aligned, {"name": aligner.name, **aligner.get_params()}
+
+
+def test_transformed_embeddings_round_trip(tmp_path):
+    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    root = tmp_path / "out"
+    path = write_transformed_embeddings(
+        tokens, aligned, root, label="baseEaCoralCh", transform=transform
+    )
+    assert path.basename == "task-rest_desc-baseEaCoralCh_tokenembeddings.nc"
+    loaded = load_embeddings(path.fpath)
+    np.testing.assert_array_equal(loaded.X, aligned)
+    assert loaded.dims == tokens.dims
+    for name in ("obs", "subject", "condition", "epoch", "start", "channel"):
+        assert loaded.coords[name].tolist() == tokens.coords[name].tolist()
+    assert loaded.meta["recordings"] == tokens.meta["recordings"]
+    assert loaded.meta["config"] == {
+        **tokens.meta["config"],
+        "Transform": {
+            "name": "ea_coral",
+            "channel_axis": 1,
+            "mode": "coral",
+            "shrinkage": True,
+        },
+    }
+    assert loaded.meta["config_hash"] != tokens.meta["config_hash"]
+    with pytest.raises(ValueError):
+        load_embeddings([tokens.meta["files"][0], path.fpath])
+
+    tangent = np.random.default_rng(0).normal(size=(len(aligned), 15))
+    cov = write_transformed_embeddings(
+        tokens, tangent, root, label="baseRa", transform={"name": "ra"}, view="cov"
+    )
+    assert load_embeddings(cov.fpath).dims == ("obs", "feature")
+    _write_dataset(
+        root, descriptions={"base": "x", "baseEaCoralCh": "y", "baseRa": "z"}
+    )
+    sidecar = json.loads(path.fpath.with_suffix(".json").read_text())
+    assert sidecar["Transform"]["name"] == "ea_coral"
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        (lambda t, a: (t, a[:-1], {}), "rows"),
+        (lambda t, a: (t, np.where(a > 0, np.nan, a), {}), "non-finite"),
+        (lambda t, a: (t, a[:, 0], {"view": "cov"}), "expected axes"),
+        (lambda t, a: (t, a, {"view": "window"}), "expected axes"),
+        (lambda t, a: (t, a, {"token_dtype": "float64"}), "token_dtype"),
+    ],
+)
+def test_transformed_embeddings_refused(tmp_path, change, message):
+    source, embeddings, settings = change(*_aligned_tokens(tmp_path)[:2])
+    with pytest.raises(ValueError, match=message):
+        write_transformed_embeddings(
+            source,
+            embeddings,
+            tmp_path / "out",
+            label="baseEaCoralCh",
+            transform={"name": "ea_coral"},
+            **settings,
+        )
+    assert not find_embeddings(tmp_path / "out", "baseEaCoralCh", "token")
+
+
+def test_transformed_embeddings_need_window_rows_of_a_plain_file(tmp_path):
+    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    root = tmp_path / "out"
+    files = find_embeddings(root, "base", "window")
+    by_recording = load_embeddings(files, representation="recording")
+    with pytest.raises(ValueError, match="one row per window"):
+        write_transformed_embeddings(
+            by_recording, by_recording.X, root, label="baseEaMean", transform={}
+        )
+    path = write_transformed_embeddings(
+        tokens, aligned, root, label="baseEaCoralCh", transform=transform
+    )
+    again = load_embeddings(path.fpath)
+    with pytest.raises(ValueError, match="already transformed"):
+        write_transformed_embeddings(
+            again, again.X, root, label="baseEaCoralChEaMean", transform={}
+        )
 
 
 def test_recordings_of_one_configuration_share_config_hash(tmp_path):

@@ -238,6 +238,29 @@ same layout:
 
    windows = load_embeddings(f"{root}/task-rest_desc-base_windowembeddings.nc")
 
+A subject transform's output is written from what was loaded, row for row,
+with :func:`~coco_pipe.io.write_transformed_embeddings`. The file keeps the
+windows, recordings and channels of its source, and its settings add
+``Transform``, so it never mixes with the source:
+
+.. code-block:: python
+
+   from coco_pipe.io import write_transformed_embeddings
+   from coco_pipe.transforms import EuclideanAlign
+
+   tokens = load_embeddings(find_embeddings(root, "base", "token"))
+   aligner = EuclideanAlign("coral", channel_axis=1)
+   write_transformed_embeddings(
+       tokens,
+       aligner.fit_transform(tokens.X, groups=tokens.coords["subject"]),
+       root,
+       label="baseEaCoralCh",
+       transform={"name": aligner.name, **aligner.get_params()},
+   )
+
+``view="cov"`` writes a transform that changes the axes, such as
+``RiemannAlign``'s tangent vectors, as a ``covembeddings`` file.
+
 Each writer checks before it writes (one model and set of settings per file,
 finite values, no epoch twice) and replaces its file atomically, so jobs may
 write into one dataset at once. :func:`~coco_pipe.io.load_embeddings` refuses

@@ -56,6 +56,9 @@ if TYPE_CHECKING:
     from .embeddings import write_embedding_dataset as write_embedding_dataset
     from .embeddings import write_embedding_manifest as write_embedding_manifest
     from .embeddings import write_recording_embeddings as write_recording_embeddings
+    from .embeddings import (
+        write_transformed_embeddings as write_transformed_embeddings,
+    )
 
 __all__ = [
     "AGGREGATION_LEVELS",
@@ -107,6 +110,7 @@ _LAZY_EMBEDDING_EXPORTS = [
     "write_embedding_dataset",
     "write_embedding_manifest",
     "write_recording_embeddings",
+    "write_transformed_embeddings",
 ]
 __all__.extend(_LAZY_DATASET_EXPORTS + _LAZY_EMBEDDING_EXPORTS)
 
