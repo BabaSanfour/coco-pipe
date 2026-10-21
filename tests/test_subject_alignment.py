@@ -142,6 +142,43 @@ def test_euclidean_alignment_of_tokens_takes_all_their_tokens():
         EuclideanAlign("mean").fit(tokens[0, 0, 0], groups=groups[:d])
 
 
+def test_euclidean_alignment_can_center_each_channel():
+    tokens, groups = _subject_tokens()
+    offsets = np.random.default_rng(1).standard_normal((4, 3, 1, tokens.shape[-1]))
+    tokens = tokens.astype(np.float64) + np.repeat(offsets * 3, 20, axis=0)
+    d = tokens.shape[-1]
+
+    whitened = EuclideanAlign("coral", shrinkage=False, channel_axis=1).fit_transform(
+        tokens, groups=groups
+    )
+    for sid in np.unique(groups):
+        subject = whitened[groups == sid]
+        np.testing.assert_allclose(subject.mean(axis=(0, 2)), 0.0, atol=1e-9)
+        rows = subject.reshape(-1, d)
+        np.testing.assert_allclose(rows.T @ rows / len(rows), np.eye(d), atol=1e-9)
+
+    per_channel = EuclideanAlign("mean", channel_axis=1).fit_transform(
+        tokens, groups=groups
+    )
+    plain = EuclideanAlign("mean").fit_transform(tokens, groups=groups)
+    for axes in ((1, 2), 1):
+        np.testing.assert_allclose(
+            per_channel.mean(axis=axes), plain.mean(axis=axes), atol=1e-12
+        )
+    channels = per_channel.mean(axis=2)
+    assert not np.allclose(channels, plain.mean(axis=2))
+    for sid in np.unique(groups):
+        np.testing.assert_allclose(channels[groups == sid].mean(0), 0.0, atol=1e-12)
+
+    for axis, X in ((0, tokens), (3, tokens), (True, tokens), (1, tokens[:, 0, 0])):
+        with pytest.raises(ValueError, match="channel_axis"):
+            EuclideanAlign("mean", channel_axis=axis).fit(X, groups=groups)
+    assert (
+        EuclideanAlign("mean", channel_axis=1).fingerprint()
+        != EuclideanAlign("mean").fingerprint()
+    )
+
+
 def test_riemann_alignment_returns_finite_tangent_vectors():
     pytest.importorskip("pyriemann")
     rng = np.random.default_rng(2)
