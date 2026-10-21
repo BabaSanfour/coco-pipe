@@ -102,7 +102,7 @@ def embedding_path(
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
         The ``desc`` label: the processing chain, e.g. ``"base"`` or
-        ``"baseRandomEaCoral"``. A BIDS label: letters, digits and ``+``.
+        ``"baseRandom0EaCoral"``. A BIDS label: letters, digits and ``+``.
     view : str
         One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
     recording_id : str, optional
@@ -500,8 +500,9 @@ Foundation-model embeddings of EEG epochs, written by coco-pipe
 Files are named `<entities>_desc-<label>_<view>embeddings.nc`.
 
 - `desc` is the processing chain: the epochs' own label, then the weights
-  (`Random` for random weights), the pooling and the alignment, e.g.
-  `baseRandomEaCoral`. `descriptions.tsv` lists the labels.
+  (`Random<seed>` for random weights drawn from that seed), the pooling and
+  the alignment, e.g. `baseRandom0EaCoral`. `descriptions.tsv` lists the
+  labels.
 - The suffix is the representation:
 {suffixes}
 - Files under `sub-*/` hold one recording. Files at the top level hold every
@@ -741,7 +742,7 @@ def find_embeddings(
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
         The ``desc`` label, matched whole: ``"base"`` does not find the
-        ``"baseRandom"`` files.
+        ``"baseRandom0"`` files.
     view : str
         One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
     subjects : str or sequence of str, optional

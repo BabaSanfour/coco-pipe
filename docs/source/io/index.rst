@@ -159,9 +159,10 @@ label followed by the pooling's name (``baseAttention``), whose
 ``WindowPooling`` setting names that pooling.
 
 The ``desc`` entity names the processing that produced the file, e.g. ``base``,
-``baseRandom`` or ``baseEaCoral``; it is any BIDS label (letters, digits and
-``+``). A file keeps its source recording's entities, so one recording's files
-sit in its subject folder and the files holding every recording at the root:
+``baseRandom0`` (random weights of seed 0) or ``baseEaCoral``; it is any BIDS
+label (letters, digits and ``+``). A file keeps its source recording's
+entities, so one recording's files sit in its subject folder and the files
+holding every recording at the root:
 
 .. code-block:: text
 

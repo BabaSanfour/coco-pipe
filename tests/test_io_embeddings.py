@@ -26,7 +26,7 @@ from tests.fixtures.embeddings import extract, source_path, write_recording
 def test_embedding_path_names_recording_and_dataset_files(tmp_path):
     recording = embedding_path(
         tmp_path,
-        "baseRandomEaCoral",
+        "baseRandom0EaCoral",
         "window",
         recording_id="sub-01_ses-02_task-rest_run-03",
     ).fpath
@@ -35,9 +35,10 @@ def test_embedding_path_names_recording_and_dataset_files(tmp_path):
         / "sub-01"
         / "ses-02"
         / "eeg"
-        / "sub-01_ses-02_task-rest_run-03_desc-baseRandomEaCoral_windowembeddings.nc"
+        / "sub-01_ses-02_task-rest_run-03_desc-baseRandom0EaCoral_windowembeddings.nc"
     )
-    assert get_entities_from_fname(recording.name)["description"] == "baseRandomEaCoral"
+    entities = get_entities_from_fname(recording.name)
+    assert entities["description"] == "baseRandom0EaCoral"
     assert embedding_path(tmp_path, "base", "token", task="rest").fpath == (
         tmp_path / "task-rest_desc-base_tokenembeddings.nc"
     )
