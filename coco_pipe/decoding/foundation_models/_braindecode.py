@@ -12,6 +12,7 @@ To add a new braindecode model: add one entry to ``_BD_MODEL_MAP`` and one
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import warnings
@@ -322,50 +323,54 @@ class BrainDecodeBackend(BackendBase):
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
-        if not pretrained:
-            # The checkpoint's architecture, with new weights drawn from the seed.
-            # Its config keeps the channels' names, positions and types, all the
-            # models read: with the pretrained weights loaded, the rebuilt model
-            # embeds exactly as the loaded one.
-            with seeded(seed), warnings.catch_warnings():
-                warnings.filterwarnings("ignore", "Modifying chs_info argument")
-                model = type(model).from_config(model.get_config())
-        if model_key == "labram" and not uses_interpolation and electrode_names:
-            # As in the authors' code, each channel takes the position embedding
-            # of its name, so a subset of the pretraining channels is fed as is.
-            model.forward = partial(model.forward, ch_names=list(electrode_names))
+        # Random weights: every weight drawn from here on, the backbone's, then
+        # LoRA's and the head's, comes from the seed, on the CPU, in this order.
+        with contextlib.nullcontext() if pretrained else seeded(seed):
+            if not pretrained:
+                # The checkpoint's architecture, with new weights. Its config
+                # keeps the channels' names, positions and types, all the models
+                # read: with the pretrained weights loaded, the rebuilt model
+                # embeds exactly as the loaded one.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", "Modifying chs_info argument")
+                    model = type(model).from_config(model.get_config())
+            if model_key == "labram" and not uses_interpolation and electrode_names:
+                # As in the authors' code, each channel takes the position
+                # embedding of its name, so a subset of the pretraining channels
+                # is fed as is.
+                model.forward = partial(model.forward, ch_names=list(electrode_names))
+
+            if train_mode == "frozen":
+                for param in model.parameters():
+                    param.requires_grad = False
+                model.eval()
+            elif train_mode == "lora":
+                from peft import LoraConfig, get_peft_model
+
+                lora_cfg = LoraConfig(
+                    r=lora_r,
+                    lora_alpha=lora_alpha,
+                    target_modules=lora_target_modules,
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                model = get_peft_model(model, lora_cfg)
+            # full: no changes — all params trainable
+
+            if n_outputs is not None:
+                try:
+                    model.reset_head(n_outputs)
+                except NotImplementedError:
+                    if model_key != "luna":
+                        raise
+            if train_mode == "frozen" and n_outputs is not None:
+                for head_name in ("final_layer", "classifier", "head"):
+                    head = getattr(model, head_name, None)
+                    if head is not None:
+                        for parameter in head.parameters():
+                            parameter.requires_grad = True
+                        break
         model = model.to(device)
-
-        if train_mode == "frozen":
-            for param in model.parameters():
-                param.requires_grad = False
-            model.eval()
-        elif train_mode == "lora":
-            from peft import LoraConfig, get_peft_model
-
-            lora_cfg = LoraConfig(
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                target_modules=lora_target_modules,
-                lora_dropout=lora_dropout,
-                bias="none",
-            )
-            model = get_peft_model(model, lora_cfg)
-        # full: no changes — all params trainable
-
-        if n_outputs is not None:
-            try:
-                model.reset_head(n_outputs)
-            except NotImplementedError:
-                if model_key != "luna":
-                    raise
-        if train_mode == "frozen" and n_outputs is not None:
-            for head_name in ("final_layer", "classifier", "head"):
-                head = getattr(model, head_name, None)
-                if head is not None:
-                    for parameter in head.parameters():
-                        parameter.requires_grad = True
-                    break
 
         backend = cls(
             metadata=metadata,

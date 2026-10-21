@@ -219,7 +219,7 @@ def _tiny_backbone_class():
     return TinyBackbone
 
 
-def test_random_weights_rebuild_the_backbone_from_the_seed():
+def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
     import torch
 
     TinyBackbone = _tiny_backbone_class()
@@ -232,7 +232,9 @@ def test_random_weights_rebuild_the_backbone_from_the_seed():
         calls.append(kwargs)
         return pos_bank if "positions" in repo_id else copy.deepcopy(checkpoint)
 
-    def backbone(**weights):
+    def backbone(global_seed=0, **weights):
+        if global_seed is not None:
+            torch.manual_seed(global_seed)  # as a decoder's random_state does
         with (
             patch(
                 "transformers.AutoModel.from_pretrained", side_effect=from_pretrained
@@ -242,25 +244,37 @@ def test_random_weights_rebuild_the_backbone_from_the_seed():
             loaded = HuggingFaceBackend.load(
                 "reve",
                 get_estimator_spec("reve"),
-                n_outputs=None,
+                n_outputs=2,
                 device="cpu",
                 train_mode="frozen",
                 electrode_names=["Cz"],
                 **weights,
             )
         assert loaded._pos_bank is pos_bank  # always the checkpoint's
-        return loaded._backbone.state_dict()
+        return {
+            f"{name}.{key}": value
+            for name in ("backbone", "head")
+            for key, value in getattr(loaded, f"_{name}").state_dict().items()
+        }
 
+    torch.manual_seed(0)
     state = torch.random.get_rng_state()
-    random = backbone(pretrained=False, seed=0)
+    random = backbone(global_seed=None, pretrained=False, seed=0)
     assert torch.equal(state, torch.random.get_rng_state())
     assert not any({"pretrained", "seed"} & set(call) for call in calls)
-    pretrained, again = backbone(), backbone(pretrained=False, seed=0)
+    pretrained = backbone()
+    again = backbone(global_seed=1, pretrained=False, seed=0)
     other = backbone(pretrained=False, seed=1)
     for key, value in random.items():
         assert torch.equal(value, again[key])
-        assert not torch.equal(value, pretrained[key])
         assert not torch.equal(value, other[key])
+        if key.startswith("backbone."):
+            assert not torch.equal(value, pretrained[key])
+    # pretrained weights: the head is drawn from the caller's random state
+    assert torch.equal(backbone()["head.weight"], pretrained["head.weight"])
+    assert not torch.equal(
+        backbone(global_seed=1)["head.weight"], pretrained["head.weight"]
+    )
 
 
 @pytest.mark.parametrize(

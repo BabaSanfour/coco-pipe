@@ -169,6 +169,27 @@ def test_random_weights_keep_the_architecture(offline, model_key):
 
 
 @pytest.mark.parametrize(
+    "model_key, train_mode",
+    [*((key, "frozen") for key in BACKBONES), ("cbramod", "lora"), ("bendr", "full")],
+)
+def test_random_weights_draw_the_head_from_the_seed(offline, model_key, train_mode):
+    def weights(global_seed, **settings):
+        torch.manual_seed(global_seed)  # as a decoder's random_state does
+        return _weights(_load(model_key, train_mode, **settings)[0])
+
+    first = weights(1, pretrained=False, seed=0)
+    again = weights(2, pretrained=False, seed=0)
+    assert all(torch.equal(first[key], again[key]) for key in first)
+    other = weights(1, pretrained=False, seed=1)
+    head = [key for key in first if not torch.equal(first[key], other[key])]
+    assert any(".final_layer." in key or ".classifier." in key for key in head)
+    # pretrained weights: the head is drawn from the caller's random state
+    pretrained = weights(1), weights(1), weights(2)
+    assert all(torch.equal(pretrained[0][key], pretrained[1][key]) for key in first)
+    assert any(not torch.equal(pretrained[0][key], pretrained[2][key]) for key in first)
+
+
+@pytest.mark.parametrize(
     "weights, message",
     [
         ({"pretrained": False}, "need an integer seed"),

@@ -11,6 +11,7 @@ qlora requires ``bitsandbytes``; lora/qlora require ``peft``.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import warnings
 from typing import TYPE_CHECKING
@@ -259,55 +260,61 @@ class HuggingFaceBackend(BackendBase):
             )
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
-        if seed is not None:
-            # The checkpoint's architecture, from its own class and config, with
-            # new weights drawn from the seed.
-            with seeded(seed):
+        pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
+        # Random weights: every weight drawn from here on, the backbone's, then
+        # LoRA's and the head's, comes from the seed, on the CPU, in this order.
+        with contextlib.nullcontext() if seed is None else seeded(seed):
+            if seed is not None:
+                # The checkpoint's architecture, from its own class and config,
+                # with new weights.
                 backbone = type(backbone)._from_config(
                     backbone.config, dtype=backbone.dtype
                 )
-        pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
-        feat_dim: int = getattr(
-            backbone.config,
-            "hidden_size",
-            metadata.embedding_dim,
-        )
-
-        if train_mode in ("lora", "qlora"):
-            from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-
-            if train_mode == "qlora":
-                # REVE does not support gradient checkpointing, which peft
-                # turns on by default and which then fails the load
-                backbone = prepare_model_for_kbit_training(
-                    backbone, use_gradient_checkpointing=False
-                )
-            lora_cfg = LoraConfig(
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                target_modules=(
-                    lora_target_modules
-                    if isinstance(lora_target_modules, str)
-                    else list(lora_target_modules)
-                ),
-                lora_dropout=lora_dropout,
-                bias="none",
+            feat_dim: int = getattr(
+                backbone.config,
+                "hidden_size",
+                metadata.embedding_dim,
             )
-            backbone = get_peft_model(backbone, lora_cfg)
-        elif train_mode == "frozen":
-            for param in backbone.parameters():
-                param.requires_grad = False
-            backbone.eval()
-        if train_mode != "full":
-            for param in pos_bank.parameters():
-                param.requires_grad = False
-            pos_bank.eval()
 
-        head = (
-            nn.Linear(feat_dim, n_outputs).to(device)
-            if n_outputs is not None
-            else nn.Identity().to(device)
-        )
+            if train_mode in ("lora", "qlora"):
+                from peft import (
+                    LoraConfig,
+                    get_peft_model,
+                    prepare_model_for_kbit_training,
+                )
+
+                if train_mode == "qlora":
+                    # REVE does not support gradient checkpointing, which peft
+                    # turns on by default and which then fails the load
+                    backbone = prepare_model_for_kbit_training(
+                        backbone, use_gradient_checkpointing=False
+                    )
+                lora_cfg = LoraConfig(
+                    r=lora_r,
+                    lora_alpha=lora_alpha,
+                    target_modules=(
+                        lora_target_modules
+                        if isinstance(lora_target_modules, str)
+                        else list(lora_target_modules)
+                    ),
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                backbone = get_peft_model(backbone, lora_cfg)
+            elif train_mode == "frozen":
+                for param in backbone.parameters():
+                    param.requires_grad = False
+                backbone.eval()
+            if train_mode != "full":
+                for param in pos_bank.parameters():
+                    param.requires_grad = False
+                pos_bank.eval()
+
+            head = (
+                nn.Linear(feat_dim, n_outputs).to(device)
+                if n_outputs is not None
+                else nn.Identity().to(device)
+            )
 
         backend = cls(
             metadata=metadata,
