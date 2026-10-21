@@ -319,6 +319,26 @@ def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     }
 
 
+def test_extractor_draws_random_weights_from_its_seed(offline):
+    _, X = _load("cbramod")
+    meta = SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+    extractor = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", pretrained=False, seed=0
+    )
+    first = extractor.extract(X, signal_metadata=meta)
+    assert (first.metadata["weights"], first.metadata["seed"]) == ("random", 0)
+    assert not any({"pretrained", "seed"} & set(call) for call in offline)
+    again = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", pretrained=False, seed=0
+    ).extract(X, signal_metadata=meta)
+    np.testing.assert_array_equal(again.window_embeddings, first.window_embeddings)
+    # another seed is another model, loaded again
+    extractor.seed = 1
+    other = extractor.extract(X, signal_metadata=meta)
+    assert other.metadata["seed"] == 1
+    assert not np.allclose(other.window_embeddings, first.window_embeddings)
+
+
 def test_labram_interpolates_missing_channels(offline):
     backend, X = _load("labram")
     adaptation = backend.get_channel_adaptation()

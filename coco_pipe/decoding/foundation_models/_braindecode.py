@@ -379,6 +379,7 @@ class BrainDecodeBackend(BackendBase):
             backend._expected_n_chans = len(electrode_names)
         backend._uses_interpolation = model_key == "labram" and interpolate_channels
         backend.checkpoint_revisions = {metadata.hub_repo: revision}
+        backend.weights_seed = None if pretrained else int(seed)
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None
         )

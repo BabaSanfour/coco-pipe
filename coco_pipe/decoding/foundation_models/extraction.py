@@ -15,7 +15,7 @@ from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from . import _montages
-from ._base import check_finite
+from ._base import check_finite, check_weights
 from ._channels import normalize_channel_names
 from ._loader import _BACKEND_MAP
 from ._prepare import prepare_backend
@@ -269,6 +269,11 @@ def _pool_tokens(
     )
 
 
+def _weights_text(seed: int | None) -> str:
+    """Name the weights of a model: pretrained, or random of a seed."""
+    return "pretrained weights" if seed is None else f"random weights of seed {seed}"
+
+
 @dataclass
 class FoundationEmbeddingResult:
     """Window embeddings plus extraction provenance.
@@ -307,6 +312,11 @@ class FoundationEmbeddingExtractor:
     ``pooling`` makes the window vectors; ``extra_poolings`` names other
     poolings the backend offers (``("attention",)`` for REVE), whose vectors
     come from the same forward pass, in ``extra_window_embeddings``.
+
+    ``pretrained=False`` with an integer ``seed`` gives the model's
+    architecture random weights drawn from the seed, the same for every
+    recording. The metadata records the weights of the model used
+    (``weights``, and ``seed`` for random ones).
     """
 
     def __init__(
@@ -315,6 +325,8 @@ class FoundationEmbeddingExtractor:
         *,
         backend: str = "auto",
         device: str = "auto",
+        pretrained: bool = True,
+        seed: int | None = None,
         pooling: str = "mean",
         extra_poolings: Sequence[str] = (),
         normalize_embeddings: bool = True,
@@ -327,6 +339,11 @@ class FoundationEmbeddingExtractor:
     ) -> None:
         if batch_size is not None and batch_size <= 0:
             raise ValueError("batch_size must be a positive integer or None.")
+        check_weights(pretrained, seed)
+        if {"pretrained", "seed"} & set(backend_kwargs or {}):
+            raise ValueError(
+                "pretrained and seed are the extractor's settings, not backend_kwargs."
+            )
         if store_tokens and cache_embeddings:
             raise ValueError("store_tokens is incompatible with cache_embeddings.")
         extra_poolings = (
@@ -344,6 +361,8 @@ class FoundationEmbeddingExtractor:
         self.model_key = model_key
         self.backend = backend
         self.device = device
+        self.pretrained = pretrained
+        self.seed = seed
         self.pooling = pooling
         self.extra_poolings = extra_poolings
         self.normalize_embeddings = normalize_embeddings
@@ -491,6 +510,8 @@ class FoundationEmbeddingExtractor:
             for part in (
                 self.model_key,
                 self.backend,
+                self.pretrained,
+                self.seed,
                 self.pooling,
                 self.normalize_embeddings,
                 prepared.target_sfreq,
@@ -546,7 +567,13 @@ class FoundationEmbeddingExtractor:
         ch_names = normalize_channel_names(signal_metadata.ch_names)
         # A model is built for one montage, rate and window length (channel
         # positions and adapters, n_times): another recording loads its own.
-        loaded_for = (float(signal_metadata.sfreq), tuple(ch_names), X.shape[-1])
+        loaded_for = (
+            float(signal_metadata.sfreq),
+            tuple(ch_names),
+            X.shape[-1],
+            self.pretrained,
+            self.seed,
+        )
         if self._loaded_for not in (None, loaded_for):
             self.model = None
         prepared = prepare_backend(
@@ -559,7 +586,11 @@ class FoundationEmbeddingExtractor:
             sfreq=float(signal_metadata.sfreq),
             ch_names=ch_names,
             pooling=self.pooling,
-            backend_kwargs=self.backend_kwargs,
+            backend_kwargs=(
+                self.backend_kwargs
+                if self.pretrained
+                else {**self.backend_kwargs, "pretrained": False, "seed": self.seed}
+            ),
             model=self.model,
         )
         if self.model is None:
@@ -567,6 +598,13 @@ class FoundationEmbeddingExtractor:
         self.model = prepared.backend
         model = prepared.backend
         spec = prepared.spec
+        weights_seed = getattr(model, "weights_seed", None)
+        asked = None if self.pretrained else self.seed
+        if weights_seed != asked:
+            raise ValueError(
+                f"The model holds {_weights_text(weights_seed)}, but the extractor "
+                f"asks for {_weights_text(asked)}."
+            )
         if not self.resample and prepared.source_sfreq != prepared.target_sfreq:
             warnings.warn(
                 f"resample=False but input sfreq ({prepared.source_sfreq} Hz) != "
@@ -632,6 +670,8 @@ class FoundationEmbeddingExtractor:
             "model_checkpoint": spec.hub_repo,
             "checkpoint_revisions": dict(getattr(model, "checkpoint_revisions", {})),
             "checkpoint_filename": spec.checkpoint_filename,
+            "weights": "pretrained" if weights_seed is None else "random",
+            **({} if weights_seed is None else {"seed": int(weights_seed)}),
             "backend": (
                 self.backend if self.backend != "auto" else spec.preferred_backend
             ),

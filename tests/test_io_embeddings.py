@@ -175,6 +175,7 @@ def test_write_recording_embeddings_round_trip(tmp_path):
             config = json.loads(ds.attrs["config"])
             assert config["ModelKey"] == "cbramod"
             assert config["NormalizeEmbeddings"] is True
+            assert config["Weights"] == "pretrained" and "Seed" not in config
             assert set(config) <= set(EMBEDDING_CONFIG_KEYS.values())
             assert stable_hash(config, length=16) == ds.attrs["config_hash"]
             hashes.add(ds.attrs["config_hash"])
@@ -241,6 +242,15 @@ def test_recordings_of_one_configuration_share_config_hash(tmp_path):
     first = config_hash("01", extract([0, 1]))
     assert config_hash("02", extract([0], seed=1, channels=("Fz",))) == first
     assert config_hash("03", extract([0], normalize_embeddings=False)) != first
+    random = extract([0])
+    random = replace(random, metadata={**random.metadata, "weights": "random"})
+    seeds = {
+        config_hash(
+            f"0{seed + 4}", replace(random, metadata={**random.metadata, "seed": seed})
+        )
+        for seed in (0, 1)
+    }
+    assert len(seeds) == 2 and first not in seeds
 
 
 def _nan_at_first(result, view):

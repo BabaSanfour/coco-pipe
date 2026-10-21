@@ -323,6 +323,7 @@ class HuggingFaceBackend(BackendBase):
             task=task,
         )
         backend.checkpoint_revisions = revisions
+        backend.weights_seed = None if seed is None else int(seed)
         return backend
 
     # ------------------------------------------------------------------

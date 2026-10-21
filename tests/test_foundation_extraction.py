@@ -13,7 +13,7 @@ from coco_pipe.decoding.foundation_models import (
 )
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
-from tests.fixtures.embeddings import extract
+from tests.fixtures.embeddings import TokenModel, extract
 
 
 class FakeFoundationModel:
@@ -462,6 +462,41 @@ def test_extra_poolings_pool_the_same_tokens():
     ],
 )
 def test_extra_poolings_refused(settings, message):
+    with pytest.raises(ValueError, match=message):
+        FoundationEmbeddingExtractor("cbramod", **settings)
+
+
+def test_extractor_records_the_weights_of_its_model():
+    class RandomTokenModel(TokenModel):
+        weights_seed = 3
+
+    def extract_with(model, **weights):
+        return FoundationEmbeddingExtractor(
+            "cbramod", model=model, resample=False, **weights
+        ).extract(
+            np.zeros((2, 2, 10), dtype=np.float32),
+            signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["T7", "Cz"]),
+        )
+
+    metadata = extract_with(TokenModel()).metadata
+    assert metadata["weights"] == "pretrained" and "seed" not in metadata
+    metadata = extract_with(RandomTokenModel(), pretrained=False, seed=3).metadata
+    assert (metadata["weights"], metadata["seed"]) == ("random", 3)
+    with pytest.raises(ValueError, match="holds random weights of seed 3, but"):
+        extract_with(RandomTokenModel())
+    with pytest.raises(ValueError, match="asks for random weights of seed 0"):
+        extract_with(TokenModel(), pretrained=False, seed=0)
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"backend_kwargs": {"seed": 0}}, "not backend_kwargs"),
+    ],
+)
+def test_random_weights_settings_refused(settings, message):
     with pytest.raises(ValueError, match=message):
         FoundationEmbeddingExtractor("cbramod", **settings)
 

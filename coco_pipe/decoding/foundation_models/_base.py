@@ -108,6 +108,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     _model = None
     # The commit loaded from each Hugging Face repository, set by ``load``.
     checkpoint_revisions: Mapping[str, str] = MappingProxyType({})
+    # The seed of random weights (``load(pretrained=False, seed=...)``); None
+    # for the checkpoint's.
+    weights_seed: int | None = None
 
     def release_memory(self) -> None:
         """Drop references to loaded torch modules so GC can reclaim them.
