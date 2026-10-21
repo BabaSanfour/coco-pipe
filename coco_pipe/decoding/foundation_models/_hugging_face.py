@@ -261,12 +261,9 @@ class HuggingFaceBackend(BackendBase):
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
         pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
-        # Random weights: every weight drawn from here on, the backbone's, then
-        # LoRA's and the head's, comes from the seed, on the CPU, in this order.
+        # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if seed is None else seeded(seed):
             if seed is not None:
-                # The checkpoint's architecture, from its own class and config,
-                # with new weights.
                 backbone = type(backbone)._from_config(
                     backbone.config, dtype=backbone.dtype
                 )
@@ -402,7 +399,6 @@ class HuggingFaceBackend(BackendBase):
         chunks = []
         with self._no_grad():
             for start in range(0, len(tokens), batch_size):
-                # the tokens' own dtype: the values the forward pass pooled
                 batch = torch.from_numpy(tokens[start : start + batch_size])
                 pooled = self._pool(batch.to(self._device), pooling)
                 chunks.append(self._from_tensor(pooled))

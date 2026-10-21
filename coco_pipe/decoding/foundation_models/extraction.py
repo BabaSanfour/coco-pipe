@@ -626,7 +626,6 @@ class FoundationEmbeddingExtractor:
         if self.store_tokens:
             token_metadata = model.get_token_output_metadata()
         elif not self.cache_embeddings and hasattr(model, "get_token_output_metadata"):
-            # without documented tokens, window embeddings only
             with contextlib.suppress(NotImplementedError):
                 token_metadata = model.get_token_output_metadata()
         views = []

@@ -108,8 +108,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     _model = None
     # The commit loaded from each Hugging Face repository, set by ``load``.
     checkpoint_revisions: Mapping[str, str] = MappingProxyType({})
-    # The seed of random weights (``load(pretrained=False, seed=...)``); None
-    # for the checkpoint's.
+    # The seed of random weights, None for pretrained ones.
     weights_seed: int | None = None
 
     def release_memory(self) -> None:

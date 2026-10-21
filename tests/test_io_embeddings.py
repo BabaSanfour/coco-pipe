@@ -217,7 +217,6 @@ def test_extra_poolings_get_window_files_of_their_own_label(tmp_path):
         assert config["WindowPooling"] == "mean"
         assert json.loads(ds.attrs["config"]) == {**config, "WindowPooling": "max"}
         assert ds.attrs["config_hash"] != base.attrs["config_hash"]
-    # the label's own files are those written without the other pooling
     plain = write_recording(
         tmp_path / "plain",
         {"EO": extract([1], seed=1), "EC": extract([0, 2])},

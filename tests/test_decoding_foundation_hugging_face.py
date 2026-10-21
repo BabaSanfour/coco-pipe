@@ -234,7 +234,7 @@ def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
 
     def backbone(global_seed=0, **weights):
         if global_seed is not None:
-            torch.manual_seed(global_seed)  # as a decoder's random_state does
+            torch.manual_seed(global_seed)
         with (
             patch(
                 "transformers.AutoModel.from_pretrained", side_effect=from_pretrained
@@ -250,7 +250,7 @@ def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
                 electrode_names=["Cz"],
                 **weights,
             )
-        assert loaded._pos_bank is pos_bank  # always the checkpoint's
+        assert loaded._pos_bank is pos_bank
         return {
             f"{name}.{key}": value
             for name in ("backbone", "head")
@@ -270,7 +270,6 @@ def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
         assert not torch.equal(value, other[key])
         if key.startswith("backbone."):
             assert not torch.equal(value, pretrained[key])
-    # pretrained weights: the head is drawn from the caller's random state
     assert torch.equal(backbone()["head.weight"], pretrained["head.weight"])
     assert not torch.equal(
         backbone(global_seed=1)["head.weight"], pretrained["head.weight"]
@@ -344,7 +343,6 @@ def test_pool_tokens_pools_the_tokens_of_one_forward_pass():
     adapter = _make_fitted_adapter(n_chans=2)
     native = torch.randn(3, 2, 4, 512, generator=torch.Generator().manual_seed(0))
     adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
-    # a read-out unlike the mean
     adapter._backbone.attention_pooling.side_effect = lambda out: out.amax(dim=(1, 2))
 
     pooled, tokens = adapter.transform(

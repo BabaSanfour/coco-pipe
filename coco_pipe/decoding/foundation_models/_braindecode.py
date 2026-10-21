@@ -323,14 +323,9 @@ class BrainDecodeBackend(BackendBase):
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
-        # Random weights: every weight drawn from here on, the backbone's, then
-        # LoRA's and the head's, comes from the seed, on the CPU, in this order.
+        # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):
             if not pretrained:
-                # The checkpoint's architecture, with new weights. Its config
-                # keeps the channels' names, positions and types, all the models
-                # read: with the pretrained weights loaded, the rebuilt model
-                # embeds exactly as the loaded one.
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", "Modifying chs_info argument")
                     model = type(model).from_config(model.get_config())

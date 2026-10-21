@@ -151,7 +151,6 @@ def _weights(backend):
 
 @pytest.mark.parametrize("model_key", BACKBONES)
 def test_random_weights_keep_the_architecture(offline, model_key):
-    # no head: a head set for n_outputs is drawn afterwards, to be trained
     loaded, X = _load(model_key, n_outputs=None)
     random, _ = _load(model_key, n_outputs=None, pretrained=False, seed=0)
     assert not any({"pretrained", "seed"} & set(call) for call in offline)
@@ -161,7 +160,6 @@ def test_random_weights_keep_the_architecture(offline, model_key):
     assert list(weights) == list(pretrained)
     assert all(weights[key].shape == pretrained[key].shape for key in weights)
     assert all(torch.equal(weights[key], again[key]) for key in weights)
-    # the tensors another seed changes were drawn, so none is the loaded one
     drawn = [key for key in weights if not torch.equal(weights[key], other[key])]
     assert drawn
     assert not any(torch.equal(weights[key], pretrained[key]) for key in drawn)
@@ -174,7 +172,7 @@ def test_random_weights_keep_the_architecture(offline, model_key):
 )
 def test_random_weights_draw_the_head_from_the_seed(offline, model_key, train_mode):
     def weights(global_seed, **settings):
-        torch.manual_seed(global_seed)  # as a decoder's random_state does
+        torch.manual_seed(global_seed)
         return _weights(_load(model_key, train_mode, **settings)[0])
 
     first = weights(1, pretrained=False, seed=0)
@@ -183,7 +181,6 @@ def test_random_weights_draw_the_head_from_the_seed(offline, model_key, train_mo
     other = weights(1, pretrained=False, seed=1)
     head = [key for key in first if not torch.equal(first[key], other[key])]
     assert any(".final_layer." in key or ".classifier." in key for key in head)
-    # pretrained weights: the head is drawn from the caller's random state
     pretrained = weights(1), weights(1), weights(2)
     assert all(torch.equal(pretrained[0][key], pretrained[1][key]) for key in first)
     assert any(not torch.equal(pretrained[0][key], pretrained[2][key]) for key in first)
@@ -353,7 +350,6 @@ def test_extractor_draws_random_weights_from_its_seed(offline):
         "cbramod", device="cpu", pretrained=False, seed=0
     ).extract(X, signal_metadata=meta)
     np.testing.assert_array_equal(again.window_embeddings, first.window_embeddings)
-    # another seed is another model, loaded again
     extractor.seed = 1
     other = extractor.extract(X, signal_metadata=meta)
     assert other.metadata["seed"] == 1
@@ -368,7 +364,6 @@ def test_labram_interpolates_missing_channels(offline):
     assert {name.upper() for name in adaptation["direct_channels"]} <= names
     assert adaptation["interpolated_channels"]
     assert adaptation["interpolation_method"]
-    # its tokens cover the 128 target channels, so they stay one axis
     _, tokens = backend.transform(X, return_tokens=True)
     assert tokens.shape == (4, 128 * 15, 200)
     assert backend.get_token_output_metadata()["token_axes"] == [
@@ -391,9 +386,6 @@ def test_labram_interpolates_missing_channels(offline):
 
 
 def test_labram_tokens_follow_their_channel(offline):
-    # LaBraM's position embedding follows the channel names and its attention
-    # has no position bias, so moving channels with their names moves their
-    # tokens: along the channel axis only if the tokens are channel-major.
     plain, X = _load("labram", interpolate_channels=False)
     order = np.random.default_rng(0).permutation(len(DEFAULT_CHANNELS))
     moved, _ = _load(

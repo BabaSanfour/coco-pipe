@@ -408,17 +408,15 @@ def test_backend_pooling_is_kept_separate_from_native_tokens():
     )
     np.testing.assert_allclose(res.window_embeddings, raw.reshape(3, -1))
     np.testing.assert_array_equal(res.token_embeddings, raw)
-    # one token axis: nothing to average for a channel or patch view
     assert res.channel_embeddings is None
     assert res.patch_embeddings is None
 
 
 def test_channel_and_patch_views_average_the_tokens():
     full = extract([0, 1, 2])
-    tokens = full.token_embeddings  # (window, channel, time_patch, feature)
+    tokens = full.token_embeddings
     np.testing.assert_allclose(full.channel_embeddings, tokens.mean(axis=2))
     np.testing.assert_allclose(full.patch_embeddings, tokens.mean(axis=1))
-    # the same without keeping the tokens or in chunks, and never normalized
     for lean in (
         extract([0, 1, 2], store_tokens=False),
         extract([0, 1, 2], store_tokens=False, batch_size=2),
@@ -443,7 +441,6 @@ def test_extra_poolings_pool_the_same_tokens():
     assert extract([0]).extra_window_embeddings == {}
     raw = extract([0, 1, 2], extra_poolings=["max"], normalize_embeddings=False)
     np.testing.assert_array_equal(raw.extra_window_embeddings["max"], maxima)
-    # the same without keeping the tokens or in chunks
     for lean in (
         extract([0, 1, 2], extra_poolings=["max"], store_tokens=False),
         extract([0, 1, 2], extra_poolings=["max"], store_tokens=False, batch_size=2),

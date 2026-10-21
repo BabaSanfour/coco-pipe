@@ -20,7 +20,6 @@ class TokenModel:
         return (pooled, tokens) if return_tokens else pooled
 
     def pool_tokens(self, tokens, pooling):
-        """A second pooling, as REVE's attention read-out is."""
         if pooling != "max":
             raise ValueError(f"TokenModel pools by 'max', got {pooling!r}.")
         return tokens.max(axis=(1, 2))
