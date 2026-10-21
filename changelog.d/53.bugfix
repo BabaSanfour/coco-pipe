@@ -1,0 +1,1 @@
+LUNA's embeddings no longer depend on the device: its frequency embedding took the phase of the Nyquist bin of each patch's FFT, which GPU FFTs leave with rounding noise in its imaginary part, flipping the phase between pi and -pi; that part is now 0, and MPS and CUDA agree with the CPU, where LUNA embeds as before.
