@@ -12,6 +12,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from contextlib import contextmanager
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,37 @@ def check_finite(X: np.ndarray, name: str) -> None:
             f"{name}: {bad.size} of {len(X)} windows hold NaN or infinite values "
             f"(windows {bad[:10].tolist()}{', ...' if bad.size > 10 else ''})."
         )
+
+
+def check_weights(pretrained: bool, seed: int | None) -> None:
+    """Check the weights asked for: pretrained, or random from an integer seed."""
+    if not isinstance(pretrained, bool):
+        raise ValueError(f"pretrained must be True or False, got {pretrained!r}.")
+    if pretrained and seed is not None:
+        raise ValueError(
+            f"seed is for random weights (pretrained=False), got seed={seed!r} "
+            "with pretrained weights."
+        )
+    if not pretrained and (
+        isinstance(seed, bool) or not isinstance(seed, int | np.integer)
+    ):
+        raise ValueError(
+            f"Random weights (pretrained=False) need an integer seed, got {seed!r}."
+        )
+
+
+@contextmanager
+def seeded(seed: int):
+    """Draw from torch's CPU generator seeded with ``seed``, then restore it.
+
+    Models are built on the CPU, so their initial weights depend on the seed
+    alone; the caller's random state is left as it was.
+    """
+    import torch
+
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(int(seed))
+        yield
 
 
 def resolve_revision(repo_id: str, revision: str | None = None, **hub_kwargs) -> str:

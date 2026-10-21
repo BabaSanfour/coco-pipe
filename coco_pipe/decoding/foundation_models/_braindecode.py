@@ -22,7 +22,7 @@ import numpy as np
 
 from .._specs import SignalMetadata
 from . import _montages
-from ._base import BackendBase, resolve_revision
+from ._base import BackendBase, check_weights, resolve_revision, seeded
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -106,6 +106,8 @@ class BrainDecodeBackend(BackendBase):
         lora_alpha: int = 32,
         lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
+        pretrained: bool = True,
+        seed: int | None = None,
         **kw,
     ) -> BrainDecodeBackend:
         """Load a pretrained braindecode model and return an initialised backend.
@@ -134,6 +136,11 @@ class BrainDecodeBackend(BackendBase):
             Which modules to inject LoRA adapters into.
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
+        pretrained : bool, default True
+            ``False`` keeps the checkpoint's architecture and draws new weights
+            from ``seed``.
+        seed : int or None
+            The seed of random weights; only with ``pretrained=False``.
         **kw
             Extra keyword arguments forwarded to ``Model.from_pretrained``.
 
@@ -161,6 +168,7 @@ class BrainDecodeBackend(BackendBase):
                 f"BrainDecodeBackend does not support '{model_key}'. "
                 f"Supported: {sorted(_BD_MODEL_MAP)}"
             )
+        check_weights(pretrained, seed)
         if train_mode == "qlora":
             raise NotImplementedError(
                 "QLoRA for BrainDecodeBackend requires HuggingFace quantization "
@@ -314,6 +322,14 @@ class BrainDecodeBackend(BackendBase):
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        if not pretrained:
+            # The checkpoint's architecture, with new weights drawn from the seed.
+            # Its config keeps the channels' names, positions and types, all the
+            # models read: with the pretrained weights loaded, the rebuilt model
+            # embeds exactly as the loaded one.
+            with seeded(seed), warnings.catch_warnings():
+                warnings.filterwarnings("ignore", "Modifying chs_info argument")
+                model = type(model).from_config(model.get_config())
         if model_key == "labram" and not uses_interpolation and electrode_names:
             # As in the authors' code, each channel takes the position embedding
             # of its name, so a subset of the pretraining channels is fed as is.

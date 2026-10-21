@@ -27,9 +27,10 @@ def clear_frozen_embedding_cache() -> None:
 def _trained_state(module: Any) -> dict[str, Any]:
     """Return the state a fit can change: trainable parameters and buffers.
 
-    Frozen weights are left out: they are the pretrained checkpoint's, loaded
-    again with the model. A 4-bit (QLoRA) backbone is frozen, so its quantized
-    weights, which a plain ``load_state_dict`` cannot read back, are left out.
+    Frozen weights are left out: they come back when the model is loaded
+    again, the checkpoint's or the same random ones from their seed. A 4-bit
+    (QLoRA) backbone is frozen, so its quantized weights, which a plain
+    ``load_state_dict`` cannot read back, are left out.
     """
     keep = {name for name, p in module.named_parameters() if p.requires_grad}
     keep |= {name for name, _ in module.named_buffers()}

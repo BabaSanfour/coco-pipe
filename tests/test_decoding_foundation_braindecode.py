@@ -22,9 +22,10 @@ BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"
 LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "Labram": {"n_times": 3000},
-    "InterpolatedLaBraM": {"n_times": 3000},
+    "Labram": {"n_times": 3000, "n_outputs": 1},
+    "InterpolatedLaBraM": {"n_times": 3000, "n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
+    "BENDR": {"n_outputs": 1},
 }
 
 
@@ -138,6 +139,47 @@ def test_backbones_embed_and_expose_their_tokens(offline, model_key):
     assert "model" in backend.checkpoint_components()
     with pytest.raises(NotImplementedError, match="no pooling but its own"):
         backend.pool_tokens(tokens, "attention")
+
+
+def _weights(backend):
+    return {
+        f"{name}.{key}": value
+        for name, component in backend.checkpoint_components().items()
+        for key, value in component.state_dict().items()
+    }
+
+
+@pytest.mark.parametrize("model_key", BACKBONES)
+def test_random_weights_keep_the_architecture(offline, model_key):
+    # no head: a head set for n_outputs is drawn afterwards, to be trained
+    loaded, X = _load(model_key, n_outputs=None)
+    random, _ = _load(model_key, n_outputs=None, pretrained=False, seed=0)
+    assert not any({"pretrained", "seed"} & set(call) for call in offline)
+    again = _weights(_load(model_key, n_outputs=None, pretrained=False, seed=0)[0])
+    other = _weights(_load(model_key, n_outputs=None, pretrained=False, seed=1)[0])
+    pretrained, weights = _weights(loaded), _weights(random)
+    assert list(weights) == list(pretrained)
+    assert all(weights[key].shape == pretrained[key].shape for key in weights)
+    assert all(torch.equal(weights[key], again[key]) for key in weights)
+    # the tensors another seed changes were drawn, so none is the loaded one
+    drawn = [key for key in weights if not torch.equal(weights[key], other[key])]
+    assert drawn
+    assert not any(torch.equal(weights[key], pretrained[key]) for key in drawn)
+    assert np.isfinite(random.transform(X)).all()
+
+
+@pytest.mark.parametrize(
+    "weights, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"pretrained": False, "seed": True}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"pretrained": "no", "seed": 0}, "True or False"),
+    ],
+)
+def test_random_weights_need_a_seed(offline, weights, message):
+    with pytest.raises(ValueError, match=message):
+        _load("cbramod", **weights)
 
 
 @pytest.mark.parametrize("model_key", ["cbramod", "bendr"])
