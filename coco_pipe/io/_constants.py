@@ -34,6 +34,9 @@ A view is stored under the suffix ``<view>embeddings``:
 - ``window``  — one vector per window, the tokens averaged over every axis.
 - ``channel`` — one vector per channel of a window, averaged over time patches.
 - ``patch``   — one vector per time patch of a window, averaged over channels.
+
+Window vectors are normalised when ``NormalizeEmbeddings`` says so; channel and
+patch views never are.
 - ``cov``     — the tangent-space token covariance of each window (RA).
 """
 
@@ -60,6 +63,7 @@ EMBEDDING_CONFIG_KEYS: dict[str, str] = {
     "finetune_input_scale": "FinetuneInputScale",
     "expected_passband": "ExpectedPassband",
     "expected_reference": "ExpectedReference",
+    "transform": "Transform",
 }
 """The extraction settings an embedding file records: metadata key -> JSON key.
 
@@ -68,7 +72,9 @@ the model and its weights (``Weights`` is ``"pretrained"``, ``"random"`` with
 its ``Seed``, or ``"finetuned"``), the sampling rates the model was trained at
 and is fed (Hz), the window length (``WindowDuration`` in seconds,
 ``WindowSamples`` fed to the model), the pooling and normalisation of window
-vectors, and how the input is scaled. Their keys are CamelCase, as BIDS
+vectors, how the input is scaled, and, in a file a subject transform wrote,
+the transform (``Transform``, see
+:func:`~coco_pipe.io.write_transformed_embeddings`). Their keys are CamelCase, as BIDS
 recommends for JSON keys. Each embedding file stores them as the JSON text
 attribute ``config``, which is also the content of the dataset's sidecar for
 the file's label and suffix, and ``config_hash`` is their hash.

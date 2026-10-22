@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import warnings
 from collections.abc import Mapping, Sequence
@@ -14,7 +15,7 @@ from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
 from . import _montages
-from ._base import check_finite
+from ._base import check_finite, check_weights
 from ._channels import normalize_channel_names
 from ._loader import _BACKEND_MAP
 from ._prepare import prepare_backend
@@ -232,26 +233,91 @@ def normalize_inclusive_endpoint(
     raise ValueError(reason)
 
 
+#: The token axis each pooled view keeps; it averages the other observation axes.
+_VIEW_AXES = {"channel": "channel", "patch": "time_patch"}
+
+
+def _pooled_views(token_metadata: Mapping[str, Any]) -> list[str]:
+    """Return the pooled views the token axes allow.
+
+    A view keeps one observation axis and averages the others, so it needs
+    that axis and at least one more (LUNA's tokens, one per time patch, are
+    already its patch view), with the feature axis last.
+    """
+    axes = token_metadata["token_axes"]
+    if axes[-1] != token_metadata["token_feature_axis"]:
+        return []
+    observation = axes[1:-1]
+    return [
+        view
+        for view, axis in _VIEW_AXES.items()
+        if axis in observation and len(observation) > 1
+    ]
+
+
+def _pool_tokens(
+    tokens: np.ndarray, token_metadata: Mapping[str, Any], view: str
+) -> np.ndarray:
+    """Average tokens over the observation axes a view does not keep.
+
+    Returns ``(window, <the view's axis>, feature)``.
+    """
+    axes = token_metadata["token_axes"]
+    kept = axes.index(_VIEW_AXES[view])
+    return tokens.mean(
+        axis=tuple(index for index in range(1, len(axes) - 1) if index != kept)
+    )
+
+
+def _weights_text(seed: int | None) -> str:
+    """Name the weights of a model: pretrained, or random of a seed."""
+    return "pretrained weights" if seed is None else f"random weights of seed {seed}"
+
+
 @dataclass
 class FoundationEmbeddingResult:
-    """Window- and recording-level embeddings plus extraction provenance.
+    """Window embeddings plus extraction provenance.
 
     ``token_embeddings`` holds the native backbone feature tensor, without
     reshaping or normalization, and is populated only when the extractor is
     built with ``store_tokens=True``.
+
+    ``channel_embeddings`` (window, channel, feature) holds each channel's
+    tokens averaged over time patches, and ``patch_embeddings`` (window,
+    time_patch, feature) each time patch's tokens averaged over channels. Each
+    is populated when the backend's tokens have its axis and another one to
+    average over (CBraMod, REVE and LaBraM without channel interpolation have
+    both), unless the extractor caches window embeddings. They are not
+    normalized, whatever ``normalize_embeddings`` says.
+
+    ``extra_window_embeddings`` maps each of the extractor's
+    ``extra_poolings`` to its window vectors, pooled from the same tokens as
+    ``window_embeddings`` and normalized like them.
     """
 
     window_embeddings: np.ndarray
-    recording_embedding: np.ndarray
     window_start: np.ndarray
     window_stop: np.ndarray
     window_index: np.ndarray
     metadata: dict[str, Any]
     token_embeddings: np.ndarray | None = None
+    channel_embeddings: np.ndarray | None = None
+    patch_embeddings: np.ndarray | None = None
+    extra_window_embeddings: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 class FoundationEmbeddingExtractor:
-    """Compose model loading, metadata binding, extraction, and pooling."""
+    """Compose model loading, metadata binding, extraction, and pooling.
+
+    ``pooling`` makes the window vectors; ``extra_poolings`` names other
+    poolings the backend offers (``("attention",)`` for REVE), whose vectors
+    come from the same forward pass, in ``extra_window_embeddings``.
+
+    ``pretrained=False`` with an integer ``seed`` gives the model's
+    architecture random weights drawn from the seed, the same for every
+    recording. The metadata records the weights of the model used
+    (``weights``, and ``seed`` for random ones).
+    """
 
     def __init__(
         self,
@@ -259,8 +325,10 @@ class FoundationEmbeddingExtractor:
         *,
         backend: str = "auto",
         device: str = "auto",
+        pretrained: bool = True,
+        seed: int | None = None,
         pooling: str = "mean",
-        recording_pooling: str = "mean",
+        extra_poolings: Sequence[str] = (),
         normalize_embeddings: bool = True,
         resample: bool = True,
         cache_embeddings: bool = False,
@@ -269,17 +337,34 @@ class FoundationEmbeddingExtractor:
         backend_kwargs: Mapping[str, Any] | None = None,
         model: Any | None = None,
     ) -> None:
-        if recording_pooling not in {"mean", "median", "max"}:
-            raise ValueError("recording_pooling must be mean, median, or max.")
         if batch_size is not None and batch_size <= 0:
             raise ValueError("batch_size must be a positive integer or None.")
+        check_weights(pretrained, seed)
+        if {"pretrained", "seed"} & set(backend_kwargs or {}):
+            raise ValueError(
+                "pretrained and seed are the extractor's settings, not backend_kwargs."
+            )
         if store_tokens and cache_embeddings:
             raise ValueError("store_tokens is incompatible with cache_embeddings.")
+        extra_poolings = (
+            (extra_poolings,)
+            if isinstance(extra_poolings, str)
+            else tuple(extra_poolings)
+        )
+        if pooling in extra_poolings or len(set(extra_poolings)) < len(extra_poolings):
+            raise ValueError(
+                f"extra_poolings must name poolings other than {pooling!r}, once "
+                f"each; got {extra_poolings!r}."
+            )
+        if extra_poolings and cache_embeddings:
+            raise ValueError("extra_poolings is incompatible with cache_embeddings.")
         self.model_key = model_key
         self.backend = backend
         self.device = device
+        self.pretrained = pretrained
+        self.seed = seed
         self.pooling = pooling
-        self.recording_pooling = recording_pooling
+        self.extra_poolings = extra_poolings
         self.normalize_embeddings = normalize_embeddings
         self.resample = resample
         self.cache_embeddings = cache_embeddings
@@ -300,8 +385,10 @@ class FoundationEmbeddingExtractor:
         model: Any,
         model_input: np.ndarray,
         *,
-        return_tokens: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        token_metadata: Mapping[str, Any] | None = None,
+        views: Sequence[str] = (),
+        poolings: Sequence[str] = (),
+    ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Forward windows through the backbone, mini-batched along axis 0.
 
         Transformer backbones (e.g. LaBraM) build an attention map per window, so
@@ -313,6 +400,12 @@ class FoundationEmbeddingExtractor:
         Each chunk is written straight into a pre-allocated destination rather
         than collected and concatenated, so peak host memory is one output array
         plus one chunk instead of two full copies of the output.
+
+        ``views`` are returned with the pooled rows, from each chunk's tokens
+        (described by ``token_metadata``): ``"token"`` the tokens as they are,
+        ``"channel"`` and ``"patch"`` the tokens averaged (``_pool_tokens``).
+        ``poolings`` are returned too, the backend's ``pool_tokens`` of the
+        same tokens. A chunk's tokens are dropped once both are taken.
         """
         batch_size = self.batch_size
         n_windows = len(model_input)
@@ -326,14 +419,35 @@ class FoundationEmbeddingExtractor:
         )
 
         embeddings: np.ndarray | None = None
-        tokens: np.ndarray | None = None
+        outputs: dict[str, np.ndarray] = {}
+        pooled: dict[str, np.ndarray] = {}
         filled = 0
         for batch in batches:
-            if return_tokens:
-                embedding_part, token_part = model.transform(batch, return_tokens=True)
-                token_part = np.asarray(token_part)
+            parts, pooled_parts = {}, {}
+            if views or poolings:
+                embedding_part, tokens = model.transform(batch, return_tokens=True)
+                tokens = np.asarray(tokens)
+                if views:
+                    token_axes = token_metadata["token_axes"]
+                    if len(token_axes) != tokens.ndim:
+                        raise ValueError(
+                            "Backend token metadata must name every native tensor "
+                            f"axis: axes={token_axes!r}, shape={tokens.shape}."
+                        )
+                parts = {
+                    view: (
+                        tokens
+                        if view == "token"
+                        else _pool_tokens(tokens, token_metadata, view)
+                    )
+                    for view in views
+                }
+                pooled_parts = {
+                    pooling: np.asarray(model.pool_tokens(tokens, pooling))
+                    for pooling in poolings
+                }
             else:
-                embedding_part, token_part = model.transform(batch), None
+                embedding_part = model.transform(batch)
             embedding_part = np.asarray(embedding_part)
 
             if embeddings is None:
@@ -342,23 +456,21 @@ class FoundationEmbeddingExtractor:
                 )
             embeddings[filled : filled + len(embedding_part)] = embedding_part
 
-            if token_part is not None:
-                if tokens is None:
-                    tokens = np.empty(
-                        (n_windows, *token_part.shape[1:]), dtype=token_part.dtype
-                    )
-                tokens[filled : filled + len(token_part)] = token_part
+            for arrays, new in ((outputs, parts), (pooled, pooled_parts)):
+                for name, part in new.items():
+                    if name not in arrays:
+                        arrays[name] = np.empty(
+                            (n_windows, *part.shape[1:]), dtype=part.dtype
+                        )
+                    arrays[name][filled : filled + len(part)] = part
 
             filled += len(embedding_part)
 
         if filled != n_windows:
             embeddings = embeddings[:filled]
-            if tokens is not None:
-                tokens = tokens[:filled]
-
-        if return_tokens:
-            return embeddings, tokens
-        return embeddings
+            outputs = {view: array[:filled] for view, array in outputs.items()}
+            pooled = {name: array[:filled] for name, array in pooled.items()}
+        return embeddings, outputs, pooled
 
     @staticmethod
     def _l2_normalize(x: np.ndarray) -> np.ndarray:
@@ -370,21 +482,26 @@ class FoundationEmbeddingExtractor:
         return np.divide(x, norms, out=np.zeros_like(x), where=norms != 0)
 
     def _embed_windows(
-        self, model: Any, model_input: np.ndarray, *, return_tokens: bool = False
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        """Extract backend-pooled rows and optional unmodified native tokens."""
-        transformed = self._transform_batched(
-            model, model_input, return_tokens=return_tokens
+        self,
+        model: Any,
+        model_input: np.ndarray,
+        *,
+        token_metadata: Mapping[str, Any] | None = None,
+        views: Sequence[str] = (),
+        poolings: Sequence[str] = (),
+    ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Extract pooled rows, normalized if asked, and token views."""
+        embeddings, outputs, pooled = self._transform_batched(
+            model,
+            model_input,
+            token_metadata=token_metadata,
+            views=views,
+            poolings=poolings,
         )
-        if return_tokens:
-            embeddings, tokens = transformed
-        else:
-            embeddings = transformed
         if self.normalize_embeddings:
             embeddings = self._l2_normalize(embeddings)
-        if not return_tokens:
-            return embeddings
-        return embeddings, tokens
+            pooled = {name: self._l2_normalize(array) for name, array in pooled.items()}
+        return embeddings, outputs, pooled
 
     def _backbone_fingerprint(self, prepared: Any) -> str:
         """Stable identity of the deterministic window->embedding mapping."""
@@ -393,6 +510,8 @@ class FoundationEmbeddingExtractor:
             for part in (
                 self.model_key,
                 self.backend,
+                self.pretrained,
+                self.seed,
                 self.pooling,
                 self.normalize_embeddings,
                 prepared.target_sfreq,
@@ -417,7 +536,7 @@ class FoundationEmbeddingExtractor:
         ]
         missing = [i for i, key in enumerate(keys) if key not in self._embedding_cache]
         if missing:
-            computed = self._embed_windows(model, model_input[missing])
+            computed, _, _ = self._embed_windows(model, model_input[missing])
             if computed.ndim != 2 or len(computed) != len(missing):
                 raise ValueError(
                     "Foundation backend must return one 2-D embedding row per window."
@@ -436,7 +555,7 @@ class FoundationEmbeddingExtractor:
         window_index: Sequence[int] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> FoundationEmbeddingResult:
-        """Extract one embedding per input window and one pooled recording vector.
+        """Extract one embedding per input window.
 
         ``window_index`` is the number of each window in its recording; by
         default the windows are numbered in the order given.
@@ -448,7 +567,13 @@ class FoundationEmbeddingExtractor:
         ch_names = normalize_channel_names(signal_metadata.ch_names)
         # A model is built for one montage, rate and window length (channel
         # positions and adapters, n_times): another recording loads its own.
-        loaded_for = (float(signal_metadata.sfreq), tuple(ch_names), X.shape[-1])
+        loaded_for = (
+            float(signal_metadata.sfreq),
+            tuple(ch_names),
+            X.shape[-1],
+            self.pretrained,
+            self.seed,
+        )
         if self._loaded_for not in (None, loaded_for):
             self.model = None
         prepared = prepare_backend(
@@ -461,7 +586,11 @@ class FoundationEmbeddingExtractor:
             sfreq=float(signal_metadata.sfreq),
             ch_names=ch_names,
             pooling=self.pooling,
-            backend_kwargs=self.backend_kwargs,
+            backend_kwargs=(
+                self.backend_kwargs
+                if self.pretrained
+                else {**self.backend_kwargs, "pretrained": False, "seed": self.seed}
+            ),
             model=self.model,
         )
         if self.model is None:
@@ -469,6 +598,13 @@ class FoundationEmbeddingExtractor:
         self.model = prepared.backend
         model = prepared.backend
         spec = prepared.spec
+        weights_seed = getattr(model, "weights_seed", None)
+        asked = None if self.pretrained else self.seed
+        if weights_seed != asked:
+            raise ValueError(
+                f"The model holds {_weights_text(weights_seed)}, but the extractor "
+                f"asks for {_weights_text(asked)}."
+            )
         if not self.resample and prepared.source_sfreq != prepared.target_sfreq:
             warnings.warn(
                 f"resample=False but input sfreq ({prepared.source_sfreq} Hz) != "
@@ -486,25 +622,38 @@ class FoundationEmbeddingExtractor:
                 "as extraction does not filter automatically.",
                 stacklevel=2,
             )
-        tokens = None
+        token_metadata = None
+        if self.store_tokens:
+            token_metadata = model.get_token_output_metadata()
+        elif not self.cache_embeddings and hasattr(model, "get_token_output_metadata"):
+            with contextlib.suppress(NotImplementedError):
+                token_metadata = model.get_token_output_metadata()
+        views = []
+        if token_metadata is not None:
+            if not isinstance(token_metadata.get("token_axes"), list):
+                raise ValueError(
+                    "Backend token metadata must list the token axes, got "
+                    f"{token_metadata.get('token_axes')!r}."
+                )
+            views = (["token"] if self.store_tokens else []) + _pooled_views(
+                token_metadata
+            )
+        outputs, pooled = {}, {}
         if self.cache_embeddings:
             embeddings = self._embed_windows_cached(model, model_input, prepared)
-        elif self.store_tokens:
-            embeddings, tokens = self._embed_windows(
-                model, model_input, return_tokens=True
-            )
         else:
-            embeddings = self._embed_windows(model, model_input)
+            embeddings, outputs, pooled = self._embed_windows(
+                model,
+                model_input,
+                token_metadata=token_metadata,
+                views=views,
+                poolings=self.extra_poolings,
+            )
+        tokens = outputs.get("token")
         if embeddings.ndim != 2 or len(embeddings) != len(X):
             raise ValueError(
                 "Foundation backend must return one 2-D embedding row per window."
             )
-        reducer = {
-            "mean": np.mean,
-            "median": np.median,
-            "max": np.max,
-        }[self.recording_pooling]
-        recording = reducer(embeddings, axis=0)
         starts = np.asarray(
             window_start if window_start is not None else np.arange(len(X)),
             dtype=int,
@@ -520,6 +669,8 @@ class FoundationEmbeddingExtractor:
             "model_checkpoint": spec.hub_repo,
             "checkpoint_revisions": dict(getattr(model, "checkpoint_revisions", {})),
             "checkpoint_filename": spec.checkpoint_filename,
+            "weights": "pretrained" if weights_seed is None else "random",
+            **({} if weights_seed is None else {"seed": int(weights_seed)}),
             "backend": (
                 self.backend if self.backend != "auto" else spec.preferred_backend
             ),
@@ -553,7 +704,6 @@ class FoundationEmbeddingExtractor:
                 **prepared.channel_adaptation(),
             },
             "within_window_pooling": self.pooling,
-            "recording_pooling": self.recording_pooling,
             "normalize_embeddings": self.normalize_embeddings,
             "expects_microvolts": bool(spec.expects_microvolts),
             "input_scale": float(spec.input_scale),
@@ -575,18 +725,8 @@ class FoundationEmbeddingExtractor:
             "window_duration_seconds": float(
                 X.shape[-1] / float(signal_metadata.sfreq)
             ),
-            "windowing_source": "upstream_epochs",
-            "remainder_policy": "defined_by_upstream_epoching",
-            "padding_policy": "defined_by_upstream_epoching",
         }
         if tokens is not None:
-            token_metadata = model.get_token_output_metadata()
-            token_axes = token_metadata.get("token_axes")
-            if not isinstance(token_axes, list) or len(token_axes) != tokens.ndim:
-                raise ValueError(
-                    "Backend token metadata must name every native tensor axis: "
-                    f"axes={token_axes!r}, shape={tokens.shape}."
-                )
             payload.update(token_metadata)
             payload.update(
                 {
@@ -598,7 +738,6 @@ class FoundationEmbeddingExtractor:
             )
         return FoundationEmbeddingResult(
             window_embeddings=embeddings,
-            recording_embedding=np.asarray(recording),
             window_start=starts,
             window_stop=stops,
             window_index=(
@@ -608,4 +747,7 @@ class FoundationEmbeddingExtractor:
             ),
             metadata=payload,
             token_embeddings=tokens,
+            channel_embeddings=outputs.get("channel"),
+            patch_embeddings=outputs.get("patch"),
+            extra_window_embeddings=pooled,
         )

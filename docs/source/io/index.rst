@@ -146,10 +146,23 @@ named by the BIDS suffix ``<view>embeddings``:
      - ``window``, ``feature``
      - The tangent-space covariance of each window's tokens.
 
+Window vectors are L2-normalised when the extraction setting
+``NormalizeEmbeddings`` says so. Channel and patch views are the tokens
+averaged and are never normalised, whatever that setting says: an analysis
+normalises them at load as it needs, per channel or, after ``flatten``, as one
+vector.
+
+An extractor built with ``extra_poolings`` (``("attention",)`` for REVE's
+attention read-out) pools the same tokens again, in the same forward pass. The
+writer puts those window vectors in a window file of their own label, the
+label followed by the pooling's name (``baseAttention``), whose
+``WindowPooling`` setting names that pooling.
+
 The ``desc`` entity names the processing that produced the file, e.g. ``base``,
-``baseRandom`` or ``baseEaCoral``; it is any BIDS label (letters, digits and
-``+``). A file keeps its source recording's entities, so one recording's files
-sit in its subject folder and the files holding every recording at the root:
+``baseRandom0`` (random weights of seed 0) or ``baseEaCoral``; it is any BIDS
+label (letters, digits and ``+``). A file keeps its source recording's
+entities, so one recording's files sit in its subject folder and the files
+holding every recording at the root:
 
 .. code-block:: text
 
@@ -171,7 +184,9 @@ of the same label and view.
 **File contents.** Every file, one recording's or every recording's, has the
 same layout:
 
-- ``embeddings``: float32 (float16 is read too), with the axes of its view.
+- ``embeddings``: float32, with the axes of its view. Token files are float16
+  when written with ``token_dtype="float16"``, half the size; both are read as
+  float32.
 - Along ``window``: ``obs`` (``<recording_id>_epoch-NNNN``), ``recording_id``,
   ``subject``, ``session``, ``task``, ``run``, ``condition``, ``epoch`` (the
   epoch's number in its source file), ``start`` and ``stop`` (samples). Windows
@@ -222,6 +237,29 @@ same layout:
    )
 
    windows = load_embeddings(f"{root}/task-rest_desc-base_windowembeddings.nc")
+
+A subject transform's output is written from what was loaded, row for row,
+with :func:`~coco_pipe.io.write_transformed_embeddings`. The file keeps the
+windows, recordings and channels of its source, and its settings add
+``Transform``, so it never mixes with the source:
+
+.. code-block:: python
+
+   from coco_pipe.io import write_transformed_embeddings
+   from coco_pipe.transforms import EuclideanAlign
+
+   tokens = load_embeddings(find_embeddings(root, "base", "token"))
+   aligner = EuclideanAlign("coral", channel_axis=1)
+   write_transformed_embeddings(
+       tokens,
+       aligner.fit_transform(tokens.X, groups=tokens.coords["subject"]),
+       root,
+       label="baseEaCoralCh",
+       transform={"name": aligner.name, **aligner.get_params()},
+   )
+
+``view="cov"`` writes a transform that changes the axes, such as
+``RiemannAlign``'s tangent vectors, as a ``covembeddings`` file.
 
 Each writer checks before it writes (one model and set of settings per file,
 finite values, no epoch twice) and replaces its file atomically, so jobs may

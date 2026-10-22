@@ -285,7 +285,6 @@ filterwarnings = [
   "ignore:.*Precision loss occurred in moment calculation.*:RuntimeWarning",
   "ignore:.*invalid value encountered in divide.*:RuntimeWarning",
   "ignore:.*vert.*Use orientation.*",
-  "ignore:Montage name 'standard_10.* is deprecated:FutureWarning:braindecode",
   "ignore:scipy.misc is deprecated:DeprecationWarning",
   "ignore:invalid escape sequence:SyntaxWarning",
   "ignore:A window was not provided:UserWarning",

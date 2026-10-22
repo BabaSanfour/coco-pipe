@@ -12,6 +12,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from contextlib import contextmanager
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,37 @@ def check_finite(X: np.ndarray, name: str) -> None:
             f"{name}: {bad.size} of {len(X)} windows hold NaN or infinite values "
             f"(windows {bad[:10].tolist()}{', ...' if bad.size > 10 else ''})."
         )
+
+
+def check_weights(pretrained: bool, seed: int | None) -> None:
+    """Check the weights asked for: pretrained, or random from an integer seed."""
+    if not isinstance(pretrained, bool):
+        raise ValueError(f"pretrained must be True or False, got {pretrained!r}.")
+    if pretrained and seed is not None:
+        raise ValueError(
+            f"seed is for random weights (pretrained=False), got seed={seed!r} "
+            "with pretrained weights."
+        )
+    if not pretrained and (
+        isinstance(seed, bool) or not isinstance(seed, int | np.integer)
+    ):
+        raise ValueError(
+            f"Random weights (pretrained=False) need an integer seed, got {seed!r}."
+        )
+
+
+@contextmanager
+def seeded(seed: int):
+    """Draw from torch's CPU generator seeded with ``seed``, then restore it.
+
+    Models are built on the CPU, so their initial weights depend on the seed
+    alone; the caller's random state is left as it was.
+    """
+    import torch
+
+    with torch.random.fork_rng(devices=[]):
+        torch.default_generator.manual_seed(int(seed))
+        yield
 
 
 def resolve_revision(repo_id: str, revision: str | None = None, **hub_kwargs) -> str:
@@ -76,6 +108,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
     _model = None
     # The commit loaded from each Hugging Face repository, set by ``load``.
     checkpoint_revisions: Mapping[str, str] = MappingProxyType({})
+    # The seed of random weights, None for pretrained ones.
+    weights_seed: int | None = None
 
     def release_memory(self) -> None:
         """Drop references to loaded torch modules so GC can reclaim them.
@@ -271,6 +305,14 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         raise NotImplementedError(
             f"{type(self).__name__} does not expose a native token representation."
         )
+
+    def pool_tokens(self, tokens: np.ndarray, pooling: str) -> np.ndarray:
+        """Pool the tokens of ``transform`` into one vector per window.
+
+        Backends with more than one pooling (REVE: mean and attention) override
+        this, so that every pooling comes from one forward pass.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no pooling but its own.")
 
     @abstractmethod
     def predict(self, X: np.ndarray) -> np.ndarray:

@@ -406,7 +406,7 @@ Enables probability calibration inside the training path.
        model_key="labram",         # a registered model — see list_foundation_models()
        sfreq=epochs.info["sfreq"], # sampling rate of the epochs (required)
        ch_names=ch_names,          # their channel names, in order (required)
-       pooling="mean",             # "mean" or "flatten"
+       pooling="mean",             # "mean", or "attention" for REVE
        cache_embeddings=True,
    )
    frozen_cfg = FrozenBackboneDecoderConfig(

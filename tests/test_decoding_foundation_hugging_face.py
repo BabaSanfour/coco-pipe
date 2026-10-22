@@ -1,6 +1,8 @@
 """Tests for HuggingFaceBackend (REVE). All network I/O is mocked."""
 
+import copy
 import warnings
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -164,7 +166,7 @@ def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19, pooling="mean"
     backbone.attention_pooling.side_effect = lambda out: out.mean(dim=2).mean(dim=1)
     pos_bank.return_value = torch.zeros(n_chans, 32)
 
-    feat_dim = meta.embedding_dim * (n_chans if pooling == "flatten" else 1)
+    feat_dim = meta.embedding_dim
 
     import torch.nn as nn
 
@@ -197,10 +199,112 @@ def test_transform_returns_ndarray():
     assert out.shape == (4, 512)
 
 
-def test_transform_flatten_keeps_per_channel_dim():
-    adapter = _make_fitted_adapter(pooling="flatten", n_chans=19)
-    out = adapter.transform(np.zeros((4, 19, 400), dtype=np.float32))
-    assert out.shape == (4, 19 * 512)
+def _tiny_backbone_class():
+    import torch
+
+    class TinyBackbone(torch.nn.Module):
+        """A backbone with a config, rebuilt from it as transformers does."""
+
+        dtype = torch.float32
+
+        def __init__(self, config):
+            super().__init__()
+            self.config = config
+            self.layer = torch.nn.Linear(4, 4)
+
+        @classmethod
+        def _from_config(cls, config, dtype=None):
+            return cls(config)
+
+    return TinyBackbone
+
+
+def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
+    import torch
+
+    TinyBackbone = _tiny_backbone_class()
+    config = SimpleNamespace(hidden_size=512)
+    pos_bank = torch.nn.Linear(3, 32)
+    checkpoint = TinyBackbone(config)
+    calls = []
+
+    def from_pretrained(repo_id, **kwargs):
+        calls.append(kwargs)
+        return pos_bank if "positions" in repo_id else copy.deepcopy(checkpoint)
+
+    def backbone(global_seed=0, **weights):
+        if global_seed is not None:
+            torch.manual_seed(global_seed)
+        with (
+            patch(
+                "transformers.AutoModel.from_pretrained", side_effect=from_pretrained
+            ),
+            patch.object(HuggingFaceBackend, "is_available", return_value=True),
+        ):
+            loaded = HuggingFaceBackend.load(
+                "reve",
+                get_estimator_spec("reve"),
+                n_outputs=2,
+                device="cpu",
+                train_mode="frozen",
+                electrode_names=["Cz"],
+                **weights,
+            )
+        assert loaded._pos_bank is pos_bank
+        return {
+            f"{name}.{key}": value
+            for name in ("backbone", "head")
+            for key, value in getattr(loaded, f"_{name}").state_dict().items()
+        }
+
+    torch.manual_seed(0)
+    state = torch.random.get_rng_state()
+    random = backbone(global_seed=None, pretrained=False, seed=0)
+    assert torch.equal(state, torch.random.get_rng_state())
+    assert not any({"pretrained", "seed"} & set(call) for call in calls)
+    pretrained = backbone()
+    again = backbone(global_seed=1, pretrained=False, seed=0)
+    other = backbone(pretrained=False, seed=1)
+    for key, value in random.items():
+        assert torch.equal(value, again[key])
+        assert not torch.equal(value, other[key])
+        if key.startswith("backbone."):
+            assert not torch.equal(value, pretrained[key])
+    assert torch.equal(backbone()["head.weight"], pretrained["head.weight"])
+    assert not torch.equal(
+        backbone(global_seed=1)["head.weight"], pretrained["head.weight"]
+    )
+
+
+@pytest.mark.parametrize(
+    "weights, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"pretrained": False, "seed": 0, "train_mode": "qlora"}, "QLoRA quantizes"),
+    ],
+)
+def test_random_weights_refused(weights, message):
+    with pytest.raises(ValueError, match=message):
+        HuggingFaceBackend.load(
+            "reve",
+            get_estimator_spec("reve"),
+            n_outputs=None,
+            device="cpu",
+            **{"train_mode": "frozen", **weights},
+        )
+
+
+def test_load_refuses_other_pooling():
+    with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
+        HuggingFaceBackend.load(
+            "reve",
+            get_estimator_spec("reve"),
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+            pooling="flatten",
+        )
 
 
 def test_transform_attention_pooling():
@@ -231,6 +335,26 @@ def test_transform_return_tokens_preserves_native_reve_output():
         "time_patch",
         "feature",
     ]
+
+
+def test_pool_tokens_pools_the_tokens_of_one_forward_pass():
+    import torch
+
+    adapter = _make_fitted_adapter(n_chans=2)
+    native = torch.randn(3, 2, 4, 512, generator=torch.Generator().manual_seed(0))
+    adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
+    adapter._backbone.attention_pooling.side_effect = lambda out: out.amax(dim=(1, 2))
+
+    pooled, tokens = adapter.transform(
+        np.zeros((3, 2, 400), dtype=np.float32), return_tokens=True
+    )
+    np.testing.assert_array_equal(adapter.pool_tokens(tokens, "mean"), pooled)
+    np.testing.assert_array_equal(
+        adapter.pool_tokens(tokens, "attention"), native.amax(dim=(1, 2)).numpy()
+    )
+    assert adapter._backbone.call_count == 1
+    with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
+        adapter.pool_tokens(tokens, "max")
 
 
 def test_reve_input_depends_on_whether_the_backbone_is_trained():
@@ -323,7 +447,7 @@ def test_configure_peft_raises_import_error_without_peft(monkeypatch):
         adapter.configure_peft({"r": 4})
 
 
-def test_load_qlora_and_flatten_pooling(monkeypatch):
+def test_load_qlora(monkeypatch):
     mock_model = _make_mock_backbone()
     mock_model.to.return_value = mock_model
     mock_pos = MagicMock()
@@ -347,14 +471,13 @@ def test_load_qlora_and_flatten_pooling(monkeypatch):
             n_outputs=2,
             device="cpu",
             train_mode="qlora",
-            pooling="flatten",
             electrode_names=["Fp1", "Fp2"],
         )
     # REVE cannot checkpoint gradients, which peft turns on by default
     mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
     # REVE has no "query"/"value" layers: every linear layer gets an adapter
     assert mock_get_peft.call_args.args[1].target_modules == "all-linear"
-    assert backend._feat_dim == 2048
+    assert backend._feat_dim == 1024
 
 
 def test_reve_skorch_module():

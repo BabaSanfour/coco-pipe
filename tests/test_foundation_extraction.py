@@ -13,6 +13,7 @@ from coco_pipe.decoding.foundation_models import (
 )
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
+from tests.fixtures.embeddings import TokenModel, extract
 
 
 class FakeFoundationModel:
@@ -29,7 +30,6 @@ def test_extractor_normalizes_channels_pools_and_records_provenance():
         "cbramod",
         model=FakeFoundationModel(),
         normalize_embeddings=False,
-        recording_pooling="mean",
         resample=False,
     )
     result = extractor.extract(
@@ -37,10 +37,7 @@ def test_extractor_normalizes_channels_pools_and_records_provenance():
         signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["T3", "T4"]),
         metadata={"recording_id": "r1"},
     )
-    assert result.window_embeddings.shape == (4, 2)
-    np.testing.assert_allclose(
-        result.recording_embedding, result.window_embeddings.mean(axis=0)
-    )
+    np.testing.assert_allclose(result.window_embeddings, X.mean(axis=-1))
     assert result.metadata["model_channels"] == ["T7", "T8"]
     assert result.metadata["recording_id"] == "r1"
     assert result.metadata["input_sfreq"] == 200.0
@@ -402,15 +399,103 @@ def test_backend_pooling_is_kept_separate_from_native_tokens():
         "cbramod",
         model=Fake3DModel(),
         normalize_embeddings=False,
-        pooling="flatten",
         resample=False,
         store_tokens=True,
     )
-    flat, tokens = ex._embed_windows(
-        Fake3DModel(), np.zeros((3, 3, 10)), return_tokens=True
+    res = ex.extract(
+        np.zeros((3, 3, 10)),
+        signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["C3", "C4", "Cz"]),
     )
-    np.testing.assert_allclose(flat, tokens.reshape(3, -1))
-    np.testing.assert_array_equal(tokens, raw)
+    np.testing.assert_allclose(res.window_embeddings, raw.reshape(3, -1))
+    np.testing.assert_array_equal(res.token_embeddings, raw)
+    assert res.channel_embeddings is None
+    assert res.patch_embeddings is None
+
+
+def test_channel_and_patch_views_average_the_tokens():
+    full = extract([0, 1, 2])
+    tokens = full.token_embeddings
+    np.testing.assert_allclose(full.channel_embeddings, tokens.mean(axis=2))
+    np.testing.assert_allclose(full.patch_embeddings, tokens.mean(axis=1))
+    for lean in (
+        extract([0, 1, 2], store_tokens=False),
+        extract([0, 1, 2], store_tokens=False, batch_size=2),
+    ):
+        assert lean.token_embeddings is None
+        assert lean.metadata["normalize_embeddings"]
+        np.testing.assert_array_equal(lean.channel_embeddings, full.channel_embeddings)
+        np.testing.assert_array_equal(lean.patch_embeddings, full.patch_embeddings)
+
+
+def test_extra_poolings_pool_the_same_tokens():
+    full = extract([0, 1, 2], extra_poolings="max")
+    maxima = full.token_embeddings.max(axis=(1, 2))
+    np.testing.assert_allclose(
+        full.extra_window_embeddings["max"],
+        maxima / np.linalg.norm(maxima, axis=1, keepdims=True),
+    )
+    assert list(full.extra_window_embeddings) == ["max"]
+    np.testing.assert_array_equal(
+        full.window_embeddings, extract([0, 1, 2]).window_embeddings
+    )
+    assert extract([0]).extra_window_embeddings == {}
+    raw = extract([0, 1, 2], extra_poolings=["max"], normalize_embeddings=False)
+    np.testing.assert_array_equal(raw.extra_window_embeddings["max"], maxima)
+    for lean in (
+        extract([0, 1, 2], extra_poolings=["max"], store_tokens=False),
+        extract([0, 1, 2], extra_poolings=["max"], store_tokens=False, batch_size=2),
+    ):
+        np.testing.assert_array_equal(
+            lean.extra_window_embeddings["max"], full.extra_window_embeddings["max"]
+        )
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"extra_poolings": ["mean"]}, "other than 'mean'"),
+        ({"extra_poolings": ["max", "max"]}, "once each"),
+        ({"extra_poolings": ["max"], "cache_embeddings": True}, "incompatible"),
+    ],
+)
+def test_extra_poolings_refused(settings, message):
+    with pytest.raises(ValueError, match=message):
+        FoundationEmbeddingExtractor("cbramod", **settings)
+
+
+def test_extractor_records_the_weights_of_its_model():
+    class RandomTokenModel(TokenModel):
+        weights_seed = 3
+
+    def extract_with(model, **weights):
+        return FoundationEmbeddingExtractor(
+            "cbramod", model=model, resample=False, **weights
+        ).extract(
+            np.zeros((2, 2, 10), dtype=np.float32),
+            signal_metadata=SignalMetadata(sfreq=200.0, ch_names=["T7", "Cz"]),
+        )
+
+    metadata = extract_with(TokenModel()).metadata
+    assert metadata["weights"] == "pretrained" and "seed" not in metadata
+    metadata = extract_with(RandomTokenModel(), pretrained=False, seed=3).metadata
+    assert (metadata["weights"], metadata["seed"]) == ("random", 3)
+    with pytest.raises(ValueError, match="holds random weights of seed 3, but"):
+        extract_with(RandomTokenModel())
+    with pytest.raises(ValueError, match="asks for random weights of seed 0"):
+        extract_with(TokenModel(), pretrained=False, seed=0)
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"backend_kwargs": {"seed": 0}}, "not backend_kwargs"),
+    ],
+)
+def test_random_weights_settings_refused(settings, message):
+    with pytest.raises(ValueError, match=message):
+        FoundationEmbeddingExtractor("cbramod", **settings)
 
 
 def test_store_tokens_incompatible_with_cache():

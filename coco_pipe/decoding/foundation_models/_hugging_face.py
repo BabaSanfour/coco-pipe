@@ -11,6 +11,7 @@ qlora requires ``bitsandbytes``; lora/qlora require ``peft``.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import warnings
 from typing import TYPE_CHECKING
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._specs import SignalMetadata
-from ._base import BackendBase, resolve_revision
+from ._base import BackendBase, check_weights, resolve_revision, seeded
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -89,6 +90,8 @@ class HuggingFaceBackend(BackendBase):
         lora_alpha: int = 32,
         lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
+        pretrained: bool = True,
+        seed: int | None = None,
         **kw,
     ) -> HuggingFaceBackend:
         """Load a pretrained HuggingFace model and return an initialised backend.
@@ -106,11 +109,10 @@ class HuggingFaceBackend(BackendBase):
         train_mode : str
             One of ``"frozen"``, ``"full"``, ``"lora"``, ``"qlora"``.
         pooling : str, default ``"mean"``
-            How to collapse the token dimension: ``"mean"`` (average over
-            channels and time -> ``embed_dim``), ``"flatten"`` (average over
-            time, concatenate channels -> ``embed_dim * n_chans``), or
-            ``"attention"`` (REVE's pretrained single-query attention read-out
-            over channels and time -> ``embed_dim``).
+            How to collapse the tokens into one vector of ``embed_dim``:
+            ``"mean"`` (average over channels and time) or ``"attention"``
+            (REVE's pretrained single-query attention read-out over channels
+            and time).
         electrode_names : list of str or None
             Channel names used by REVE's positional encoder. Falls back to
             generic ``["e0", "e1", …]`` when ``None``.
@@ -128,6 +130,12 @@ class HuggingFaceBackend(BackendBase):
             ``to_out``).
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
+        pretrained : bool, default True
+            ``False`` keeps the checkpoint's architecture and draws new backbone
+            weights from ``seed``; the position bank stays the checkpoint's.
+            Not with ``train_mode="qlora"``, which quantizes pretrained weights.
+        seed : int or None
+            The seed of random weights; only with ``pretrained=False``.
         **kw
             Extra keyword arguments forwarded to ``AutoModel.from_pretrained``.
 
@@ -139,10 +147,21 @@ class HuggingFaceBackend(BackendBase):
         Raises
         ------
         ValueError
-            If ``model_key`` is not ``"reve"``.
+            If ``model_key`` is not ``"reve"``, or the weights asked for are not
+            pretrained or random with a seed.
         """
         if model_key != "reve":
             raise ValueError(f"HuggingFaceBackend does not support '{model_key}'.")
+        check_weights(pretrained, seed)
+        if not pretrained and train_mode == "qlora":
+            raise ValueError(
+                "QLoRA quantizes pretrained weights; random weights take "
+                "train_mode 'frozen', 'full' or 'lora'."
+            )
+        if pooling not in {"mean", "attention"}:
+            raise ValueError(
+                f"REVE supports pooling='mean' or 'attention', got {pooling!r}."
+            )
         return cls._load_reve(
             metadata,
             n_outputs=n_outputs,
@@ -156,6 +175,7 @@ class HuggingFaceBackend(BackendBase):
             lora_alpha=lora_alpha,
             lora_target_modules=lora_target_modules,
             lora_dropout=lora_dropout,
+            seed=None if pretrained else seed,
             **kw,
         )
 
@@ -174,9 +194,10 @@ class HuggingFaceBackend(BackendBase):
         lora_alpha: int,
         lora_target_modules: str | list[str],
         lora_dropout: float,
+        seed: int | None = None,
         **kw,
     ) -> HuggingFaceBackend:
-        """Load REVE from HuggingFace."""
+        """Load REVE from HuggingFace, with random backbone weights from ``seed``."""
         import torch
         import torch.nn as nn
         from transformers import AutoModel
@@ -240,54 +261,57 @@ class HuggingFaceBackend(BackendBase):
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
         pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
-        feat_dim: int = getattr(
-            backbone.config,
-            "hidden_size",
-            metadata.embedding_dim,
-        )
-        if pooling == "flatten":
-            n_ch = (
-                len(electrode_names)
-                if electrode_names
-                else metadata.pretrained_n_chans or 19
-            )
-            feat_dim = feat_dim * n_ch
-
-        if train_mode in ("lora", "qlora"):
-            from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-
-            if train_mode == "qlora":
-                # REVE does not support gradient checkpointing, which peft
-                # turns on by default and which then fails the load
-                backbone = prepare_model_for_kbit_training(
-                    backbone, use_gradient_checkpointing=False
+        # backbone, LoRA and head all drawn from the seed, on the CPU
+        with contextlib.nullcontext() if seed is None else seeded(seed):
+            if seed is not None:
+                backbone = type(backbone)._from_config(
+                    backbone.config, dtype=backbone.dtype
                 )
-            lora_cfg = LoraConfig(
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                target_modules=(
-                    lora_target_modules
-                    if isinstance(lora_target_modules, str)
-                    else list(lora_target_modules)
-                ),
-                lora_dropout=lora_dropout,
-                bias="none",
+            feat_dim: int = getattr(
+                backbone.config,
+                "hidden_size",
+                metadata.embedding_dim,
             )
-            backbone = get_peft_model(backbone, lora_cfg)
-        elif train_mode == "frozen":
-            for param in backbone.parameters():
-                param.requires_grad = False
-            backbone.eval()
-        if train_mode != "full":
-            for param in pos_bank.parameters():
-                param.requires_grad = False
-            pos_bank.eval()
 
-        head = (
-            nn.Linear(feat_dim, n_outputs).to(device)
-            if n_outputs is not None
-            else nn.Identity().to(device)
-        )
+            if train_mode in ("lora", "qlora"):
+                from peft import (
+                    LoraConfig,
+                    get_peft_model,
+                    prepare_model_for_kbit_training,
+                )
+
+                if train_mode == "qlora":
+                    # REVE does not support gradient checkpointing, which peft
+                    # turns on by default and which then fails the load
+                    backbone = prepare_model_for_kbit_training(
+                        backbone, use_gradient_checkpointing=False
+                    )
+                lora_cfg = LoraConfig(
+                    r=lora_r,
+                    lora_alpha=lora_alpha,
+                    target_modules=(
+                        lora_target_modules
+                        if isinstance(lora_target_modules, str)
+                        else list(lora_target_modules)
+                    ),
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                backbone = get_peft_model(backbone, lora_cfg)
+            elif train_mode == "frozen":
+                for param in backbone.parameters():
+                    param.requires_grad = False
+                backbone.eval()
+            if train_mode != "full":
+                for param in pos_bank.parameters():
+                    param.requires_grad = False
+                pos_bank.eval()
+
+            head = (
+                nn.Linear(feat_dim, n_outputs).to(device)
+                if n_outputs is not None
+                else nn.Identity().to(device)
+            )
 
         backend = cls(
             metadata=metadata,
@@ -303,6 +327,7 @@ class HuggingFaceBackend(BackendBase):
             task=task,
         )
         backend.checkpoint_revisions = revisions
+        backend.weights_seed = None if seed is None else int(seed)
         return backend
 
     # ------------------------------------------------------------------
@@ -343,32 +368,41 @@ class HuggingFaceBackend(BackendBase):
         pos = self._pos_bank(elec).unsqueeze(0).expand(len(x_tensor), -1, -1)
         # REVE's forward returns a raw tensor of per-patch embeddings with shape
         # (batch, channels, time_patches, embed_dim) -- not a HF ModelOutput.
-        # Pool over the time-patch axis to get a per-channel embedding
-        # (batch, channels, embed_dim); ``flatten`` pooling then keeps the
-        # per-channel layout (feat_dim == embed_dim * n_chans), ``mean`` averages
-        # across channels (feat_dim == embed_dim).
         out = self._backbone(x_tensor, pos)
-        if self._pooling == "attention":
+        pooled = self._pool(out, self._pooling)
+        if return_tokens:
+            return pooled, out
+        return pooled if return_embeddings else self._head(pooled)
+
+    def _pool(self, out, pooling: str):
+        """Collapse ``(batch, channel, time_patch, embed_dim)`` tokens."""
+        if pooling == "attention":
             # REVE's pretrained single-query attention read-out over the
             # flattened channel+time tokens -> (batch, embed_dim). Under
             # LoRA/QLoRA the backbone is a PeftModel wrapping the Reve module,
             # so reach the base model that owns the method.
             base = getattr(self._backbone, "get_base_model", None)
             base = base() if base is not None else self._backbone
-            pooled = base.attention_pooling(out)
-        else:
-            # Pool over the time-patch axis to get a per-channel embedding
-            # (batch, channels, embed_dim); ``flatten`` then keeps the
-            # per-channel layout (feat_dim == embed_dim * n_chans), ``mean``
-            # averages across channels (feat_dim == embed_dim).
-            hidden = out.mean(dim=2)
-            if self._pooling == "mean":
-                pooled = hidden.mean(dim=1)
-            else:
-                pooled = hidden.flatten(start_dim=1)
-        if return_tokens:
-            return pooled, out
-        return pooled if return_embeddings else self._head(pooled)
+            return base.attention_pooling(out)
+        # average over time patches, then over channels -> (batch, embed_dim)
+        return out.mean(dim=2).mean(dim=1)
+
+    def pool_tokens(self, tokens: np.ndarray, pooling: str) -> np.ndarray:
+        """Pool the tokens of ``transform`` by ``"mean"`` or ``"attention"``."""
+        import torch
+
+        if pooling not in {"mean", "attention"}:
+            raise ValueError(
+                f"REVE supports pooling='mean' or 'attention', got {pooling!r}."
+            )
+        batch_size = self._eval_batch_size()
+        chunks = []
+        with self._no_grad():
+            for start in range(0, len(tokens), batch_size):
+                batch = torch.from_numpy(tokens[start : start + batch_size])
+                pooled = self._pool(batch.to(self._device), pooling)
+                chunks.append(self._from_tensor(pooled))
+        return np.concatenate(chunks)
 
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False

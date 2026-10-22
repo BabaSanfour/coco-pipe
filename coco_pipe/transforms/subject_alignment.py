@@ -147,26 +147,62 @@ def _inv_sqrt_cov(xc: np.ndarray, *, shrinkage: bool = True) -> np.ndarray:
 
 
 class EuclideanAlign(SubjectAlignment):
-    """Per-subject mean or CORAL alignment, including unseen subjects."""
+    """Per-subject mean or CORAL alignment, including unseen subjects.
 
-    def __init__(self, mode: str = "coral", *, shrinkage: bool = True):
+    ``X`` is ``(window, feature)`` or tokens ``(window, ..., feature)``: a
+    subject's mean, and for ``"coral"`` its feature covariance, are taken over
+    all its tokens. With ``channel_axis``, each channel's tokens are centered
+    on their own mean, and ``"coral"`` whitens every channel with the
+    subject's one covariance of the centered tokens. The output keeps the
+    shape and float dtype of ``X``.
+    """
+
+    def __init__(
+        self,
+        mode: str = "coral",
+        *,
+        shrinkage: bool = True,
+        channel_axis: int | None = None,
+    ):
         if mode not in {"coral", "mean"}:
             raise ValueError(f"mode must be 'coral' or 'mean', got {mode!r}.")
         self.mode = mode
         self.name = f"ea_{mode}"
         self.shrinkage = shrinkage
+        self.channel_axis = channel_axis
         with config_context(enable_metadata_routing=True):
             self.set_fit_request(groups=True)
             self.set_transform_request(groups=True)
 
     def _stats(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
-        mu = xs.mean(0)
+        xs = np.asarray(xs, dtype=np.float64)
+        axes = tuple(i for i in range(xs.ndim - 1) if i != self.channel_axis)
+        mu = xs.mean(axis=axes, keepdims=True)[0]
         if self.mode == "mean":
             return mu, None
-        return mu, _inv_sqrt_cov(xs - mu, shrinkage=self.shrinkage)
+        centered = (xs - mu).reshape(-1, xs.shape[-1])
+        return mu, _inv_sqrt_cov(centered, shrinkage=self.shrinkage)
+
+    def _check(self, X) -> np.ndarray:
+        x = np.asarray(X)
+        if x.ndim < 2:
+            raise ValueError(
+                f"EuclideanAlign expects (window, ..., feature), got {x.shape}."
+            )
+        axis = self.channel_axis
+        if axis is not None and (
+            isinstance(axis, bool)
+            or not isinstance(axis, int)
+            or not 1 <= axis < x.ndim - 1
+        ):
+            raise ValueError(
+                "channel_axis must be a token axis, between the window and "
+                f"feature axes of {x.shape}, got {axis!r}."
+            )
+        return x
 
     def fit(self, X, y=None, groups=None):
-        x = np.asarray(X, dtype=np.float64)
+        x = self._check(X)
         subject = _require_groups(groups, len(x))
         self.mu_ = {}
         self.w_ = {}
@@ -175,15 +211,16 @@ class EuclideanAlign(SubjectAlignment):
             self.mu_[sid] = mu
             if w is not None:
                 self.w_[sid] = w
-        self.n_features_in_ = x.shape[1]
+        self.n_features_in_ = x.shape[-1]
         return self
 
     def transform(self, X, groups=None):
         if not hasattr(self, "mu_"):
             raise RuntimeError("EuclideanAlign.transform called before fit.")
-        x = np.asarray(X, dtype=np.float64)
+        x = self._check(X)
         subject = _require_groups(groups, len(x))
-        out = np.empty_like(x)
+        dtype = x.dtype if np.issubdtype(x.dtype, np.floating) else np.float64
+        out = np.empty(x.shape, dtype=dtype)
         for sid in np.unique(subject):
             rows = subject == sid
             if sid in self.mu_:

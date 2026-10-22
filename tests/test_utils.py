@@ -1,6 +1,7 @@
 from importlib.metadata import PackageNotFoundError
 from unittest.mock import MagicMock, patch
 
+import joblib
 import pytest
 
 from coco_pipe.utils import (
@@ -141,5 +142,7 @@ def test_run_task_batch():
     assert run_task_batch([], lambda x: x, 4) == []
     # Sequential execution (max_workers = 1)
     assert run_task_batch([1, 2, 3], lambda x: x * 2, 1) == [2, 4, 6]
-    # Parallel execution (max_workers > 1)
-    assert run_task_batch([1, 2, 3], lambda x: x * 2, 2) == [2, 4, 6]
+    # Parallel execution (max_workers > 1), in threads: joblib's worker
+    # processes once hung here on a macOS runner until CI cancelled the job.
+    with joblib.parallel_config(backend="threading"):
+        assert run_task_batch([1, 2, 3], lambda x: x * 2, 2) == [2, 4, 6]

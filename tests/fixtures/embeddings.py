@@ -19,6 +19,11 @@ class TokenModel:
         pooled = tokens.mean(axis=(1, 2))
         return (pooled, tokens) if return_tokens else pooled
 
+    def pool_tokens(self, tokens, pooling):
+        if pooling != "max":
+            raise ValueError(f"TokenModel pools by 'max', got {pooling!r}.")
+        return tokens.max(axis=(1, 2))
+
     def get_token_output_metadata(self):
         return {
             "token_source": "test_output",

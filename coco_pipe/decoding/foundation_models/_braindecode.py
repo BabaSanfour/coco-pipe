@@ -12,17 +12,19 @@ To add a new braindecode model: add one entry to ``_BD_MODEL_MAP`` and one
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import warnings
 from functools import partial
+from types import MethodType
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._specs import SignalMetadata
 from . import _montages
-from ._base import BackendBase, resolve_revision
+from ._base import BackendBase, check_weights, resolve_revision, seeded
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -41,6 +43,29 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
 _INTERPOLATED_CLASS: dict[str, str] = {
     "labram": "InterpolatedLaBraM",
 }
+
+
+def _luna_frequency_features(self, x):
+    """LUNA's frequency embedding, its DC and Nyquist bins made real.
+
+    As braindecode's ``_FrequencyFeatureEmbedder.forward``, except that the
+    imaginary part of those bins is set to 0: GPU FFTs leave rounding noise
+    there, whose sign flips their phase between pi and -pi.
+    """
+    import torch
+    import torch.nn.functional as F
+    from einops import rearrange
+
+    batch, n_chans, n_times = x.shape
+    if n_times % self.patch_size:
+        x = F.pad(x, (0, self.patch_size - n_times % self.patch_size))
+    spectrum = torch.fft.rfft(x.view(batch, n_chans, -1, self.patch_size), dim=-1)
+    real = torch.zeros(spectrum.shape[-1], dtype=torch.bool, device=x.device)
+    real[0] = True
+    real[-1] = self.patch_size % 2 == 0
+    spectrum = torch.complex(spectrum.real, torch.where(real, 0.0, spectrum.imag))
+    features = torch.cat((spectrum.abs(), spectrum.angle()), dim=-1)
+    return rearrange(self.frequency_to_embed(features), "B C t D -> B (C t) D")
 
 
 class BrainDecodeBackend(BackendBase):
@@ -66,7 +91,6 @@ class BrainDecodeBackend(BackendBase):
         device: str,
         train_mode: str,
         task: str,
-        pooling: str = "mean",
     ) -> None:
         self._metadata = metadata
         self._model = model
@@ -74,7 +98,6 @@ class BrainDecodeBackend(BackendBase):
         self._device = device
         self._train_mode = train_mode
         self._task = task
-        self._pooling = pooling
         self.signal_metadata_: SignalMetadata | None = None
 
     @classmethod
@@ -108,6 +131,8 @@ class BrainDecodeBackend(BackendBase):
         lora_alpha: int = 32,
         lora_target_modules: str | list[str] = "all-linear",
         lora_dropout: float = 0.05,
+        pretrained: bool = True,
+        seed: int | None = None,
         **kw,
     ) -> BrainDecodeBackend:
         """Load a pretrained braindecode model and return an initialised backend.
@@ -136,6 +161,11 @@ class BrainDecodeBackend(BackendBase):
             Which modules to inject LoRA adapters into.
         lora_dropout : float, default 0.05
             Dropout probability inside LoRA adapters.
+        pretrained : bool, default True
+            ``False`` keeps the checkpoint's architecture and draws new weights
+            from ``seed``.
+        seed : int or None
+            The seed of random weights; only with ``pretrained=False``.
         **kw
             Extra keyword arguments forwarded to ``Model.from_pretrained``.
 
@@ -163,6 +193,7 @@ class BrainDecodeBackend(BackendBase):
                 f"BrainDecodeBackend does not support '{model_key}'. "
                 f"Supported: {sorted(_BD_MODEL_MAP)}"
             )
+        check_weights(pretrained, seed)
         if train_mode == "qlora":
             raise NotImplementedError(
                 "QLoRA for BrainDecodeBackend requires HuggingFace quantization "
@@ -174,9 +205,9 @@ class BrainDecodeBackend(BackendBase):
         models_module = importlib.import_module(module_path)
         electrode_names = kw.pop("electrode_names", None)
         pooling = kw.pop("pooling", "mean")
-        if pooling not in {"mean", "flatten"}:
+        if pooling != "mean":
             raise ValueError(
-                "BrainDecode foundation models support pooling='mean' or 'flatten'."
+                f"braindecode models support pooling='mean', got {pooling!r}."
             )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
         n_times = int(
@@ -316,42 +347,58 @@ class BrainDecodeBackend(BackendBase):
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
-        if model_key == "labram" and not uses_interpolation and electrode_names:
-            # As in the authors' code, each channel takes the position embedding
-            # of its name, so a subset of the pretraining channels is fed as is.
-            model.forward = partial(model.forward, ch_names=list(electrode_names))
+        # backbone, LoRA and head all drawn from the seed, on the CPU
+        with contextlib.nullcontext() if pretrained else seeded(seed):
+            if not pretrained:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", "Modifying chs_info argument")
+                    model = type(model).from_config(model.get_config())
+            if model_key == "labram" and not uses_interpolation and electrode_names:
+                # As in the authors' code, each channel takes the position
+                # embedding of its name, so a subset of the pretraining channels
+                # is fed as is.
+                model.forward = partial(model.forward, ch_names=list(electrode_names))
+            if model_key == "luna":
+                if n_times % model.patch_size:
+                    raise ValueError(
+                        f"LUNA cuts windows into patches of {model.patch_size} "
+                        f"samples, so n_times must be a multiple of it, got {n_times}."
+                    )
+                model.freq_embed.forward = MethodType(
+                    _luna_frequency_features, model.freq_embed
+                )
+
+            if train_mode == "frozen":
+                for param in model.parameters():
+                    param.requires_grad = False
+                model.eval()
+            elif train_mode == "lora":
+                from peft import LoraConfig, get_peft_model
+
+                lora_cfg = LoraConfig(
+                    r=lora_r,
+                    lora_alpha=lora_alpha,
+                    target_modules=lora_target_modules,
+                    lora_dropout=lora_dropout,
+                    bias="none",
+                )
+                model = get_peft_model(model, lora_cfg)
+            # full: no changes — all params trainable
+
+            if n_outputs is not None:
+                try:
+                    model.reset_head(n_outputs)
+                except NotImplementedError:
+                    if model_key != "luna":
+                        raise
+            if train_mode == "frozen" and n_outputs is not None:
+                for head_name in ("final_layer", "classifier", "head"):
+                    head = getattr(model, head_name, None)
+                    if head is not None:
+                        for parameter in head.parameters():
+                            parameter.requires_grad = True
+                        break
         model = model.to(device)
-
-        if train_mode == "frozen":
-            for param in model.parameters():
-                param.requires_grad = False
-            model.eval()
-        elif train_mode == "lora":
-            from peft import LoraConfig, get_peft_model
-
-            lora_cfg = LoraConfig(
-                r=lora_r,
-                lora_alpha=lora_alpha,
-                target_modules=lora_target_modules,
-                lora_dropout=lora_dropout,
-                bias="none",
-            )
-            model = get_peft_model(model, lora_cfg)
-        # full: no changes — all params trainable
-
-        if n_outputs is not None:
-            try:
-                model.reset_head(n_outputs)
-            except NotImplementedError:
-                if model_key != "luna":
-                    raise
-        if train_mode == "frozen" and n_outputs is not None:
-            for head_name in ("final_layer", "classifier", "head"):
-                head = getattr(model, head_name, None)
-                if head is not None:
-                    for parameter in head.parameters():
-                        parameter.requires_grad = True
-                    break
 
         backend = cls(
             metadata=metadata,
@@ -360,12 +407,12 @@ class BrainDecodeBackend(BackendBase):
             device=device,
             train_mode=train_mode,
             task=task,
-            pooling=pooling,
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
         backend._uses_interpolation = model_key == "labram" and interpolate_channels
         backend.checkpoint_revisions = {metadata.hub_repo: revision}
+        backend.weights_seed = None if pretrained else int(seed)
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None
         )
@@ -566,8 +613,6 @@ class BrainDecodeBackend(BackendBase):
                     tokens = captured_tokens[0]
                 if feats.ndim < 3:
                     pooled = feats
-                elif self._pooling == "flatten":
-                    pooled = feats.flatten(start_dim=1)
                 else:
                     pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
                 embedding_chunks.append(self._from_tensor(pooled))
@@ -577,6 +622,9 @@ class BrainDecodeBackend(BackendBase):
                             f"{self._metadata.display_name} exposes only a pooled "
                             "feature tensor; native token extraction is unavailable."
                         )
+                    if self._metadata.name == "labram" and not self._uses_interpolation:
+                        # one token per channel and time patch, channel-major
+                        tokens = tokens.unflatten(1, (tensor.shape[1], -1))
                     token_chunks.append(self._from_tensor(tokens))
         embeddings = np.concatenate(embedding_chunks, axis=0)
         if return_tokens:
@@ -584,7 +632,12 @@ class BrainDecodeBackend(BackendBase):
         return embeddings
 
     def get_token_output_metadata(self) -> dict[str, object]:
-        """Describe the upstream feature tensor without changing its layout."""
+        """Describe the upstream feature tensor.
+
+        LaBraM's tokens, one per channel and time patch in a flat axis, are split
+        into those two axes, unless the model interpolates channels: its tokens
+        then cover its target channels, not the input ones, and stay flat.
+        """
         layouts = {
             "cbramod": {
                 "token_source": "return_features.features",
@@ -600,8 +653,8 @@ class BrainDecodeBackend(BackendBase):
             },
             "labram": {
                 "token_source": "return_features.features",
-                "token_axes": ["window", "patch_token", "feature"],
-                "token_observation_axes": ["patch_token"],
+                "token_axes": ["window", "channel", "time_patch", "feature"],
+                "token_observation_axes": ["channel", "time_patch"],
                 "token_feature_axis": "feature",
             },
             "luna": {
@@ -635,6 +688,12 @@ class BrainDecodeBackend(BackendBase):
                 f"{self._metadata.display_name} does not expose a documented "
                 "native token representation."
             )
+        if self._metadata.name == "labram" and self._uses_interpolation:
+            metadata = {
+                **metadata,
+                "token_axes": ["window", "patch_token", "feature"],
+                "token_observation_axes": ["patch_token"],
+            }
         return metadata
 
     def checkpoint_components(self) -> dict:

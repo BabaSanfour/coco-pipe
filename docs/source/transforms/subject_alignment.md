@@ -113,6 +113,22 @@ The transform stores fitted subject means in `mu_` and whitening matrices in
 `w_`. At transform time, known subjects use stored statistics; unseen subjects
 derive statistics from their provided transform batch.
 
+`EuclideanAlign` also takes foundation-model tokens, `(window, ..., feature)`.
+A subject's mean and covariance are then taken over all its tokens, subjects are
+aligned one at a time, and the output keeps the shape and float dtype of the
+input. Pooling tokens after `ea_mean` gives the same vectors as `ea_mean` on the
+pooled vectors. Token covariances can be rank-deficient: a final LayerNorm, as
+in LaBraM and LUNA, leaves one direction without variance, which whitening
+leaves at zero.
+
+`channel_axis` centers each channel's tokens on the subject's mean for that
+channel, e.g. `EuclideanAlign("coral", channel_axis=1)` for
+`(window, channel, time_patch, feature)` tokens. `"coral"` then whitens every
+channel with the subject's one covariance of the centered tokens, so the
+channels keep one feature basis. In mean mode the window and patch vectors are
+those of plain `ea_mean`; the channel vectors and the tokens lose each
+subject's mean per channel, its average topography in the model's space.
+
 ## Riemannian alignment
 
 `RiemannAlign` expects `(window, token, feature)` tensors. Each window is

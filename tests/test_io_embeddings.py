@@ -18,7 +18,9 @@ from coco_pipe.io.embeddings import (
     write_embedding_dataset,
     write_embedding_manifest,
     write_recording_embeddings,
+    write_transformed_embeddings,
 )
+from coco_pipe.transforms.subject_alignment import EuclideanAlign
 from coco_pipe.utils import stable_hash
 from tests.fixtures.embeddings import extract, source_path, write_recording
 
@@ -26,7 +28,7 @@ from tests.fixtures.embeddings import extract, source_path, write_recording
 def test_embedding_path_names_recording_and_dataset_files(tmp_path):
     recording = embedding_path(
         tmp_path,
-        "baseRandomEaCoral",
+        "baseRandom0EaCoral",
         "window",
         recording_id="sub-01_ses-02_task-rest_run-03",
     ).fpath
@@ -35,9 +37,10 @@ def test_embedding_path_names_recording_and_dataset_files(tmp_path):
         / "sub-01"
         / "ses-02"
         / "eeg"
-        / "sub-01_ses-02_task-rest_run-03_desc-baseRandomEaCoral_windowembeddings.nc"
+        / "sub-01_ses-02_task-rest_run-03_desc-baseRandom0EaCoral_windowembeddings.nc"
     )
-    assert get_entities_from_fname(recording.name)["description"] == "baseRandomEaCoral"
+    entities = get_entities_from_fname(recording.name)
+    assert entities["description"] == "baseRandom0EaCoral"
     assert embedding_path(tmp_path, "base", "token", task="rest").fpath == (
         tmp_path / "task-rest_desc-base_tokenembeddings.nc"
     )
@@ -127,9 +130,9 @@ def test_write_recording_embeddings_round_trip(tmp_path):
         bad_channels=["Cz"],
     )
     recording = "sub-01_ses-02_task-rest_run-03"
-    assert {view: path.basename for view, path in paths.items()} == {
-        "window": f"{recording}_desc-base_windowembeddings.nc",
-        "token": f"{recording}_desc-base_tokenembeddings.nc",
+    assert {key: path.basename for key, path in paths.items()} == {
+        ("base", view): f"{recording}_desc-base_{view}embeddings.nc"
+        for view in ("window", "token", "channel", "patch")
     }
     # Windows in epoch order: EO's 1 and 3 between EC's 0, 2 and 4.
     order = [2, 0, 3, 1, 4]
@@ -137,8 +140,10 @@ def test_write_recording_embeddings_round_trip(tmp_path):
     for view, dims in (
         ("window", ("window", "feature")),
         ("token", ("window", "channel", "time_patch", "feature")),
+        ("channel", ("window", "channel", "feature")),
+        ("patch", ("window", "time_patch", "feature")),
     ):
-        with xr.open_dataset(paths[view].fpath, engine="h5netcdf") as ds:
+        with xr.open_dataset(paths["base", view].fpath, engine="h5netcdf") as ds:
             expected = np.concatenate(
                 [getattr(results[c], f"{view}_embeddings") for c in ("EO", "EC")]
             )[order]
@@ -173,16 +178,179 @@ def test_write_recording_embeddings_round_trip(tmp_path):
             config = json.loads(ds.attrs["config"])
             assert config["ModelKey"] == "cbramod"
             assert config["NormalizeEmbeddings"] is True
+            assert config["Weights"] == "pretrained" and "Seed" not in config
             assert set(config) <= set(EMBEDDING_CONFIG_KEYS.values())
             assert stable_hash(config, length=16) == ds.attrs["config_hash"]
             hashes.add(ds.attrs["config_hash"])
             if view == "token":
                 assert ds.attrs["token_source"] == "test_output"
                 assert ds.attrs["token_feature_axis"] == "feature"
+            if "channel" in dims:
                 assert ds["channel"].values.tolist() == ["T7", "Cz"]
             else:
                 assert "channel" not in ds.coords
     assert len(hashes) == 1
+
+
+def test_extra_poolings_get_window_files_of_their_own_label(tmp_path):
+    results = {
+        "EO": extract([1], seed=1, extra_poolings="max"),
+        "EC": extract([0, 2], extra_poolings="max"),
+    }
+    paths = write_recording(tmp_path, results)
+    recording = "sub-01_ses-02_task-rest_run-03"
+    assert {key for key in paths if key[0] != "base"} == {("baseMax", "window")}
+    assert paths["baseMax", "window"].basename == (
+        f"{recording}_desc-baseMax_windowembeddings.nc"
+    )
+    pooled = load_embeddings(paths["baseMax", "window"].fpath)
+    windows = load_embeddings(paths["base", "window"].fpath)
+    expected = np.concatenate(
+        [results[c].extra_window_embeddings["max"] for c in ("EO", "EC")]
+    )[[1, 0, 2]]
+    np.testing.assert_array_equal(pooled.X, expected.astype(np.float32))
+    assert pooled.ids.tolist() == windows.ids.tolist()
+    with (
+        xr.open_dataset(paths["base", "window"].fpath, engine="h5netcdf") as base,
+        xr.open_dataset(paths["baseMax", "window"].fpath, engine="h5netcdf") as ds,
+    ):
+        assert ds.attrs["description"] == "baseMax"
+        config = json.loads(base.attrs["config"])
+        assert config["WindowPooling"] == "mean"
+        assert json.loads(ds.attrs["config"]) == {**config, "WindowPooling": "max"}
+        assert ds.attrs["config_hash"] != base.attrs["config_hash"]
+    plain = write_recording(
+        tmp_path / "plain",
+        {"EO": extract([1], seed=1), "EC": extract([0, 2])},
+    )
+    assert set(plain) == {key for key in paths if key[0] == "base"}
+    np.testing.assert_array_equal(
+        load_embeddings(plain["base", "window"].fpath).X, windows.X
+    )
+
+
+def test_tokens_can_be_written_as_float16(tmp_path):
+    result = extract([0, 1])
+
+    def write(results, token_dtype):
+        return write_recording_embeddings(
+            results,
+            tmp_path / "out",
+            label="base",
+            source=source_path(tmp_path),
+            source_dataset="preproc",
+            token_dtype=token_dtype,
+        )
+
+    paths = write({"EC": result}, "float16")
+    half = result.token_embeddings.astype(np.float16)
+    with xr.open_dataset(paths["base", "token"].fpath, engine="h5netcdf") as ds:
+        assert ds["embeddings"].dtype == np.float16
+        np.testing.assert_array_equal(ds["embeddings"], half)
+    for view in ("window", "channel", "patch"):
+        with xr.open_dataset(paths["base", view].fpath, engine="h5netcdf") as ds:
+            assert ds["embeddings"].dtype == np.float32
+    loaded = load_embeddings(paths["base", "token"].fpath)
+    assert loaded.X.dtype == np.float32
+    np.testing.assert_array_equal(loaded.X, half.astype(np.float32))
+
+    before = {path: path.fpath.read_bytes() for path in paths.values()}
+    large = replace(result, token_embeddings=np.full_like(half, 1e5, dtype=np.float32))
+    with pytest.raises(ValueError, match="non-finite values as float16"):
+        write({"EC": large}, "float16")
+    assert {path: path.fpath.read_bytes() for path in paths.values()} == before
+    with pytest.raises(ValueError, match="token_dtype must be"):
+        write({"EC": result}, "float64")
+
+
+def _aligned_tokens(tmp_path):
+    write_recording(tmp_path, {"EC": extract([0, 2], seed=1), "EO": extract([1, 3])})
+    write_recording(tmp_path, {"EC": extract([0, 1], seed=2)}, subject="02")
+    tokens = load_embeddings(find_embeddings(tmp_path / "out", "base", "token"))
+    aligner = EuclideanAlign("coral", channel_axis=1)
+    aligned = aligner.fit_transform(tokens.X, groups=tokens.coords["subject"])
+    return tokens, aligned, {"name": aligner.name, **aligner.get_params()}
+
+
+def test_transformed_embeddings_round_trip(tmp_path):
+    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    root = tmp_path / "out"
+    path = write_transformed_embeddings(
+        tokens, aligned, root, label="baseEaCoralCh", transform=transform
+    )
+    assert path.basename == "task-rest_desc-baseEaCoralCh_tokenembeddings.nc"
+    loaded = load_embeddings(path.fpath)
+    np.testing.assert_array_equal(loaded.X, aligned)
+    assert loaded.dims == tokens.dims
+    for name in ("obs", "subject", "condition", "epoch", "start", "channel"):
+        assert loaded.coords[name].tolist() == tokens.coords[name].tolist()
+    assert loaded.meta["recordings"] == tokens.meta["recordings"]
+    assert loaded.meta["config"] == {
+        **tokens.meta["config"],
+        "Transform": {
+            "name": "ea_coral",
+            "channel_axis": 1,
+            "mode": "coral",
+            "shrinkage": True,
+        },
+    }
+    assert loaded.meta["config_hash"] != tokens.meta["config_hash"]
+    with pytest.raises(ValueError):
+        load_embeddings([tokens.meta["files"][0], path.fpath])
+
+    tangent = np.random.default_rng(0).normal(size=(len(aligned), 15))
+    cov = write_transformed_embeddings(
+        tokens, tangent, root, label="baseRa", transform={"name": "ra"}, view="cov"
+    )
+    assert load_embeddings(cov.fpath).dims == ("obs", "feature")
+    _write_dataset(
+        root, descriptions={"base": "x", "baseEaCoralCh": "y", "baseRa": "z"}
+    )
+    sidecar = json.loads(path.fpath.with_suffix(".json").read_text())
+    assert sidecar["Transform"]["name"] == "ea_coral"
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        (lambda t, a: (t, a[:-1], {}), "rows"),
+        (lambda t, a: (t, np.where(a > 0, np.nan, a), {}), "non-finite"),
+        (lambda t, a: (t, a[:, 0], {"view": "cov"}), "expected axes"),
+        (lambda t, a: (t, a, {"view": "window"}), "expected axes"),
+        (lambda t, a: (t, a, {"token_dtype": "float64"}), "token_dtype"),
+    ],
+)
+def test_transformed_embeddings_refused(tmp_path, change, message):
+    source, embeddings, settings = change(*_aligned_tokens(tmp_path)[:2])
+    with pytest.raises(ValueError, match=message):
+        write_transformed_embeddings(
+            source,
+            embeddings,
+            tmp_path / "out",
+            label="baseEaCoralCh",
+            transform={"name": "ea_coral"},
+            **settings,
+        )
+    assert not find_embeddings(tmp_path / "out", "baseEaCoralCh", "token")
+
+
+def test_transformed_embeddings_need_window_rows_of_a_plain_file(tmp_path):
+    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    root = tmp_path / "out"
+    files = find_embeddings(root, "base", "window")
+    by_recording = load_embeddings(files, representation="recording")
+    with pytest.raises(ValueError, match="one row per window"):
+        write_transformed_embeddings(
+            by_recording, by_recording.X, root, label="baseEaMean", transform={}
+        )
+    path = write_transformed_embeddings(
+        tokens, aligned, root, label="baseEaCoralCh", transform=transform
+    )
+    again = load_embeddings(path.fpath)
+    with pytest.raises(ValueError, match="already transformed"):
+        write_transformed_embeddings(
+            again, again.X, root, label="baseEaCoralChEaMean", transform={}
+        )
 
 
 def test_recordings_of_one_configuration_share_config_hash(tmp_path):
@@ -194,12 +362,21 @@ def test_recordings_of_one_configuration_share_config_hash(tmp_path):
             source=source_path(tmp_path, subject=subject),
             source_dataset="preproc",
         )
-        with xr.open_dataset(paths["window"].fpath, engine="h5netcdf") as ds:
+        with xr.open_dataset(paths["base", "window"].fpath, engine="h5netcdf") as ds:
             return ds.attrs["config_hash"]
 
     first = config_hash("01", extract([0, 1]))
     assert config_hash("02", extract([0], seed=1, channels=("Fz",))) == first
     assert config_hash("03", extract([0], normalize_embeddings=False)) != first
+    random = extract([0])
+    random = replace(random, metadata={**random.metadata, "weights": "random"})
+    seeds = {
+        config_hash(
+            f"0{seed + 4}", replace(random, metadata={**random.metadata, "seed": seed})
+        )
+        for seed in (0, 1)
+    }
+    assert len(seeds) == 2 and first not in seeds
 
 
 def _nan_at_first(result, view):
@@ -236,7 +413,31 @@ def _nan_at_first(result, view):
             lambda: {"EC": extract([0]), "EO": extract([1], channels=("T3", "Fz"))},
             "channels",
         ),
+        (
+            lambda: {"EC": extract([0], extra_poolings="max"), "EO": extract([1])},
+            "poolings",
+        ),
         (lambda: {"EC": _nan_at_first(extract([0]), "window")}, "non-finite"),
+        (
+            lambda: {
+                "EC": replace(
+                    extract([0]),
+                    extra_window_embeddings={
+                        "max": np.full((1, 5), np.nan, dtype=np.float32)
+                    },
+                )
+            },
+            "non-finite",
+        ),
+        (
+            lambda: {
+                "EC": replace(
+                    extract([0]),
+                    extra_window_embeddings={"max-1": extract([0]).window_embeddings},
+                )
+            },
+            "letters and digits",
+        ),
         (lambda: {"EC": _nan_at_first(extract([0]), "token")}, "non-finite"),
         (lambda: {"EC": extract([0, 1]), "EO": extract([1])}, "more than once"),
         (
@@ -272,8 +473,8 @@ def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
             source_dataset="preproc",
         )
 
-    path = write(extract([0], store_tokens=False))["window"].fpath
-    before = path.read_bytes()
+    paths = [path.fpath for path in write(extract([0], store_tokens=False)).values()]
+    before = [path.read_bytes() for path in paths]
 
     def fail(self, target, **kwargs):
         Path(target).write_bytes(b"partial")
@@ -282,8 +483,8 @@ def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
     monkeypatch.setattr(xr.Dataset, "to_netcdf", fail)
     with pytest.raises(OSError, match="disk full"):
         write(extract([0], seed=1, store_tokens=False))
-    assert path.read_bytes() == before
-    assert [p.name for p in path.parent.iterdir()] == [path.name]
+    assert [path.read_bytes() for path in paths] == before
+    assert sorted(paths[0].parent.iterdir()) == sorted(paths)
 
 
 def _embedding_dataset(tmp_path, labels=("base",)):
@@ -297,14 +498,14 @@ def _embedding_dataset(tmp_path, labels=("base",)):
         source_dataset="preproc",
     )
     for label in labels:
-        with xr.open_dataset(paths["window"].fpath, engine="h5netcdf") as ds:
+        with xr.open_dataset(paths["base", "window"].fpath, engine="h5netcdf") as ds:
             ds = ds.load()
         ds.attrs["description"] = label
         ds.to_netcdf(
             embedding_path(root, label, "window", task="rest").fpath,
             engine="h5netcdf",
         )
-    return root, paths["window"]
+    return root, paths["base", "window"]
 
 
 def _write_dataset(root, **kwargs):
@@ -438,7 +639,7 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
             getattr(first["EO"], f"{view}_embeddings"),
             getattr(second["EC"], f"{view}_embeddings"),
         ]
-        if view == "token":
+        if view in ("token", "channel"):
             # The second recording's channels are Cz, T7: put in T7, Cz order.
             arrays[2] = arrays[2][:, ::-1]
         return np.concatenate(arrays)[list(order)].astype(np.float32)
@@ -481,6 +682,17 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
     np.testing.assert_array_equal(tokens.X, expected("token"))
     assert tokens.meta["token_feature_axis"] == "feature"
 
+    for view, dims in (
+        ("channel", ("obs", "channel", "feature")),
+        ("patch", ("obs", "time_patch", "feature")),
+    ):
+        loaded = load_embeddings(find_embeddings(root, "base", view))
+        assert loaded.dims == dims
+        np.testing.assert_array_equal(loaded.X, expected(view))
+        assert loaded.meta["view"] == view
+        if "channel" in dims:
+            assert loaded.coords["channel"].tolist() == ["T7", "Cz"]
+
     files = find_embeddings(root, "base", "window")
     eyes_open = load_embeddings(files, conditions="EO")
     np.testing.assert_array_equal(eyes_open.X, expected("window", [2, 3]))
@@ -500,9 +712,9 @@ def test_load_embeddings_reads_windows_tokens_and_recordings(tmp_path, monkeypat
         recordings.X,
         np.stack(
             [
-                first["EC"].recording_embedding,
-                first["EO"].recording_embedding,
-                second["EC"].recording_embedding,
+                first["EC"].window_embeddings.mean(axis=0),
+                first["EO"].window_embeddings.mean(axis=0),
+                second["EC"].window_embeddings.mean(axis=0),
             ]
         ),
         rtol=1e-6,
@@ -521,7 +733,7 @@ def _rewrite(path, change):
 
 
 def test_load_embeddings_upcasts_float16(tmp_path):
-    path = write_recording(tmp_path, {"EC": extract([0, 1])})["token"].fpath
+    path = write_recording(tmp_path, {"EC": extract([0, 1])})["base", "token"].fpath
 
     def to_float16(dataset):
         dataset["embeddings"] = dataset["embeddings"].astype(np.float16)
@@ -539,7 +751,7 @@ def _one(tmp_path, view="window", subject="01", label="base", **settings):
     paths = write_recording(
         tmp_path, {"EC": extract([0], **settings)}, subject=subject, label=label
     )
-    return paths[view].fpath
+    return paths[label, view].fpath
 
 
 def _set_nan(dataset):
@@ -626,7 +838,7 @@ def test_consolidated_file_keeps_float16_and_drops_a_task_not_shared(tmp_path):
     other = write_recording(tmp_path, {"EC": extract([0])}, subject="02", task="other")
     files = [
         _rewrite(_one(tmp_path, "token"), to_float16),
-        _rewrite(other["token"].fpath, to_float16),
+        _rewrite(other["base", "token"].fpath, to_float16),
     ]
     path = consolidate_embeddings(files, tmp_path / "out")
     assert path.fpath.name == "desc-base_tokenembeddings.nc"

@@ -621,7 +621,7 @@ class FoundationEmbeddingModelConfig(BaseEstimatorConfig):
     model_key: str
     backend: str = "auto"
     device: DeviceConfig = Field(default_factory=DeviceConfig)
-    pooling: Literal["mean", "flatten"] = "mean"
+    pooling: Literal["mean", "attention"] = "mean"
     cache_embeddings: bool = True
     sfreq: float = Field(gt=0, description="Sampling rate of the input epochs.")
     ch_names: list[str] = Field(

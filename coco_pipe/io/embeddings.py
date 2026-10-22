@@ -43,8 +43,14 @@ _BIDSIGNORE = ("*embeddings.nc", "*embeddings.json", "*.tar.zst", "*_manifest.js
 _VIEW_TEXT = {
     "token": "the model's token tensor of each window, nothing pooled",
     "window": "one vector per window",
-    "channel": "one vector per channel of each window, averaged over time patches",
-    "patch": "one vector per time patch of each window, averaged over channels",
+    "channel": (
+        "one vector per channel of each window, averaged over time patches, "
+        "not normalised"
+    ),
+    "patch": (
+        "one vector per time patch of each window, averaged over channels, "
+        "not normalised"
+    ),
     "cov": "the tangent-space covariance of each window's tokens",
 }
 
@@ -54,6 +60,20 @@ _VIEW_DIMS = {
     "patch": ("window", "time_patch", "feature"),
     "cov": ("window", "feature"),
 }
+
+#: The coordinates along ``window`` that every embedding file holds.
+_WINDOW_COORDS = (
+    "obs",
+    "recording_id",
+    "subject",
+    "session",
+    "task",
+    "run",
+    "condition",
+    "epoch",
+    "start",
+    "stop",
+)
 
 # h5py reads a long list of indices slowly: 43,741 rows of an 87,000-window
 # file took 0.97 s as one list and 0.08 s as lists of 1,024 (2026-10-20).
@@ -96,7 +116,7 @@ def embedding_path(
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
         The ``desc`` label: the processing chain, e.g. ``"base"`` or
-        ``"baseRandomEaCoral"``. A BIDS label: letters, digits and ``+``.
+        ``"baseRandom0EaCoral"``. A BIDS label: letters, digits and ``+``.
     view : str
         One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
     recording_id : str, optional
@@ -193,15 +213,20 @@ def write_recording_embeddings(
     source: BIDSPath,
     source_dataset: str,
     bad_channels: Sequence[str] = (),
-) -> dict[str, BIDSPath]:
+    token_dtype: str = "float32",
+) -> dict[tuple[str, str], BIDSPath]:
     """Write one recording's embeddings, one file per view.
 
     Each view the results hold (``window_embeddings``, ``token_embeddings``,
     and so on, see :data:`~coco_pipe.io.EMBEDDING_VIEWS`) goes to its own
-    file, named by :func:`embedding_path` after the source recording. A file
-    holds every condition, its windows in epoch order. Nothing is written if
-    any check fails, and each file is written to a temporary name and then
-    moved into place, so an existing file is replaced whole or not at all.
+    file, named by :func:`embedding_path` after the source recording. The
+    window vectors of each other pooling (``extra_window_embeddings``, e.g.
+    REVE's attention read-out) go to a window file of their own label, the
+    label followed by the pooling's name (``baseAttention``), whose settings
+    name that pooling. A file holds every condition, its windows in epoch
+    order. Nothing is written if any check fails, and each file is written to
+    a temporary name and then moved into place, so an existing file is
+    replaced whole or not at all.
 
     Parameters
     ----------
@@ -221,24 +246,30 @@ def write_recording_embeddings(
         ``"preproc"``, for the BIDS URI of ``source``.
     bad_channels : sequence of str
         The recording's bad channels.
+    token_dtype : {"float32", "float16"}
+        The dtype of the token file; ``"float16"`` halves its size. The other
+        views are float32.
 
     Returns
     -------
-    dict of str to BIDSPath
-        The path written for each view.
+    dict of (str, str) to BIDSPath
+        The path written for each label and view, e.g.
+        ``paths["base", "window"]``.
 
     Raises
     ------
     ValueError
         If the conditions come from different models or settings (their
-        ``config_hash``), differ in views, feature size or channels, hold
-        non-finite values or share epoch numbers, if a channel axis does not
-        match ``model_channels``, or if ``source`` lacks its root, subject or
-        datatype.
+        ``config_hash``), differ in views, poolings, feature size or channels,
+        hold non-finite values or share epoch numbers, if a channel axis does
+        not match ``model_channels``, if a pooling's name is not letters and
+        digits, if ``source`` lacks its root, subject or datatype, or if
+        ``token_dtype`` is not ``"float32"`` or ``"float16"``.
 
     Notes
     -----
-    The ``embeddings`` variable holds the view, as float32. Along ``window``
+    The ``embeddings`` variable holds the view, as float32 (tokens as
+    ``token_dtype``; values beyond float16's range are refused). Along ``window``
     are the coordinates ``obs`` (``<recording_id>_epoch-NNNN``, as the BIDS
     loader names observations), ``recording_id``, ``subject``, ``session``,
     ``task``, ``run``, ``condition``, ``epoch``, ``start`` and ``stop``.
@@ -255,6 +286,10 @@ def write_recording_embeddings(
     """
     if not results:
         raise ValueError("results must hold at least one condition.")
+    if token_dtype not in ("float32", "float16"):
+        raise ValueError(
+            f"token_dtype must be 'float32' or 'float16', got {token_dtype!r}."
+        )
     if source.root is None or source.subject is None or source.datatype is None:
         raise ValueError("source must be a BIDSPath with root, subject and datatype.")
     if not source_dataset or ":" in source_dataset:
@@ -265,6 +300,7 @@ def write_recording_embeddings(
     relative = source.fpath.relative_to(Path(source.root)).as_posix()
 
     views: dict[str, list[np.ndarray]] = {}
+    poolings: dict[str, list[np.ndarray]] = {}
     windows: dict[str, list[np.ndarray]] = {
         "condition": [],
         "epoch": [],
@@ -297,13 +333,29 @@ def write_recording_embeddings(
             recording[f"{kind}_channels"] = _channel_list(
                 adaptation.get(f"{kind}_channels", ())
             )
-        arrays = {
-            view: np.asarray(array, dtype=np.float32)
-            for view in EMBEDDING_VIEWS
-            if (array := getattr(result, f"{view}_embeddings", None)) is not None
-        }
+        with np.errstate(over="ignore"):
+            arrays = {
+                view: np.asarray(
+                    array, dtype=token_dtype if view == "token" else "float32"
+                )
+                for view in EMBEDDING_VIEWS
+                if (array := getattr(result, f"{view}_embeddings", None)) is not None
+            }
         if "window" not in arrays:
             raise ValueError(f"Condition {condition!r} has no window embeddings.")
+        pooled = {
+            pooling: np.asarray(array, dtype=np.float32)
+            for pooling, array in (
+                getattr(result, "extra_window_embeddings", None) or {}
+            ).items()
+        }
+        for pooling in pooled:
+            if not (
+                isinstance(pooling, str) and pooling.isascii() and pooling.isalnum()
+            ):
+                raise ValueError(
+                    f"Pooling names must be letters and digits, got {pooling!r}."
+                )
         current = {
             "config_hash": stable_hash(config, length=16),
             "config": config,
@@ -314,6 +366,10 @@ def write_recording_embeddings(
             "views": {
                 view: (_view_dims(view, array, metadata), array.shape[1:])
                 for view, array in arrays.items()
+            },
+            "poolings": {
+                pooling: (_view_dims("window", array, metadata), array.shape[1:])
+                for pooling, array in pooled.items()
             },
             "token": {
                 key: metadata[key]
@@ -327,6 +383,7 @@ def write_recording_embeddings(
             for key, what in (
                 ("config_hash", "models or settings (config_hash)"),
                 ("views", "views or their shapes"),
+                ("poolings", "poolings or their shapes"),
                 ("recording", "channels or sampling rates"),
                 ("model_channels", "the channels the model saw"),
                 ("token", "token layouts"),
@@ -340,7 +397,11 @@ def write_recording_embeddings(
         epochs = np.asarray(result.window_index, dtype=np.int64)
         starts = np.asarray(result.window_start, dtype=np.int64)
         stops = np.asarray(result.window_stop, dtype=np.int64)
-        for view, array in arrays.items():
+        named = {
+            **arrays,
+            **{f"{pooling} window": array for pooling, array in pooled.items()},
+        }
+        for view, array in named.items():
             if len(array) != n_windows:
                 raise ValueError(
                     f"Condition {condition!r} has {len(array)} {view} rows for "
@@ -349,9 +410,18 @@ def write_recording_embeddings(
             if not np.isfinite(array).all():
                 raise ValueError(
                     f"The {view} embeddings of condition {condition!r} hold "
-                    "non-finite values."
+                    "non-finite values"
+                    + (
+                        f" as {token_dtype}"
+                        if view == "token" and token_dtype == "float16"
+                        else ""
+                    )
+                    + "."
                 )
+        for view, array in arrays.items():
             views.setdefault(view, []).append(array)
+        for pooling, array in pooled.items():
+            poolings.setdefault(pooling, []).append(array)
         if not len(epochs) == len(starts) == len(stops) == n_windows:
             raise ValueError(
                 f"Condition {condition!r} needs one epoch number, start and stop "
@@ -415,16 +485,36 @@ def write_recording_embeddings(
                     f"channels, but model_channels names {len(channels)}."
                 )
             view_coords = {**coords, "channel": channels}
-        paths[view] = embedding_path(
+        paths[label, view] = embedding_path(
             root, label, view, recording_id=recording_id, datatype=source.datatype
         )
-        datasets[view] = xr.Dataset(
+        datasets[label, view] = xr.Dataset(
             {"embeddings": (dims, np.concatenate(parts)[order])},
             coords=view_coords,
             attrs={**attrs, **(reference["token"] if view == "token" else {})},
         )
-    for view, dataset in datasets.items():
-        _write_netcdf(dataset, paths[view].mkdir().fpath)
+    for pooling, parts in poolings.items():
+        pooled_label = label + pooling[0].upper() + pooling[1:]
+        config = {**reference["config"], "WindowPooling": pooling}
+        paths[pooled_label, "window"] = embedding_path(
+            root,
+            pooled_label,
+            "window",
+            recording_id=recording_id,
+            datatype=source.datatype,
+        )
+        datasets[pooled_label, "window"] = xr.Dataset(
+            {"embeddings": (_VIEW_DIMS["window"], np.concatenate(parts)[order])},
+            coords=coords,
+            attrs={
+                **attrs,
+                "config_hash": stable_hash(config, length=16),
+                "config": json.dumps(config),
+                "description": pooled_label,
+            },
+        )
+    for key, dataset in datasets.items():
+        _write_netcdf(dataset, paths[key].mkdir().fpath)
     return paths
 
 
@@ -443,8 +533,9 @@ Foundation-model embeddings of EEG epochs, written by coco-pipe
 Files are named `<entities>_desc-<label>_<view>embeddings.nc`.
 
 - `desc` is the processing chain: the epochs' own label, then the weights
-  (`Random` for random weights), the pooling and the alignment, e.g.
-  `baseRandomEaCoral`. `descriptions.tsv` lists the labels.
+  (`Random<seed>` for random weights drawn from that seed), the pooling and
+  the alignment, e.g. `baseRandom0EaCoral`. `descriptions.tsv` lists the
+  labels.
 - The suffix is the representation:
 {suffixes}
 - Files under `sub-*/` hold one recording. Files at the top level hold every
@@ -684,7 +775,7 @@ def find_embeddings(
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
         The ``desc`` label, matched whole: ``"base"`` does not find the
-        ``"baseRandom"`` files.
+        ``"baseRandom0"`` files.
     view : str
         One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
     subjects : str or sequence of str, optional
@@ -1133,4 +1224,132 @@ def consolidate_embeddings(
                 rows = np.arange(len(header["windows"]["obs"]))
                 _copy_rows(header, rows, out, start)
                 start += len(rows)
+    return path
+
+
+def write_transformed_embeddings(
+    source: DataContainer,
+    embeddings: np.ndarray,
+    root: str | Path,
+    *,
+    label: str,
+    transform: Mapping[str, Any],
+    view: str | None = None,
+    token_dtype: str = "float32",
+) -> BIDSPath:
+    """Write transformed embeddings as one file holding every recording.
+
+    ``source`` is what :func:`load_embeddings` returned for one label and
+    view, one row per window, and ``embeddings`` its transform, row for row:
+    of the same shape for a transform that keeps it (``EuclideanAlign``,
+    ``LeaceEraser``), or ``(window, feature)`` with ``view="cov"`` for
+    ``RiemannAlign``'s tangent vectors. The file keeps the windows, the
+    recordings and the channels of ``source``; its settings are those of
+    ``source`` with ``Transform`` added, so its ``config_hash`` differs. It is
+    named by :func:`embedding_path`, with the task of the windows when they
+    share one, and written to a temporary name, then moved into place.
+
+    Parameters
+    ----------
+    source : DataContainer
+        Embeddings read by :func:`load_embeddings`, one row per window.
+    embeddings : np.ndarray
+        The transformed embeddings, one row per row of ``source``.
+    root : path-like
+        The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
+    label : str
+        The ``desc`` label of the file, e.g. ``"baseEaCoralCh"``.
+    transform : mapping
+        What made ``embeddings``, recorded as the setting ``Transform``, e.g.
+        ``{"name": aligner.name, **aligner.get_params()}``.
+    view : str, optional
+        The view of the file; that of ``source`` by default.
+    token_dtype : {"float32", "float16"}
+        The dtype of a token file; other views are float32.
+
+    Returns
+    -------
+    BIDSPath
+        The file written.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` is not one row per window of an embedding file, or is
+        already transformed, if ``embeddings`` does not have one row per
+        window, has axes its view cannot have or holds non-finite values, or
+        if ``label`` is not a BIDS label.
+    """
+    meta = dict(source.meta)
+    if meta.get("representation") != "epoch" or "config" not in meta:
+        raise ValueError(
+            "source must be one row per window of an embedding file, as "
+            "load_embeddings returns with representation='epoch'."
+        )
+    if "Transform" in meta["config"]:
+        raise ValueError("source is already transformed.")
+    if token_dtype not in ("float32", "float16"):
+        raise ValueError(
+            f"token_dtype must be 'float32' or 'float16', got {token_dtype!r}."
+        )
+    view = view or meta["view"]
+    _check_view(view)
+    dtype = token_dtype if view == "token" else "float32"
+    with np.errstate(over="ignore"):
+        array = np.asarray(embeddings, dtype=dtype)
+    if len(array) != len(source.X):
+        raise ValueError(
+            f"embeddings has {len(array)} rows for {len(source.X)} windows."
+        )
+    if view == meta["view"]:
+        dims = ("window", *source.dims[1:])
+    elif view in _VIEW_DIMS:
+        dims = _VIEW_DIMS[view]
+    else:
+        raise ValueError(f"A transform cannot make {view} embeddings.")
+    if array.ndim != len(dims) or (view != "token" and dims != _VIEW_DIMS[view]):
+        raise ValueError(
+            f"{view} embeddings have shape {array.shape}, expected axes {dims}."
+        )
+    if not np.isfinite(array).all():
+        raise ValueError(f"embeddings hold non-finite values as {dtype}.")
+    config = {**meta["config"], "Transform": _json_value(dict(transform))}
+    coords = source.coords
+    n_windows = len(array)
+    windows = {
+        name: coords[name] if name in coords else np.full(n_windows, "", dtype=object)
+        for name in _WINDOW_COORDS
+    }
+    loaded = set(windows["recording_id"].tolist())
+    recordings = [row for row in meta["recordings"] if row["recording_id"] in loaded]
+    tasks = set(windows["task"].tolist())
+    path = embedding_path(
+        root, label, view, task=tasks.pop() if len(tasks) == 1 else None
+    )
+    dataset = xr.Dataset(
+        {"embeddings": (dims, array)},
+        coords={
+            **{name: ("window", values) for name, values in windows.items()},
+            "recording": [row["recording_id"] for row in recordings],
+            **{
+                name: ("recording", [row[name] for row in recordings])
+                for name in recordings[0]
+                if name != "recording_id"
+            },
+            **({"channel": coords["channel"]} if "channel" in dims else {}),
+        },
+        attrs={
+            "model_key": meta["model_key"],
+            "config_hash": stable_hash(config, length=16),
+            "config": json.dumps(config),
+            "description": label,
+            **(
+                {key: meta[key] for key in ("token_source", "token_feature_axis")}
+                if view == "token"
+                else {}
+            ),
+        },
+    )
+    Path(root).mkdir(parents=True, exist_ok=True)
+    _write_netcdf(dataset, path.fpath)
     return path

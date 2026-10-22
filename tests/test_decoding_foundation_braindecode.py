@@ -22,9 +22,10 @@ BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"
 LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "Labram": {"n_times": 3000},
-    "InterpolatedLaBraM": {"n_times": 3000},
+    "Labram": {"n_times": 3000, "n_outputs": 1},
+    "InterpolatedLaBraM": {"n_times": 3000, "n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
+    "BENDR": {"n_outputs": 1},
 }
 
 
@@ -79,7 +80,9 @@ def offline(monkeypatch, tmp_path):
     return calls
 
 
-def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
+def _load(
+    model_key, train_mode="frozen", n_outputs=2, channels=DEFAULT_CHANNELS, **kwargs
+):
     spec = get_estimator_spec(model_key)
     if model_key == "labram":
         kwargs.setdefault("interpolate_channels", True)
@@ -92,19 +95,19 @@ def _load(model_key, train_mode="frozen", n_outputs=2, **kwargs):
         n_outputs=n_outputs,
         device="cpu",
         train_mode=train_mode,
-        electrode_names=list(DEFAULT_CHANNELS),
+        electrode_names=list(channels),
         sfreq=spec.pretrained_sfreq,
         **kwargs,
     )
     backend.signal_metadata_ = SignalMetadata(
-        sfreq=spec.pretrained_sfreq, ch_names=list(DEFAULT_CHANNELS)
+        sfreq=spec.pretrained_sfreq, ch_names=list(channels)
     )
     n_times = (
         spec.pretrained_n_times
         or kwargs.get("n_times")
         or round(spec.pretrained_sfreq * 2)
     )
-    X = np.random.default_rng(0).normal(size=(4, len(DEFAULT_CHANNELS), n_times))
+    X = np.random.default_rng(0).normal(size=(4, len(channels), n_times))
     return backend, X.astype(np.float32)
 
 
@@ -134,6 +137,67 @@ def test_backbones_embed_and_expose_their_tokens(offline, model_key):
     feature_axis = layout["token_axes"].index(layout["token_feature_axis"])
     assert tokens.shape[feature_axis] == spec.embedding_dim
     assert "model" in backend.checkpoint_components()
+    with pytest.raises(NotImplementedError, match="no pooling but its own"):
+        backend.pool_tokens(tokens, "attention")
+
+
+def _weights(backend):
+    return {
+        f"{name}.{key}": value
+        for name, component in backend.checkpoint_components().items()
+        for key, value in component.state_dict().items()
+    }
+
+
+@pytest.mark.parametrize("model_key", BACKBONES)
+def test_random_weights_keep_the_architecture(offline, model_key):
+    loaded, X = _load(model_key, n_outputs=None)
+    random, _ = _load(model_key, n_outputs=None, pretrained=False, seed=0)
+    assert not any({"pretrained", "seed"} & set(call) for call in offline)
+    again = _weights(_load(model_key, n_outputs=None, pretrained=False, seed=0)[0])
+    other = _weights(_load(model_key, n_outputs=None, pretrained=False, seed=1)[0])
+    pretrained, weights = _weights(loaded), _weights(random)
+    assert list(weights) == list(pretrained)
+    assert all(weights[key].shape == pretrained[key].shape for key in weights)
+    assert all(torch.equal(weights[key], again[key]) for key in weights)
+    drawn = [key for key in weights if not torch.equal(weights[key], other[key])]
+    assert drawn
+    assert not any(torch.equal(weights[key], pretrained[key]) for key in drawn)
+    assert np.isfinite(random.transform(X)).all()
+
+
+@pytest.mark.parametrize(
+    "model_key, train_mode",
+    [*((key, "frozen") for key in BACKBONES), ("cbramod", "lora"), ("bendr", "full")],
+)
+def test_random_weights_draw_the_head_from_the_seed(offline, model_key, train_mode):
+    def weights(global_seed, **settings):
+        torch.manual_seed(global_seed)
+        return _weights(_load(model_key, train_mode, **settings)[0])
+
+    first = weights(1, pretrained=False, seed=0)
+    again = weights(2, pretrained=False, seed=0)
+    assert all(torch.equal(first[key], again[key]) for key in first)
+    other = weights(1, pretrained=False, seed=1)
+    head = [key for key in first if not torch.equal(first[key], other[key])]
+    assert any(".final_layer." in key or ".classifier." in key for key in head)
+    pretrained = weights(1), weights(1), weights(2)
+    assert all(torch.equal(pretrained[0][key], pretrained[1][key]) for key in first)
+    assert any(not torch.equal(pretrained[0][key], pretrained[2][key]) for key in first)
+
+
+@pytest.mark.parametrize(
+    "weights, message",
+    [
+        ({"pretrained": False}, "need an integer seed"),
+        ({"pretrained": False, "seed": True}, "need an integer seed"),
+        ({"seed": 0}, "seed is for random weights"),
+        ({"pretrained": "no", "seed": 0}, "True or False"),
+    ],
+)
+def test_random_weights_need_a_seed(offline, weights, message):
+    with pytest.raises(ValueError, match=message):
+        _load("cbramod", **weights)
 
 
 @pytest.mark.parametrize("model_key", ["cbramod", "bendr"])
@@ -273,20 +337,94 @@ def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
     }
 
 
+def test_extractor_draws_random_weights_from_its_seed(offline):
+    _, X = _load("cbramod")
+    meta = SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+    extractor = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", pretrained=False, seed=0
+    )
+    first = extractor.extract(X, signal_metadata=meta)
+    assert (first.metadata["weights"], first.metadata["seed"]) == ("random", 0)
+    assert not any({"pretrained", "seed"} & set(call) for call in offline)
+    again = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", pretrained=False, seed=0
+    ).extract(X, signal_metadata=meta)
+    np.testing.assert_array_equal(again.window_embeddings, first.window_embeddings)
+    extractor.seed = 1
+    other = extractor.extract(X, signal_metadata=meta)
+    assert other.metadata["seed"] == 1
+    assert not np.allclose(other.window_embeddings, first.window_embeddings)
+
+
 def test_labram_interpolates_missing_channels(offline):
-    backend, _ = _load("labram")
+    backend, X = _load("labram")
     adaptation = backend.get_channel_adaptation()
     names = {name.upper() for name in DEFAULT_CHANNELS}
     assert {name.upper() for name in adaptation["source_channels"]} == names
     assert {name.upper() for name in adaptation["direct_channels"]} <= names
     assert adaptation["interpolated_channels"]
     assert adaptation["interpolation_method"]
+    _, tokens = backend.transform(X, return_tokens=True)
+    assert tokens.shape == (4, 128 * 15, 200)
+    assert backend.get_token_output_metadata()["token_axes"] == [
+        "window",
+        "patch_token",
+        "feature",
+    ]
 
     # without interpolation the 19 channels go in as they are, found by name
     plain, X = _load("labram", interpolate_channels=False)
     assert not plain.get_channel_adaptation().get("interpolated_channels")
     _, tokens = plain.transform(X, return_tokens=True)
-    assert tokens.shape == (4, len(DEFAULT_CHANNELS) * 15, 200)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 15, 200)
+    assert plain.get_token_output_metadata()["token_axes"] == [
+        "window",
+        "channel",
+        "time_patch",
+        "feature",
+    ]
+
+
+def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
+    backend, X = _load("luna")
+    module = backend._model.freq_embed
+    upstream = type(module).forward
+    x = torch.from_numpy(X)
+    with torch.no_grad():
+        clean = module(x)
+    assert torch.equal(clean, upstream(module, x).detach())
+
+    rfft = torch.fft.rfft
+
+    def noisy(signal, *args, **kwargs):
+        spectrum = rfft(signal, *args, **kwargs)
+        noise = torch.zeros_like(spectrum)
+        noise[..., -1] = -1e-7j
+        return spectrum + noise
+
+    monkeypatch.setattr(torch.fft, "rfft", noisy)
+    with torch.no_grad():
+        assert torch.equal(module(x), clean)
+        assert not torch.equal(upstream(module, x), clean)
+
+
+def test_luna_refuses_windows_it_cannot_patch(offline):
+    with pytest.raises(ValueError, match="multiple"):
+        _load("luna", n_times=512)
+
+
+def test_labram_tokens_follow_their_channel(offline):
+    plain, X = _load("labram", interpolate_channels=False)
+    order = np.random.default_rng(0).permutation(len(DEFAULT_CHANNELS))
+    moved, _ = _load(
+        "labram",
+        interpolate_channels=False,
+        channels=[DEFAULT_CHANNELS[index] for index in order],
+    )
+    moved._model.load_state_dict(plain._model.state_dict())
+    _, tokens = plain.transform(X, return_tokens=True)
+    _, moved_tokens = moved.transform(X[:, order], return_tokens=True)
+    np.testing.assert_allclose(moved_tokens, tokens[:, order], rtol=1e-4, atol=1e-4)
 
 
 def test_eegpt_refuses_a_partly_loaded_checkpoint(offline, tmp_path, monkeypatch):
@@ -305,6 +443,15 @@ def test_load_errors(offline, monkeypatch):
     with pytest.raises(NotImplementedError, match="QLoRA"):
         BrainDecodeBackend.load(
             "cbramod", spec, n_outputs=None, device="cpu", train_mode="qlora"
+        )
+    with pytest.raises(ValueError, match="support pooling='mean'"):
+        BrainDecodeBackend.load(
+            "cbramod",
+            spec,
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+            pooling="flatten",
         )
     with pytest.raises(ValueError, match="BrainDecodeBackend does not support"):
         BrainDecodeBackend.load(

@@ -82,6 +82,60 @@ coco-pipe integrates the following foundation models natively, registered in
 
 .. foundation-table::
 
+1.3 Extracting Embeddings to Files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Outside an experiment,
+:class:`~coco_pipe.decoding.foundation_models.FoundationEmbeddingExtractor`
+embeds a recording's windows in every view the model allows, and
+:func:`~coco_pipe.io.write_recording_embeddings` writes them as a BIDS
+derivative dataset (see :ref:`io`, section 3).
+
+.. code-block:: python
+
+   from coco_pipe.decoding import SignalMetadata
+   from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
+   from coco_pipe.io import write_recording_embeddings
+
+   extractor = FoundationEmbeddingExtractor(
+       "reve", store_tokens=True, extra_poolings=("attention",)
+   )
+   result = extractor.extract(
+       X, signal_metadata=SignalMetadata(sfreq=sfreq, ch_names=ch_names)
+   )
+   write_recording_embeddings(
+       {"EC": result},
+       "derivatives/coco-pipe-reve",
+       label="base",
+       source=source,
+       source_dataset="preproc",
+       token_dtype="float16",
+   )
+
+The result holds:
+
+- ``window_embeddings``: one vector per window, L2-normalised unless
+  ``normalize_embeddings=False``;
+- ``token_embeddings``: the backbone's tokens, with ``store_tokens=True``;
+- ``channel_embeddings`` and ``patch_embeddings``: the tokens averaged over
+  time patches or over channels, for models whose tokens have both axes
+  (CBraMod, REVE, and LaBraM without channel interpolation); never normalised;
+- ``extra_window_embeddings``: the window vectors of each of
+  ``extra_poolings``, pooled from the same forward pass, such as REVE's
+  attention read-out. The writer puts them in a window file of their own
+  label, here ``baseAttention``.
+
+**Random weights.** ``pretrained=False`` with an integer ``seed`` keeps the
+checkpoint's architecture and draws new weights from the seed; when the
+backend builds LoRA adapters or a head, they are drawn from the same seed. One
+seed always gives the same network. Constant initial values (LayerNorm scales,
+zero biases) and values the architecture fixes are the same for every seed.
+REVE defines no initialisation of its own, so its weights follow transformers'
+default (normal, std 0.02), and its position bank stays the checkpoint's.
+QLoRA, which quantizes pretrained weights, is refused. The files' settings
+record ``Weights`` and ``Seed``; give each seed its own label, e.g.
+``baseRandom0``.
+
 ---
 
 2. Neural Fine-Tuning (LoRA / QLoRA)
