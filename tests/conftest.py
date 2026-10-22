@@ -1,3 +1,5 @@
+import contextlib
+import importlib
 import os
 import tempfile
 import warnings
@@ -18,12 +20,9 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # braindecode builds MNE's deprecated "standard_1020" montage on import; MNE
 # attributes it to "mne", so no filter can tell it from coco-pipe's own use.
-try:
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", "Montage name 'standard_10", FutureWarning)
-        import braindecode  # noqa: F401
-except ImportError:
-    pass
+with contextlib.suppress(ImportError), warnings.catch_warnings():
+    warnings.filterwarnings("ignore", "Montage name 'standard_10", FutureWarning)
+    importlib.import_module("braindecode")
 
 
 @pytest.fixture(scope="session", autouse=True)
