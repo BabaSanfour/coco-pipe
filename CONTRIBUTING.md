@@ -172,7 +172,6 @@ These tests:
 Enable them explicitly:
 
 ```bash
-export HF_TOKEN=hf_xxx
 export COCO_PIPE_RUN_REAL_FOUNDATION=1
 
 pytest -m real_checkpoints

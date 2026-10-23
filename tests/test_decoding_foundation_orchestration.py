@@ -501,30 +501,6 @@ def test_grid_over_lora_and_trainer_fields():
     assert search["MeanTestScore"].notna().all()
 
 
-def test_gated_checkpoint_without_token_reports_authentication_required(
-    monkeypatch,
-):
-    import huggingface_hub
-
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.setattr(huggingface_hub, "get_token", lambda: None)
-    records = validate_real_checkpoints(["reve"])
-    assert records == [
-        {
-            "model_key": "reve",
-            "status": "authentication_required",
-            "expected_embedding_dim": 512,
-            "checkpoint": "brain-bzh/reve-base",
-            "checkpoint_revision": None,
-            "checkpoint_filename": None,
-            "reason": (
-                "Run `hf auth login` or set HF_TOKEN after accepting the "
-                "gated-model license."
-            ),
-        }
-    ]
-
-
 @pytest.mark.real_checkpoints
 @pytest.mark.skipif(
     os.environ.get("COCO_PIPE_RUN_REAL_FOUNDATION") != "1",
@@ -538,7 +514,6 @@ def test_real_foundation_checkpoints():
         in {
             "verified",
             "degenerate",
-            "authentication_required",
             "failed",
             "unsupported",
         }
@@ -548,8 +523,6 @@ def test_real_foundation_checkpoints():
     # upstream); the check has to keep flagging it until that is fixed
     known_degenerate = {"signaljepa"}
     for record in records:
-        if record["model_key"] == "reve":
-            continue
         expected = (
             "degenerate" if record["model_key"] in known_degenerate else "verified"
         )
@@ -565,9 +538,7 @@ def test_real_foundation_training():
     records = validate_real_training()
     assert records
     assert all(
-        record["status"]
-        in {"verified", "authentication_required", "unsupported", "failed"}
-        for record in records
+        record["status"] in {"verified", "unsupported", "failed"} for record in records
     )
 
 

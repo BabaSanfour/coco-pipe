@@ -263,7 +263,6 @@ class FoundationModelSpec(EstimatorSpec):
     display_name: str = ""
     checkpoint_revision: str | None = None
     checkpoint_filename: str | None = None
-    requires_auth: bool = False
     pretrained_n_chans: int | None = None
     pretrained_n_times: int | None = None
     pretrained_ch_names: list[str] | None = None
@@ -662,7 +661,6 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         hub_repo="brain-bzh/reve-base",
         embedding_dim=512,
         pretrained_sfreq=200.0,
-        requires_auth=True,
         preferred_backend="hugging_face",
         supported_train_modes=("frozen", "full", "lora", "qlora"),
         dependency_extra="transformers",

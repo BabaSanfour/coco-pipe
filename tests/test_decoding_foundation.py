@@ -176,17 +176,6 @@ def test_resolve_device_override():
         assert _resolve_device("auto") == "cuda"
 
 
-def test_resolve_hf_token(monkeypatch):
-    from coco_pipe.decoding.foundation_models.validation import _resolve_hf_token
-
-    # Test env variable resolution
-    monkeypatch.setenv("HF_TOKEN", "env-token")
-    assert _resolve_hf_token(None) == "env-token"
-
-    # Test direct arg override
-    assert _resolve_hf_token("direct-token") == "direct-token"
-
-
 @patch("coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor")
 def test_validate_real_checkpoints(mock_extractor_cls):
     from coco_pipe.decoding.foundation_models.validation import (
@@ -273,24 +262,10 @@ def test_validation_main(mock_training, mock_checkpoints):
 
 def test_validation_edge_cases():
     from coco_pipe.decoding.foundation_models.validation import (
-        _resolve_hf_token,
         validate_real_checkpoints,
     )
 
-    # 1. get_token raises exception
-    with patch("huggingface_hub.get_token", side_effect=Exception("error")):
-        assert _resolve_hf_token(None) is None
-
-    # 2. validate_real_checkpoints requires auth
-    # REVE spec requires auth
-    with patch(
-        "coco_pipe.decoding.foundation_models.validation._resolve_hf_token",
-        return_value=None,
-    ):
-        records = validate_real_checkpoints(model_keys=["reve"], token=None)
-        assert records[0]["status"] == "authentication_required"
-
-    # 3. validate_real_checkpoints with labram (triggers interpolate_channels)
+    # 1. validate_real_checkpoints with labram (triggers interpolate_channels)
     with patch(
         "coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor"
     ) as mock_extractor_cls:
@@ -307,7 +282,7 @@ def test_validation_edge_cases():
         records = validate_real_checkpoints(model_keys=["labram"], token="dummy-token")
         assert len(records) == 1
 
-        # 4. validate_real_checkpoints raises exception
+        # 2. validate_real_checkpoints raises exception
         mock_extractor_cls.side_effect = Exception("extractor failed")
         records = validate_real_checkpoints(model_keys=["cbramod"], token="dummy-token")
         assert records[0]["status"] == "failed"
