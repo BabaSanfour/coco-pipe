@@ -328,18 +328,17 @@ def test_transformed_embeddings_round_trip(tmp_path):
         (lambda t, a: (t, a[:, 0], {"view": "cov"}), "expected axes"),
         (lambda t, a: (t, a, {"view": "window"}), "expected axes"),
         (lambda t, a: (t, a, {"token_dtype": "float64"}), "token_dtype"),
+        (
+            lambda t, a: (t, a, {"transform": EuclideanAlign("coral", channel_axis=2)}),
+            "no channel axis",
+        ),
     ],
 )
 def test_transformed_embeddings_refused(tmp_path, change, message):
     source, embeddings, settings = change(*_aligned_tokens(tmp_path)[:2])
+    settings = {"transform": EuclideanAlign("coral", channel_axis=1), **settings}
     with pytest.raises(ValueError, match=message):
-        write_transformed_embeddings(
-            source,
-            embeddings,
-            tmp_path / "out",
-            transform=EuclideanAlign("coral", channel_axis=1),
-            **settings,
-        )
+        write_transformed_embeddings(source, embeddings, tmp_path / "out", **settings)
     assert not find_embeddings(tmp_path / "out", "baseEaCoralCh", "token")
 
 

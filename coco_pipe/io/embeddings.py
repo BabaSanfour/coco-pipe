@@ -1449,8 +1449,10 @@ def write_transformed_embeddings(
     ValueError
         If ``source`` is not one row per window of an embedding file, or is
         already transformed, if ``embeddings`` does not have one row per
-        window, has axes its view cannot have or holds non-finite values, or
-        if the label is not a BIDS label.
+        window, has axes its view cannot have or holds non-finite values, if
+        ``transform`` works per channel (``channel_axis``) along an axis of
+        ``source`` that is not ``channel``, or if the label is not a BIDS
+        label.
     """
     meta = dict(source.meta)
     if meta.get("representation") != "epoch" or "config" not in meta:
@@ -1485,6 +1487,17 @@ def write_transformed_embeddings(
         )
     if not np.isfinite(array).all():
         raise ValueError(f"embeddings hold non-finite values as {dtype}.")
+    # A transform labelled per channel must have worked on the channel axis: an
+    # index alone also fits tokens without one (one per time patch, as LUNA's).
+    channel_axis = getattr(transform, "channel_axis", None)
+    if channel_axis is not None and (
+        channel_axis >= len(source.dims) or source.dims[channel_axis] != "channel"
+    ):
+        raise ValueError(
+            f"{transform.label} works per channel along axis {channel_axis}, but "
+            f"the source has axes {source.dims[1:]} after the window: no channel "
+            "axis there."
+        )
     label = embedding_label(meta["description"], transform=transform.label)
     config = {
         **meta["config"],
