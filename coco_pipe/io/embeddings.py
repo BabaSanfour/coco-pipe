@@ -642,19 +642,18 @@ def embeddings_up_to_date(
         for condition, epoch in rows[["condition", "epoch"]].to_numpy()[order]
     ]
     recording_id = str(rows["recording_id"].iloc[0])
-    return all(
-        _up_to_date(
-            embedding_path(
-                path.root,
-                label,
-                view,
-                recording_id=recording_id,
-                datatype=path.datatype,
-            ).fpath,
-            _read_header(path.fpath)["config_hash"],
-            windows,
-        )
+    targets = {
+        (label, view): embedding_path(
+            path.root, label, view, recording_id=recording_id, datatype=path.datatype
+        ).fpath
         for (label, view), path in written.items()
+    }
+    # A recording not embedded yet has no file: no header needs reading.
+    if not all(target.exists() for target in targets.values()):
+        return False
+    return all(
+        _up_to_date(targets[key], _read_header(path.fpath)["config_hash"], windows)
+        for key, path in written.items()
     )
 
 
