@@ -20,6 +20,11 @@ The public registry exposes four methods:
 | `ea_coral` | `EuclideanAlign` | `(observation, feature)` | Center and whiten every subject |
 | `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter subject covariance matrices and project to tangent space |
 
+Each also has a `label` (`Leace`, `EaMean`, `EaCoral`, `Ra`; `EaMeanCh` and
+`EaCoralCh` with `channel_axis`), which
+{func}`~coco_pipe.io.write_transformed_embeddings` adds to the label of the
+embedding files it writes.
+
 Temporal trajectories also support participant-specific PCA plus orthogonal
 Procrustes alignment:
 

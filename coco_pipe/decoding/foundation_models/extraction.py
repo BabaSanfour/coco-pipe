@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ...utils import resolve_device
 from .._cache import make_feature_cache_key
 from .._specs import SignalMetadata
 from ..registry import get_foundation_model_spec
@@ -334,6 +335,8 @@ class FoundationEmbeddingExtractor:
             )
         if extra_poolings and cache_embeddings:
             raise ValueError("extra_poolings is incompatible with cache_embeddings.")
+        # A missing GPU fails here, not at the first window.
+        resolve_device(device)
         self.model_key = model_key
         self.backend = backend
         self.device = device
@@ -727,3 +730,34 @@ class FoundationEmbeddingExtractor:
             patch_embeddings=outputs.get("patch"),
             extra_window_embeddings=pooled,
         )
+
+    def extract_recording(
+        self, recording: DataContainer
+    ) -> dict[str, FoundationEmbeddingResult]:
+        """Extract the windows of one recording the BIDS loader read, by condition.
+
+        ``recording`` holds the loader's rows of one recording, with their
+        ``condition`` and ``epoch`` coordinates. Each condition's result numbers
+        its windows by their epoch, and their samples count as if the epochs
+        were back to back. :func:`~coco_pipe.io.write_recording_embeddings`
+        takes the results.
+        """
+        rows = recording.obs_table()
+        X = np.asarray(recording.X, dtype=np.float32)
+        signal_metadata = SignalMetadata(
+            sfreq=float(recording.meta["sfreq"]),
+            ch_names=[str(name) for name in recording.coords["channel"]],
+        )
+        conditions = rows["condition"].astype(str).to_numpy()
+        results = {}
+        for condition in sorted(set(conditions)):
+            part = conditions == condition
+            epochs = rows["epoch"].to_numpy(dtype=int)[part]
+            results[condition] = self.extract(
+                X[part],
+                signal_metadata=signal_metadata,
+                window_start=epochs * X.shape[-1],
+                window_stop=(epochs + 1) * X.shape[-1],
+                window_index=epochs,
+            )
+        return results

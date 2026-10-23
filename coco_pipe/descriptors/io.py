@@ -22,6 +22,7 @@ import pandas as pd
 from coco_pipe.io._serialization import read_table
 from coco_pipe.io.structures import DataContainer
 from coco_pipe.io.utils import normalize_subject_value
+from coco_pipe.utils import NoDataError
 
 from .naming import parse_descriptor_feature_column
 
@@ -219,7 +220,7 @@ def load_descriptor_table(
         df = df[normalized.isin(wanted)].copy()
 
     if df.empty:
-        raise RuntimeError(f"No rows survived filtering for condition={condition!r}.")
+        raise NoDataError(f"No rows survived filtering for condition={condition!r}.")
     n_rows_entering_qc = len(df)
 
     missing_columns = [column for column in raw_cols if column not in df.columns]

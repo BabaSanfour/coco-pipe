@@ -1,0 +1,1 @@
+The BIDS loader gives each row the file it was read from, as the `source` coordinate, and `write_recording_embeddings` takes that path as `source`: the recording, its datatype folder and its BIDS URI come from the file, so callers no longer rebuild the source `BIDSPath` from the recording's entities.

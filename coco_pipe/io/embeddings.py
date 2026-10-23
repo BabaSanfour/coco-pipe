@@ -94,6 +94,66 @@ def _check_view(view: str) -> None:
         raise ValueError(f"view must be one of {EMBEDDING_VIEWS}, got {view!r}.")
 
 
+def embedding_label(
+    label: str,
+    *,
+    seed: int | None = None,
+    pooling: str = "mean",
+    transform: str | None = None,
+) -> str:
+    """Return the ``desc`` label of embeddings made from ``label``'s data.
+
+    The label of the data embedded, then ``Random<seed>`` for random weights,
+    the pooling's name for window vectors pooled otherwise than by the mean,
+    and the label of a subject transform: ``"base"``, ``"baseRandom3"``,
+    ``"baseAttention"``, ``"baseRandom3EaCoralCh"``. The writers name their
+    files with it.
+
+    Parameters
+    ----------
+    label : str
+        The label of the data embedded, e.g. ``"base"`` for epochs labelled
+        ``desc-base``.
+    seed : int, optional
+        The seed of random weights; None for pretrained weights.
+    pooling : str
+        The pooling of window vectors; only window files take it.
+    transform : str, optional
+        The ``label`` of a subject transform, e.g. ``EuclideanAlign``'s.
+
+    Returns
+    -------
+    str
+
+    Raises
+    ------
+    ValueError
+        If ``label`` or the result is not a BIDS label.
+    """
+    _check_label(label)
+    parts = [label]
+    if seed is not None:
+        parts.append(f"Random{int(seed)}")
+    if pooling != "mean":
+        parts.append(pooling[:1].upper() + pooling[1:])
+    if transform is not None:
+        parts.append(transform)
+    full = "".join(parts)
+    _check_label(full)
+    return full
+
+
+def _config_label(label: str, config: Mapping[str, Any], view: str) -> str:
+    """The label of a file of ``view`` with these settings, made from ``label``."""
+    transform = config.get("Transform")
+    return embedding_label(
+        label,
+        seed=config.get("Seed") if config.get("Weights") == "random" else None,
+        pooling=config.get("WindowPooling", "mean") if view == "window" else "mean",
+        transform=transform["label"] if transform else None,
+    )
+
+
 def embedding_path(
     root: str | Path,
     label: str,
@@ -115,8 +175,8 @@ def embedding_path(
     root : path-like
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
-        The ``desc`` label: the processing chain, e.g. ``"base"`` or
-        ``"baseRandom0EaCoral"``. A BIDS label: letters, digits and ``+``.
+        The ``desc`` label, e.g. ``"base"`` or ``"baseRandom0EaCoral"`` (see
+        :func:`embedding_label`). A BIDS label: letters, digits and ``+``.
     view : str
         One of :data:`~coco_pipe.io.EMBEDDING_VIEWS`.
     recording_id : str, optional
@@ -171,9 +231,9 @@ def embedding_path(
     )
 
 
-def _channel_list(names: Sequence[str]) -> str:
+def _channel_list(names: str | Sequence[str]) -> str:
     """Join channel names with commas, as the BIDS loader's bad_channels."""
-    return ",".join(str(name) for name in names)
+    return names if isinstance(names, str) else ",".join(str(n) for n in names)
 
 
 def _view_dims(view: str, array: np.ndarray, metadata: Mapping[str, Any]) -> tuple:
@@ -210,23 +270,25 @@ def write_recording_embeddings(
     root: str | Path,
     *,
     label: str,
-    source: BIDSPath,
+    source: str | Path,
     source_dataset: str,
-    bad_channels: Sequence[str] = (),
+    bad_channels: str | Sequence[str] = (),
     token_dtype: str = "float32",
+    skip_up_to_date: bool = False,
 ) -> dict[tuple[str, str], BIDSPath]:
     """Write one recording's embeddings, one file per view.
 
     Each view the results hold (``window_embeddings``, ``token_embeddings``,
     and so on, see :data:`~coco_pipe.io.EMBEDDING_VIEWS`) goes to its own
-    file, named by :func:`embedding_path` after the source recording. The
-    window vectors of each other pooling (``extra_window_embeddings``, e.g.
-    REVE's attention read-out) go to a window file of their own label, the
-    label followed by the pooling's name (``baseAttention``), whose settings
-    name that pooling. A file holds every condition, its windows in epoch
-    order. Nothing is written if any check fails, and each file is written to
-    a temporary name and then moved into place, so an existing file is
-    replaced whole or not at all.
+    file, named by :func:`embedding_path` after the source recording, with
+    the label :func:`embedding_label` gives for the weights and pooling: e.g.
+    ``baseRandom3`` for random weights of seed 3. The window vectors of each
+    other pooling (``extra_window_embeddings``, e.g. REVE's attention
+    read-out) go to a window file of their own label (``baseAttention``),
+    whose settings name that pooling. A file holds every condition, its
+    windows in epoch order. Nothing is written if any check fails, and each
+    file is written to a temporary name and then moved into place, so an
+    existing file is replaced whole or not at all.
 
     Parameters
     ----------
@@ -236,25 +298,32 @@ def write_recording_embeddings(
     root : path-like
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     label : str
-        The ``desc`` label: the processing chain, e.g. ``"base"``.
-    source : BIDSPath
-        The file the epochs were read from, with its ``root`` and
-        ``datatype``. Its entities name the recording, and the embedding
-        files go in the same datatype folder.
+        The label of the data embedded, e.g. ``"base"`` for epochs labelled
+        ``desc-base``.
+    source : path-like
+        The file the epochs were read from, in its datatype folder of a BIDS
+        dataset: the ``source`` coordinate of the BIDS loader's rows, or a
+        :class:`~mne_bids.BIDSPath`'s ``fpath``. Its entities name the
+        recording, and the embedding files go in the same datatype folder.
     source_dataset : str
         The name of the source dataset in ``DatasetLinks``, e.g.
         ``"preproc"``, for the BIDS URI of ``source``.
-    bad_channels : sequence of str
-        The recording's bad channels.
+    bad_channels : str | sequence of str
+        The recording's bad channels, or the BIDS loader's ``bad_channels``
+        coordinate (comma-separated).
     token_dtype : {"float32", "float16"}
         The dtype of the token file; ``"float16"`` halves its size. The other
         views are float32.
+    skip_up_to_date : bool
+        Keep a file that already holds the same windows with the same
+        ``config_hash``, as :func:`embeddings_up_to_date` tells, instead of
+        replacing it. Its values are not compared.
 
     Returns
     -------
     dict of (str, str) to BIDSPath
-        The path written for each label and view, e.g.
-        ``paths["base", "window"]``.
+        The path of each label and view, e.g.
+        ``paths["baseRandom3", "window"]``.
 
     Raises
     ------
@@ -263,8 +332,9 @@ def write_recording_embeddings(
         ``config_hash``), differ in views, poolings, feature size or channels,
         hold non-finite values or share epoch numbers, if a channel axis does
         not match ``model_channels``, if a pooling's name is not letters and
-        digits, if ``source`` lacks its root, subject or datatype, or if
-        ``token_dtype`` is not ``"float32"`` or ``"float16"``.
+        digits, if ``label`` is not a BIDS label, if ``source`` is not a file
+        in a datatype folder of a subject, or if ``token_dtype`` is not
+        ``"float32"`` or ``"float16"``.
 
     Notes
     -----
@@ -280,7 +350,7 @@ def write_recording_embeddings(
     The attributes are ``model_key``, ``config``
     (the extraction settings that are the same for every recording, as JSON
     text, see :data:`~coco_pipe.io.EMBEDDING_CONFIG_KEYS`), ``config_hash``
-    (their hash) and ``description`` (the label); a token file adds
+    (their hash) and ``description`` (the file's label); a token file adds
     ``token_source`` and ``token_feature_axis``, the other token axes being
     the observation axes. Other metadata in the results is not stored.
     """
@@ -290,14 +360,22 @@ def write_recording_embeddings(
         raise ValueError(
             f"token_dtype must be 'float32' or 'float16', got {token_dtype!r}."
         )
-    if source.root is None or source.subject is None or source.datatype is None:
-        raise ValueError("source must be a BIDSPath with root, subject and datatype.")
+    _check_label(label)
     if not source_dataset or ":" in source_dataset:
         raise ValueError(
             f"source_dataset must be a DatasetLinks name, got {source_dataset!r}."
         )
-    recording_id = bids_recording_id(source)
-    relative = source.fpath.relative_to(Path(source.root)).as_posix()
+    source = Path(source)
+    entities = get_entities_from_fname(source.name, on_error="ignore")
+    folders = [f for f in source.parents if f.name == f"sub-{entities['subject']}"]
+    datatype = source.parent.name
+    if not folders or datatype.startswith(("sub-", "ses-")):
+        raise ValueError(
+            "source must be a file in a datatype folder of a subject of a BIDS "
+            f"dataset, got {source}."
+        )
+    recording_id = bids_recording_id(BIDSPath(**entities, check=False))
+    relative = source.relative_to(folders[0].parent).as_posix()
 
     views: dict[str, list[np.ndarray]] = {}
     poolings: dict[str, list[np.ndarray]] = {}
@@ -442,11 +520,11 @@ def write_recording_embeddings(
     order = np.argsort(columns["epoch"], kind="stable")
     columns = {key: column[order] for key, column in columns.items()}
     n_windows = len(order)
-    entities = {
-        "subject": source.subject,
-        "session": source.session or "",
-        "task": source.task or "",
-        "run": source.run or "",
+    window_entities = {
+        "subject": entities["subject"],
+        "session": entities["session"] or "",
+        "task": entities["task"] or "",
+        "run": entities["run"] or "",
     }
     coords = {
         "obs": (
@@ -456,7 +534,7 @@ def write_recording_embeddings(
         "recording_id": ("window", np.full(n_windows, recording_id, dtype=object)),
         **{
             name: ("window", np.full(n_windows, value, dtype=object))
-            for name, value in entities.items()
+            for name, value in window_entities.items()
         },
         **{key: ("window", column) for key, column in columns.items()},
         "recording": [recording_id],
@@ -466,16 +544,23 @@ def write_recording_embeddings(
             key: ("recording", [value]) for key, value in reference["recording"].items()
         },
     }
-    attrs = {
-        "model_key": reference["config"]["ModelKey"],
-        "config_hash": reference["config_hash"],
-        "config": json.dumps(reference["config"]),
-        "description": label,
-    }
+    # Each file: its view, axes, rows and settings; another pooling's window
+    # vectors are a window file whose settings name that pooling.
+    files = [
+        (view, *reference["views"][view], parts, reference["config"])
+        for view, parts in views.items()
+    ] + [
+        (
+            "window",
+            *reference["poolings"][pooling],
+            parts,
+            {**reference["config"], "WindowPooling": pooling},
+        )
+        for pooling, parts in poolings.items()
+    ]
     paths = {}
     datasets = {}
-    for view, parts in views.items():
-        dims, shape = reference["views"][view]
+    for view, dims, shape, parts, config in files:
         view_coords = coords
         if "channel" in dims:
             channels = reference["model_channels"]
@@ -485,37 +570,92 @@ def write_recording_embeddings(
                     f"channels, but model_channels names {len(channels)}."
                 )
             view_coords = {**coords, "channel": channels}
-        paths[label, view] = embedding_path(
-            root, label, view, recording_id=recording_id, datatype=source.datatype
+        file_label = _config_label(label, config, view)
+        paths[file_label, view] = embedding_path(
+            root, file_label, view, recording_id=recording_id, datatype=datatype
         )
-        datasets[label, view] = xr.Dataset(
+        datasets[file_label, view] = xr.Dataset(
             {"embeddings": (dims, np.concatenate(parts)[order])},
             coords=view_coords,
-            attrs={**attrs, **(reference["token"] if view == "token" else {})},
-        )
-    for pooling, parts in poolings.items():
-        pooled_label = label + pooling[0].upper() + pooling[1:]
-        config = {**reference["config"], "WindowPooling": pooling}
-        paths[pooled_label, "window"] = embedding_path(
-            root,
-            pooled_label,
-            "window",
-            recording_id=recording_id,
-            datatype=source.datatype,
-        )
-        datasets[pooled_label, "window"] = xr.Dataset(
-            {"embeddings": (_VIEW_DIMS["window"], np.concatenate(parts)[order])},
-            coords=coords,
             attrs={
-                **attrs,
+                "model_key": config["ModelKey"],
                 "config_hash": stable_hash(config, length=16),
                 "config": json.dumps(config),
-                "description": pooled_label,
+                "description": file_label,
+                **(reference["token"] if view == "token" else {}),
             },
         )
+    windows = list(
+        zip(columns["condition"].tolist(), columns["epoch"].tolist(), strict=True)
+    )
     for key, dataset in datasets.items():
-        _write_netcdf(dataset, paths[key].mkdir().fpath)
+        path = paths[key].mkdir().fpath
+        if not (
+            skip_up_to_date and _up_to_date(path, dataset.attrs["config_hash"], windows)
+        ):
+            _write_netcdf(dataset, path)
     return paths
+
+
+def _up_to_date(path: Path, config_hash: str, windows: list[tuple[str, int]]) -> bool:
+    """Whether a file holds these (condition, epoch) windows with these settings."""
+    try:
+        header = _read_header(path)
+    except (OSError, ValueError):
+        return False
+    held = zip(
+        header["windows"]["condition"].astype(str).tolist(),
+        header["windows"]["epoch"].tolist(),
+        strict=True,
+    )
+    return header["config_hash"] == config_hash and list(held) == windows
+
+
+def embeddings_up_to_date(
+    recording: DataContainer, written: Mapping[tuple[str, str], BIDSPath]
+) -> bool:
+    """Return whether a recording's embedding files are written and up to date.
+
+    ``written`` is what :func:`write_recording_embeddings` returned for another
+    recording of the same model and settings. ``recording`` is up to date when
+    it has each of those files, holding its windows (condition and epoch, from
+    the BIDS loader's rows) with the ``config_hash`` of the file written: a
+    file of other windows or settings (another model revision, pooling and
+    so on) is not. A resubmitted job uses it to skip the recordings that need
+    no extraction.
+
+    Parameters
+    ----------
+    recording : DataContainer
+        The BIDS loader's rows of one recording.
+    written : mapping of (str, str) to BIDSPath
+        The files written for another recording, by label and view.
+
+    Returns
+    -------
+    bool
+    """
+    rows = recording.obs_table()
+    order = np.argsort(rows["epoch"].to_numpy(dtype=int), kind="stable")
+    windows = [
+        (str(condition), int(epoch))
+        for condition, epoch in rows[["condition", "epoch"]].to_numpy()[order]
+    ]
+    recording_id = str(rows["recording_id"].iloc[0])
+    return all(
+        _up_to_date(
+            embedding_path(
+                path.root,
+                label,
+                view,
+                recording_id=recording_id,
+                datatype=path.datatype,
+            ).fpath,
+            _read_header(path.fpath)["config_hash"],
+            windows,
+        )
+        for (label, view), path in written.items()
+    )
 
 
 def _dataset_readme(name: str, views: Sequence[str]) -> str:
@@ -558,6 +698,28 @@ their hash: files whose hashes differ were not made the same way.
 """
 
 
+def _label_text(text: str, config: Mapping[str, Any], view: str) -> str:
+    """Describe a file: its data's ``text``, then its weights, pooling and transform."""
+    weights = config.get("Weights", "pretrained")
+    parts = [
+        text,
+        f"random weights (seed {config['Seed']})"
+        if weights == "random"
+        else f"{weights} weights",
+    ]
+    pooling = config.get("WindowPooling", "mean")
+    if view == "window" and pooling != "mean":
+        parts.append(f"{pooling} pooling")
+    if transform := config.get("Transform"):
+        params = ", ".join(
+            f"{key}={value}"
+            for key, value in transform.items()
+            if key not in ("name", "label")
+        )
+        parts.append(f"{transform['name']} transform ({params})")
+    return ", ".join(parts)
+
+
 def write_embedding_dataset(
     root: str | Path,
     descriptions: Mapping[str, str],
@@ -570,22 +732,25 @@ def write_embedding_dataset(
 
     Writes ``dataset_description.json``, ``README.md``, ``descriptions.tsv``
     and its ``descriptions.json``, and ``.bidsignore`` (keeping lines already
-    there). Each top-level embedding file (one holding every recording) gets
-    a JSON sidecar of the same name, holding the file's extraction settings
-    (its ``config`` attribute), its ``config_hash`` as ``ConfigHash`` and a
-    ``Description``. By BIDS inheritance a sidecar also applies to the
-    recording files of the same label and suffix. Every file is replaced
-    atomically and comes out the same whoever calls, so several jobs may
-    call this on one dataset.
+    there). ``descriptions.tsv`` lists the label of each top-level embedding
+    file (one holding every recording): what its data is, from
+    ``descriptions``, then its weights, pooling and transform, from its
+    settings. Each such file gets a JSON sidecar of the same name, holding
+    the file's extraction settings (its ``config`` attribute), its
+    ``config_hash`` as ``ConfigHash`` and a ``Description``. By BIDS
+    inheritance a sidecar also applies to the recording files of the same
+    label and suffix. Every file is replaced atomically and comes out the
+    same whoever calls on the same files, so several jobs may call this on
+    one dataset.
 
     Parameters
     ----------
     root : path-like
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
     descriptions : mapping of str to str
-        What each ``desc`` label means, one row of ``descriptions.tsv`` each.
-        Every top-level embedding file's label must be here; a label without
-        files yet is listed all the same.
+        What the data of each label embedded is, e.g. ``{"base": "Every
+        epoch of the preprocessed recordings"}``: the ``label`` given to the
+        writers, not the labels :func:`embedding_label` makes from it.
     name : str
         The dataset's ``Name``.
     dataset_links : mapping of str to str
@@ -605,11 +770,11 @@ def write_embedding_dataset(
     ------
     ValueError
         If a label or link name is not valid, a description holds a tab or a
-        line break, or a top-level embedding file has a label not in
-        ``descriptions`` or other than the one it holds, an unknown view, no
-        ``config`` or one that does not match its ``config_hash``, sources in
-        a dataset ``dataset_links`` does not name, or another model than the
-        other files.
+        line break, or a top-level embedding file has a label no label of
+        ``descriptions`` gives with its settings, a label other than the one
+        it holds, an unknown view, no ``config`` or one that does not match
+        its ``config_hash``, sources in a dataset ``dataset_links`` does not
+        name, or another model than the other files.
     """
     root = Path(root)
     for label, text in descriptions.items():
@@ -625,25 +790,33 @@ def write_embedding_dataset(
             )
 
     sidecars: dict[Path, dict[str, Any]] = {}
+    rows: dict[str, str] = {}
     models = set()
     for path in sorted(root.glob("*embeddings.nc")):
         header = _read_header(path)
         label = header["description"]
-        if label not in descriptions:
+        config = json.loads(header["config"])
+        texts = [
+            _label_text(text, config, header["view"])
+            for data, text in descriptions.items()
+            if _config_label(data, config, header["view"]) == label
+        ]
+        if not texts:
             raise ValueError(
-                f"{path.name} has the label {label!r}, which descriptions lacks."
+                f"{path.name} has the label {label!r}, which no label of "
+                "descriptions gives with its settings."
             )
+        rows.setdefault(label, texts[0])
         links = {str(uri).split(":")[1] for uri in header["recordings"]["source"]}
         if not links <= set(dataset_links):
             raise ValueError(
                 f"The sources of {path.name} are in {sorted(links)}, which "
                 "dataset_links must name."
             )
-        config = json.loads(header["config"])
         models.add(config["ModelKey"])
         sidecar = header["name"].copy().update(root=root, extension=".json")
         sidecars[sidecar.fpath] = {
-            "Description": f"{descriptions[label]}: {_VIEW_TEXT[header['view']]}.",
+            "Description": f"{texts[0]}: {_VIEW_TEXT[header['view']]}.",
             **config,
             "ConfigHash": header["config_hash"],
         }
@@ -667,7 +840,7 @@ def write_embedding_dataset(
         "SourceDatasets": [{"URL": url} for url in dataset_links.values()],
         "DatasetLinks": dict(dataset_links),
     }
-    table = "".join(f"desc-{label}\t{text}\n" for label, text in descriptions.items())
+    table = "".join(f"desc-{label}\t{text}\n" for label, text in sorted(rows.items()))
     ignore = root / ".bidsignore"
     kept = ignore.read_text(encoding="utf-8").splitlines() if ignore.exists() else []
     texts = {
@@ -1232,8 +1405,7 @@ def write_transformed_embeddings(
     embeddings: np.ndarray,
     root: str | Path,
     *,
-    label: str,
-    transform: Mapping[str, Any],
+    transform: Any,
     view: str | None = None,
     token_dtype: str = "float32",
 ) -> BIDSPath:
@@ -1245,9 +1417,11 @@ def write_transformed_embeddings(
     ``LeaceEraser``), or ``(window, feature)`` with ``view="cov"`` for
     ``RiemannAlign``'s tangent vectors. The file keeps the windows, the
     recordings and the channels of ``source``; its settings are those of
-    ``source`` with ``Transform`` added, so its ``config_hash`` differs. It is
-    named by :func:`embedding_path`, with the task of the windows when they
-    share one, and written to a temporary name, then moved into place.
+    ``source`` with ``Transform`` added, so its ``config_hash`` differs. Its
+    label is that of ``source`` followed by the transform's (see
+    :func:`embedding_label`), e.g. ``baseRandom3EaCoralCh``. It is named by
+    :func:`embedding_path`, with the task of the windows when they share one,
+    and written to a temporary name, then moved into place.
 
     Parameters
     ----------
@@ -1257,11 +1431,10 @@ def write_transformed_embeddings(
         The transformed embeddings, one row per row of ``source``.
     root : path-like
         The derivative dataset, e.g. ``derivatives/coco-pipe-cbramod``.
-    label : str
-        The ``desc`` label of the file, e.g. ``"baseEaCoralCh"``.
-    transform : mapping
-        What made ``embeddings``, recorded as the setting ``Transform``, e.g.
-        ``{"name": aligner.name, **aligner.get_params()}``.
+    transform : SubjectAlignment
+        The fitted transform that made ``embeddings``, e.g. an
+        :class:`~coco_pipe.transforms.EuclideanAlign`. Its ``name``, ``label``
+        and parameters are recorded as the setting ``Transform``.
     view : str, optional
         The view of the file; that of ``source`` by default.
     token_dtype : {"float32", "float16"}
@@ -1278,7 +1451,7 @@ def write_transformed_embeddings(
         If ``source`` is not one row per window of an embedding file, or is
         already transformed, if ``embeddings`` does not have one row per
         window, has axes its view cannot have or holds non-finite values, or
-        if ``label`` is not a BIDS label.
+        if the label is not a BIDS label.
     """
     meta = dict(source.meta)
     if meta.get("representation") != "epoch" or "config" not in meta:
@@ -1313,7 +1486,17 @@ def write_transformed_embeddings(
         )
     if not np.isfinite(array).all():
         raise ValueError(f"embeddings hold non-finite values as {dtype}.")
-    config = {**meta["config"], "Transform": _json_value(dict(transform))}
+    label = embedding_label(meta["description"], transform=transform.label)
+    config = {
+        **meta["config"],
+        "Transform": _json_value(
+            {
+                "name": transform.name,
+                "label": transform.label,
+                **transform.get_params(deep=False),
+            }
+        ),
+    }
     coords = source.coords
     n_windows = len(array)
     windows = {

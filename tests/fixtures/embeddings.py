@@ -73,7 +73,7 @@ def source_path(tmp_path, **entities):
         datatype="eeg",
         check=False,
         **entities,
-    )
+    ).fpath
 
 
 def write_recording(
