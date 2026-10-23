@@ -86,29 +86,6 @@ def check_capability(
             "missing_dependency",
             str(exc),
         )
-    if spec.requires_auth and resolved_backend == spec.preferred_backend:
-        token = (backend_kwargs or {}).get("token")
-        if token is None:
-            try:
-                from huggingface_hub import get_token
-
-                token = get_token()
-            except Exception:
-                token = None
-        if not token:
-            return CapabilityResult(
-                model_key,
-                train_mode,
-                "authentication_required",
-                (
-                    f"{spec.display_name} uses a gated checkpoint. Authenticate "
-                    "with Hugging Face or pass backend_kwargs.token."
-                ),
-                {
-                    "checkpoint": spec.hub_repo,
-                    "checkpoint_revision": spec.checkpoint_revision,
-                },
-            )
     normalized = normalize_channel_names(ch_names or [])
     # Fixed-montage models (biot/bendr/eegpt) use a faithful per-model channel
     # construction; their availability is the required-electrode / name-vocab
@@ -162,7 +139,6 @@ def check_capability(
         "interpolation_requested": interpolation_requested,
         "checkpoint_revision": spec.checkpoint_revision,
         "checkpoint_filename": spec.checkpoint_filename,
-        "requires_auth": spec.requires_auth,
         "expects_microvolts": spec.expects_microvolts,
         "input_scale": spec.input_scale,
         "input_normalization": spec.input_normalization,

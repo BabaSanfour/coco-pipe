@@ -1,0 +1,1 @@
+REVE runs without a Hugging Face token: its checkpoint (`brain-bzh/reve-base`) is no longer gated, so `check_capability` no longer reports it as `authentication_required` and `validate_real_checkpoints` and `validate_real_training` check it like the other models. The `requires_auth` field of the model specs and the `authentication_required` status are removed.

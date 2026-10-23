@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -38,21 +37,6 @@ DEFAULT_CHANNELS = [
     "O1",
     "O2",
 ]
-
-
-def _resolve_hf_token(token: str | None) -> str | None:
-    """Resolve an HF token from arg, HF_TOKEN env, or `hf auth login`."""
-    if token:
-        return token
-    env = os.environ.get("HF_TOKEN")
-    if env:
-        return env
-    try:
-        from huggingface_hub import get_token
-
-        return get_token()
-    except Exception:
-        return None
 
 
 REAL_MODEL_KEYS = (
@@ -102,25 +86,8 @@ def validate_real_checkpoints(
     """
     records = []
     channels = list(ch_names) if ch_names else list(DEFAULT_CHANNELS)
-    token = _resolve_hf_token(token)
     for model_key in model_keys:
         spec = get_foundation_model_spec(model_key)
-        if spec.requires_auth and not token:
-            records.append(
-                {
-                    "model_key": model_key,
-                    "status": "authentication_required",
-                    "expected_embedding_dim": spec.embedding_dim,
-                    "checkpoint": spec.hub_repo,
-                    "checkpoint_revision": spec.checkpoint_revision,
-                    "checkpoint_filename": spec.checkpoint_filename,
-                    "reason": (
-                        "Run `hf auth login` or set HF_TOKEN after accepting "
-                        "the gated-model license."
-                    ),
-                }
-            )
-            continue
         n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 10)
         backend_kwargs: dict[str, Any] = {}
         if model_key == "labram":
@@ -194,24 +161,9 @@ def validate_real_training(
     to train against the exact channel adaptation used in cohort runs.
     """
     channels = list(ch_names) if ch_names else list(DEFAULT_CHANNELS)
-    token = _resolve_hf_token(token)
     records: list[dict[str, Any]] = []
     for model_key in model_keys:
         spec = get_foundation_model_spec(model_key)
-        if spec.requires_auth and not token:
-            for train_mode in train_modes:
-                records.append(
-                    {
-                        "model_key": model_key,
-                        "train_mode": train_mode,
-                        "status": "authentication_required",
-                        "reason": (
-                            "Run `hf auth login` or set HF_TOKEN after accepting "
-                            "the gated-model license."
-                        ),
-                    }
-                )
-            continue
         n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 10)
         rng = np.random.default_rng(42)
         X = rng.normal(size=(8, len(channels), n_times)).astype(np.float32)
@@ -338,10 +290,7 @@ def main() -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(payload, encoding="utf-8")
     print(payload)
-    if any(
-        record["status"] not in {"verified", "authentication_required", "unsupported"}
-        for record in records
-    ):
+    if any(record["status"] not in {"verified", "unsupported"} for record in records):
         raise SystemExit(1)
 
 

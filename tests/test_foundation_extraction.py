@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from pytest import MonkeyPatch
 
 from coco_pipe.decoding._specs import SignalMetadata
 from coco_pipe.decoding.foundation_models import (
@@ -137,31 +136,6 @@ def test_labram_capability_needs_known_channels_or_interpolation():
         "labram", train_mode="frozen", sfreq=200, ch_names=["Fp1", "Cz"], n_times=3000
     )
     assert known.status == "available"
-
-
-def test_reve_capability_reports_missing_gated_checkpoint_authentication():
-    monkeypatch = MonkeyPatch()
-    monkeypatch.setattr("huggingface_hub.get_token", lambda: None)
-    result = check_capability(
-        "reve",
-        train_mode="frozen",
-        sfreq=200,
-        ch_names=["C3", "C4"],
-        backend_kwargs={},
-    )
-    monkeypatch.undo()
-    assert result.status == "authentication_required"
-
-
-def test_reve_capability_accepts_explicit_token():
-    result = check_capability(
-        "reve",
-        train_mode="frozen",
-        sfreq=200,
-        ch_names=["C3", "C4"],
-        backend_kwargs={"token": "test-token"},
-    )
-    assert result.status == "available"
 
 
 def test_prepare_backend_and_adapt_paths():
