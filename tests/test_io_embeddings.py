@@ -308,11 +308,11 @@ def test_transformed_embeddings_round_trip(tmp_path):
     assert load_embeddings(cov.fpath).dims == ("obs", "feature")
     _write_dataset(root, descriptions={"base": "Every epoch"})
     table = pd.read_csv(root / "descriptions.tsv", sep="\t")
+    ea = "ea_coral transform (channel_axis=1, mode=coral, shrinkage=True)"
     assert table.to_dict("list") == {
         "desc_id": ["desc-baseEaCoralCh", "desc-baseRa"],
         "description": [
-            "Every epoch, pretrained weights, ea_coral transform "
-            "(channel_axis=1, mode=coral, shrinkage=True)",
+            f"Every epoch, pretrained weights, {ea}",
             "Every epoch, pretrained weights, ra transform (shrinkage=0.1)",
         ],
     }
