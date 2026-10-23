@@ -18,6 +18,7 @@ import pandas as pd
 from mne_bids import BIDSPath, find_matching_paths, read_epochs_bids, read_raw_bids
 from mne_bids.config import reader as mne_bids_reader
 
+from ..utils import NoDataError
 from ._constants import LOADED_LEVELS
 from .structures import DataContainer, aggregate_recordings
 from .utils import (
@@ -329,6 +330,7 @@ _LOADER_COORDS = (
     "obs",
     "epoch",
     "recording_id",
+    "source",
     "bad_channels",
     "subject",
     "session",
@@ -390,8 +392,9 @@ class BIDSDataset(BaseDataset):
     subject_metadata_df : DataFrame, optional
         Subject-level metadata to attach, in addition to ``participants.tsv``.
         Neither may have a column named like a coordinate the loader sets
-        (``obs``, ``epoch``, ``recording_id``, ``bad_channels``, ``subject``,
-        ``session``, ``task``, ``run``, ``condition``, ``epoch_count``).
+        (``obs``, ``epoch``, ``recording_id``, ``source``, ``bad_channels``,
+        ``subject``, ``session``, ``task``, ``run``, ``condition``,
+        ``epoch_count``).
     subject_key : str, optional
         Column of `subject_metadata_df` holding the subject ID. It matches
         rows to subjects and is not attached itself.
@@ -596,8 +599,10 @@ class BIDSDataset(BaseDataset):
               each event name that was found to its code.
             - ids: Unique identifiers for each observation.
             - coords: 'channel', 'time', and one entry per observation for
-              'obs', 'epoch', 'recording_id', 'bad_channels' (comma-separated,
-              as marked in the file), 'subject', 'session', 'task', 'run',
+              'obs', 'epoch', 'recording_id', 'source' (the file read, e.g.
+              for :func:`~coco_pipe.io.write_recording_embeddings`),
+              'bad_channels' (comma-separated, as marked in the file),
+              'subject', 'session', 'task', 'run',
               'condition' (the event name) and the subject metadata. At the
               recording level, one row per recording and condition (see
               :func:`~coco_pipe.io.aggregate_recordings`).
@@ -610,8 +615,10 @@ class BIDSDataset(BaseDataset):
 
         Raises
         ------
+        NoDataError
+            If no recording has the requested events, or none matches.
         RuntimeError
-            If no recording could be loaded.
+            If no recording could be loaded and some failed to.
         ValueError
             If the recordings cannot be stacked (see
             :func:`mne.concatenate_epochs`).
@@ -697,6 +704,7 @@ class BIDSDataset(BaseDataset):
                         "obs": [f"{recording_id}_epoch-{i:04d}" for i in numbers],
                         "epoch": numbers,
                         "recording_id": recording_id,
+                        "source": str(bids_path.fpath),
                         "bad_channels": bad_channels,
                         "subject": bids_path.subject,
                         "session": bids_path.session or "",
@@ -741,7 +749,7 @@ class BIDSDataset(BaseDataset):
                         f"the first being {load_failures[0]['recording_id']} "
                         f"({load_failures[0]['error']})"
                     )
-                raise RuntimeError(message)
+                raise (RuntimeError if load_failures else NoDataError)(message)
 
             # MNE checks that the recordings agree and stacks events and metadata.
             epochs = mne.concatenate_epochs(stand_ins)

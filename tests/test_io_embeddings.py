@@ -8,11 +8,14 @@ import pytest
 import xarray as xr
 from mne_bids import BIDSPath, get_entities_from_fname
 
-from coco_pipe.io import EMBEDDING_CONFIG_KEYS
+from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
+from coco_pipe.io import EMBEDDING_CONFIG_KEYS, DataContainer
 from coco_pipe.io import embeddings as embeddings_module
 from coco_pipe.io.embeddings import (
     consolidate_embeddings,
+    embedding_label,
     embedding_path,
+    embeddings_up_to_date,
     find_embeddings,
     load_embeddings,
     write_embedding_dataset,
@@ -20,9 +23,9 @@ from coco_pipe.io.embeddings import (
     write_recording_embeddings,
     write_transformed_embeddings,
 )
-from coco_pipe.transforms.subject_alignment import EuclideanAlign
+from coco_pipe.transforms.subject_alignment import EuclideanAlign, RiemannAlign
 from coco_pipe.utils import stable_hash
-from tests.fixtures.embeddings import extract, source_path, write_recording
+from tests.fixtures.embeddings import TokenModel, extract, source_path, write_recording
 
 
 def test_embedding_path_names_recording_and_dataset_files(tmp_path):
@@ -269,15 +272,13 @@ def _aligned_tokens(tmp_path):
     tokens = load_embeddings(find_embeddings(tmp_path / "out", "base", "token"))
     aligner = EuclideanAlign("coral", channel_axis=1)
     aligned = aligner.fit_transform(tokens.X, groups=tokens.coords["subject"])
-    return tokens, aligned, {"name": aligner.name, **aligner.get_params()}
+    return tokens, aligned, aligner
 
 
 def test_transformed_embeddings_round_trip(tmp_path):
-    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    tokens, aligned, aligner = _aligned_tokens(tmp_path)
     root = tmp_path / "out"
-    path = write_transformed_embeddings(
-        tokens, aligned, root, label="baseEaCoralCh", transform=transform
-    )
+    path = write_transformed_embeddings(tokens, aligned, root, transform=aligner)
     assert path.basename == "task-rest_desc-baseEaCoralCh_tokenembeddings.nc"
     loaded = load_embeddings(path.fpath)
     np.testing.assert_array_equal(loaded.X, aligned)
@@ -289,6 +290,7 @@ def test_transformed_embeddings_round_trip(tmp_path):
         **tokens.meta["config"],
         "Transform": {
             "name": "ea_coral",
+            "label": "EaCoralCh",
             "channel_axis": 1,
             "mode": "coral",
             "shrinkage": True,
@@ -300,12 +302,20 @@ def test_transformed_embeddings_round_trip(tmp_path):
 
     tangent = np.random.default_rng(0).normal(size=(len(aligned), 15))
     cov = write_transformed_embeddings(
-        tokens, tangent, root, label="baseRa", transform={"name": "ra"}, view="cov"
+        tokens, tangent, root, transform=RiemannAlign(), view="cov"
     )
+    assert cov.basename == "task-rest_desc-baseRa_covembeddings.nc"
     assert load_embeddings(cov.fpath).dims == ("obs", "feature")
-    _write_dataset(
-        root, descriptions={"base": "x", "baseEaCoralCh": "y", "baseRa": "z"}
-    )
+    _write_dataset(root, descriptions={"base": "Every epoch"})
+    table = pd.read_csv(root / "descriptions.tsv", sep="\t")
+    assert table.to_dict("list") == {
+        "desc_id": ["desc-baseEaCoralCh", "desc-baseRa"],
+        "description": [
+            "Every epoch, pretrained weights, ea_coral transform "
+            "(channel_axis=1, mode=coral, shrinkage=True)",
+            "Every epoch, pretrained weights, ra transform (shrinkage=0.1)",
+        ],
+    }
     sidecar = json.loads(path.fpath.with_suffix(".json").read_text())
     assert sidecar["Transform"]["name"] == "ea_coral"
 
@@ -327,29 +337,26 @@ def test_transformed_embeddings_refused(tmp_path, change, message):
             source,
             embeddings,
             tmp_path / "out",
-            label="baseEaCoralCh",
-            transform={"name": "ea_coral"},
+            transform=EuclideanAlign("coral", channel_axis=1),
             **settings,
         )
     assert not find_embeddings(tmp_path / "out", "baseEaCoralCh", "token")
 
 
 def test_transformed_embeddings_need_window_rows_of_a_plain_file(tmp_path):
-    tokens, aligned, transform = _aligned_tokens(tmp_path)
+    tokens, aligned, aligner = _aligned_tokens(tmp_path)
     root = tmp_path / "out"
     files = find_embeddings(root, "base", "window")
     by_recording = load_embeddings(files, representation="recording")
     with pytest.raises(ValueError, match="one row per window"):
         write_transformed_embeddings(
-            by_recording, by_recording.X, root, label="baseEaMean", transform={}
+            by_recording, by_recording.X, root, transform=EuclideanAlign("mean")
         )
-    path = write_transformed_embeddings(
-        tokens, aligned, root, label="baseEaCoralCh", transform=transform
-    )
+    path = write_transformed_embeddings(tokens, aligned, root, transform=aligner)
     again = load_embeddings(path.fpath)
     with pytest.raises(ValueError, match="already transformed"):
         write_transformed_embeddings(
-            again, again.X, root, label="baseEaCoralChEaMean", transform={}
+            again, again.X, root, transform=EuclideanAlign("mean")
         )
 
 
@@ -362,7 +369,9 @@ def test_recordings_of_one_configuration_share_config_hash(tmp_path):
             source=source_path(tmp_path, subject=subject),
             source_dataset="preproc",
         )
-        with xr.open_dataset(paths["base", "window"].fpath, engine="h5netcdf") as ds:
+        label = embedding_label("base", seed=result.metadata.get("seed"))
+        assert {key[0] for key in paths} == {label}
+        with xr.open_dataset(paths[label, "window"].fpath, engine="h5netcdf") as ds:
             return ds.attrs["config_hash"]
 
     first = config_hash("01", extract([0, 1]))
@@ -377,6 +386,68 @@ def test_recordings_of_one_configuration_share_config_hash(tmp_path):
         for seed in (0, 1)
     }
     assert len(seeds) == 2 and first not in seeds
+
+
+def _recording(tmp_path, subject, windows):
+    """The BIDS loader's rows of one recording, a (condition, epoch) per window."""
+    source = source_path(tmp_path, subject=subject)
+    recording_id = f"sub-{subject}_ses-02_task-rest_run-03"
+    n_windows = len(windows)
+    return DataContainer(
+        X=np.random.default_rng(int(subject)).normal(size=(n_windows, 2, 10)),
+        dims=("obs", "channel", "time"),
+        coords={
+            "channel": np.array(["T3", "Cz"], dtype=object),
+            "time": np.arange(10) / 200.0,
+            "condition": np.array([name for name, _ in windows], dtype=object),
+            "epoch": np.array([epoch for _, epoch in windows]),
+            "recording_id": np.full(n_windows, recording_id, dtype=object),
+            "source": np.full(n_windows, str(source), dtype=object),
+        },
+        ids=np.array([f"{recording_id}_epoch-{e:04d}" for _, e in windows]),
+        meta={"sfreq": 200.0},
+    )
+
+
+def test_embeddings_are_up_to_date_when_their_files_hold_windows_and_settings(
+    tmp_path,
+):
+    def write(recording, skip_up_to_date=False, **settings):
+        extractor = FoundationEmbeddingExtractor(
+            "cbramod", model=TokenModel(), resample=False, **settings
+        )
+        return write_recording_embeddings(
+            extractor.extract_recording(recording),
+            tmp_path / "out",
+            label="base",
+            source=recording.coords["source"][0],
+            source_dataset="preproc",
+            bad_channels="T3,Cz",
+            skip_up_to_date=skip_up_to_date,
+        )
+
+    first = _recording(tmp_path, "01", [("EO", 0), ("EC", 1), ("EO", 2)])
+    written = write(first)
+    with xr.open_dataset(written["base", "window"].fpath, engine="h5netcdf") as ds:
+        assert ds["condition"].values.tolist() == ["EO", "EC", "EO"]
+        assert ds["start"].values.tolist() == [0, 10, 20]
+        assert ds["bad_channels"].values.tolist() == ["T3,Cz"]
+    assert embeddings_up_to_date(first, written)
+    assert not embeddings_up_to_date(first.isel(obs=[0, 2]), written)
+
+    second = _recording(tmp_path, "02", [("EC", 0)])
+    assert not embeddings_up_to_date(second, written)
+    write(second, normalize_embeddings=False)
+    assert not embeddings_up_to_date(second, written)
+    window = write(second, skip_up_to_date=True)["base", "window"].fpath
+    assert embeddings_up_to_date(second, written)
+
+    # An up-to-date file is kept, another one replaced.
+    kept = window.stat().st_mtime_ns
+    write(second, skip_up_to_date=True)
+    assert window.stat().st_mtime_ns == kept
+    write(second, skip_up_to_date=True, normalize_embeddings=False)
+    assert window.stat().st_mtime_ns != kept
 
 
 def _nan_at_first(result, view):
@@ -487,25 +558,24 @@ def test_failed_write_leaves_the_previous_file(tmp_path, monkeypatch):
     assert sorted(paths[0].parent.iterdir()) == sorted(paths)
 
 
-def _embedding_dataset(tmp_path, labels=("base",)):
-    """A dataset with one recording's files and a top-level file per label."""
+def _embedding_dataset(tmp_path):
+    """A recording's window files, pretrained and random, and their top-level files."""
     root = tmp_path / "coco-pipe-cbramod"
-    paths = write_recording_embeddings(
-        {"EC": extract([0, 1])},
-        root,
-        label="base",
-        source=source_path(tmp_path),
-        source_dataset="preproc",
+    pretrained = extract([0, 1])
+    random = replace(
+        pretrained, metadata={**pretrained.metadata, "weights": "random", "seed": 0}
     )
-    for label in labels:
-        with xr.open_dataset(paths["base", "window"].fpath, engine="h5netcdf") as ds:
-            ds = ds.load()
-        ds.attrs["description"] = label
-        ds.to_netcdf(
-            embedding_path(root, label, "window", task="rest").fpath,
-            engine="h5netcdf",
+    for result in (pretrained, random):
+        paths = write_recording_embeddings(
+            {"EC": result},
+            root,
+            label="base",
+            source=source_path(tmp_path),
+            source_dataset="preproc",
         )
-    return root, paths["base", "window"]
+        window = next(path for (_, view), path in paths.items() if view == "window")
+        consolidate_embeddings([window], root)
+    return root, find_embeddings(root, "base", "window")[0]
 
 
 def _write_dataset(root, **kwargs):
@@ -521,7 +591,7 @@ def _write_dataset(root, **kwargs):
 def test_write_embedding_dataset_writes_bids_files_and_sidecars(tmp_path):
     root, recording_file = _embedding_dataset(tmp_path)
     (root / ".bidsignore").write_text("extra/\n\n*.nc\n", encoding="utf-8")
-    descriptions = {"base": "pretrained, every epoch", "baseRandom": "random weights"}
+    descriptions = {"base": "Every epoch"}
     written = _write_dataset(root, descriptions=descriptions)
 
     description = json.loads((root / "dataset_description.json").read_text())
@@ -532,8 +602,11 @@ def test_write_embedding_dataset_writes_bids_files_and_sidecars(tmp_path):
     assert description["SourceDatasets"] == [{"URL": "../preproc"}]
     table = pd.read_csv(root / "descriptions.tsv", sep="\t")
     assert table.to_dict("list") == {
-        "desc_id": ["desc-base", "desc-baseRandom"],
-        "description": list(descriptions.values()),
+        "desc_id": ["desc-base", "desc-baseRandom0"],
+        "description": [
+            "Every epoch, pretrained weights",
+            "Every epoch, random weights (seed 0)",
+        ],
     }
     assert "Description" in json.loads((root / "descriptions.json").read_text())
     assert (root / ".bidsignore").read_text().splitlines() == [
@@ -549,7 +622,7 @@ def test_write_embedding_dataset_writes_bids_files_and_sidecars(tmp_path):
     sidecar = root / "task-rest_desc-base_windowembeddings.json"
     with xr.open_dataset(recording_file.fpath, engine="h5netcdf") as ds:
         assert json.loads(sidecar.read_text()) == {
-            "Description": "pretrained, every epoch: one vector per window.",
+            "Description": "Every epoch, pretrained weights: one vector per window.",
             **json.loads(ds.attrs["config"]),
             "ConfigHash": ds.attrs["config_hash"],
         }
@@ -568,7 +641,8 @@ def _set_attrs(path, **attrs):
 
 
 def _other_model(path):
-    config = {"ModelKey": "reve"}
+    with xr.open_dataset(path, engine="h5netcdf") as ds:
+        config = {**json.loads(ds.attrs["config"]), "ModelKey": "reve"}
     _set_attrs(
         path, config=json.dumps(config), config_hash=stable_hash(config, length=16)
     )
@@ -577,7 +651,7 @@ def _other_model(path):
 @pytest.mark.parametrize(
     "change, kwargs, message",
     [
-        (None, {"descriptions": {"baseX": "other"}}, "descriptions lacks"),
+        (None, {"descriptions": {"baseX": "other"}}, "no label of descriptions"),
         (None, {"descriptions": {"base": "one\ttwo"}}, "one line"),
         (None, {"dataset_links": {"pre:proc": "../preproc"}}, "DatasetLinks"),
         (None, {"dataset_links": {"raw": ".."}}, "dataset_links must name"),
@@ -589,10 +663,10 @@ def _other_model(path):
 def test_write_embedding_dataset_refuses_before_writing(
     tmp_path, change, kwargs, message
 ):
-    root, _ = _embedding_dataset(tmp_path, labels=("base", "baseRandom"))
-    kwargs.setdefault("descriptions", {"base": "pretrained", "baseRandom": "random"})
+    root, _ = _embedding_dataset(tmp_path)
+    kwargs.setdefault("descriptions", {"base": "Every epoch"})
     if change is not None:
-        change(root / "task-rest_desc-baseRandom_windowembeddings.nc")
+        change(root / "task-rest_desc-baseRandom0_windowembeddings.nc")
     with pytest.raises(ValueError, match=message):
         _write_dataset(root, **kwargs)
     assert not list(root.glob("*.json"))
@@ -614,9 +688,7 @@ def test_each_label_has_its_own_manifest(tmp_path):
         {"recording_id": "b", "status": "skipped"}
     ]
     write_embedding_manifest(tmp_path, "base", [{"path": source}])
-    assert json.loads(base.read_text())["records"] == [
-        {"path": source.fpath.as_posix()}
-    ]
+    assert json.loads(base.read_text())["records"] == [{"path": source.as_posix()}]
     assert {p.name for p in tmp_path.iterdir()} == {base.name, random.name}
     with pytest.raises(ValueError, match="BIDS label"):
         write_embedding_manifest(tmp_path, "base_x", [])
