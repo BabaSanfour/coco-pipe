@@ -981,8 +981,18 @@ def find_embeddings(
     )
 
 
+def _values(variable: Any) -> np.ndarray:
+    """A netCDF variable's values as xarray decodes them: strings as ``str``."""
+    values = variable[...]
+    return np.asarray(values.tolist(), dtype=str) if values.dtype == object else values
+
+
 def _read_header(path: Path) -> dict[str, Any]:
-    """Return what :func:`load_embeddings` checks of a file, without its data."""
+    """Return what :func:`load_embeddings` checks of a file, without its data.
+
+    The file is read with h5netcdf, not xarray: xarray builds and decodes every
+    variable, many more reads, which a parallel file system makes slow.
+    """
     try:
         name = get_bids_path_from_fname(path.name, check=False)
     except KeyError:
@@ -1000,10 +1010,13 @@ def _read_header(path: Path) -> dict[str, Any]:
     if name.subject is not None:
         folders = [f for f in path.parents if f.name == f"sub-{name.subject}"]
         root = folders[0].parent if folders else None
-    with xr.open_dataset(path, engine="h5netcdf", cache=False) as dataset:
-        attrs = dict(dataset.attrs)
-        variable = dataset["embeddings"]
-        dims = variable.dims
+    with h5netcdf.File(path, "r", decode_vlen_strings=True) as file:
+        attrs = {
+            key: value for key, value in file.attrs.items() if key != "coordinates"
+        }
+        variables = file.variables
+        variable = variables["embeddings"]
+        dims = variable.dimensions
         header = {
             "path": path,
             "name": name,
@@ -1019,18 +1032,18 @@ def _read_header(path: Path) -> dict[str, Any]:
                 if view == "token"
             },
             "windows": {
-                name: coord.values
-                for name, coord in dataset.coords.items()
-                if coord.dims == ("window",)
+                name: _values(values)
+                for name, values in variables.items()
+                if values.dimensions == ("window",)
             },
             "recordings": {
-                name: coord.values.tolist()
-                for name, coord in dataset.coords.items()
-                if coord.dims == ("recording",)
+                name: _values(values).tolist()
+                for name, values in variables.items()
+                if values.dimensions == ("recording",)
             },
             "channel": (
-                dataset["channel"].values.tolist()
-                if "channel" in dataset.coords
+                _values(variables["channel"]).tolist()
+                if "channel" in variables
                 else None
             ),
         }
@@ -1129,8 +1142,8 @@ def _copy_rows(
     if not len(rows):
         return
     axes = header["axes"]
-    with xr.open_dataset(header["path"], engine="h5netcdf", cache=False) as dataset:
-        variable = dataset["embeddings"]
+    with h5netcdf.File(header["path"], "r") as file:
+        variable = file.variables["embeddings"]
         for begin in range(0, len(rows), _READ_ROWS):
             block = rows[begin : begin + _READ_ROWS]
             index = (
@@ -1138,7 +1151,7 @@ def _copy_rows(
                 if block[-1] - block[0] == len(block) - 1
                 else block
             )
-            values = variable.isel(window=index).values
+            values = variable[index]
             if not np.isfinite(values).all():
                 raise ValueError(f"{header['path'].name} holds non-finite values.")
             if header["order"] is not None:
