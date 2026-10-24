@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from coco_pipe.io.dataset import BIDSDataset, TabularDataset
+from coco_pipe.io.dataset import BIDSDataset, NoDataError, TabularDataset
 
 
 def _tsv(path, frame):
@@ -173,7 +173,11 @@ def test_bids_dataset_description_selects_the_file(tmp_path, write_bids_epochs):
     write_bids_epochs(tmp_path, "01", description="base", value=1.0)
     write_bids_epochs(tmp_path, "01", description="alt", value=2.0)
 
-    assert np.all(_load_epochs(tmp_path, description="base", units="V").X[:, 0] == 1)
+    base = _load_epochs(tmp_path, description="base", units="V")
+    assert np.all(base.X[:, 0] == 1)
+    assert set(base.coords["source"]) == {
+        str(tmp_path / "sub-01" / "eeg" / "sub-01_task-rest_desc-base_epo.fif")
+    }
     assert np.all(_load_epochs(tmp_path, description="alt", units="V").X[:, 0] == 2)
     with pytest.raises(ValueError, match="Several files match recording sub-01"):
         _load_epochs(tmp_path)
@@ -304,7 +308,7 @@ def test_bids_dataset_raw_recordings(tmp_path):
     assert recordings.y.tolist() == [10, 3, 10, 3]
     np.testing.assert_allclose(recordings.X[0], container.X[[0, 2]].mean(axis=0))
 
-    with pytest.raises(RuntimeError, match="No valid data found"):
+    with pytest.raises(NoDataError, match="No valid data found"):
         BIDSDataset(tmp_path, task="other", datatype="meg", window_length=1.0).load()
     # a mistyped mode does not fall back to cutting raw recordings
     with pytest.raises(ValueError, match="mode must be 'epochs' or 'load_existing'"):
@@ -502,5 +506,6 @@ def test_bids_dataset_reports_recordings_that_fail_to_load(
     assert set(left.coords["subject"]) == {"01"}
     with pytest.raises(
         RuntimeError, match=r"No valid data found in .*sub-02_task-rest"
-    ):
+    ) as failure:
         _load_epochs(tmp_path, subjects="02")
+    assert not isinstance(failure.value, NoDataError)

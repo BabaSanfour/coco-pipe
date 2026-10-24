@@ -112,6 +112,11 @@ derivative dataset (see :ref:`io`, section 3).
        token_dtype="float16",
    )
 
+For a recording the BIDS loader read,
+:meth:`~coco_pipe.decoding.foundation_models.FoundationEmbeddingExtractor.extract_recording`
+gives the result of each condition, its windows numbered by their epoch.
+An extractor on ``device="cuda"`` refuses to be built without a GPU.
+
 The result holds:
 
 - ``window_embeddings``: one vector per window, L2-normalised unless
@@ -133,8 +138,8 @@ zero biases) and values the architecture fixes are the same for every seed.
 REVE defines no initialisation of its own, so its weights follow transformers'
 default (normal, std 0.02), and its position bank stays the checkpoint's.
 QLoRA, which quantizes pretrained weights, is refused. The files' settings
-record ``Weights`` and ``Seed``; give each seed its own label, e.g.
-``baseRandom0``.
+record ``Weights`` and ``Seed``, and the writer labels them by the seed, e.g.
+``baseRandom0`` for ``label="base"``.
 
 ---
 

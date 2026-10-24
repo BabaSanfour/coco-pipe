@@ -1,0 +1,1 @@
+`load_embeddings`, `consolidate_embeddings` and `embeddings_up_to_date` read embedding files with h5netcdf instead of xarray, which builds and decodes every variable of a file: each file takes half as many HDF5 reads, so loading many recordings' files is about twice as fast on a local disk and spends far less time waiting on a parallel file system. What they return is unchanged.

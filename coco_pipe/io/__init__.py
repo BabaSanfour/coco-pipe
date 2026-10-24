@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from ..utils import NoDataError
 from ._constants import (
     AGGREGATION_LEVELS,
     ANALYSIS_MODES,
@@ -50,7 +51,9 @@ if TYPE_CHECKING:
     from .dataset import BIDSDataset as BIDSDataset
     from .dataset import TabularDataset as TabularDataset
     from .embeddings import consolidate_embeddings as consolidate_embeddings
+    from .embeddings import embedding_label as embedding_label
     from .embeddings import embedding_path as embedding_path
+    from .embeddings import embeddings_up_to_date as embeddings_up_to_date
     from .embeddings import find_embeddings as find_embeddings
     from .embeddings import load_embeddings as load_embeddings
     from .embeddings import write_embedding_dataset as write_embedding_dataset
@@ -72,6 +75,7 @@ __all__ = [
     "DatasetConfig",
     "EmbeddingConfig",
     "EpochDropRecord",
+    "NoDataError",
     "QCResult",
     "SklearnWrapper",
     "SubjectDropRecord",
@@ -104,7 +108,9 @@ _LAZY_DATASET_EXPORTS = ["BIDSDataset", "TabularDataset"]
 # They import mne-bids and h5netcdf, which `import coco_pipe.io` does not need.
 _LAZY_EMBEDDING_EXPORTS = [
     "consolidate_embeddings",
+    "embedding_label",
     "embedding_path",
+    "embeddings_up_to_date",
     "find_embeddings",
     "load_embeddings",
     "write_embedding_dataset",

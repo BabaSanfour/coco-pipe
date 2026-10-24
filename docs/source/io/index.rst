@@ -152,17 +152,22 @@ averaged and are never normalised, whatever that setting says: an analysis
 normalises them at load as it needs, per channel or, after ``flatten``, as one
 vector.
 
+The ``desc`` entity names how the file was made. The writers build it with
+:func:`~coco_pipe.io.embedding_label` from the label of the data embedded
+(e.g. ``base`` for epochs labelled ``desc-base``) and the file's settings:
+``Random<seed>`` for random weights, the pooling's name for window vectors
+pooled otherwise than by the mean, and a subject transform's label. So
+``base``, ``baseRandom0`` (random weights of seed 0), ``baseAttention`` and
+``baseRandom0EaCoralCh`` are files of the same epochs. A label is a BIDS label
+(letters, digits and ``+``).
+
 An extractor built with ``extra_poolings`` (``("attention",)`` for REVE's
 attention read-out) pools the same tokens again, in the same forward pass. The
-writer puts those window vectors in a window file of their own label, the
-label followed by the pooling's name (``baseAttention``), whose
-``WindowPooling`` setting names that pooling.
+writer puts those window vectors in a window file of their own label
+(``baseAttention``), whose ``WindowPooling`` setting names that pooling.
 
-The ``desc`` entity names the processing that produced the file, e.g. ``base``,
-``baseRandom0`` (random weights of seed 0) or ``baseEaCoral``; it is any BIDS
-label (letters, digits and ``+``). A file keeps its source recording's
-entities, so one recording's files sit in its subject folder and the files
-holding every recording at the root:
+A file keeps its source recording's entities, so one recording's files sit in
+its subject folder and the files holding every recording at the root:
 
 .. code-block:: text
 
@@ -205,10 +210,9 @@ same layout:
 
 .. code-block:: python
 
-   from mne_bids import BIDSPath
-
    from coco_pipe.io import (
        consolidate_embeddings,
+       embeddings_up_to_date,
        find_embeddings,
        load_embeddings,
        write_embedding_dataset,
@@ -216,22 +220,30 @@ same layout:
    )
 
    root = "derivatives/coco-pipe-cbramod"
-   source = BIDSPath(
-       root="derivatives/preproc", subject="01", session="01", task="rest",
-       run="01", description="base", suffix="epo", extension=".fif",
-       datatype="eeg", check=False,
+   # One recording, as the BIDS loader's rows: the extractor's result for each
+   # condition, the file its epochs were read from and its bad channels.
+   written = write_recording_embeddings(
+       extractor.extract_recording(recording),
+       root,
+       label="base",
+       source=recording.coords["source"][0],
+       source_dataset="preproc",
+       bad_channels=recording.coords["bad_channels"][0],
    )
-   # One recording: `results` maps each condition to the extractor's result.
-   write_recording_embeddings(
-       results, root, label="base", source=source, source_dataset="preproc"
-   )
+   # A resubmitted job skips the recordings whose files hold their windows
+   # with the settings of the files written; `skip_up_to_date=True` keeps such
+   # files when the writer is given them anyway.
+   if not embeddings_up_to_date(other, written):
+       ...
 
    # Every recording of a label and view in one file, then the dataset files.
    files = find_embeddings(root, "base", "window")
    consolidate_embeddings(files, root)
+   # What the data of each label embedded is; the weights, pooling and
+   # transform of each file are described from its settings.
    write_embedding_dataset(
        root,
-       {"base": "Pretrained weights"},
+       {"base": "Every epoch of the preprocessed recordings"},
        name="CBraMod embeddings",
        dataset_links={"preproc": "../preproc"},
    )
@@ -240,8 +252,9 @@ same layout:
 
 A subject transform's output is written from what was loaded, row for row,
 with :func:`~coco_pipe.io.write_transformed_embeddings`. The file keeps the
-windows, recordings and channels of its source, and its settings add
-``Transform``, so it never mixes with the source:
+windows, recordings and channels of its source, its settings add
+``Transform``, so it never mixes with the source, and its label adds the
+transform's (``baseEaCoralCh`` here):
 
 .. code-block:: python
 
@@ -254,8 +267,7 @@ windows, recordings and channels of its source, and its settings add
        tokens,
        aligner.fit_transform(tokens.X, groups=tokens.coords["subject"]),
        root,
-       label="baseEaCoralCh",
-       transform={"name": aligner.name, **aligner.get_params()},
+       transform=aligner,
    )
 
 ``view="cov"`` writes a transform that changes the axes, such as
