@@ -226,8 +226,17 @@ class EuclideanAlign(SubjectAlignment):
     subject's mean, and for ``"coral"`` its feature covariance, are taken over
     all its tokens. With ``channel_axis``, each channel's tokens are centered
     on their own mean, and ``"coral"`` whitens every channel with the
-    subject's one covariance of the centered tokens. The output keeps the
-    shape and float dtype of ``X``.
+    subject's one covariance of the centered tokens. With ``shrinkage``,
+    ``"coral"`` scales each subject's output to the identity's mean squared norm
+    (the number of features), so it does not depend on how many samples the
+    subject has. The
+    output keeps the shape and float dtype of ``X``.
+
+    Each subject loses its mean, so a trait constant within a subject (a
+    diagnosis, age) is removed with it; and when a subject's samples mix
+    conditions in uneven shares, its reference moves with its share. Use it for
+    targets that vary within a subject, or pass ``subject x condition`` as
+    ``groups`` to take a reference per condition.
     """
 
     def __init__(
@@ -254,7 +263,14 @@ class EuclideanAlign(SubjectAlignment):
         if self.mode == "mean":
             return mu, None
         centered = (xs - mu).reshape(-1, xs.shape[-1])
-        return mu, _inv_sqrt_cov(centered, shrinkage=self.shrinkage)
+        w = _inv_sqrt_cov(centered, shrinkage=self.shrinkage)
+        # Shrinkage whitens a subject with few samples to less than unit variance,
+        # so the output size would follow the sample count: give every subject the
+        # identity's mean squared norm.
+        spread = np.mean(np.sum((centered @ w.T) ** 2, axis=1))
+        if self.shrinkage and spread > 0:
+            w = w * np.sqrt(xs.shape[-1] / spread)
+        return mu, w
 
     def _check(self, X) -> np.ndarray:
         x = np.asarray(X)

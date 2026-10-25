@@ -157,6 +157,16 @@ def test_euclidean_alignment_centers_and_whitens_each_subject():
             np.cov(whitened[rows], rowvar=False), np.eye(x.shape[1]), atol=0.1
         )
 
+    # With shrinkage, the output size does not follow a subject's sample count.
+    rng = np.random.default_rng(3)
+    counts = np.array([5, 20, 200])
+    groups = np.repeat(np.arange(3), counts)
+    x = rng.standard_normal((counts.sum(), 30))
+    whitened = EuclideanAlign("coral").fit_transform(x, groups=groups)
+    for sid in range(3):
+        norms = np.sum(whitened[groups == sid] ** 2, axis=1)
+        assert norms.mean() == pytest.approx(30.0)
+
 
 def _subject_tokens(n_subjects=4, per=20, axes=(3, 5), d=6, seed=0):
     rng = np.random.default_rng(seed)
@@ -283,10 +293,33 @@ def test_registry_and_fingerprint_are_stable():
         make_subject_transform("missing")
 
 
-def test_only_leace_is_fold_local():
-    assert make_subject_transform("leace").fold_local is True
-    for name in ("ea_coral", "ea_mean", "ra"):
-        assert make_subject_transform(name).fold_local is False
+def test_only_leace_transforms_subjects_without_their_groups():
+    x, subject, _ = _condition_data()
+    leace = make_subject_transform("leace").fit(x, groups=subject)
+    assert leace.transform(x).shape == x.shape
+    for name in ("ea_mean", "ea_coral"):
+        aligner = make_subject_transform(name).fit(x, groups=subject)
+        with pytest.raises(ValueError, match="requires groups"):
+            aligner.transform(x)
+
+
+def test_ea_reference_moves_with_the_condition_share_unless_taken_per_condition():
+    x, subject, condition = _condition_data()
+    cell = np.char.add(np.char.add(subject.astype(str), "|"), condition.astype(str))
+    mixed = EuclideanAlign("mean").fit_transform(x, groups=subject)
+    per_condition = EuclideanAlign("mean").fit_transform(x, groups=cell)
+
+    # Within condition 0, a subject's windows sit where its share of condition 1 puts
+    # them on the condition axis (3), unless the reference is taken per condition.
+    kept = [s for s in np.unique(subject) if ((subject == s) & (condition == 0)).any()]
+    share = np.array([condition[subject == s].mean() for s in kept])
+
+    def position(aligned):
+        rows = [(subject == s) & (condition == 0) for s in kept]
+        return np.array([aligned[r, 3].mean() for r in rows])
+
+    assert np.corrcoef(share, position(mixed))[0, 1] < -0.9
+    np.testing.assert_allclose(position(per_condition), 0.0, atol=1e-9)
 
 
 def test_variance_diagnostics_match_null_and_nested_partition():

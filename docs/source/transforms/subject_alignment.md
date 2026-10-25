@@ -160,7 +160,10 @@ The table also holds each direction's `eta2` and whether it is `erased`.
 inverse covariance square root. Ledoit-Wolf shrinkage is enabled by default and
 is recommended for high-dimensional embeddings or small subject sample counts.
 With `shrinkage=False`, rank-deficient covariance directions are projected to
-zero.
+zero. With shrinkage, a subject with few samples would come out with less than
+unit variance, so the output size would follow its sample count; each subject's
+output is scaled to the identity's mean squared norm (the number of features)
+instead.
 
 The transform stores fitted subject means in `mu_` and whitening matrices in
 `w_`. At transform time, known subjects use stored statistics; unseen subjects
@@ -222,6 +225,18 @@ is useful when a downstream method consumes SPD matrices directly.
 No transform guarantees preservation of the scientific label. If labels are
 constant within subject, label and subject information are partly confounded;
 aggressive alignment can necessarily remove both.
+
+`ea_mean`, `ea_coral` and `ra` recenter every subject on itself, so they remove a
+label that is constant within a subject (a diagnosis, age, sex) by
+construction: a linear model that averages a subject's predictions gives every
+subject the same score. Use them for targets that vary within a subject. When a
+subject's samples mix conditions in uneven shares (e.g. more eyes-closed than
+eyes-open windows), its reference moves with its share, and within one condition
+the transform leaves each subject shifted by it: a difference between groups in
+those shares then looks like a difference in the label. Take a reference per
+condition by passing `subject x condition` as `groups`. To remove identity but
+keep a trait, fit `leace` in the folds with the trait as `condition`, which
+erases only how subjects differ within their group.
 
 ## Auditing the result
 
