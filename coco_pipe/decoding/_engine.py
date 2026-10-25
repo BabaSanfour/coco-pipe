@@ -331,6 +331,10 @@ def fit_and_score_fold(
         X_test = aligner.transform(X_test, groups=test_groups)
         alignment_time = time.perf_counter() - alignment_start
     routing_pipeline = _wrapped_pipeline(estimator)
+    # EA aligns each test subject on its own samples; LEACE's projector needs no groups.
+    erasure_step = (
+        routing_pipeline.named_steps.get("erasure") if routing_pipeline else None
+    )
     _needs_group_routing = (
         test_groups is not None
         and routing_pipeline is not None
@@ -338,7 +342,7 @@ def fit_and_score_fold(
             isinstance(
                 routing_pipeline.named_steps.get("scaler"), SubjectStandardScaler
             )
-            or "erasure" in routing_pipeline.named_steps
+            or (erasure_step is not None and not erasure_step.fold_local)
         )
     )
     captured_warnings = []

@@ -1,4 +1,4 @@
-"""Experimental: subject-axis removal for frozen embedding vectors."""
+"""Subject alignment of embeddings: LEACE, Euclidean and Riemannian alignment."""
 
 from __future__ import annotations
 
@@ -311,12 +311,29 @@ class EuclideanAlign(SubjectAlignment):
 
 
 def tokens_to_covariances(tokens: np.ndarray, *, shrinkage: float = 0.1) -> np.ndarray:
-    """Convert ``(window, token, feature)`` tensors to regularized SPD matrices."""
+    """The feature covariance of each window's tokens, shrunk to be positive definite.
+
+    Each window's tokens are centered on their mean first, so the matrix describes how
+    the tokens co-vary, not where they sit. A window has rank at most ``T - 1``, often
+    below ``d`` (e.g. 64 tokens of 256 features), so the covariance is moved by
+    ``shrinkage`` toward the identity scaled to its mean variance: every eigenvalue is
+    then at least ``shrinkage * trace / d``, positive, as the Riemannian mean and the
+    tangent map need. A window whose tokens are all the same is refused.
+    """
     z = np.asarray(tokens, dtype=np.float64)
     if z.ndim != 3:
         raise ValueError(f"RiemannAlign expects (N, T, d) tensors, got {z.shape}.")
     _, t, d = z.shape
-    covs = np.einsum("ntd,nte->nde", z, z) / max(t, 1)
+    if t < 2:
+        raise ValueError(f"A covariance needs at least two tokens per window, got {t}.")
+    z = z - z.mean(axis=1, keepdims=True)
+    covs = np.einsum("ntd,nte->nde", z, z) / (t - 1)
+    flat = np.flatnonzero(np.trace(covs, axis1=1, axis2=2) <= 0)
+    if flat.size:
+        raise ValueError(
+            f"{flat.size} window(s) have identical tokens (e.g. window {flat[0]}): "
+            "their covariance is zero, so no shrinkage makes it positive definite."
+        )
     eye = np.eye(d)
     for index in range(len(covs)):
         trace = np.trace(covs[index]) / d
@@ -339,7 +356,7 @@ class RiemannAlign(SubjectAlignment):
         return tokens_to_covariances(tokens, shrinkage=self.shrinkage)
 
     def fit(self, X, y=None, groups=None):
-        from pyriemann.utils.mean import mean_riemann
+        from pyriemann.geometry.mean import mean_riemann
 
         covs = self._covs(X)
         subject = _require_groups(groups, len(covs))
@@ -351,8 +368,8 @@ class RiemannAlign(SubjectAlignment):
         return self
 
     def transform(self, X, groups=None):
-        from pyriemann.utils.mean import mean_riemann
-        from pyriemann.utils.tangentspace import tangent_space
+        from pyriemann.geometry.mean import mean_riemann
+        from pyriemann.geometry.tangentspace import tangent_space
 
         if not hasattr(self, "ref_"):
             raise RuntimeError("RiemannAlign.transform called before fit.")

@@ -52,6 +52,12 @@ selection workflows.
 `ra` changes 3-D token tensors into 2-D tangent vectors and must be applied in a
 token/covariance workflow before ordinary 2-D decoding.
 
+`ea_mean` and `ea_coral` align each test subject on its own samples, so they
+need the test subjects' groups at prediction. Hyperparameter search scores its
+inner folds, and calibration predicts, without groups, so the configuration
+refuses EA erasure with `tuning` or `calibration`. LEACE's projector is fixed
+after fitting and needs no groups, so it works with both.
+
 ## Fit scope and leakage
 
 The class attribute `fold_local` describes whether a transform intrinsically
@@ -179,12 +185,19 @@ subject's mean per channel, its average topography in the model's space.
 ## Riemannian alignment
 
 `RiemannAlign` expects `(window, token, feature)` tensors. Each window is
-converted to a regularized feature second-moment matrix:
+converted to the feature covariance of its tokens, centered on their mean, so it
+describes how the tokens co-vary and not where they sit:
 
 ```text
-C = Z.T @ Z / n_tokens
+Zc = Z - Z.mean(axis=0)
+C = Zc.T @ Zc / (n_tokens - 1)
 C_regularized = (1 - shrinkage) * C + shrinkage * trace(C) / d * I
 ```
+
+A window's covariance has rank at most `n_tokens - 1`, often below `d` (LUNA:
+64 tokens of 256 features), so `shrinkage` (default 0.1) moves it toward the
+identity scaled to its mean variance: the Riemannian mean and the tangent map
+need positive definite matrices.
 
 The method computes a Riemannian mean reference per subject, recenters the
 subject matrices, and maps them to symmetric tangent vectors. An input feature

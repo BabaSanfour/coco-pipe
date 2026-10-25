@@ -1419,4 +1419,20 @@ class ExperimentConfig(BaseModel):
                 "Calibration is enabled but calibration.cv is not defined."
             )
 
+        # 7. EA erasure aligns each test subject on its own samples, so it needs their
+        # groups at predict time, which neither a search's inner scoring nor
+        # calibration passes on (LEACE's projector needs none).
+        if self.erasure.enabled and self.erasure.method != "leace":
+            for name, used in (
+                ("tuning", self.tuning.enabled),
+                ("calibration", self.calibration.enabled),
+            ):
+                if used:
+                    raise ValueError(
+                        f"erasure method {self.erasure.method!r} cannot be combined "
+                        f"with {name}: it aligns each test subject on its own "
+                        f"samples, and {name} predicts without their groups. Use "
+                        "method='leace' or turn it off."
+                    )
+
         return self

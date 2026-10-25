@@ -246,17 +246,28 @@ def test_euclidean_alignment_can_center_each_channel():
     )
 
 
-def test_riemann_alignment_returns_finite_tangent_vectors():
+def test_riemann_alignment_recenters_each_subject_on_token_covariances():
     pytest.importorskip("pyriemann")
     rng = np.random.default_rng(2)
-    tokens = rng.standard_normal((24, 15, 6))
     groups = np.repeat(np.arange(4), 6)
-    covariances = tokens_to_covariances(tokens)
-    assert np.linalg.eigvalsh(covariances).min() > 0
+    scales = rng.uniform(0.5, 3.0, (4, 6))
+    tokens = rng.standard_normal((24, 15, 6)) * scales[groups][:, None, :]
     output = RiemannAlign().fit_transform(tokens, groups=groups)
     assert output.shape == (24, 21)
-    assert RiemannAlign().fit(tokens, groups=groups).n_output_features_ == 21
-    assert np.isfinite(output).all()
+
+    # Each subject's tangent vectors average to zero at its own reference.
+    for subject in range(4):
+        np.testing.assert_allclose(output[groups == subject].mean(0), 0.0, atol=1e-6)
+    # Where a window's tokens sit does not matter, only how they co-vary.
+    shifted = tokens + rng.standard_normal((24, 1, 6)) * 10.0
+    np.testing.assert_allclose(
+        RiemannAlign().fit_transform(shifted, groups=groups), output, atol=1e-8
+    )
+    with pytest.raises(ValueError, match="at least two tokens"):
+        tokens_to_covariances(tokens[:, :1])
+    assert np.linalg.eigvalsh(tokens_to_covariances(tokens[:, :3])).min() > 0
+    with pytest.raises(ValueError, match="identical tokens"):
+        tokens_to_covariances(np.ones((2, 5, 6)))
 
 
 def test_registry_and_fingerprint_are_stable():

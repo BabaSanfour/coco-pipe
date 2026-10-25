@@ -13,7 +13,7 @@ from coco_pipe.decoding import (
     ExperimentConfig,
     TuningConfig,
 )
-from coco_pipe.decoding.configs import LogisticRegressionConfig
+from coco_pipe.decoding.configs import CalibrationConfig, LogisticRegressionConfig
 
 
 def _within_subject_data(seed=0):
@@ -70,25 +70,41 @@ def test_euclidean_alignment_handles_unseen_fold_subjects():
     assert result.raw["lr"]["status"] == "success"
 
 
-def test_tuned_euclidean_alignment_routes_groups_through_search_wrapper():
+def test_ea_erasure_refuses_tuning_and_calibration_and_leace_takes_both():
+    tuning = TuningConfig(
+        enabled=True, cv=CVConfig(strategy="group_kfold", n_splits=2), n_jobs=1
+    )
+    calibration = CalibrationConfig(
+        enabled=True, cv=CVConfig(strategy="group_kfold", n_splits=2)
+    )
+    common = {
+        "task": "classification",
+        "models": {"lr": LogisticRegressionConfig(max_iter=1000)},
+        "grids": {"lr": {"clf__C": [0.5, 1.0]}},
+        "metrics": ["balanced_accuracy"],
+        "cv": CVConfig(strategy="group_kfold", n_splits=4),
+        "n_jobs": 1,
+        "verbose": False,
+    }
+    for name, setting in (("tuning", tuning), ("calibration", calibration)):
+        with pytest.raises(ValueError, match=f"cannot be combined with {name}"):
+            ExperimentConfig(
+                **common,
+                erasure=ErasureConfig(enabled=True, method="ea_mean"),
+                **{name: setting},
+            )
+
+    # LEACE's projector needs no groups to predict, so both run and score.
     x, labels, groups = _within_subject_data()
     config = ExperimentConfig(
-        task="classification",
-        models={"lr": LogisticRegressionConfig(max_iter=1000)},
-        grids={"lr": {"clf__C": [0.5, 1.0]}},
-        metrics=["balanced_accuracy"],
-        cv=CVConfig(strategy="group_kfold", n_splits=4),
-        tuning=TuningConfig(
-            enabled=True,
-            cv=CVConfig(strategy="group_kfold", n_splits=2),
-            n_jobs=1,
-        ),
-        erasure=ErasureConfig(enabled=True, method="ea_mean"),
-        n_jobs=1,
-        verbose=False,
+        **common,
+        erasure=ErasureConfig(enabled=True, method="leace"),
+        tuning=tuning,
+        calibration=calibration,
     )
     result = Experiment(config).run(x, labels, groups=groups)
     assert result.raw["lr"]["status"] == "success"
+    assert np.isfinite(result.raw["lr"]["metrics"]["balanced_accuracy"]["mean"])
 
 
 def _decoding_ba(
