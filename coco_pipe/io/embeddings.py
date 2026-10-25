@@ -1418,6 +1418,7 @@ def write_transformed_embeddings(
     root: str | Path,
     *,
     transform: Any,
+    fitted_on: str | None = None,
     view: str | None = None,
     token_dtype: str = "float32",
 ) -> BIDSPath:
@@ -1429,7 +1430,9 @@ def write_transformed_embeddings(
     ``LeaceEraser``), or ``(window, feature)`` with ``view="cov"`` for
     ``RiemannAlign``'s tangent vectors. The file keeps the windows, the
     recordings and the channels of ``source``; its settings are those of
-    ``source`` with ``Transform`` added, so its ``config_hash`` differs. Its
+    ``source`` with ``Transform`` added, so its ``config_hash`` differs, and
+    without ``NormalizeEmbeddings``, which says how the source's vectors were
+    made, not the transformed ones. Its
     label is that of ``source`` followed by the transform's (see
     :func:`embedding_label`), e.g. ``baseRandom3EaCoralCh``. It is named by
     :func:`embedding_path`, with the task of the windows when they share one,
@@ -1446,7 +1449,11 @@ def write_transformed_embeddings(
     transform : SubjectAlignment
         The fitted transform that made ``embeddings``, e.g. an
         :class:`~coco_pipe.transforms.EuclideanAlign`. Its ``name``, ``label``
-        and parameters are recorded as the setting ``Transform``.
+        and parameters are recorded as the setting ``Transform``, with its
+        fitted ``rank_`` and ``n_subjects_`` when it has them (LEACE).
+    fitted_on : str, optional
+        What the transform was fitted on, recorded in ``Transform``, e.g.
+        ``"every window of base, both conditions"``.
     view : str, optional
         The view of the file; that of ``source`` by default.
     token_dtype : {"float32", "float16"}
@@ -1512,13 +1519,21 @@ def write_transformed_embeddings(
             "axis there."
         )
     label = embedding_label(meta["description"], transform=transform.label)
+    fitted = {
+        key: getattr(transform, attribute)
+        for key, attribute in (("rank", "rank_"), ("n_subjects", "n_subjects_"))
+        if hasattr(transform, attribute)
+    }
+    if fitted_on is not None:
+        fitted["fitted_on"] = fitted_on
     config = {
-        **meta["config"],
+        **{k: v for k, v in meta["config"].items() if k != "NormalizeEmbeddings"},
         "Transform": _json_value(
             {
                 "name": transform.name,
                 "label": transform.label,
                 **transform.get_params(deep=False),
+                **fitted,
             }
         ),
     }

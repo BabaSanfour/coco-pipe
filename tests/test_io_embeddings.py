@@ -278,7 +278,9 @@ def _aligned_tokens(tmp_path):
 def test_transformed_embeddings_round_trip(tmp_path):
     tokens, aligned, aligner = _aligned_tokens(tmp_path)
     root = tmp_path / "out"
-    path = write_transformed_embeddings(tokens, aligned, root, transform=aligner)
+    path = write_transformed_embeddings(
+        tokens, aligned, root, transform=aligner, fitted_on="every window"
+    )
     assert path.basename == "task-rest_desc-baseEaCoralCh_tokenembeddings.nc"
     loaded = load_embeddings(path.fpath)
     np.testing.assert_array_equal(loaded.X, aligned)
@@ -286,14 +288,18 @@ def test_transformed_embeddings_round_trip(tmp_path):
     for name in ("obs", "subject", "condition", "epoch", "start", "channel"):
         assert loaded.coords[name].tolist() == tokens.coords[name].tolist()
     assert loaded.meta["recordings"] == tokens.meta["recordings"]
+    # The source's normalisation does not describe the transformed vectors.
+    source = dict(tokens.meta["config"])
+    assert source.pop("NormalizeEmbeddings") is True
     assert loaded.meta["config"] == {
-        **tokens.meta["config"],
+        **source,
         "Transform": {
             "name": "ea_coral",
             "label": "EaCoralCh",
             "channel_axis": 1,
             "mode": "coral",
             "shrinkage": True,
+            "fitted_on": "every window",
         },
     }
     assert loaded.meta["config_hash"] != tokens.meta["config_hash"]
@@ -308,7 +314,10 @@ def test_transformed_embeddings_round_trip(tmp_path):
     assert load_embeddings(cov.fpath).dims == ("obs", "feature")
     _write_dataset(root, descriptions={"base": "Every epoch"})
     table = pd.read_csv(root / "descriptions.tsv", sep="\t")
-    ea = "ea_coral transform (channel_axis=1, mode=coral, shrinkage=True)"
+    ea = (
+        "ea_coral transform (channel_axis=1, mode=coral, shrinkage=True, "
+        "fitted_on=every window)"
+    )
     assert table.to_dict("list") == {
         "desc_id": ["desc-baseEaCoralCh", "desc-baseRa"],
         "description": [
