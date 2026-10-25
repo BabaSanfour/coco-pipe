@@ -15,7 +15,7 @@ The public registry exposes four methods:
 
 | Registry name | Class | Input | Main operation |
 |---|---|---|---|
-| `leace` | `LeaceEraser` | `(observation, feature)` | Remove the linearly predictable subject subspace |
+| `leace` | `LeaceEraser` | `(observation, feature)` | Erase the directions in which subjects differ most |
 | `ea_mean` | `EuclideanAlign` | `(observation, feature)` | Center every subject |
 | `ea_coral` | `EuclideanAlign` | `(observation, feature)` | Center and whiten every subject |
 | `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter subject covariance matrices and project to tangent space |

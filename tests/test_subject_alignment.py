@@ -10,6 +10,7 @@ import pytest
 
 from coco_pipe.diagnostics.variance import (
     crossed_ss_fractions,
+    direction_traits,
     nested_ss,
     null_control,
     omega_squared_from_ss,
@@ -37,16 +38,82 @@ def _subject_data(n_subjects=8, per=30, d=12, seed=0):
     return x, groups, labels
 
 
-def test_leace_erases_linear_subject_axis_and_flags_dimension_limit():
-    x, groups, _ = _subject_data()
-    pre, _ = subject_probe(x, groups)
-    eraser = LeaceEraser().fit(x, groups=groups)
-    post, _ = subject_probe(eraser.transform(x, groups=groups), groups)
-    assert pre is not None and post is not None and post < pre - 0.2
-    assert not eraser.degenerate_
+def _condition_data(n_subjects=60, per=30, d=12, seed=0):
+    """Subjects differing in 3 directions, a shared condition shift in a 4th,
+    and each subject with its own share of the condition."""
+    rng = np.random.default_rng(seed)
+    subject = np.repeat(np.arange(n_subjects), per)
+    share = rng.uniform(0.0, 1.0, n_subjects)
+    condition = (rng.random(len(subject)) < share[subject]).astype(int)
+    x = rng.standard_normal((len(subject), d))
+    x[:, :3] += rng.standard_normal((n_subjects, 3))[subject] * 4.0
+    x[:, 3] += 3.0 * condition
+    return x, subject, condition
 
-    small_x, small_groups, _ = _subject_data(n_subjects=10, per=6, d=4)
-    assert LeaceEraser().fit(small_x, groups=small_groups).degenerate_
+
+def test_leace_erases_the_subject_directions_and_keeps_the_condition():
+    x, subject, condition = _condition_data()
+
+    def shift(values):
+        return values[condition == 1, 3].mean() - values[condition == 0, 3].mean()
+
+    eraser = LeaceEraser().fit(x, groups=subject, condition=condition)
+    erased = eraser.transform(x)
+    assert eraser.rank_ == 3
+    assert crossed_ss_fractions(x, subject, condition)["subject_frac"] > 0.7
+    assert crossed_ss_fractions(erased, subject, condition)["subject_frac"] < 0.15
+    assert shift(erased) == pytest.approx(shift(x), abs=0.1)
+
+    # Without the conditions, a subject's share of them looks like identity.
+    blind = LeaceEraser(eta2=0.2).fit(x, groups=subject)
+    assert blind.rank_ == 4 and abs(shift(blind.transform(x))) < 0.5
+    assert LeaceEraser(eta2=0.2).fit(x, groups=subject, condition=condition).rank_ == 3
+
+    # The projector carries over to subjects it was not fitted on.
+    seen = subject < 40
+    unseen = LeaceEraser().fit(x[seen], groups=subject[seen], condition=condition[seen])
+    assert (
+        crossed_ss_fractions(
+            unseen.transform(x[~seen]), subject[~seen], condition[~seen]
+        )["subject_frac"]
+        < 0.15
+    )
+
+
+def test_leace_refuses_to_erase_almost_everything():
+    x, subject, _ = _condition_data()
+    with pytest.raises(ValueError, match="would erase 12 of 12"):
+        LeaceEraser(eta2=0.0).fit(x, groups=subject)
+    # max_rank bounds the directions erased; with eta2=0 it is their number.
+    assert LeaceEraser(eta2=0.0, max_rank=5).fit(x, groups=subject).rank_ == 5
+    assert LeaceEraser(max_rank=2).fit(x, groups=subject).rank_ == 2
+
+
+def test_direction_traits_names_what_the_subject_directions_carry():
+    rng = np.random.default_rng(0)
+    n_subjects = 80
+    subject = np.repeat(np.arange(n_subjects), 20)
+    age = rng.uniform(5.0, 60.0, n_subjects)
+    sex = rng.choice(["F", "M"], n_subjects)
+    x = rng.standard_normal((len(subject), 8))
+    x[:, 0] += 0.2 * (age - age.mean())[subject]
+    x[:, 1] += np.where(sex == "F", -2.0, 2.0)[subject]
+    traits = pd.DataFrame(
+        {"age": age, "sex": sex, "noise": rng.standard_normal(n_subjects)}
+    )
+    traits.loc[:9, "age"] = np.nan
+
+    eraser = LeaceEraser(eta2=0.0, max_rank=2).fit(x, groups=subject)
+    table = direction_traits(eraser, x, subject, traits, n_directions=3)
+    r2 = table.pivot(index="trait", columns="direction", values="r2")
+    assert r2.loc["age", 0] > 0.9 and r2.loc["sex", 1] > 0.9
+    assert r2.loc["noise"].max() < 0.1 and r2[2].max() < 0.1
+    assert table.groupby("trait")["n_subjects"].first().to_dict() == {
+        "age": 70,
+        "noise": 80,
+        "sex": 80,
+    }
+    assert table.loc[table["erased"], "direction"].unique().tolist() == [0, 1]
 
 
 @pytest.mark.parametrize(
@@ -198,8 +265,8 @@ def test_registry_and_fingerprint_are_stable():
         assert transform.name == name
         assert transform.fingerprint() == transform.fingerprint()
     assert (
-        make_subject_transform("leace", shrinkage=True).fingerprint()
-        != make_subject_transform("leace", shrinkage=False).fingerprint()
+        make_subject_transform("leace", eta2=0.5).fingerprint()
+        != make_subject_transform("leace", eta2=0.3).fingerprint()
     )
     with pytest.raises(ValueError, match="Unknown subject transform"):
         make_subject_transform("missing")

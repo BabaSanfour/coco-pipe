@@ -211,3 +211,50 @@ def test_precomputed_erasure_reused_matches_inline_fold_local():
         rtol=1e-9,
         atol=1e-9,
     )
+
+
+def test_leace_erasure_uses_the_condition_column_and_fails_when_degenerate():
+    rng = np.random.default_rng(3)
+    n_subjects, per, d = 40, 30, 12
+    subject = np.repeat(np.arange(n_subjects), per)
+    share = rng.uniform(0.0, 1.0, n_subjects)
+    condition = (rng.random(len(subject)) < share[subject]).astype(int)
+    x = rng.standard_normal((len(subject), d))
+    x[:, :3] += rng.standard_normal((n_subjects, 3))[subject] * 4.0
+    x[:, 3] += 3.0 * condition
+    metadata = {
+        "Subject": subject,
+        "Session": np.full(len(subject), "01"),
+        "condition": condition,
+    }
+
+    def run(params, condition_column=None):
+        config = ExperimentConfig(
+            task="classification",
+            models={"lr": LogisticRegressionConfig(max_iter=1000)},
+            metrics=["balanced_accuracy"],
+            cv=CVConfig(strategy="group_kfold", n_splits=4),
+            erasure=ErasureConfig(
+                enabled=True,
+                method="leace",
+                params=params,
+                condition_column=condition_column,
+            ),
+            n_jobs=1,
+            verbose=False,
+        )
+        return Experiment(config).run(
+            x, condition, groups=subject, sample_metadata=metadata
+        )
+
+    def score(result):
+        predictions = result.get_predictions()
+        return balanced_accuracy_score(predictions["y_true"], predictions["y_pred"])
+
+    # A low threshold erases the condition too, unless the eraser gets it.
+    assert score(run({"eta2": 0.2}, condition_column="condition")) > 0.85
+    assert score(run({"eta2": 0.2})) < 0.65
+
+    degenerate = run({"eta2": 0.0}).raw["lr"]
+    assert degenerate["status"] == "failed"
+    assert "would erase" in str(degenerate["error"])
