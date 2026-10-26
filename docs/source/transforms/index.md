@@ -15,10 +15,19 @@ The public registry exposes four methods:
 
 | Registry name | Class | Input | Main operation |
 |---|---|---|---|
-| `leace` | `LeaceEraser` | `(observation, feature)` | Remove the linearly predictable subject subspace |
+| `leace` | `LeaceEraser` | `(observation, feature)` | Erase the directions in which subjects differ most |
 | `ea_mean` | `EuclideanAlign` | `(observation, feature)` | Center every subject |
 | `ea_coral` | `EuclideanAlign` | `(observation, feature)` | Center and whiten every subject |
-| `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter subject covariance matrices and project to tangent space |
+| `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter each subject's token covariances and project to tangent space |
+
+`ea_mean`, `ea_coral` and `ra` recenter every subject, so they remove labels that
+are constant within a subject (a diagnosis, age); `leace` is learned on training
+subjects and can keep such a label (see the guide).
+
+Each also has a `label` (`Leace`, `EaMean`, `EaCoral`, `Ra`; `EaMeanCh` and
+`EaCoralCh` with `channel_axis`), which
+{func}`~coco_pipe.io.write_transformed_embeddings` adds to the label of the
+embedding files it writes.
 
 Temporal trajectories also support participant-specific PCA plus orthogonal
 Procrustes alignment:

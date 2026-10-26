@@ -238,6 +238,7 @@ def fit_and_score_fold(
     force_serial: bool = False,
     sample_weight: np.ndarray | None = None,
     score_by: str | None = None,
+    erasure_condition_column: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -284,6 +285,9 @@ def fit_and_score_fold(
     sample_weight : np.ndarray, optional
         Per-sample weights for the full dataset. Only the training-fold
         slice is forwarded to the classifier; test samples are never weighted.
+    erasure_condition_column : str, optional
+        Sample-metadata column whose training-fold slice is given to the
+        erasure step's fit as ``condition``.
 
     Returns
     -------
@@ -327,6 +331,10 @@ def fit_and_score_fold(
         X_test = aligner.transform(X_test, groups=test_groups)
         alignment_time = time.perf_counter() - alignment_start
     routing_pipeline = _wrapped_pipeline(estimator)
+    # EA aligns each test subject on its own samples; LEACE's projector needs no groups.
+    erasure_step = (
+        routing_pipeline.named_steps.get("erasure") if routing_pipeline else None
+    )
     _needs_group_routing = (
         test_groups is not None
         and routing_pipeline is not None
@@ -334,7 +342,7 @@ def fit_and_score_fold(
             isinstance(
                 routing_pipeline.named_steps.get("scaler"), SubjectStandardScaler
             )
-            or "erasure" in routing_pipeline.named_steps
+            or (erasure_step is not None and not erasure_step.fold_local)
         )
     )
     captured_warnings = []
@@ -359,6 +367,11 @@ def fit_and_score_fold(
                 calibration_config=calibration_config,
                 tuning_config=tuning_config,
                 sample_weight=sw_train,
+                condition_train=(
+                    sample_metadata[erasure_condition_column][train_idx]
+                    if erasure_condition_column is not None
+                    else None
+                ),
             )
     fit_time = time.perf_counter() - fit_start
     captured_warnings.extend(warning_records_to_dict("fit", warning_records))
@@ -522,6 +535,7 @@ def fit_estimator(
     calibration_config: Any,
     tuning_config: Any = None,
     sample_weight: np.ndarray | None = None,
+    condition_train: np.ndarray | None = None,
 ) -> None:
     """
     Fit an estimator with intelligent metadata and group routing.
@@ -552,6 +566,9 @@ def fit_estimator(
         Per-sample weights for the training fold. Forwarded as
         ``clf__sample_weight`` when the pipeline's ``clf`` step exposes
         a ``sample_weight`` parameter in its ``fit`` signature.
+    condition_train : np.ndarray, optional
+        Training condition of each sample, forwarded as ``erasure__condition``
+        to an erasure step whose ``fit`` takes ``condition``.
     """
     from sklearn.calibration import CalibratedClassifierCV
     from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
@@ -596,6 +613,8 @@ def fit_estimator(
             erasure_step = pipeline.named_steps["erasure"]
             if "groups" in inspect.signature(erasure_step.fit).parameters:
                 fit_params["erasure__groups"] = groups_train
+            if condition_train is not None:
+                fit_params["erasure__condition"] = condition_train
         if isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
             classifier_step = pipeline.named_steps["clf"]
             if "groups" in inspect.signature(classifier_step.fit).parameters:

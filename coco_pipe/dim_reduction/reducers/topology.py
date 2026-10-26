@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from ...utils import import_optional_dependency
+from ...utils import import_optional_dependency, resolve_device
 from .base import ArrayLike, BaseReducer
 
 __all__ = ["TopologicalAEReducer", "TopologicalSignatureDistance"]
@@ -64,35 +64,6 @@ def _load_gudhi():
         dependency="gudhi",
         install_hint="pip install coco-pipe[topology]",
     )
-
-
-def _resolve_device(device: str) -> str:
-    """
-    Resolve the execution device for topology models.
-
-    Parameters
-    ----------
-    device : str
-        Requested device identifier. If set to `"auto"`, available backends
-        are probed in the order CUDA, MPS, CPU.
-
-    Returns
-    -------
-    str
-        Concrete device identifier to use during training and inference.
-    """
-    if device != "auto":
-        return device
-
-    try:
-        torch = _load_torch()
-        if torch.cuda.is_available():
-            return "cuda"
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            return "mps"
-    except Exception:
-        pass  # Fallback to CPU on any backend probing error
-    return "cpu"
 
 
 def _filter_skorch_params(params: dict) -> dict:
@@ -423,7 +394,7 @@ class TopologicalAEReducer(BaseReducer):
             install_hint="pip install coco-pipe[topology]",
         )
 
-        self.device = _resolve_device(self.requested_device)
+        self.device = resolve_device(self.requested_device)
         self.input_dim_ = int(X_cast.shape[1])
         estimator_kwargs = {
             **_filter_skorch_params(self.params),

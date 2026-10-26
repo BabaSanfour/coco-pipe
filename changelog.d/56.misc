@@ -1,0 +1,1 @@
+`RiemannAlign` imports from `pyriemann.geometry`, so it keeps working with pyriemann 0.14, which removes `pyriemann.utils.mean` and `pyriemann.utils.tangentspace`; coco-pipe requires pyriemann 0.12 or later.

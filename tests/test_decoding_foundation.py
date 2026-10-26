@@ -167,13 +167,13 @@ def test_unregister_backend_errors():
 
 
 def test_resolve_device_override():
-    from coco_pipe.decoding.foundation_models._loader import _resolve_device
+    from coco_pipe.utils import resolve_device
 
-    assert _resolve_device("cuda") == "cuda"
-    assert _resolve_device("cpu") == "cpu"
+    assert resolve_device("cpu") == "cpu"
     # Test auto device resolution under different environments
     with patch("torch.cuda.is_available", return_value=True):
-        assert _resolve_device("auto") == "cuda"
+        assert resolve_device("cuda") == "cuda"
+        assert resolve_device("auto") == "cuda"
 
 
 @patch("coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor")

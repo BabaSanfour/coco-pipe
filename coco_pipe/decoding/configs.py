@@ -967,6 +967,22 @@ class ErasureConfig(BaseModel):
     enabled: bool = False
     method: Literal["leace", "ea_coral", "ea_mean"] = "leace"
     params: dict[str, Any] = Field(default_factory=dict)
+    condition_column: str | None = Field(
+        None,
+        description=(
+            "Sample-metadata column with each sample's condition, given to the "
+            "LEACE eraser's fit on the training samples, so a subject's share of "
+            "each condition is not erased as its identity."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_condition_column(self) -> ErasureConfig:
+        if self.condition_column is not None and self.method != "leace":
+            raise ValueError(
+                f"condition_column only applies to method='leace', not {self.method!r}."
+            )
+        return self
 
 
 class TemporalAlignmentConfig(BaseModel):
@@ -1402,5 +1418,21 @@ class ExperimentConfig(BaseModel):
             raise ValueError(
                 "Calibration is enabled but calibration.cv is not defined."
             )
+
+        # 7. EA erasure aligns each test subject on its own samples, so it needs their
+        # groups at predict time, which neither a search's inner scoring nor
+        # calibration passes on (LEACE's projector needs none).
+        if self.erasure.enabled and self.erasure.method != "leace":
+            for name, used in (
+                ("tuning", self.tuning.enabled),
+                ("calibration", self.calibration.enabled),
+            ):
+                if used:
+                    raise ValueError(
+                        f"erasure method {self.erasure.method!r} cannot be combined "
+                        f"with {name}: it aligns each test subject on its own "
+                        f"samples, and {name} predicts without their groups. Use "
+                        "method='leace' or turn it off."
+                    )
 
         return self

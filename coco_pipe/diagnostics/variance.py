@@ -506,6 +506,89 @@ def subject_probe(
     return float(mean_ba), n_subjects
 
 
+def direction_traits(
+    eraser,
+    features,
+    subject,
+    traits: pd.DataFrame,
+    *,
+    n_directions: int | None = None,
+    condition=None,
+) -> pd.DataFrame:
+    """How much of each subject direction of a fitted eraser each trait explains.
+
+    Each row of ``features`` is scored on the directions of ``eraser`` (a
+    fitted :class:`~coco_pipe.transforms.LeaceEraser`, largest subject eta^2
+    first), and the scores are averaged per subject. For each direction and
+    trait, ``r2`` is the share of the variance of these subject means that the
+    trait explains: the squared correlation for a numeric trait, eta^2 across
+    its levels for any other. A trait that explains much of an erased direction
+    is erased with it. Subjects missing a trait are left out of its rows.
+
+    Parameters
+    ----------
+    eraser : coco_pipe.transforms.LeaceEraser
+        The fitted eraser.
+    features : array-like of shape (n_samples, n_features)
+        The vectors, e.g. the ones the eraser was fitted on.
+    subject : array-like of shape (n_samples,)
+        The subject of each row, as in the index of ``traits``.
+    traits : DataFrame
+        One row per subject, one column per trait, e.g. age, sex or diagnosis.
+    n_directions : int, optional
+        Number of directions, largest eta^2 first. Defaults to the erased ones.
+    condition : array-like of shape (n_samples,), optional
+        The condition of each row. The scores are then centered on their
+        condition's mean before averaging, as in a fit with ``condition``.
+
+    Returns
+    -------
+    DataFrame
+        One row per direction and trait: ``direction`` (0 has the largest
+        eta^2), ``eta2``, ``erased``, ``trait``, ``r2`` and ``n_subjects``.
+    """
+    x = np.asarray(features, dtype=np.float64)
+    groups = np.asarray(subject)
+    if x.ndim != 2 or groups.shape != (len(x),):
+        raise ValueError("features and subject must have matching sample counts.")
+    n = eraser.rank_ if n_directions is None else int(n_directions)
+    scores = (x - eraser.mu_) @ eraser.components_[:n].T
+    if condition is not None:
+        condition = np.asarray(condition)
+        for level in pd.unique(condition):
+            scores[condition == level] -= scores[condition == level].mean(0)
+    means = pd.DataFrame(scores).groupby(groups).mean()
+    frames = []
+    for trait, values in traits.reindex(means.index).items():
+        known = values.notna().to_numpy()
+        y = means.to_numpy()[known]
+        y = y - y.mean(0)
+        if pd.api.types.is_numeric_dtype(values):
+            t = values.to_numpy(dtype=np.float64)[known]
+            t = t - t.mean()
+            explained = (t @ y) ** 2 / (t @ t)
+        else:
+            codes = _factorize(values[known].to_numpy())[0]
+            sums = np.zeros((codes.max() + 1, n))
+            np.add.at(sums, codes, y)
+            explained = (sums**2 / np.bincount(codes)[:, None]).sum(0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r2 = explained / (y**2).sum(0)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "direction": np.arange(n),
+                    "eta2": eraser.eta2_[:n],
+                    "erased": np.arange(n) < eraser.rank_,
+                    "trait": trait,
+                    "r2": r2,
+                    "n_subjects": int(known.sum()),
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
 def _container_vector(
     container: DataContainer,
     value: str | Any | None,
