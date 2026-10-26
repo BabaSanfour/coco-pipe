@@ -18,7 +18,11 @@ The public registry exposes four methods:
 | `leace` | `LeaceEraser` | `(observation, feature)` | Erase the directions in which subjects differ most |
 | `ea_mean` | `EuclideanAlign` | `(observation, feature)` | Center every subject |
 | `ea_coral` | `EuclideanAlign` | `(observation, feature)` | Center and whiten every subject |
-| `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter subject covariance matrices and project to tangent space |
+| `ra` | `RiemannAlign` | `(window, token, feature)` | Recenter each subject's token covariances and project to tangent space |
+
+`ea_mean`, `ea_coral` and `ra` recenter every subject, so they remove labels that
+are constant within a subject (a diagnosis, age); `leace` is learned on training
+subjects and can keep such a label (see the guide).
 
 Temporal trajectories also support participant-specific PCA plus orthogonal
 Procrustes alignment:

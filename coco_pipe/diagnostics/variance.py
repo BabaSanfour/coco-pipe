@@ -527,7 +527,7 @@ def direction_traits(
 
     Parameters
     ----------
-    eraser : LeaceEraser
+    eraser : coco_pipe.transforms.LeaceEraser
         The fitted eraser.
     features : array-like of shape (n_samples, n_features)
         The vectors, e.g. the ones the eraser was fitted on.

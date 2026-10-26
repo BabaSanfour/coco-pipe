@@ -1,12 +1,20 @@
 # Subject alignment
 
-Subject-alignment transforms reduce stable subject identity in learned
-representations. They are useful when subject-specific offsets or covariance
-structure dominate the scientific label of interest.
+Subject-alignment transforms reduce subject identity in learned
+representations. There are two kinds:
 
-These transforms are experimental. Alignment changes the representation and
-can remove label signal when label and subject are confounded. Always compare
-label decoding and subject diagnostics before and after alignment.
+- **`leace`** learns, on training subjects, the directions in which subjects
+  differ most and erases them; the projector then applies to new subjects
+  without their groups.
+- **`ea_mean`, `ea_coral` and `ra`** recenter every subject on its own
+  statistics, the test subjects included.
+
+Recentering every subject removes whatever is constant within a subject, so
+the per-subject methods suit targets that vary within a subject (a condition, a
+state), not traits such as a diagnosis, age or sex. To reduce identity while
+keeping a trait, use `leace` with the trait as `condition` (see
+[LEACE erasure](#leace-erasure)). Compare label decoding and subject
+diagnostics before and after any alignment.
 
 ## Direct use
 
@@ -60,10 +68,12 @@ after fitting and needs no groups, so it works with both.
 
 ## Fit scope and leakage
 
-The class attribute `fold_local` describes whether a transform intrinsically
-requires training-fold fitting; it does not change `Experiment` behavior.
-`Experiment` always places enabled vector erasure inside the fold-local
-pipeline.
+The class attribute `fold_local` says whether a transform is learned on
+training subjects and then applies to new ones without their groups (`leace`),
+or needs each subject's own samples at transform time (the others).
+`Experiment` always places enabled vector erasure inside the fold pipeline,
+and passes the test subjects' groups at prediction only to a transform that is
+not fold-local.
 
 | Method | `fold_local` | Unseen subject at `transform` | Precomputation guidance |
 |---|---:|---|---|
@@ -114,8 +124,15 @@ When the windows belong to conditions (e.g. eyes open and closed), pass them to
 `fit` as `condition`: `S_b` is then taken from the subject x condition cell
 means around their condition's mean. A subject with more windows of one
 condition does not count that as identity, and a difference between conditions
-that the subjects share is kept. In `Experiment`, name the column of
-`sample_metadata` that holds them:
+that the subjects share is kept.
+
+`condition` can also be a trait, such as a diagnosis. Each subject then has one
+level, `S_b` holds only how subjects differ within their group, and the
+directions that separate the groups are less likely to be erased. A direction
+that carries both is still erased whole, so part of the group difference can go
+with it. The eraser uses the training subjects' labels only.
+
+In `Experiment`, name the column of `sample_metadata` that holds the condition:
 
 ```python
 ErasureConfig(enabled=True, method="leace", condition_column="condition")
@@ -212,31 +229,22 @@ is useful when a downstream method consumes SPD matrices directly.
 
 ## Choosing a method
 
-- Use `leace` when the target is a 2-D embedding and the goal is to remove
-  the directions that carry subject identity most, with a projector learned on
-  training subjects only.
-- Use `ea_mean` when subject offsets dominate but within-subject geometry should
-  otherwise remain unchanged.
-- Use `ea_coral` when both offsets and subject-specific covariance/scaling are
-  nuisance structure.
-- Use `ra` for token sequences where covariance geometry is itself the desired
-  representation.
+| Target | Method |
+|---|---|
+| Varies within a subject (condition, state, task) | `ea_mean`: subject offsets removed, within-subject geometry kept; `ea_coral`: offsets and each subject's covariance; `ra`: token covariances, recentered per subject |
+| Constant within a subject (diagnosis, age, sex) | `leace`, fitted in the folds; with the trait as `condition` to keep the group difference |
 
-No transform guarantees preservation of the scientific label. If labels are
-constant within subject, label and subject information are partly confounded;
-aggressive alignment can necessarily remove both.
+No transform guarantees preservation of the label of interest.
 
-`ea_mean`, `ea_coral` and `ra` recenter every subject on itself, so they remove a
-label that is constant within a subject (a diagnosis, age, sex) by
-construction: a linear model that averages a subject's predictions gives every
-subject the same score. Use them for targets that vary within a subject. When a
-subject's samples mix conditions in uneven shares (e.g. more eyes-closed than
-eyes-open windows), its reference moves with its share, and within one condition
-the transform leaves each subject shifted by it: a difference between groups in
-those shares then looks like a difference in the label. Take a reference per
-condition by passing `subject x condition` as `groups`. To remove identity but
-keep a trait, fit `leace` in the folds with the trait as `condition`, which
-erases only how subjects differ within their group.
+`ea_mean`, `ea_coral` and `ra` remove a label constant within a subject by
+construction: after recentering, a linear model that averages a subject's
+predictions gives every subject the same score.
+
+When a subject's samples mix conditions in uneven shares (e.g. more eyes-closed
+than eyes-open windows), a per-subject reference moves with the share, and
+within one condition the transform leaves each subject shifted by it. If the
+shares differ between groups, that shift looks like a difference in the label.
+Pass `subject x condition` as `groups` to take a reference per condition.
 
 ## Auditing the result
 
@@ -257,6 +265,10 @@ Compare at least:
 - label decoding under leakage-safe subject-aware CV;
 - LEACE's `rank_` and `eta2_`, and the traits its erased directions carry
   (`direction_traits`), when applicable.
+
+LEACE learns its directions from the subjects it is fitted on, so measured on
+those same subjects the erasure looks more complete than on new ones. Fit it on
+training subjects and report the diagnostics on held-out subjects.
 
 See [Subject and label variance diagnostics](../diagnostics/variance.md) for the
 metric definitions, scaling policy, permutation nulls, and block-aware subject
