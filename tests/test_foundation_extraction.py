@@ -472,6 +472,12 @@ def test_random_weights_settings_refused(settings, message):
         FoundationEmbeddingExtractor("cbramod", **settings)
 
 
+def test_extractor_refuses_cuda_without_a_gpu(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA is not available"):
+        FoundationEmbeddingExtractor("cbramod", device="cuda")
+
+
 def test_store_tokens_incompatible_with_cache():
     with pytest.raises(ValueError, match="store_tokens is incompatible"):
         FoundationEmbeddingExtractor(

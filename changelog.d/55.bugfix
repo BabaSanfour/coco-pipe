@@ -1,0 +1,1 @@
+A transformed embedding file no longer repeats its source's `NormalizeEmbeddings`, which described the source's vectors, not the transformed ones. Its `Transform` setting records LEACE's fitted `rank` and `n_subjects`, and, with `write_transformed_embeddings(..., fitted_on=...)`, what the transform was fitted on.

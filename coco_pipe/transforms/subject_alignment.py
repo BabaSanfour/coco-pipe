@@ -24,9 +24,14 @@ def _require_groups(groups: Any, n_samples: int) -> np.ndarray:
 
 
 class SubjectAlignment(BaseEstimator, TransformerMixin):
-    """Base class for subject-alignment estimators."""
+    """Base class for subject-alignment estimators.
+
+    ``label`` is the transform's part of the ``desc`` label of the embedding
+    files it writes (see :func:`~coco_pipe.io.embedding_label`).
+    """
 
     name = "identity"
+    label = "Identity"
     fold_local: bool = False
 
     def fingerprint(self) -> str:
@@ -120,6 +125,7 @@ class LeaceEraser(SubjectAlignment):
     """
 
     name = "leace"
+    label = "Leace"
     fold_local = True
 
     def __init__(
@@ -256,6 +262,11 @@ class EuclideanAlign(SubjectAlignment):
             self.set_fit_request(groups=True)
             self.set_transform_request(groups=True)
 
+    @property
+    def label(self) -> str:
+        """``EaMean`` or ``EaCoral``, followed by ``Ch`` with ``channel_axis``."""
+        return f"Ea{self.mode.capitalize()}{'' if self.channel_axis is None else 'Ch'}"
+
     def _stats(self, xs: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
         xs = np.asarray(xs, dtype=np.float64)
         axes = tuple(i for i in range(xs.ndim - 1) if i != self.channel_axis)
@@ -361,6 +372,7 @@ class RiemannAlign(SubjectAlignment):
     """Per-subject Riemannian recentering followed by tangent projection."""
 
     name = "ra"
+    label = "Ra"
 
     def __init__(self, *, shrinkage: float = 0.1):
         self.shrinkage = shrinkage

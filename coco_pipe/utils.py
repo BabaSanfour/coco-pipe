@@ -208,6 +208,33 @@ def slug(value: object, *, max_len: int = 80) -> str:
     return text[:max_len]
 
 
+class NoDataError(RuntimeError):
+    """Nothing matches what was asked for, and nothing failed to load."""
+
+
+def resolve_device(device: str) -> str:
+    """Resolve a torch device: ``"auto"`` picks CUDA, MPS or the CPU.
+
+    Raises :class:`RuntimeError` for a CUDA device when CUDA is not available.
+    """
+    if device.startswith("cuda"):
+        import torch
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"device is {device!r}, but CUDA is not available.")
+    if device != "auto":
+        return device
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def resolve_n_jobs(n_jobs: int) -> int:
     """Resolve ``n_jobs`` to a concrete positive integer.
 

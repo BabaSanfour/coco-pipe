@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ...utils import resolve_device
 from ..registry import get_foundation_model_spec
 from ._base import BackendBase
 from ._braindecode import BrainDecodeBackend
@@ -112,25 +113,10 @@ def load(
         model_key,
         spec,
         n_outputs=n_outputs,
-        device=_resolve_device(device),
+        device=resolve_device(device),
         train_mode=train_mode,
         **backend_kwargs,
     )
     if signal_metadata is not None:
         backend_obj.signal_metadata_ = signal_metadata
     return backend_obj
-
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return "cuda"
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            return "mps"
-    except ImportError:
-        pass  # Fallback to CPU if torch is not installed
-    return "cpu"

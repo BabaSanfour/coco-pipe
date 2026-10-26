@@ -24,6 +24,11 @@ The public registry exposes four methods:
 are constant within a subject (a diagnosis, age); `leace` is learned on training
 subjects and can keep such a label (see the guide).
 
+Each also has a `label` (`Leace`, `EaMean`, `EaCoral`, `Ra`; `EaMeanCh` and
+`EaCoralCh` with `channel_axis`), which
+{func}`~coco_pipe.io.write_transformed_embeddings` adds to the label of the
+embedding files it writes.
+
 Temporal trajectories also support participant-specific PCA plus orthogonal
 Procrustes alignment:
 
