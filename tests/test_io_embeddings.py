@@ -290,7 +290,8 @@ def test_transformed_embeddings_round_trip(tmp_path):
     assert loaded.meta["recordings"] == tokens.meta["recordings"]
     # The source's normalisation does not describe the transformed vectors.
     source = dict(tokens.meta["config"])
-    assert source.pop("NormalizeEmbeddings") is True
+    normalized = source.pop("NormalizeEmbeddings")
+    assert normalized is True
     assert loaded.meta["config"] == {
         **source,
         "Transform": {
