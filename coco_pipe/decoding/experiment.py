@@ -881,6 +881,11 @@ class Experiment:
                 force_serial=(n_jobs == 1),
                 sample_weight=sample_weight,
                 score_by=self.config.cv.score_by,
+                erasure_condition_column=(
+                    self.config.erasure.condition_column
+                    if self.config.erasure.enabled
+                    else None
+                ),
             )
             for train_idx, test_idx in splits
         )
@@ -1023,6 +1028,19 @@ class Experiment:
             if score_by.capitalize() not in meta.columns:
                 raise ValueError(f"score_by '{score_by}' not found in sample_metadata.")
             meta[score_by] = meta[score_by.capitalize()]
+
+        condition = self.config.erasure.condition_column
+        if (
+            self.config.erasure.enabled
+            and condition is not None
+            and condition not in meta.columns
+        ):
+            if condition.capitalize() not in meta.columns:
+                raise ValueError(
+                    f"erasure condition_column '{condition}' not found in "
+                    "sample_metadata."
+                )
+            meta[condition] = meta[condition.capitalize()]
 
         # Validation: Grouped strategies with only 1 group will fail in sklearn
         if has_grouped_cv:

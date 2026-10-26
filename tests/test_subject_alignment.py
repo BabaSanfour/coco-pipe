@@ -10,6 +10,7 @@ import pytest
 
 from coco_pipe.diagnostics.variance import (
     crossed_ss_fractions,
+    direction_traits,
     nested_ss,
     null_control,
     omega_squared_from_ss,
@@ -37,16 +38,82 @@ def _subject_data(n_subjects=8, per=30, d=12, seed=0):
     return x, groups, labels
 
 
-def test_leace_erases_linear_subject_axis_and_flags_dimension_limit():
-    x, groups, _ = _subject_data()
-    pre, _ = subject_probe(x, groups)
-    eraser = LeaceEraser().fit(x, groups=groups)
-    post, _ = subject_probe(eraser.transform(x, groups=groups), groups)
-    assert pre is not None and post is not None and post < pre - 0.2
-    assert not eraser.degenerate_
+def _condition_data(n_subjects=60, per=30, d=12, seed=0):
+    """Subjects differing in 3 directions, a shared condition shift in a 4th,
+    and each subject with its own share of the condition."""
+    rng = np.random.default_rng(seed)
+    subject = np.repeat(np.arange(n_subjects), per)
+    share = rng.uniform(0.0, 1.0, n_subjects)
+    condition = (rng.random(len(subject)) < share[subject]).astype(int)
+    x = rng.standard_normal((len(subject), d))
+    x[:, :3] += rng.standard_normal((n_subjects, 3))[subject] * 4.0
+    x[:, 3] += 3.0 * condition
+    return x, subject, condition
 
-    small_x, small_groups, _ = _subject_data(n_subjects=10, per=6, d=4)
-    assert LeaceEraser().fit(small_x, groups=small_groups).degenerate_
+
+def test_leace_erases_the_subject_directions_and_keeps_the_condition():
+    x, subject, condition = _condition_data()
+
+    def shift(values):
+        return values[condition == 1, 3].mean() - values[condition == 0, 3].mean()
+
+    eraser = LeaceEraser().fit(x, groups=subject, condition=condition)
+    erased = eraser.transform(x)
+    assert eraser.rank_ == 3
+    assert crossed_ss_fractions(x, subject, condition)["subject_frac"] > 0.7
+    assert crossed_ss_fractions(erased, subject, condition)["subject_frac"] < 0.15
+    assert shift(erased) == pytest.approx(shift(x), abs=0.1)
+
+    # Without the conditions, a subject's share of them looks like identity.
+    blind = LeaceEraser(eta2=0.2).fit(x, groups=subject)
+    assert blind.rank_ == 4 and abs(shift(blind.transform(x))) < 0.5
+    assert LeaceEraser(eta2=0.2).fit(x, groups=subject, condition=condition).rank_ == 3
+
+    # The projector carries over to subjects it was not fitted on.
+    seen = subject < 40
+    unseen = LeaceEraser().fit(x[seen], groups=subject[seen], condition=condition[seen])
+    assert (
+        crossed_ss_fractions(
+            unseen.transform(x[~seen]), subject[~seen], condition[~seen]
+        )["subject_frac"]
+        < 0.15
+    )
+
+
+def test_leace_refuses_to_erase_almost_everything():
+    x, subject, _ = _condition_data()
+    with pytest.raises(ValueError, match="would erase 12 of 12"):
+        LeaceEraser(eta2=0.0).fit(x, groups=subject)
+    # max_rank bounds the directions erased; with eta2=0 it is their number.
+    assert LeaceEraser(eta2=0.0, max_rank=5).fit(x, groups=subject).rank_ == 5
+    assert LeaceEraser(max_rank=2).fit(x, groups=subject).rank_ == 2
+
+
+def test_direction_traits_names_what_the_subject_directions_carry():
+    rng = np.random.default_rng(0)
+    n_subjects = 80
+    subject = np.repeat(np.arange(n_subjects), 20)
+    age = rng.uniform(5.0, 60.0, n_subjects)
+    sex = rng.choice(["F", "M"], n_subjects)
+    x = rng.standard_normal((len(subject), 8))
+    x[:, 0] += 0.2 * (age - age.mean())[subject]
+    x[:, 1] += np.where(sex == "F", -2.0, 2.0)[subject]
+    traits = pd.DataFrame(
+        {"age": age, "sex": sex, "noise": rng.standard_normal(n_subjects)}
+    )
+    traits.loc[:9, "age"] = np.nan
+
+    eraser = LeaceEraser(eta2=0.0, max_rank=2).fit(x, groups=subject)
+    table = direction_traits(eraser, x, subject, traits, n_directions=3)
+    r2 = table.pivot(index="trait", columns="direction", values="r2")
+    assert r2.loc["age", 0] > 0.9 and r2.loc["sex", 1] > 0.9
+    assert r2.loc["noise"].max() < 0.1 and r2[2].max() < 0.1
+    assert table.groupby("trait")["n_subjects"].first().to_dict() == {
+        "age": 70,
+        "noise": 80,
+        "sex": 80,
+    }
+    assert table.loc[table["erased"], "direction"].unique().tolist() == [0, 1]
 
 
 @pytest.mark.parametrize(
@@ -89,6 +156,16 @@ def test_euclidean_alignment_centers_and_whitens_each_subject():
         np.testing.assert_allclose(
             np.cov(whitened[rows], rowvar=False), np.eye(x.shape[1]), atol=0.1
         )
+
+    # With shrinkage, the output size does not follow a subject's sample count.
+    rng = np.random.default_rng(3)
+    counts = np.array([5, 20, 200])
+    groups = np.repeat(np.arange(3), counts)
+    x = rng.standard_normal((counts.sum(), 30))
+    whitened = EuclideanAlign("coral").fit_transform(x, groups=groups)
+    for sid in range(3):
+        norms = np.sum(whitened[groups == sid] ** 2, axis=1)
+        assert norms.mean() == pytest.approx(30.0)
 
 
 def _subject_tokens(n_subjects=4, per=20, axes=(3, 5), d=6, seed=0):
@@ -179,17 +256,28 @@ def test_euclidean_alignment_can_center_each_channel():
     )
 
 
-def test_riemann_alignment_returns_finite_tangent_vectors():
+def test_riemann_alignment_recenters_each_subject_on_token_covariances():
     pytest.importorskip("pyriemann")
     rng = np.random.default_rng(2)
-    tokens = rng.standard_normal((24, 15, 6))
     groups = np.repeat(np.arange(4), 6)
-    covariances = tokens_to_covariances(tokens)
-    assert np.linalg.eigvalsh(covariances).min() > 0
+    scales = rng.uniform(0.5, 3.0, (4, 6))
+    tokens = rng.standard_normal((24, 15, 6)) * scales[groups][:, None, :]
     output = RiemannAlign().fit_transform(tokens, groups=groups)
     assert output.shape == (24, 21)
-    assert RiemannAlign().fit(tokens, groups=groups).n_output_features_ == 21
-    assert np.isfinite(output).all()
+
+    # Each subject's tangent vectors average to zero at its own reference.
+    for subject in range(4):
+        np.testing.assert_allclose(output[groups == subject].mean(0), 0.0, atol=1e-6)
+    # Where a window's tokens sit does not matter, only how they co-vary.
+    shifted = tokens + rng.standard_normal((24, 1, 6)) * 10.0
+    np.testing.assert_allclose(
+        RiemannAlign().fit_transform(shifted, groups=groups), output, atol=1e-8
+    )
+    with pytest.raises(ValueError, match="at least two tokens"):
+        tokens_to_covariances(tokens[:, :1])
+    assert np.linalg.eigvalsh(tokens_to_covariances(tokens[:, :3])).min() > 0
+    with pytest.raises(ValueError, match="identical tokens"):
+        tokens_to_covariances(np.ones((2, 5, 6)))
 
 
 def test_registry_and_fingerprint_are_stable():
@@ -198,17 +286,40 @@ def test_registry_and_fingerprint_are_stable():
         assert transform.name == name
         assert transform.fingerprint() == transform.fingerprint()
     assert (
-        make_subject_transform("leace", shrinkage=True).fingerprint()
-        != make_subject_transform("leace", shrinkage=False).fingerprint()
+        make_subject_transform("leace", eta2=0.5).fingerprint()
+        != make_subject_transform("leace", eta2=0.3).fingerprint()
     )
     with pytest.raises(ValueError, match="Unknown subject transform"):
         make_subject_transform("missing")
 
 
-def test_only_leace_is_fold_local():
-    assert make_subject_transform("leace").fold_local is True
-    for name in ("ea_coral", "ea_mean", "ra"):
-        assert make_subject_transform(name).fold_local is False
+def test_only_leace_transforms_subjects_without_their_groups():
+    x, subject, _ = _condition_data()
+    leace = make_subject_transform("leace").fit(x, groups=subject)
+    assert leace.transform(x).shape == x.shape
+    for name in ("ea_mean", "ea_coral"):
+        aligner = make_subject_transform(name).fit(x, groups=subject)
+        with pytest.raises(ValueError, match="requires groups"):
+            aligner.transform(x)
+
+
+def test_ea_reference_moves_with_the_condition_share_unless_taken_per_condition():
+    x, subject, condition = _condition_data()
+    cell = np.char.add(np.char.add(subject.astype(str), "|"), condition.astype(str))
+    mixed = EuclideanAlign("mean").fit_transform(x, groups=subject)
+    per_condition = EuclideanAlign("mean").fit_transform(x, groups=cell)
+
+    # Within condition 0, a subject's windows sit where its share of condition 1 puts
+    # them on the condition axis (3), unless the reference is taken per condition.
+    kept = [s for s in np.unique(subject) if ((subject == s) & (condition == 0)).any()]
+    share = np.array([condition[subject == s].mean() for s in kept])
+
+    def position(aligned):
+        rows = [(subject == s) & (condition == 0) for s in kept]
+        return np.array([aligned[r, 3].mean() for r in rows])
+
+    assert np.corrcoef(share, position(mixed))[0, 1] < -0.9
+    np.testing.assert_allclose(position(per_condition), 0.0, atol=1e-9)
 
 
 def test_variance_diagnostics_match_null_and_nested_partition():

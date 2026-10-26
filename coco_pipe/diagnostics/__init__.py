@@ -7,6 +7,7 @@ from .streaming_variance import (
 )
 from .variance import (
     crossed_ss_fractions,
+    direction_traits,
     nested_ss,
     null_control,
     omega_squared_from_ss,
@@ -17,6 +18,7 @@ from .variance import (
 __all__ = [
     "DEFAULT_PARTICIPATION_RATIO_MAX_GRAM_BYTES",
     "crossed_ss_fractions",
+    "direction_traits",
     "nested_ss",
     "null_control",
     "omega_squared_from_ss",
