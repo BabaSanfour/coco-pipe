@@ -38,7 +38,7 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
 
     This extractor fits one specparam model per observation and sensor in a
     validated descriptor input array, then exposes scalar summaries such as
-    aperiodic parameters, fit quality, and dominant peak statistics.
+    aperiodic parameters, fit quality, the peak count and the alpha peak.
 
     Parameters
     ----------
@@ -158,9 +158,7 @@ class ParametricDescriptorExtractor(BasePSDDescriptorExtractor):
             metrics.extend(
                 [
                     "peak_count",
-                    "peak_freq_dom",
-                    "peak_power_dom",
-                    "peak_bandwidth_dom",
+                    "alpha_peak_present",
                     "alpha_peak_freq",
                     "alpha_peak_power",
                 ]

@@ -127,33 +127,19 @@ def fit_single_spectrum(
         np.asarray(model.results.get_metrics("gof", "rsquared")).squeeze()
     )
 
+    # Without an alpha peak its frequency and power are undefined (NaN, never filled);
+    # alpha_peak_present records whether there was one.
+    alpha_peak_freq = np.nan
+    alpha_peak_power = np.nan
     if periodic.size == 0 or np.all(np.isnan(periodic)):
         peak_freqs = np.empty(0)
         peak_count = 0.0
-        dominant_freq = np.nan
-        dominant_power = np.nan
-        dominant_bandwidth = np.nan
-        alpha_peak_freq = np.nan
-        alpha_peak_power = np.nan
     else:
         periodic = np.atleast_2d(periodic)
         peak_count = float(periodic.shape[0])
         power = np.asarray(periodic[:, 1], dtype=float)
         valid_power = np.isfinite(power)
         peak_freqs = periodic[valid_power & np.isfinite(periodic[:, 0]), 0]
-        if np.any(valid_power):
-            valid_indices = np.flatnonzero(valid_power)
-            dominant_idx = int(valid_indices[np.nanargmax(power[valid_power])])
-            dominant_freq = float(periodic[dominant_idx, 0])
-            dominant_power = float(periodic[dominant_idx, 1])
-            dominant_bandwidth = (
-                float(periodic[dominant_idx, 2]) if periodic.shape[1] >= 3 else np.nan
-            )
-        else:
-            dominant_freq = np.nan
-            dominant_power = np.nan
-            dominant_bandwidth = np.nan
-
         alpha_mask = (
             valid_power
             & np.isfinite(periodic[:, 0])
@@ -165,9 +151,6 @@ def fit_single_spectrum(
             alpha_idx = int(alpha_indices[np.nanargmax(power[alpha_mask])])
             alpha_peak_freq = float(periodic[alpha_idx, 0])
             alpha_peak_power = float(periodic[alpha_idx, 1])
-        else:
-            alpha_peak_freq = np.nan
-            alpha_peak_power = np.nan
 
     offset = float(aperiodic[0]) if aperiodic.size >= 1 else np.nan
     knee = float(aperiodic[1]) if aperiodic.size == 3 else np.nan
@@ -198,9 +181,7 @@ def fit_single_spectrum(
             "fit_error": error,
             "r_squared": r_squared,
             "peak_count": peak_count,
-            "peak_freq_dom": dominant_freq,
-            "peak_power_dom": dominant_power,
-            "peak_bandwidth_dom": dominant_bandwidth,
+            "alpha_peak_present": float(np.isfinite(alpha_peak_freq)),
             "alpha_peak_freq": alpha_peak_freq,
             "alpha_peak_power": alpha_peak_power,
         },
@@ -259,9 +240,7 @@ def fit_parametric_batch(
             metric_names.extend(
                 [
                     "peak_count",
-                    "peak_freq_dom",
-                    "peak_power_dom",
-                    "peak_bandwidth_dom",
+                    "alpha_peak_present",
                     "alpha_peak_freq",
                     "alpha_peak_power",
                 ]
