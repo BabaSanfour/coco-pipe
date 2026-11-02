@@ -72,9 +72,7 @@ PARAM_SUBFAMILY: dict[str, str] = {
     "r_squared": "fit_quality",
     "fit_error": "fit_quality",
     "peak_count": "peaks",
-    "peak_freq_dom": "peaks",
-    "peak_power_dom": "peaks",
-    "peak_bandwidth_dom": "peaks",
+    "alpha_peak_present": "peaks",
     "alpha_peak_freq": "peaks",
     "alpha_peak_power": "peaks",
 }

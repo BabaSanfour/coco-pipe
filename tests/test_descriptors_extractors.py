@@ -126,11 +126,13 @@ def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
     assert not failures
     for channel in CHANNELS:
         assert (values[f"param_exponent_ch-{channel}"] > 0).all()
-    np.testing.assert_allclose(values["param_peak_freq_dom_ch-Fz"], 10.0, atol=0.5)
     np.testing.assert_allclose(values["param_alpha_peak_freq_ch-Fz"], 10.0, atol=0.5)
-    np.testing.assert_allclose(values["param_peak_freq_dom_ch-Cz"], 20.0, atol=0.5)
-    # Cz has no peak in the alpha band
+    assert (values["param_alpha_peak_present_ch-Fz"] == 1).all()
+    # Cz has a peak, but not in the alpha band
+    assert (values["param_peak_count_ch-Cz"] >= 1).all()
+    assert (values["param_alpha_peak_present_ch-Cz"] == 0).all()
     assert np.isnan(values["param_alpha_peak_freq_ch-Cz"]).all()
+    assert np.isnan(values["param_alpha_peak_power_ch-Cz"]).all()
 
     # a minimum height above every peak leaves only the aperiodic fit
     values, _ = _extract(
@@ -144,6 +146,7 @@ def test_parametric_fit_finds_the_peaks_and_the_aperiodic_slope(signals):
         },
     )
     assert (values["param_peak_count_ch-Fz"] == 0).all()
+    assert (values["param_alpha_peak_present_ch-Fz"] == 0).all()
     assert np.isnan(values["param_alpha_peak_freq_ch-Fz"]).all()
 
 
