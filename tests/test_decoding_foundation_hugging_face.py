@@ -1,9 +1,12 @@
-"""Tests for HuggingFaceBackend (REVE). All network I/O is mocked."""
+"""Tests for HuggingFaceBackend (REVE) on a toy model with REVE's interface.
 
-import copy
-import warnings
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+Only the Hugging Face Hub is replaced: ``AutoModel.from_pretrained`` returns a
+small local model shaped like REVE and its position bank, and each repository
+resolves to a commit of its own without the network.
+"""
+
+import hashlib
+import sys
 
 import numpy as np
 import pytest
@@ -12,267 +15,216 @@ from coco_pipe.decoding._specs import SignalMetadata
 from coco_pipe.decoding.foundation_models._hugging_face import HuggingFaceBackend
 from coco_pipe.decoding.registry import get_estimator_spec
 
+torch = pytest.importorskip("torch")
+transformers = pytest.importorskip("transformers")
 
-@pytest.fixture(autouse=True)
-def commits(monkeypatch):
-    """Resolve every repository to a commit named after it, without the Hub."""
-    monkeypatch.setattr(
-        "coco_pipe.decoding.foundation_models._hugging_face.resolve_revision",
-        lambda repo_id, revision=None, **kwargs: revision or f"{repo_id}@latest",
-    )
+SPEC = get_estimator_spec("reve")
+POSITIONS = "brain-bzh/reve-positions"
+CHANNELS = ["Fp1", "Fp2", "Cz", "Oz"]
 
 
-def test_hugging_face_available_when_packages_present(monkeypatch):
-    monkeypatch.setattr(
-        HuggingFaceBackend, "is_available", classmethod(lambda cls: True)
-    )
-    assert HuggingFaceBackend.is_available()
+def _latest(repo_id):
+    return hashlib.sha1(repo_id.encode()).hexdigest()
 
 
-def test_hugging_face_not_available_without_transformers(monkeypatch):
-    monkeypatch.setattr(
-        HuggingFaceBackend, "is_available", classmethod(lambda cls: False)
-    )
-    assert not HuggingFaceBackend.is_available()
+class TinyReveConfig(transformers.PretrainedConfig):
+    model_type = "tiny-reve"
+
+    def __init__(self, hidden_size=8, patch_size=50, **kwargs):
+        super().__init__(**kwargs)
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
 
 
-def test_hugging_face_not_available_without_torch(monkeypatch):
-    monkeypatch.setattr(
-        HuggingFaceBackend, "is_available", classmethod(lambda cls: False)
-    )
-    assert not HuggingFaceBackend.is_available()
+class TinyReve(transformers.PreTrainedModel):
+    """REVE at toy size: one token per channel and time patch."""
+
+    config_class = TinyReveConfig
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.to_patch_embedding = torch.nn.Linear(config.patch_size, config.hidden_size)
+        self.to_position = torch.nn.Linear(3, config.hidden_size)
+        self.cls_query_token = torch.nn.Parameter(torch.randn(1, 1, config.hidden_size))
+        self.post_init()
+
+    def _init_weights(self, module):
+        """Keep torch's random initialisation of each layer."""
+
+    def forward(self, eeg, pos):
+        size = self.config.patch_size
+        patches = eeg.float().unfold(2, size, size)
+        return self.to_patch_embedding(patches) + self.to_position(pos)[:, :, None]
+
+    def attention_pooling(self, x):
+        # REVE's single-query read-out over all channel and time-patch tokens
+        b, c, s, e = x.shape
+        x = x.reshape(b, c * s, e)
+        scores = self.cls_query_token.expand(b, -1, -1) @ x.transpose(-1, -2)
+        return (torch.softmax(scores / e**0.5, dim=-1) @ x).squeeze(1)
 
 
-def _make_mock_backbone(hidden_size: int = 1024):
-    import torch
+class TinyPositionBank(torch.nn.Module):
+    """REVE's position bank: the 3D position of each channel, by name."""
 
-    backbone = MagicMock()
-    backbone.config.hidden_size = hidden_size
-    backbone.parameters.return_value = []
-    # REVE's forward returns a raw (batch, channels, time_patches, embed_dim)
-    # tensor -- not a HF ModelOutput.
-    backbone.side_effect = lambda x, pos, *a, **kw: torch.zeros(
-        x.shape[0], x.shape[1], 1, hidden_size
-    )
-    return backbone
-
-
-@pytest.fixture()
-def mock_auto_model():
-    backbone = _make_mock_backbone()
-    pos_bank = MagicMock()
-    with (
-        patch(
-            "coco_pipe.decoding.foundation_models._hugging_face.HuggingFaceBackend.is_available",
-            return_value=True,
-        ),
-        patch(
-            "transformers.AutoModel.from_pretrained", side_effect=[backbone, pos_bank]
-        ),
-    ):
-        yield backbone, pos_bank
-
-
-def test_load_calls_from_pretrained(mock_auto_model):
-    import transformers
-
-    backbone, pos_bank = mock_auto_model
-    meta = get_estimator_spec("reve")
-    with patch.object(
-        transformers.AutoModel, "from_pretrained", side_effect=[backbone, pos_bank]
-    ) as from_pretrained:
-        adapter = HuggingFaceBackend._load_reve(
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="frozen",
-            pooling="mean",
-            electrode_names=None,
-            token=None,
-            task="classification",
-            lora_r=16,
-            lora_alpha=32,
-            lora_target_modules="all-linear",
-            lora_dropout=0.05,
-        )
-    assert isinstance(adapter, HuggingFaceBackend)
-    assert adapter._feat_dim == 1024
-    # each repository loads the commit resolved for it, and records it
-    loaded = {
-        call.args[0]: call.kwargs["revision"] for call in from_pretrained.call_args_list
-    }
-    assert (
-        loaded
-        == adapter.checkpoint_revisions
-        == {
-            "brain-bzh/reve-base": "brain-bzh/reve-base@latest",
-            "brain-bzh/reve-positions": "brain-bzh/reve-positions@latest",
-        }
-    )
-
-
-def test_frozen_mode_calls_eval(mock_auto_model):
-    import transformers
-
-    backbone, pos_bank = mock_auto_model
-    meta = get_estimator_spec("reve")
-    with patch.object(
-        transformers.AutoModel, "from_pretrained", side_effect=[backbone, pos_bank]
-    ):
-        HuggingFaceBackend._load_reve(
-            meta,
-            n_outputs=None,
-            device="cpu",
-            train_mode="frozen",
-            pooling="mean",
-            electrode_names=None,
-            token=None,
-            task="classification",
-            lora_r=16,
-            lora_alpha=32,
-            lora_target_modules="all-linear",
-            lora_dropout=0.05,
-        )
-    backbone.eval.assert_called()
-    pos_bank.eval.assert_called()
-
-
-def test_unsupported_model_key_raises():
-    with pytest.raises(ValueError, match="HuggingFaceBackend does not support"):
-        HuggingFaceBackend.load(
-            "cbramod",
-            get_estimator_spec("cbramod"),
-            n_outputs=None,
-            device="cpu",
-            train_mode="frozen",
+    def __init__(self, names):
+        super().__init__()
+        self.mapping = {name: index for index, name in enumerate(names)}
+        generator = torch.Generator().manual_seed(0)
+        self.register_buffer(
+            "embedding", torch.randn(len(names), 3, generator=generator)
         )
 
-
-def _make_fitted_adapter(n_outputs=None, sfreq=200.0, n_chans=19, pooling="mean"):
-    """Build a HuggingFaceBackend with all internals mocked for unit testing."""
-    import torch
-
-    meta = get_estimator_spec("reve")
-    backbone = MagicMock()
-    pos_bank = MagicMock()
-
-    # REVE returns a raw (batch, channels, time_patches, embed_dim) tensor.
-    backbone.side_effect = lambda x, pos, *a, **kw: torch.zeros(
-        x.shape[0], x.shape[1], 1, meta.embedding_dim
-    )
-    # frozen backbone is the raw Reve module (no PeftModel.get_base_model);
-    # its attention read-out collapses channels+time -> (batch, embed_dim).
-    backbone.get_base_model = None
-    backbone.attention_pooling.side_effect = lambda out: out.mean(dim=2).mean(dim=1)
-    pos_bank.return_value = torch.zeros(n_chans, 32)
-
-    feat_dim = meta.embedding_dim
-
-    import torch.nn as nn
-
-    head = nn.Linear(feat_dim, n_outputs) if n_outputs else nn.Identity()
-    adapter = HuggingFaceBackend(
-        metadata=meta,
-        backbone=backbone,
-        pos_bank=pos_bank,
-        head=head,
-        feat_dim=feat_dim,
-        n_outputs=n_outputs,
-        device="cpu",
-        train_mode="frozen",
-        pooling=pooling,
-        electrode_names=None,
-        task="classification",
-    )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=sfreq,
-        ch_names=[f"ch{i}" for i in range(n_chans)],
-    )
-    return adapter
+    def forward(self, channel_names):
+        return self.embedding[[self.mapping[name] for name in channel_names]]
 
 
-def test_transform_returns_ndarray():
-    adapter = _make_fitted_adapter()
-    X = np.zeros((4, 19, 400), dtype=np.float32)
-    out = adapter.transform(X)
-    assert isinstance(out, np.ndarray)
-    assert out.shape == (4, 512)
+@pytest.fixture
+def hub(monkeypatch):
+    """Serve REVE's two repositories from toy models; return each load."""
+    import huggingface_hub
 
-
-def _tiny_backbone_class():
-    import torch
-
-    class TinyBackbone(torch.nn.Module):
-        """A backbone with a config, rebuilt from it as transformers does."""
-
-        dtype = torch.float32
-
-        def __init__(self, config):
-            super().__init__()
-            self.config = config
-            self.layer = torch.nn.Linear(4, 4)
-
-        @classmethod
-        def _from_config(cls, config, dtype=None):
-            return cls(config)
-
-    return TinyBackbone
-
-
-def test_random_weights_rebuild_the_backbone_and_head_from_the_seed():
-    import torch
-
-    TinyBackbone = _tiny_backbone_class()
-    config = SimpleNamespace(hidden_size=512)
-    pos_bank = torch.nn.Linear(3, 32)
-    checkpoint = TinyBackbone(config)
-    calls = []
+    loads = []
 
     def from_pretrained(repo_id, **kwargs):
-        calls.append(kwargs)
-        return pos_bank if "positions" in repo_id else copy.deepcopy(checkpoint)
+        loads.append((repo_id, {k: v for k, v in kwargs.items() if k != "token"}))
+        if repo_id == POSITIONS:
+            return TinyPositionBank(CHANNELS)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(1234)  # the checkpoint's weights
+            model = TinyReve(TinyReveConfig())
+        if "quantization_config" in kwargs:
+            model.is_loaded_in_4bit = True  # as transformers marks it
+        return model
 
-    def backbone(global_seed=0, **weights):
+    def download(repo_id, filename, revision=None, **kwargs):
+        # a cached snapshot folder is named by its commit
+        return f"/snapshots/{revision or _latest(repo_id)}/{filename}"
+
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
+    return loads
+
+
+def _load(train_mode="frozen", n_outputs=2, **kwargs):
+    backend = HuggingFaceBackend.load(
+        "reve",
+        SPEC,
+        n_outputs=n_outputs,
+        device="cpu",
+        train_mode=train_mode,
+        electrode_names=CHANNELS,
+        **kwargs,
+    )
+    backend.signal_metadata_ = SignalMetadata(
+        sfreq=SPEC.pretrained_sfreq, ch_names=CHANNELS
+    )
+    return backend
+
+
+def _windows(n_windows=3):
+    rng = np.random.default_rng(0)
+    return rng.normal(scale=30.0, size=(n_windows, len(CHANNELS), 400))
+
+
+def _trainable(backend):
+    return {
+        f"{name}.{key}"
+        for name, component in backend.checkpoint_components().items()
+        for key, parameter in component.named_parameters()
+        if parameter.requires_grad
+    }
+
+
+def _state(module):
+    return {key: value.clone() for key, value in module.state_dict().items()}
+
+
+def test_hugging_face_needs_transformers(monkeypatch):
+    assert HuggingFaceBackend.is_available()
+    monkeypatch.setitem(sys.modules, "transformers", None)
+    assert not HuggingFaceBackend.is_available()
+
+
+def test_each_repository_loads_the_commit_resolved_for_it(hub):
+    backend = _load()
+    assert all(kwargs["trust_remote_code"] for _, kwargs in hub)
+    assert (
+        {repo: kwargs["revision"] for repo, kwargs in hub}
+        == backend.checkpoint_revisions
+        == {SPEC.hub_repo: _latest(SPEC.hub_repo), POSITIONS: _latest(POSITIONS)}
+    )
+    # a pinned revision names the backbone's commit; the bank keeps its own
+    pinned = _load(revision="abc123")
+    assert pinned.checkpoint_revisions == {
+        SPEC.hub_repo: "abc123",
+        POSITIONS: _latest(POSITIONS),
+    }
+    assert pinned.get_embedding_info() == SPEC
+
+
+def test_train_modes_choose_what_trains(hub):
+    frozen = _load("frozen")
+    assert _trainable(frozen) == {"head.weight", "head.bias"}
+    components = frozen.checkpoint_components()
+    assert set(components) == {"backbone", "position_bank", "head"}
+    assert not components["backbone"].training
+    assert not components["position_bank"].training
+
+    backbone = {
+        f"backbone.{key}" for key, _ in TinyReve(TinyReveConfig()).named_parameters()
+    }
+    assert _trainable(_load("full")) == backbone | {"head.weight", "head.bias"}
+
+    # REVE names its layers to_qkv, to_out...: every linear layer gets an adapter
+    lora = {name for name in _trainable(_load("lora")) if name.startswith("backbone.")}
+    assert lora and all("lora_" in name for name in lora)
+    assert {name.split(".")[3] for name in lora} == {
+        "to_patch_embedding",
+        "to_position",
+    }
+
+
+def test_qlora_quantizes_the_backbone_without_gradient_checkpointing(hub):
+    # the toy model, like REVE, refuses gradient checkpointing: peft only
+    # loads it when coco-pipe turns it off
+    backend = _load("qlora")
+    (_, backbone_kwargs), (_, bank_kwargs) = hub
+    config = backbone_kwargs["quantization_config"]
+    assert config.load_in_4bit
+    assert config.bnb_4bit_quant_type == "nf4"
+    assert "quantization_config" not in bank_kwargs
+    trained = {name for name in _trainable(backend) if name.startswith("backbone.")}
+    assert trained and all("lora_" in name for name in trained)
+
+
+def test_random_weights_rebuild_the_backbone_and_head_from_the_seed(hub):
+    def weights(global_seed=0, **kwargs):
         if global_seed is not None:
             torch.manual_seed(global_seed)
-        with (
-            patch(
-                "transformers.AutoModel.from_pretrained", side_effect=from_pretrained
-            ),
-            patch.object(HuggingFaceBackend, "is_available", return_value=True),
-        ):
-            loaded = HuggingFaceBackend.load(
-                "reve",
-                get_estimator_spec("reve"),
-                n_outputs=2,
-                device="cpu",
-                train_mode="frozen",
-                electrode_names=["Cz"],
-                **weights,
-            )
-        assert loaded._pos_bank is pos_bank
+        components = _load(**kwargs).checkpoint_components()
         return {
             f"{name}.{key}": value
             for name in ("backbone", "head")
-            for key, value in getattr(loaded, f"_{name}").state_dict().items()
+            for key, value in components[name].state_dict().items()
         }
 
     torch.manual_seed(0)
     state = torch.random.get_rng_state()
-    random = backbone(global_seed=None, pretrained=False, seed=0)
+    random = weights(global_seed=None, pretrained=False, seed=0)
     assert torch.equal(state, torch.random.get_rng_state())
-    assert not any({"pretrained", "seed"} & set(call) for call in calls)
-    pretrained = backbone()
-    again = backbone(global_seed=1, pretrained=False, seed=0)
-    other = backbone(pretrained=False, seed=1)
+    assert not any({"pretrained", "seed"} & set(kwargs) for _, kwargs in hub)
+    pretrained = weights()
+    again = weights(global_seed=1, pretrained=False, seed=0)
+    other = weights(pretrained=False, seed=1)
     for key, value in random.items():
         assert torch.equal(value, again[key])
         assert not torch.equal(value, other[key])
         if key.startswith("backbone."):
             assert not torch.equal(value, pretrained[key])
-    assert torch.equal(backbone()["head.weight"], pretrained["head.weight"])
+    assert torch.equal(weights()["head.weight"], pretrained["head.weight"])
     assert not torch.equal(
-        backbone(global_seed=1)["head.weight"], pretrained["head.weight"]
+        weights(global_seed=1)["head.weight"], pretrained["head.weight"]
     )
 
 
@@ -288,18 +240,26 @@ def test_random_weights_refused(weights, message):
     with pytest.raises(ValueError, match=message):
         HuggingFaceBackend.load(
             "reve",
-            get_estimator_spec("reve"),
+            SPEC,
             n_outputs=None,
             device="cpu",
             **{"train_mode": "frozen", **weights},
         )
 
 
-def test_load_refuses_other_pooling():
+def test_load_refuses_other_models_and_pooling():
+    with pytest.raises(ValueError, match="HuggingFaceBackend does not support"):
+        HuggingFaceBackend.load(
+            "cbramod",
+            get_estimator_spec("cbramod"),
+            n_outputs=None,
+            device="cpu",
+            train_mode="frozen",
+        )
     with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
         HuggingFaceBackend.load(
             "reve",
-            get_estimator_spec("reve"),
+            SPEC,
             n_outputs=None,
             device="cpu",
             train_mode="frozen",
@@ -307,278 +267,128 @@ def test_load_refuses_other_pooling():
         )
 
 
-def test_transform_attention_pooling():
-    adapter = _make_fitted_adapter(pooling="attention")
-    out = adapter.transform(np.zeros((4, 19, 400), dtype=np.float32))
-    assert out.shape == (4, 512)
-    adapter._backbone.attention_pooling.assert_called()
+@pytest.mark.parametrize("pooling", ["mean", "attention"])
+def test_transform_pools_the_tokens_of_one_forward_pass(hub, pooling):
+    backend = _load(pooling=pooling)
+    X = _windows()
 
+    pooled, tokens = backend.transform(X, return_tokens=True)
 
-def test_transform_return_tokens_preserves_native_reve_output():
-    import torch
-
-    adapter = _make_fitted_adapter(pooling="attention", n_chans=2)
-    native = torch.arange(3 * 2 * 4 * 512, dtype=torch.float32).reshape(3, 2, 4, 512)
-    adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
-
-    pooled, tokens = adapter.transform(
-        np.zeros((3, 2, 400), dtype=np.float32), return_tokens=True
-    )
-
-    assert pooled.shape == (3, 512)
-    assert tokens.shape == (3, 2, 4, 512)
-    np.testing.assert_array_equal(tokens, native.numpy())
-    assert adapter._backbone.call_count == 1
-    assert adapter.get_token_output_metadata()["token_axes"] == [
+    # REVE's native output: window, channel, time patch, feature
+    assert tokens.shape == (3, len(CHANNELS), 8, 8)
+    assert backend.get_token_output_metadata()["token_axes"] == [
         "window",
         "channel",
         "time_patch",
         "feature",
     ]
-
-
-def test_pool_tokens_pools_the_tokens_of_one_forward_pass():
-    import torch
-
-    adapter = _make_fitted_adapter(n_chans=2)
-    native = torch.randn(3, 2, 4, 512, generator=torch.Generator().manual_seed(0))
-    adapter._backbone.side_effect = lambda x, pos: native[: len(x)]
-    adapter._backbone.attention_pooling.side_effect = lambda out: out.amax(dim=(1, 2))
-
-    pooled, tokens = adapter.transform(
-        np.zeros((3, 2, 400), dtype=np.float32), return_tokens=True
-    )
-    np.testing.assert_array_equal(adapter.pool_tokens(tokens, "mean"), pooled)
-    np.testing.assert_array_equal(
-        adapter.pool_tokens(tokens, "attention"), native.amax(dim=(1, 2)).numpy()
-    )
-    assert adapter._backbone.call_count == 1
+    if pooling == "mean":
+        expected = tokens.mean(axis=(1, 2))
+    else:
+        backbone = backend.checkpoint_components()["backbone"]
+        expected = backbone.attention_pooling(torch.from_numpy(tokens)).detach()
+    np.testing.assert_allclose(pooled, expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(backend.transform(X), pooled, rtol=1e-6)
+    np.testing.assert_allclose(backend.pool_tokens(tokens, pooling), pooled, rtol=1e-6)
     with pytest.raises(ValueError, match="pooling='mean' or 'attention'"):
-        adapter.pool_tokens(tokens, "max")
+        backend.pool_tokens(tokens, "max")
 
 
-def test_reve_input_depends_on_whether_the_backbone_is_trained():
-    adapter = _make_fitted_adapter(n_outputs=2)
-    X = np.random.default_rng(0).normal(scale=30.0, size=(3, 19, 400))
+def test_reve_input_depends_on_whether_the_backbone_is_trained(hub):
+    X = _windows()
     X[0, 0, 0] = 5000.0  # an artefact, far above 15 standard deviations
+    seen = []
+
+    def record(module, args):
+        seen.append(args[0].numpy().copy())
 
     # frozen backbone: each channel z-scored and clipped, as in pretraining
-    adapter.transform(X)
-    frozen = adapter._backbone.call_args.args[0].numpy()
-    assert frozen.max() == pytest.approx(15.0)
-    np.testing.assert_allclose(frozen[1].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
+    frozen = _load("frozen")
+    frozen.checkpoint_components()["backbone"].register_forward_pre_hook(record)
+    frozen.transform(X)
+    assert seen[-1].max() == pytest.approx(15.0)
+    np.testing.assert_allclose(seen[-1][1].std(axis=-1, ddof=1), 1.0, rtol=1e-4)
 
     # trained backbone: units of 100 microvolts, as in the authors' fine-tunes
-    adapter._train_mode = "full"
-    adapter.predict(X)
-    np.testing.assert_allclose(
-        adapter._backbone.call_args.args[0].numpy(), X / 100, rtol=1e-6
-    )
+    full = _load("full")
+    full.checkpoint_components()["backbone"].register_forward_pre_hook(record)
+    full.predict(X)
+    np.testing.assert_allclose(seen[-1], X / 100, rtol=1e-6)
 
 
-def test_transform_raises_before_fit():
-    import torch.nn as nn
-
-    meta = get_estimator_spec("reve")
-    adapter = HuggingFaceBackend(
-        metadata=meta,
-        backbone=MagicMock(),
-        pos_bank=MagicMock(),
-        head=nn.Identity(),
-        feat_dim=1024,
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        pooling="mean",
-        electrode_names=None,
-        task="classification",
-    )
+def test_transform_checks_its_input(hub):
+    backend = _load()
+    backend.signal_metadata_ = None
     with pytest.raises(RuntimeError, match="fitted"):
-        adapter.transform(np.zeros((2, 19, 400)))
+        backend.transform(_windows())
+
+    backend.signal_metadata_ = SignalMetadata(sfreq=100.0, ch_names=CHANNELS)
+    with pytest.warns(UserWarning, match="sfreq"):
+        backend.transform(_windows())
 
 
-def test_sfreq_mismatch_warns():
-    adapter = _make_fitted_adapter(sfreq=100.0)
-    X = np.zeros((4, 19, 400), dtype=np.float32)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        adapter.transform(X)
-    assert any("sfreq" in str(w.message) for w in caught)
+def test_predict_reads_the_head_on_the_pooled_embedding(hub):
+    X = _windows(6)
 
+    def head_output(backend):
+        head = backend.checkpoint_components()["head"]
+        return head(torch.from_numpy(backend.transform(X))).detach().numpy()
 
-def test_reset_head_changes_output_dim():
-    import torch.nn as nn
-
-    adapter = _make_fitted_adapter(n_outputs=2)
-    adapter.reset_head(5)
-    assert adapter._n_outputs == 5
-    assert isinstance(adapter._head, nn.Linear)
-    assert adapter._head.out_features == 5
-
-
-def test_configure_peft_raises_import_error_without_peft(monkeypatch):
-    import importlib
-
-    orig = importlib.import_module
-
-    def _block(name, *a, **kw):
-        if name == "peft":
-            raise ImportError("peft not installed")
-        return orig(name, *a, **kw)
-
-    import torch.nn as nn
-
-    meta = get_estimator_spec("reve")
-    adapter = HuggingFaceBackend(
-        metadata=meta,
-        backbone=MagicMock(),
-        pos_bank=MagicMock(),
-        head=nn.Identity(),
-        feat_dim=1024,
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        pooling="mean",
-        electrode_names=None,
-        task="classification",
+    classifier = _load(n_outputs=3)
+    np.testing.assert_array_equal(
+        classifier.predict(X), head_output(classifier).argmax(axis=1)
     )
-    monkeypatch.setattr("builtins.__import__", _block)
-    with pytest.raises((ImportError, Exception)):
-        adapter.configure_peft({"r": 4})
+    regressor = _load(n_outputs=1, task="regression")
+    np.testing.assert_allclose(regressor.predict(X), head_output(regressor)[:, 0])
 
 
-def test_load_qlora(monkeypatch):
-    mock_model = _make_mock_backbone()
-    mock_model.to.return_value = mock_model
-    mock_pos = MagicMock()
-    mock_pos.to.return_value = mock_pos
+def test_reset_head_keeps_the_backbone(hub):
+    backend = _load(n_outputs=2)
+    X = _windows()
+    embeddings = backend.transform(X)
+    backbone = _state(backend.checkpoint_components()["backbone"])
 
-    meta = get_estimator_spec("reve")
+    backend.reset_head(5)
 
-    with (
-        patch(
-            "transformers.AutoModel.from_pretrained", side_effect=[mock_model, mock_pos]
-        ),
-        patch(
-            "peft.prepare_model_for_kbit_training", return_value=mock_model
-        ) as mock_prep,
-        patch("peft.get_peft_model", return_value=mock_model) as mock_get_peft,
-        patch.object(HuggingFaceBackend, "is_available", return_value=True),
-    ):
-        backend = HuggingFaceBackend.load(
-            "reve",
-            meta,
-            n_outputs=2,
-            device="cpu",
-            train_mode="qlora",
-            electrode_names=["Fp1", "Fp2"],
-        )
-    # REVE cannot checkpoint gradients, which peft turns on by default
-    mock_prep.assert_called_once_with(mock_model, use_gradient_checkpointing=False)
-    # REVE has no "query"/"value" layers: every linear layer gets an adapter
-    assert mock_get_peft.call_args.args[1].target_modules == "all-linear"
-    assert backend._feat_dim == 1024
+    assert backend.checkpoint_components()["head"].out_features == 5
+    np.testing.assert_array_equal(backend.transform(X), embeddings)
+    after = backend.checkpoint_components()["backbone"].state_dict()
+    assert all(torch.equal(value, after[key]) for key, value in backbone.items())
 
 
-def test_reve_skorch_module():
-    import torch
-    import torch.nn as nn
+def test_frozen_fit_trains_the_head_alone(hub):
+    X = _windows(8)
+    y = np.repeat([0, 1], 4)
 
-    meta = get_estimator_spec("reve")
+    def fit(train_mode):
+        torch.manual_seed(0)
+        backend = _load(train_mode)
+        components = backend.checkpoint_components()
+        before = {name: _state(components[name]) for name in ("backbone", "head")}
+        backend.fit(X, y, max_epochs=2, batch_size=4, lr=0.1, validation_fraction=0.0)
+        changed = {
+            name: any(
+                not torch.equal(value, components[name].state_dict()[key])
+                for key, value in before[name].items()
+            )
+            for name in before
+        }
+        return backend, changed
 
-    mock_backbone = MagicMock(spec=nn.Module)
-    mock_backbone.return_value = torch.zeros(2, 19, 1, 512)
+    frozen, changed = fit("frozen")
+    assert changed == {"backbone": False, "head": True}
+    # training leaves the frozen backbone and the position bank in eval mode
+    assert not frozen.checkpoint_components()["backbone"].training
+    assert not frozen.checkpoint_components()["position_bank"].training
+    assert frozen.predict_proba(X).shape == (8, 2)
 
-    mock_pos = MagicMock(spec=nn.Module)
-    mock_pos.return_value = torch.zeros(19, 512)
-
-    backend = HuggingFaceBackend(
-        metadata=meta,
-        backbone=mock_backbone,
-        pos_bank=mock_pos,
-        head=nn.Linear(512, 2),
-        feat_dim=512,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        pooling="mean",
-        electrode_names=["ch0"],
-        task="classification",
-    )
-
-    module_cls = backend._get_skorch_module()
-    module = module_cls(backend, output_dim=2)
-    assert isinstance(module, nn.Module)
-
-    # Test forward
-    out = module(torch.zeros(2, 19, 100))
-    assert out.shape == (2, 2)
-
-    # Test train mode
-    module.train(True)
-    mock_backbone.eval.assert_called()
-    mock_pos.eval.assert_called()
+    _, changed = fit("full")
+    assert changed == {"backbone": True, "head": True}
 
 
-def test_predict_and_checkpoint_components():
-    import torch
-    import torch.nn as nn
-
-    meta = get_estimator_spec("reve")
-
-    mock_backbone = MagicMock()
-    mock_backbone.return_value = torch.zeros(2, 19, 1, 512)
-    mock_pos = MagicMock()
-    mock_pos.return_value = torch.zeros(19, 512)
-
-    # 1. Classification Predict
-    backend_clf = HuggingFaceBackend(
-        metadata=meta,
-        backbone=mock_backbone,
-        pos_bank=mock_pos,
-        head=nn.Linear(512, 2),
-        feat_dim=512,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        pooling="mean",
-        electrode_names=None,
-        task="classification",
-    )
-    backend_clf.signal_metadata_ = SignalMetadata(sfreq=200.0, ch_names=["Fp1"])
-    # Mock linear layer outputs
-    backend_clf._head.weight.data.fill_(0.0)
-    backend_clf._head.bias.data.fill_(0.0)
-
-    preds = backend_clf.predict(np.zeros((2, 1, 100)))
-    assert preds.shape == (2,)
-
-    # 2. Regression Predict
-    backend_reg = HuggingFaceBackend(
-        metadata=meta,
-        backbone=mock_backbone,
-        pos_bank=mock_pos,
-        head=nn.Linear(512, 1),
-        feat_dim=512,
-        n_outputs=1,
-        device="cpu",
-        train_mode="frozen",
-        pooling="mean",
-        electrode_names=None,
-        task="regression",
-    )
-    backend_reg.signal_metadata_ = SignalMetadata(sfreq=200.0, ch_names=["Fp1"])
-    backend_reg._head.weight.data.fill_(0.0)
-    backend_reg._head.bias.data.fill_(0.0)
-
-    preds_reg = backend_reg.predict(np.zeros((2, 1, 100)))
-    assert preds_reg.shape == (2,)
-
-    # Checkpoint components
-    comps = backend_clf.checkpoint_components()
-    assert comps["backbone"] == mock_backbone
-    assert comps["position_bank"] == mock_pos
-    assert isinstance(comps["head"], nn.Linear)
-
-    # get_embedding_info
-    assert backend_clf.get_embedding_info() == meta
+def test_configure_peft_adds_adapters_to_a_loaded_backbone(hub):
+    backend = _load("frozen")
+    backend.configure_peft({"r": 2, "target_modules": "all-linear"})
+    trained = {name for name in _trainable(backend) if name.startswith("backbone.")}
+    assert trained and all("lora_" in name for name in trained)
+    assert backend.transform(_windows()).shape == (3, 8)
