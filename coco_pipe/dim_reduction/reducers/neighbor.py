@@ -289,8 +289,10 @@ class UMAPReducer(BaseReducer):
             Number of embedding dimensions.
         **kwargs : dict
             Additional keyword arguments forwarded to `umap.UMAP` after
-            filtering.
+            filtering. ``compatibility_layout`` defaults to True: umap-learn
+            0.5's layout, which 0.6 would replace by default in a later release.
         """
+        kwargs.setdefault("compatibility_layout", True)
         super().__init__(n_components=n_components, **kwargs)
 
     def fit(self, X: ArrayLike, y: ArrayLike | None = None) -> "UMAPReducer":
