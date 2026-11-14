@@ -2,21 +2,16 @@
 Tests for Dim-Red Components
 """
 
-import contextlib
-from typing import ClassVar
-from unittest.mock import MagicMock, patch
+from io import StringIO
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import pytest
 
+from coco_pipe.dim_reduction import DimReduction
 from coco_pipe.io.quality import QCResult
 from coco_pipe.report.core import Report
 from coco_pipe.report.dim_reduction import (
-    _get_reducer_summary,
-    _metrics_summary_table,
-    _trajectory_times,
     add_reduction_components,
     add_reduction_coranking,
     add_reduction_diagnostics,
@@ -27,88 +22,61 @@ from coco_pipe.report.dim_reduction import (
     add_reduction_trajectory_separation,
     make_reduction_report,
 )
-from coco_pipe.report.elements import PlotlyElement
-from coco_pipe.viz.interactive.dim_reduction import (
-    plot_embedding as plot_embedding_interactive,
+from coco_pipe.report.elements import (
+    DownloadAssetElement,
+    ImageElement,
+    MetricsTableElement,
+    PlotlyElement,
+    TableElement,
+    TabsElement,
 )
-from coco_pipe.viz.interactive.dim_reduction import (
-    plot_metrics as plot_metric_details,
-)
+
+FEATURES = ["a", "b", "c", "d", "e"]
 
 
-class MockReducer:
-    """Mock DimReduction object."""
+def _scored_pca():
+    """A PCA reduction of 30 x 5 data, scored and interpreted."""
+    X = np.random.default_rng(0).normal(size=(30, 5))
+    reduction = DimReduction("PCA", n_components=2)
+    X_emb = reduction.fit_transform(X)
+    reduction.score(X_emb, X=X)
+    reduction.interpret(
+        X, X_emb=X_emb, analyses=["correlation"], feature_names=FEATURES
+    )
+    return reduction, X, X_emb
 
-    def __init__(self):
-        self.loss_history_ = [10, 5, 2, 1]
-        self.explained_variance_ratio_ = np.array([0.5, 0.3, 0.1])
-        self.capabilities = {
-            "supported_diagnostics": [
-                "loss_history_",
-                "explained_variance_ratio_",
-            ],
-            "supported_metadata": [],
-        }
 
-    def get_diagnostics(self):
-        return {
-            "loss_history_": self.loss_history_,
-            "explained_variance_ratio_": self.explained_variance_ratio_,
-        }
+def _scored_trajectory(times):
+    """A PCA reduction scored on 6 trajectories of 8 time points."""
+    rng = np.random.default_rng(1)
+    reduction = DimReduction("PCA", n_components=2).fit(rng.normal(size=(30, 5)))
+    X_emb = rng.normal(size=(6, 8, 2))
+    reduction.score(X_emb, labels=np.array([0, 1] * 3), times=times)
+    return reduction, X_emb
 
-    def get_quality_metadata(self):
-        return {}
+
+class _Summary:
+    """A reduction known only by its summary."""
+
+    def __init__(self, summary, components=None):
+        self.summary = summary
+        self.components = components
 
     def get_summary(self):
-        return {
-            "method": "MockReducer",
-            "metrics": {},
-            "metric_records": [],
-            "quality_metadata": self.get_quality_metadata(),
-            "diagnostics": self.get_diagnostics(),
-            "interpretation": {},
-            "interpretation_records": [],
-            "capabilities": self.capabilities,
-        }
+        return self.summary
+
+    def get_components(self):
+        return self.components
 
 
-def test_plotly_element_rendering():
-    fig = go.Figure(data=go.Scatter(x=[1], y=[1]))
-    el = PlotlyElement(fig)
-    html = el.render()
-
-    # Check for lazy loading structure
-    assert "lazy-plot" in html
-    assert "data-figure" in html
-    assert "&quot;data&quot;" in html  # JSON encoded
-
-
-def test_plot_embedding_interactive_logic():
-    emb = np.random.randn(50, 2)
-    labels = np.random.randint(0, 2, 50)
-    metadata = {"Class": ["X"] * 25 + ["Y"] * 25, "Score": np.random.rand(50)}
-
-    fig_basic = plot_embedding_interactive(emb, labels=labels, title="Basic")
-    assert isinstance(fig_basic, go.Figure)
-    assert len(fig_basic.data) > 0
-
-    fig_adv = plot_embedding_interactive(
-        emb, labels=labels, metadata=metadata, title="Adv"
-    )
-    assert isinstance(fig_adv, go.Figure)
-    assert len(fig_adv.data) > 0
-
-
-def test_plot_metric_details():
-    records = [
-        {"Method": "PCA", "Metric": "Trustworthiness", "Score": 0.8},
-        {"Method": "PCA", "Metric": "Continuity", "Score": 0.7},
-        {"Method": "UMAP", "Metric": "Trustworthiness", "Score": 0.9},
-        {"Method": "UMAP", "Metric": "Continuity", "Score": 0.95},
+def _plots(section):
+    return [
+        child.figure for child in section.children if isinstance(child, PlotlyElement)
     ]
-    fig = plot_metric_details(records)
-    assert isinstance(fig, go.Figure)
-    assert len(fig.data) > 0
+
+
+def _titles(report):
+    return [section.title for section in report.children]
 
 
 def test_reduction_report_renders_qc_result():
@@ -132,86 +100,190 @@ def test_reduction_report_renders_qc_result():
     assert "N Rows Entering Qc" in html
 
 
-def test_report_add_reduction_logic():
+def test_add_reduction_shows_the_scores_and_diagnostics_of_a_reduction():
+    reduction, _, X_emb = _scored_pca()
+    summary = reduction.get_summary()
+
     rep = Report("DimRed Test")
-    reducer = MockReducer()
-    embedding = np.random.randn(100, 2)
-    metadata = {
-        "Group": ["A"] * 50 + ["B"] * 50,
-        "Value": np.random.rand(100),
-    }
+    labels = np.array([0, 1] * 15)
+    assert rep.add_reduction(reduction, "My PCA", X_emb=X_emb, labels=labels) is rep
 
-    rep.add_reduction(reducer, name="MockPCA", X_emb=embedding, metadata=metadata)
+    (section,) = rep.children
+    assert section.title == "My PCA"
+    (table,) = [child for child in section.children if isinstance(child, TableElement)]
+    assert table.title == "Quality Metrics"
+    assert table.data["trustworthiness"] == summary["metrics"]["trustworthiness"]
+    assert table.data["n_components_"] == 2
 
-    html = rep.render()
-
-    assert "MockPCA" in html
-
-    assert html.count("lazy-plot") >= 3
-
-
-def test_report_add_comparison():
-    rep = Report("Comparison Test")
-
-    metrics_df = pd.DataFrame(
-        {
-            "Method": ["PCA", "ISO"],
-            "Trustworthiness": [0.8, 0.6],
-            "Continuity": [0.7, 0.5],
-        }
-    ).set_index("Method")
-
-    rep.add_comparison(metrics_df)
-
-    html = rep.render()
-
-    # Check for section title and icon
-    assert "Method Comparison" in html
-    # Check for plots (Radar + Bar)
-    # Check for Table title
-    assert "Quality Metrics" in html
-
-
-def test_report_add_reduction_requires_summary_contract():
-    """Report.add_reduction should require the explicit reducer summary contract."""
-    rep = Report("Safe Access Test")
-
-    class BrokenReducer:
-        def __init__(self):
-            self.embedding_ = np.random.randn(10, 2)
-
-        @property
-        def loss_history_(self):
-            raise RuntimeError("Broken loss history")
-
-    reducer = BrokenReducer()
-    with pytest.raises(TypeError, match="must implement get_summary"):
-        rep.add_reduction(reducer, name="BrokenMethod")
-
-
-def test_make_reduction_report_static_sections():
-    class StaticReducer(MockReducer):
-        diagnostics_: ClassVar[dict] = {"coranking_matrix_": np.eye(5)}
-
-        def get_summary(self):
-            summary = super().get_summary()
-            summary["metrics"] = {"trustworthiness": 0.9}
-            summary["diagnostics"] = self.diagnostics_
-            return summary
-
-        def get_components(self):
-            return {"components_": np.random.randn(4, 2)}
-
-    report = make_reduction_report(
-        [StaticReducer()],
-        embeddings=[np.random.randn(20, 2)],
-        sections=["overview", "embedding", "metrics", "coranking", "components"],
+    embedding, metrics, scree, coranking = _plots(section)
+    assert embedding.layout.title.text == "My PCA Embedding"
+    points = np.concatenate([trace.x for trace in embedding.data])
+    np.testing.assert_allclose(np.sort(points), np.sort(X_emb[:, 0]))
+    assert metrics.layout.title.text == "Metric Details"
+    np.testing.assert_allclose(
+        scree.data[0].y, summary["diagnostics"]["explained_variance_ratio_"]
     )
-    html = report.render()
-    assert "MockReducer Overview" in html
-    assert "MockReducer Embedding" in html
+    np.testing.assert_array_equal(
+        coranking.data[0].z, summary["diagnostics"]["coranking_matrix_"]
+    )
+    assert "My PCA" in rep.render()
 
-    assert hasattr(Report, "add_reduction_overview")
+
+def test_add_reduction_plots_the_trajectory_diagnostics():
+    reduction, X_emb = _scored_trajectory(None)
+
+    rep = Report()
+    rep.add_reduction(reduction, X_emb=X_emb)
+    trajectory, _, _, *plots = _plots(rep.children[0])
+    assert trajectory.layout.title.text == "PCA Trajectory"
+    # one plot per per-time series, then the class separation
+    assert [plot.layout.title.text for plot in plots] == [
+        "Trajectory Speed",
+        "Trajectory Acceleration",
+        "Trajectory Curvature",
+        "Trajectory Turning Angle",
+        "Trajectory Dispersion",
+        "Trajectory Path Length",
+        "Trajectory Displacement",
+        "Trajectory Separation",
+    ]
+    np.testing.assert_array_equal(plots[0].data[0].x, np.arange(8))
+
+
+def test_add_reduction_plots_trajectory_series_on_their_time_axis():
+    times = np.arange(8) * 10.0
+    speed = np.random.default_rng(3).random((6, 8))
+    reduction = _Summary(
+        {"diagnostics": {"trajectory_times_": times, "trajectory_speed_": speed}}
+    )
+
+    rep = Report()
+    # without explicit times, the series follow the scored time axis
+    rep.add_reduction(reduction, "Scored")
+    (series,) = _plots(rep.children[0])
+    np.testing.assert_array_equal(series.data[0].x, times)
+    rep.add_reduction(reduction, "Explicit", times=times + 5)
+    (series,) = _plots(rep.children[1])
+    np.testing.assert_array_equal(series.data[0].x, times + 5)
+
+
+def test_add_reduction_reads_the_summary_contract():
+    rep = Report("Summary Test")
+    with pytest.raises(TypeError, match="must implement get_summary"):
+        rep.add_reduction(object())
+    with pytest.raises(TypeError, match="must return a dictionary"):
+        rep.add_reduction(_Summary("not a dict"))
+    with pytest.raises(ValueError, match="2D embedding or 3D trajectory"):
+        rep.add_reduction(_Summary({}), X_emb=np.zeros((2, 2, 2, 2)))
+
+    # a partial summary is named after its method and shows what it has
+    loss = {"method": "AE", "diagnostics": {"loss_history_": [3.0, 2.0, 1.0]}}
+    rep.add_reduction(_Summary(loss))
+    (section,) = rep.children
+    assert section.title == "AE"
+    (figure,) = _plots(section)
+    np.testing.assert_array_equal(figure.data[0].y, [3.0, 2.0, 1.0])
+
+
+def test_add_comparison_summarises_methods():
+    scores = {"PCA": (0.9, 0.1, 0.8), "UMAP": (0.95, 0.05, 0.85)}
+    rows = [
+        {"Method": method, "Metric": metric, "Value": value, "ScopeValue": "A"}
+        for method, values in scores.items()
+        for metric, value in zip(("Trust", "Loss", "Continuity"), values, strict=True)
+    ]
+    rep = Report()
+    rep.add_comparison(pd.DataFrame(rows))
+    (section,) = rep.children
+    assert section.title == "Method Comparison"
+    (table,) = [c for c in section.children if isinstance(c, MetricsTableElement)]
+    assert table.data.loc["UMAP", "Trust"] == 0.95
+    # three metrics of two methods on one scope add a radar chart
+    titles = [figure.layout.title.text for figure in _plots(section)]
+    assert titles[:2] == ["Metric Heatmap", "Metric Details"]
+    assert len(titles) == 3
+
+    wide = pd.DataFrame(
+        {"Method": ["PCA", "ISO"], "Trustworthiness": [0.8, 0.6]}
+    ).set_index("Method")
+    rep.add_comparison(wide, name="Wide")
+    assert len(_plots(rep.children[1])) == 2
+
+    with pytest.raises(ValueError, match="No comparison metrics"):
+        rep.add_comparison(pd.DataFrame())
+
+
+def test_make_reduction_report_sections_of_a_reduction():
+    reduction, _, X_emb = _scored_pca()
+    report = make_reduction_report(
+        [reduction],
+        embeddings=[X_emb],
+        sections=[
+            "overview",
+            "embedding",
+            "metrics",
+            "coranking",
+            "components",
+        ],
+    )
+    assert _titles(report) == [
+        "PCA Overview",
+        "PCA Embedding",
+        "PCA Quality Metrics",
+        "PCA Co-Ranking Matrix",
+        "PCA Component Loadings",
+    ]
+    overview = report.children[0].children[0].data
+    assert dict(zip(overview["Key"], overview["Value"], strict=True))["method"] == "PCA"
+    download = report.children[2].children[0]
+    assert isinstance(download, DownloadAssetElement)
+    exported = pd.read_csv(StringIO(download.data))
+    assert exported["metric"].tolist() == [
+        record["metric"] for record in reduction.get_summary()["metric_records"]
+    ]
+    assert "PCA Embedding" in report.render()
+
+
+def test_make_reduction_report_pairs_the_embedding_with_its_shepard_diagram():
+    X = np.random.default_rng(2).normal(size=(20, 4))
+    X_emb = X[:, :2]
+
+    def first_section(diagnostics, sections=("embedding",)):
+        report = make_reduction_report(
+            [_Summary({"method": "M", "diagnostics": diagnostics})],
+            embeddings=[X_emb],
+            sections=list(sections),
+        )
+        return report.children[0]
+
+    (tabs,) = first_section({"X_orig": X}).children
+    assert isinstance(tabs, TabsElement)
+    assert list(tabs.tabs) == ["Embedding", "Shepard Diagram"]
+    # an original that does not align leaves the embedding alone
+    (image,) = first_section({"X_orig": X[:5]}).children
+    assert isinstance(image, ImageElement)
+    assert image.caption == "Embedding"
+    # without the embedding section, diagnostics show the Shepard diagram
+    diagnostics = first_section({"X_orig_": X}, sections=("diagnostics",))
+    assert diagnostics.title == "M Diagnostics"
+    assert diagnostics.children[0].caption == "Shepard diagram"
+
+
+def test_make_reduction_report_takes_components_from_a_mapping():
+    reduction = _Summary({"method": "M"}, components={"components": np.ones((2, 3))})
+    report = make_reduction_report([reduction], sections=["components"])
+    assert _titles(report) == ["M Component Loadings"]
+
+
+def test_make_reduction_report_interactive_warning():
+    with pytest.warns(UserWarning, match="not yet implemented"):
+        make_reduction_report([], interactive=True)
+
+
+def test_make_reduction_report_mismatched_embeddings():
+    reduction, _, X_emb = _scored_pca()
+    with pytest.raises(ValueError, match="must align with `reductions`"):
+        make_reduction_report([reduction], embeddings=[X_emb, X_emb])
 
 
 def test_reduction_report_empty_edge_cases():
@@ -235,371 +307,114 @@ def test_reduction_report_empty_edge_cases():
     assert len(report.children) == 0
 
 
-def test_add_reduction_interpretation_renders_section():
-    """The rewired interpretation path renders via plot_feature_importance."""
-    interpretation = [
-        {
-            "Method": "PCA",
-            "Feature": f"F{idx}",
-            "Dimension": "PC1",
-            "Analysis": "loadings",
-            "Value": 0.5 - 0.1 * idx,
-        }
-        for idx in range(4)
-    ]
+def test_add_reduction_interpretation_ranks_the_features():
+    X = np.random.default_rng(0).normal(size=(30, 5))
+    reduction = DimReduction("PCA", n_components=2)
+    X_emb = reduction.fit_transform(X)
+    result = reduction.interpret(
+        X,
+        X_emb=X_emb,
+        analyses=["perturbation"],
+        feature_names=FEATURES,
+        random_state=0,
+    )
+    scores = result["analysis"]["perturbation"]
+
     report = Report("Interp")
-    report.add_reduction_interpretation(interpretation, analysis="loadings")
-    assert len(report.children) == 1
-    assert report.children[0].title == "Interpretation"
+    report.add_reduction_interpretation(result["records"], analysis="perturbation")
+    (section,) = report.children
+    assert section.title == "Interpretation"
+    (image,) = section.children
+    assert image.caption == "perturbation"
+    axes = image.src.axes[0]
+    # one bar per feature, the most important first
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    assert [label.get_text() for label in axes.get_yticklabels()] == ranked
+    np.testing.assert_allclose(
+        [bar.get_width() for bar in axes.patches], [scores[name] for name in ranked]
+    )
 
 
-def test_reduction_full_coverage():
-    import numpy as np
+def test_section_builders_add_one_section_each():
+    reduction, X, X_emb = _scored_pca()
+    coranking = reduction.get_summary()["diagnostics"]["coranking_matrix_"]
+    trajectory, X_3d = _scored_trajectory(np.arange(8))
+    diagnostics = trajectory.get_summary()["diagnostics"]
 
-    class FullReduction:
-        def get_summary(self):
-            return {
-                "method": "PCA",
-                "diagnostics": {"explained_variance_ratio_": np.array([0.5, 0.3])},
-                "metric_records": [{"metric": "trustworthiness", "score": 0.9}],
-                "interpretation": {"loadings": np.array([[1, 0], [0, 1]])},
-            }
-
-        def get_scores(self):
-            return [{"metric": "trustworthiness", "score": 0.9}]
-
-        def get_components(self):
-            return np.array([[1, 0], [0, 1]])
-
-    reduction = FullReduction()
     report = Report("Full")
-
-    X_emb = np.random.rand(10, 2)
-    X_3d = np.random.rand(5, 10, 2)
-    coranking = np.random.rand(9, 9)
-    sep = {"A-B": np.random.rand(5)}
-
     report.add_reduction_overview(reduction)
     report.add_reduction_embedding(X_emb)
     report.add_reduction_metrics(reduction)
-    report.add_reduction_diagnostics(np.random.rand(10, 5), X_emb)
+    report.add_reduction_diagnostics(X, X_emb)
     report.add_reduction_coranking(coranking)
     report.add_reduction_components(reduction.get_components())
     report.add_reduction_trajectory(X_3d)
-    report.add_reduction_trajectory_separation(sep)
+    report.add_reduction_trajectory_separation(diagnostics["trajectory_separation_"])
 
-    assert len(report.children) > 0
-
-
-def test_get_reducer_summary_edge_cases():
-    # 1. Missing get_summary
-    with pytest.raises(TypeError, match="must implement get_summary"):
-        _get_reducer_summary(object())
-
-    # 2. get_summary returns non-dict
-    mock = MagicMock()
-    mock.get_summary.return_value = "not a dict"
-    with pytest.raises(TypeError, match="must return a dictionary"):
-        _get_reducer_summary(mock)
-
-    # 3. Partial summary (fills defaults)
-    mock.get_summary.return_value = {"method": "PCA"}
-    summary = _get_reducer_summary(mock)
-    assert summary["method"] == "PCA"
-    assert summary["metrics"] == {}
-    assert summary["metric_records"] == []
+    assert _titles(report) == [
+        "Overview",
+        "Embedding",
+        "Quality Metrics",
+        "Diagnostics",
+        "Co-Ranking Matrix",
+        "Component Loadings",
+        "Trajectory",
+        "Trajectory Separation",
+    ]
+    for section in report.children[1:]:
+        assert any(isinstance(child, ImageElement) for child in section.children)
 
 
-def test_metrics_summary_table_empty():
-    assert _metrics_summary_table({}).empty
-
-
-def test_trajectory_times_resolution():
-    assert _trajectory_times({}, np.array([1, 2, 3])) is not None
-    assert _trajectory_times({}, np.array([])) is None
-    assert _trajectory_times({"trajectory_times_": [1, 2]}, None) is not None
-    assert _trajectory_times({"trajectory_times_": []}, None) is None
-
-
-def test_report_add_reduction_coverage():
-    from coco_pipe.io.structures import DataContainer
-
-    rep = Report()
-    mock_reducer = MagicMock()
-    mock_reducer.get_summary.return_value = {
-        "method": "MockDR",
-        "metrics": {"trust": 0.9},
-        "metric_records": [{"method": "MockDR", "metric": "trust", "value": 0.9}],
-        "diagnostics": {
-            "embedding_": np.random.randn(10, 2),
-            "reconstruction_": np.random.randn(10, 5),
-        },
-        "quality_metadata": {},
-    }
-
-    X = np.random.randn(10, 5)
-    _ = DataContainer(X, dims=("obs", "feature"))
-
-    # 1. Basic add
-    rep.add_reduction(mock_reducer, name="Mock Reduction")
-    assert "Mock Reduction" in rep.children[-1].render()
-
-    # 2. Add with explicit embedding and labels
-    X_emb = np.random.randn(10, 2)
-    labels = np.array([0, 1] * 5)
-    metadata = {"feat": np.random.randn(10)}
-    rep.add_reduction(
-        mock_reducer,
-        name="With Embedding",
-        X_emb=X_emb,
-        labels=labels,
-        metadata=metadata,
-    )
-    assert "With Embedding" in rep.children[-1].render()
-
-
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_loss_history")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_scree")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_trajectory_metric_series")
-def test_add_reduction_advanced(mock_traj_series, mock_eig, mock_loss, mock_traj):
-    mock_fig = MagicMock()
-    mock_fig.to_json.return_value = '{"data": []}'
-    mock_fig.to_dict.return_value = {"data": []}
-    mock_traj.return_value = mock_fig
-    mock_loss.return_value = mock_fig
-    mock_eig.return_value = mock_fig
-    mock_traj_series.return_value = mock_fig
-
-    mock_reducer = MagicMock()
-    mock_reducer.get_summary.return_value = {
-        "method": "MockAdvanced",
-        "metrics": {"trust": 0.9},
-        "metric_records": [],
-        "diagnostics": {
-            "loss_history_": [1, 2],
-            "explained_variance_ratio_": [0.5, 0.5],
-            "coranking_matrix_": np.zeros((2, 2)),
-            "trajectory_speed_": [0.1, 0.2],
-            "trajectory_separation_": [0.5, 0.6],
-        },
-        "quality_metadata": {},
-    }
-
-    rep = Report()
-    X_emb = np.random.randn(10, 2, 3)
-    rep.add_reduction(mock_reducer, X_emb=X_emb)
-
-    mock_traj.assert_called()
-    mock_loss.assert_called()
-    mock_eig.assert_called()
-    mock_traj_series.assert_called()
-
-    html = rep.render()
-    assert "MockAdvanced" in html
-
-
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_metrics")
-@patch("coco_pipe.viz.interactive.dim_reduction.plot_radar_comparison")
-def test_add_comparison(mock_radar, mock_metrics):
-    mock_metrics.return_value = MagicMock()
-    mock_radar.return_value = MagicMock()
-
-    rep = Report()
-    df = pd.DataFrame(
-        [
-            {"Method": "PCA", "Metric": "Trust", "Value": 0.9, "ScopeValue": "A"},
-            {"Method": "UMAP", "Metric": "Trust", "Value": 0.95, "ScopeValue": "A"},
-            {"Method": "PCA", "Metric": "Loss", "Value": 0.1, "ScopeValue": "A"},
-            {"Method": "UMAP", "Metric": "Loss", "Value": 0.05, "ScopeValue": "A"},
-            {"Method": "PCA", "Metric": "Continuity", "Value": 0.8, "ScopeValue": "A"},
-            {
-                "Method": "UMAP",
-                "Metric": "Continuity",
-                "Value": 0.85,
-                "ScopeValue": "A",
-            },
-        ]
-    )
-
-    rep.add_comparison(df)
-
-    mock_metrics.assert_called()
-    mock_radar.assert_called()
-
-    with pytest.raises(ValueError):
-        rep.add_comparison(pd.DataFrame())
-
-
-class MockReducerForExceptions:
-    def get_summary(self):
-        return {
-            "method": "ExceptionMock",
-            "metric_records": [{"metric": "m", "score": 1}],
-            "diagnostics": {"coranking_matrix_": np.ones((5, 5))},
-            "interpretation": {"loadings": np.ones((2, 2))},
-        }
-
-    def get_scores(self):
-        return [{"metric": "m", "score": 1}]
-
-    def get_components(self):
-        return np.ones((2, 2))
+_RECORDS = [{"method": "PCA", "metric": "trust", "value": 0.9, "scope": "global"}]
 
 
 @pytest.mark.parametrize(
-    "plot_target, call, log_prefix, patch_kwargs",
+    "call",
     [
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_embedding",
-            lambda rep: add_reduction_embedding(rep, np.random.randn(10, 2)),
-            "Embedding section skipped: %s",
-            {},
+            lambda rep: add_reduction_embedding(rep, np.zeros((5, 2)), labels=[0, 1]),
             id="embedding",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_metrics",
-            lambda rep: add_reduction_metrics(rep, MockReducerForExceptions()),
-            "Metrics section skipped: %s",
-            {},
+            lambda rep: add_reduction_metrics(
+                rep, _Summary({"metric_records": _RECORDS}), metric="missing"
+            ),
             id="metrics",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_shepard_diagram",
             lambda rep: add_reduction_diagnostics(
-                rep, np.random.randn(10, 5), np.random.randn(10, 2)
+                rep, np.zeros((10, 5)), np.zeros((8, 2))
             ),
-            "Diagnostics section skipped: %s",
-            {},
             id="diagnostics",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_feature_importance",
             lambda rep: add_reduction_interpretation(
-                rep, {"loadings": np.ones((2, 2))}, analysis="loadings"
+                rep, [{"feature": "a", "value": 1.0}], analysis="loadings"
             ),
-            "Interpretation section skipped: %s",
-            {},
             id="interpretation",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_coranking_matrix",
-            lambda rep: add_reduction_coranking(rep, np.ones((5, 5))),
-            "Co-ranking section skipped: %s",
-            {},
+            lambda rep: add_reduction_coranking(rep, np.ones((3, 4))),
             id="coranking",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_component_loadings",
-            lambda rep: add_reduction_components(rep, np.ones((2, 2))),
-            "Component section skipped: %s",
-            {},
+            lambda rep: add_reduction_components(rep, np.ones(3)),
             id="components",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_trajectory",
-            lambda rep: add_reduction_trajectory(rep, np.random.randn(5, 10, 2)),
-            "Trajectory section skipped: %s",
-            {},
+            lambda rep: add_reduction_trajectory(rep, np.ones((5, 2))),
             id="trajectory",
         ),
         pytest.param(
-            "coco_pipe.viz.dim_reduction.plot_trajectory_separation",
-            lambda rep: add_reduction_trajectory_separation(rep, {"A-B": [1, 2]}),
-            "Trajectory separation section skipped: %s",
-            {},
+            lambda rep: add_reduction_trajectory_separation(
+                rep, {"A-B": np.ones(5)}, times=np.arange(3)
+            ),
             id="trajectory_separation",
         ),
     ],
 )
-def test_add_reduction_section_exception(plot_target, call, log_prefix, patch_kwargs):
-    """Each section logs and skips gracefully when its plot helper raises."""
-    err = ValueError("Plot error")
-    with (
-        patch("coco_pipe.report.dim_reduction.logger.debug") as mock_log,
-        patch(plot_target, side_effect=err, **patch_kwargs),
-    ):
-        call(Report("Test"))
-    mock_log.assert_called_with(log_prefix, err)
-
-
-@patch("coco_pipe.report.dim_reduction.warnings.warn")
-def test_make_reduction_report_interactive_warning(mock_warn):
-    make_reduction_report([MockReducerForExceptions()], interactive=True)
-    assert mock_warn.called
-
-
-def test_make_reduction_report_mismatched_embeddings():
-    with pytest.raises(ValueError, match="must align with `reductions`"):
-        make_reduction_report(
-            [MockReducerForExceptions()],
-            embeddings=[np.random.randn(10, 2), np.random.randn(10, 2)],
-        )
-
-
-def test_metrics_fallback_to_empty():
-    class NoMetricsReducer:
-        def get_summary(self):
-            return {}
-
+def test_section_builders_skip_data_they_cannot_plot(call):
+    """A section whose data cannot be plotted is left out of the report."""
     rep = Report("Test")
-    # Should not crash, should return self
-    assert add_reduction_metrics(rep, NoMetricsReducer()) is rep
-
-
-def test_metrics_get_scores_attribute_error():
-    class BrokenScoresReducer:
-        @property
-        def get_scores(self):
-            raise AttributeError("Broken")
-
-        def get_summary(self):
-            return {}
-
-    rep = Report("Test")
-    assert add_reduction_metrics(rep, BrokenScoresReducer()) is rep
-
-
-def test_components_fallback_dict():
-    from coco_pipe.report.dim_reduction import _components_payload
-
-    class DictComponentReducer:
-        def get_components(self):
-            return {"components": np.ones((2, 2))}
-
-    assert _components_payload(DictComponentReducer()) is not None
-
-    class BrokenComponentReducer:
-        @property
-        def get_components(self):
-            raise AttributeError("Broken")
-
-    assert _components_payload(BrokenComponentReducer()) is None
-
-
-def test_original_data_payload_fallback():
-    from coco_pipe.report.dim_reduction import _original_data_payload
-
-    assert _original_data_payload({"X_orig_": [1, 2]}) == [1, 2]
-    assert _original_data_payload({"X_orig": [3, 4]}) == [3, 4]
-
-
-def test_add_embedding_and_shepard_with_exceptions():
-    from coco_pipe.report.dim_reduction import _add_embedding_and_shepard
-
-    rep = Report("Test")
-    reducer = MockReducerForExceptions()
-    # Test skipping logic internally
-    # with plot_shepard_diagram failing
-    with patch(
-        "coco_pipe.viz.dim_reduction.plot_shepard_diagram", side_effect=ValueError
-    ):
-        with contextlib.suppress(Exception):
-            _add_embedding_and_shepard(
-                rep,
-                reducer,
-                np.random.randn(10, 2),
-                prefix="Test",
-                diagnostics={"X_orig": np.random.randn(10, 5)},
-            )
-        assert len(rep.children) >= 0
+    assert call(rep) is rep
+    assert rep.children == []
