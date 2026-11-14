@@ -33,7 +33,6 @@ def _experiment_config() -> ExperimentConfig:
             "logreg": ClassicalModelConfig(
                 estimator="LogisticRegression",
                 params={"solver": "liblinear", "max_iter": 200},
-                input_kind="tabular",
             )
         },
         cv=CVConfig(
@@ -152,7 +151,6 @@ def test_run_decoding_unit_reports_a_model_that_fails(tmp_path):
     broken = ClassicalModelConfig(
         estimator="LogisticRegression",
         params={"solver": "liblinear", "penalty": "elasticnet"},
-        input_kind="tabular",
     )
     config = config.model_copy(update={"models": {**config.models, "broken": broken}})
     records = {
