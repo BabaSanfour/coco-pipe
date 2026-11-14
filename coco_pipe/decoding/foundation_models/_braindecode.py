@@ -232,26 +232,36 @@ class BrainDecodeBackend(BackendBase):
                 )
         model_cls = getattr(models_module, class_name)
 
-        # Montage-dependent models need ``chs_info``: LaBraM/SignalJEPA resolve
-        # channel identity from it (SignalJEPA indexes its pretrained per-channel
-        # embeddings by name).
+        # Montage-dependent models need ``chs_info``. LaBraM and SignalJEPA
+        # (with its pretrained channel embeddings) find channels by name; LUNA,
+        # and SignalJEPA with channel_embedding="scratch", embed their positions,
+        # where braindecode gives a channel without one a made-up position.
         if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
             import mne
 
             kw.setdefault("n_chans", len(electrode_names))
             kw.setdefault("sfreq", sfreq)
-            info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
-            try:
-                info.set_montage("colin27_1020", on_missing="warn")
-            except Exception as exc:
-                warnings.warn(
-                    f"Could not assign the colin27_1020 montage for "
-                    f"{model_key} ({type(exc).__name__}: {exc}); channel "
-                    "positions are unset, which can degrade montage-dependent "
-                    "embeddings (e.g. LaBraM interpolation).",
-                    stacklevel=2,
+            needs_positions = model_key == "luna" or (
+                model_key == "signaljepa" and kw.get("channel_embedding") == "scratch"
+            )
+            if "chs_info" not in kw:
+                info = mne.create_info(electrode_names, sfreq=sfreq, ch_types="eeg")
+                info.set_montage(
+                    "colin27_1020",
+                    match_case=False,
+                    on_missing="raise" if needs_positions else "ignore",
                 )
-            kw.setdefault("chs_info", info["chs"])
+                kw["chs_info"] = info["chs"]
+            unplaced = [
+                ch["ch_name"]
+                for ch in kw["chs_info"]
+                if not np.isfinite(ch["loc"][:3]).all()
+            ]
+            if needs_positions and unplaced:
+                raise ValueError(
+                    f"{metadata.display_name} embeds channel positions, but "
+                    f"{unplaced} have none."
+                )
         if model_key == "luna":
             kw.setdefault("n_times", n_times)
             kw.setdefault("embed_dim", 64)

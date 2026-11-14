@@ -388,6 +388,20 @@ def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
         assert not torch.equal(upstream(module, x), clean)
 
 
+def test_luna_refuses_a_channel_without_a_position(offline):
+    with pytest.raises(ValueError, match="X1"):
+        _load("luna", channels=[*DEFAULT_CHANNELS[:-1], "X1"])
+
+
+def test_luna_finds_positions_whatever_the_case_of_the_names(offline):
+    def embed(channels):
+        backend, X = _load("luna", channels=channels, pretrained=False, seed=0)
+        return backend.transform(X)
+
+    upper = [name.upper() for name in DEFAULT_CHANNELS]
+    np.testing.assert_array_equal(embed(upper), embed(DEFAULT_CHANNELS))
+
+
 @pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])
 def test_models_refuse_windows_they_cannot_patch(offline, model_key, n_times):
     with pytest.raises(ValueError, match="not divisible by patch_size"):
