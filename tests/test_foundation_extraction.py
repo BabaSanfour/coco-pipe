@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 import torch
@@ -10,7 +8,6 @@ from coco_pipe.decoding.foundation_models import (
     check_capability,
     normalize_channel_names,
 )
-from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.registry import get_foundation_model_spec
 from tests.fixtures.embeddings import TokenModel, extract
 
@@ -85,34 +82,7 @@ def test_extractor_caches_window_embeddings_without_changing_output():
     assert rows_seen["n"] == 2 * len(X)
 
 
-def test_labram_channel_adaptation_reports_real_19_to_128_mapping():
-    source = [f"src-{index}" for index in range(19)]
-    target = [f"target-{index}" for index in range(128)]
-    layer = SimpleNamespace(
-        src_chs_info=[{"ch_name": value} for value in source],
-        tgt_chs_info=[{"ch_name": value} for value in target],
-        mode="always",
-        method="spline",
-        matrix=torch.zeros(128, 19),
-    )
-    model = SimpleNamespace(interpolation_layer=layer)
-    backend = BrainDecodeBackend(
-        metadata=get_foundation_model_spec("labram"),
-        model=model,
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    backend.signal_metadata_ = SignalMetadata(sfreq=200, ch_names=source)
-    backend._uses_interpolation = True
-    adaptation = backend.get_channel_adaptation()
-    assert len(adaptation["interpolated_channels"]) == 128
-    assert adaptation["interpolation_matrix_shape"] == [128, 19]
-    assert adaptation["zero_filled_channels"] == []
-
-
-def test_labram_capability_needs_known_channels_or_interpolation():
+def test_labram_capability_needs_known_channels():
     channels = [f"ch-{index}" for index in range(19)]
     rejected = check_capability(
         "labram",
@@ -122,16 +92,7 @@ def test_labram_capability_needs_known_channels_or_interpolation():
         n_times=3000,
     )
     assert rejected.status == "incompatible_channels"
-    accepted = check_capability(
-        "labram",
-        train_mode="frozen",
-        sfreq=200,
-        ch_names=channels,
-        n_times=3000,
-        backend_kwargs={"interpolate_channels": True},
-    )
-    assert accepted.status == "available"
-    # its own pretraining channels need no interpolation
+    # a subset of its own pretraining channels
     known = check_capability(
         "labram", train_mode="frozen", sfreq=200, ch_names=["Fp1", "Cz"], n_times=3000
     )

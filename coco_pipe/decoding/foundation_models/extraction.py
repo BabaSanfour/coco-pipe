@@ -108,10 +108,7 @@ def check_capability(
         spec.pretrained_n_chans is not None
         and len(normalized) != spec.pretrained_n_chans
     )
-    interpolation_requested = bool(
-        (backend_kwargs or {}).get("interpolate_channels", False)
-    )
-    if requires_adaptation and not interpolation_requested:
+    if requires_adaptation:
         # LaBraM takes any subset of its pretraining channels, found by name.
         from braindecode.models.labram import LABRAM_CHANNEL_ORDER
 
@@ -124,8 +121,7 @@ def check_capability(
                 "incompatible_channels",
                 (
                     f"{unknown} are not among the {spec.pretrained_n_chans} "
-                    f"pretraining channels of {spec.display_name}. Drop them or "
-                    "enable channel interpolation."
+                    f"pretraining channels of {spec.display_name}. Drop them."
                 ),
                 {"normalized_channels": normalized},
             )
@@ -137,7 +133,6 @@ def check_capability(
         "normalized_channels": normalized,
         "requires_resampling": sfreq is not None and sfreq != spec.pretrained_sfreq,
         "requires_channel_adaptation": requires_adaptation,
-        "interpolation_requested": interpolation_requested,
         "checkpoint_revision": spec.checkpoint_revision,
         "checkpoint_filename": spec.checkpoint_filename,
         "expects_microvolts": spec.expects_microvolts,
@@ -675,9 +670,6 @@ class FoundationEmbeddingExtractor:
                     )
                     if original != normalized
                 ],
-                "interpolation_requested": bool(
-                    self.backend_kwargs.get("interpolate_channels", False)
-                ),
                 "pretrained_n_chans": spec.pretrained_n_chans,
                 "input_n_chans": len(prepared.ch_names),
                 **prepared.channel_adaptation(),

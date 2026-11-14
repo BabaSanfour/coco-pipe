@@ -14,10 +14,10 @@ interpolation (which is physically wrong; see
   62-name pretraining vocabulary; the remaining channels keep their pretrained
   per-channel embeddings (looked up by name).
 
-The braindecode-side constants (``BIOT_CHANNEL_ORDER`` / ``_BIOT_TARGET_CHS_INFO``,
-``BENDR_CHANNEL_ORDER`` / ``_BENDR_TARGET_CHS_INFO``, ``CHANNEL_DICT``) remain the
-ground truth; this module derives its name-level constants from them lazily so a
-braindecode upgrade cannot silently desync the two (``tests`` assert the match).
+The braindecode-side constants (``BIOT_CHANNEL_ORDER``, ``BENDR_CHANNEL_ORDER``,
+``CHANNEL_DICT``) remain the ground truth; this module derives its name-level
+constants from them lazily so a braindecode upgrade cannot silently desync the
+two (``tests`` assert the match).
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def min_max_normalize(
 class ChannelPlan:
     """Resolved channel adaptation for one model + source montage.
 
-    ``status`` is ``"available"`` (``adapter``/``target_chs_info`` populated) or
+    ``status`` is ``"available"`` (``adapter`` populated) or
     ``"unsupported"`` (``reason`` set, everything else ``None``). ``adapter``
     maps ``X`` of shape ``(n_windows, n_source, n_times)`` to the model's native
     channel layout ``(n_windows, model_n_chans, n_times)``.
@@ -81,7 +81,6 @@ class ChannelPlan:
     model_n_chans: int | None = None
     model_ch_names: list[str] | None = None
     adapter: Callable[[np.ndarray], np.ndarray] | None = None
-    target_chs_info: list[dict] | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
 
@@ -176,8 +175,6 @@ def _plan_biot(
         derived = [X[:, a, :] - X[:, b, :] for a, b in pair_idx]
         return np.stack(derived, axis=1).astype(np.float32)
 
-    from braindecode.models.biot import _BIOT_TARGET_CHS_INFO
-
     bipolar_names = [f"{a}-{b}" for a, b in pairs]
     provenance = {
         "channel_adaptation": "bipolar_derive",
@@ -191,7 +188,6 @@ def _plan_biot(
         model_n_chans=16,
         model_ch_names=bipolar_names,
         adapter=adapter,
-        target_chs_info=[dict(ch) for ch in _BIOT_TARGET_CHS_INFO[:16]],
         provenance=provenance,
     )
 
@@ -253,7 +249,6 @@ def _plan_bendr(
         model_n_chans=20,
         model_ch_names=[*order, "SCALE"],
         adapter=adapter,
-        target_chs_info=None,  # plain BENDR loads with n_chans=20, no chs_info
         provenance=provenance,
     )
 
@@ -292,7 +287,6 @@ def _plan_eegpt(names: list[str]) -> ChannelPlan:
         model_n_chans=len(kept_names),
         model_ch_names=kept_names,
         adapter=adapter if dropped else None,
-        target_chs_info=None,  # backend builds chs_info from kept_names
         provenance=provenance,
     )
 

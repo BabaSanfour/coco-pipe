@@ -81,8 +81,8 @@ def validate_real_checkpoints(
     ch_names : sequence of str, optional
         Montage to validate against. Defaults to :data:`DEFAULT_CHANNELS`
         (a representative 19-channel 10-20 set). Pass the study's actual
-        channel list to exercise the exact channel adaptation (e.g. the real
-        ``128 x N`` LaBraM interpolation) the cohort run will use.
+        channel list to exercise the exact channel adaptation the cohort run
+        will use.
     """
     records = []
     channels = list(ch_names) if ch_names else list(DEFAULT_CHANNELS)
@@ -90,8 +90,6 @@ def validate_real_checkpoints(
         spec = get_foundation_model_spec(model_key)
         n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 10)
         backend_kwargs: dict[str, Any] = {}
-        if model_key == "labram":
-            backend_kwargs["interpolate_channels"] = True
         if token is not None:
             backend_kwargs["token"] = token
         try:
@@ -170,8 +168,6 @@ def validate_real_training(
         y = np.repeat([0, 1], 4)
         groups = np.asarray([f"group-{index}" for index in range(4) for _ in range(2)])
         backend_kwargs: dict[str, Any] = {}
-        if model_key == "labram":
-            backend_kwargs["interpolate_channels"] = True
         if token is not None:
             backend_kwargs["token"] = token
         for train_mode in train_modes:

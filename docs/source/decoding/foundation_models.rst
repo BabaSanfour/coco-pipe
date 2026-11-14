@@ -124,7 +124,7 @@ The result holds:
 - ``token_embeddings``: the backbone's tokens, with ``store_tokens=True``;
 - ``channel_embeddings`` and ``patch_embeddings``: the tokens averaged over
   time patches or over channels, for models whose tokens have both axes
-  (CBraMod, REVE, and LaBraM without channel interpolation); never normalised;
+  (CBraMod, REVE and LaBraM); never normalised;
 - ``extra_window_embeddings``: the window vectors of each of
   ``extra_poolings``, pooled from the same forward pass, such as REVE's
   attention read-out. The writer puts them in a window file of their own

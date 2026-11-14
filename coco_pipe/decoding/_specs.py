@@ -720,13 +720,11 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         pretrained_sfreq=200.0,
         pretrained_n_chans=128,
         pretrained_n_times=3000,
-        supports_channel_interpolation=True,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         input_scale=0.01,
         model_notes=(
-            "Requires 128 channels in LABRAM_CHANNEL_ORDER. "
-            "Use InterpolatedLaBraM (braindecode>=1.5) for arbitrary channel sets. "
+            "Takes any subset of the channels in LABRAM_CHANNEL_ORDER, by name. "
             "Input in units of 100 µV, as in the authors' code."
         ),
     ),
