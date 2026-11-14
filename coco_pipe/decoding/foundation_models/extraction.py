@@ -636,14 +636,10 @@ class FoundationEmbeddingExtractor:
             "input_sfreq": float(prepared.source_sfreq),
             "model_sfreq": float(prepared.target_sfreq),
             "pretrained_sfreq": float(spec.pretrained_sfreq),
-            "original_sfreq": float(signal_metadata.sfreq),
             "resampled": resampled,
             "requires_resampling": prepared.source_sfreq != prepared.target_sfreq,
             "original_channels": list(signal_metadata.ch_names),
             "model_channels": prepared.ch_names,
-            "channel_mapping": dict(
-                zip(signal_metadata.ch_names, prepared.ch_names, strict=False)
-            ),
             "channel_adaptation": {
                 "legacy_1020_renamed": [
                     {

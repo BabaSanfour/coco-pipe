@@ -265,8 +265,6 @@ class FoundationModelSpec(EstimatorSpec):
     checkpoint_revision: str | None = None
     checkpoint_filename: str | None = None
     pretrained_n_chans: int | None = None
-    pretrained_ch_names: list[str] | None = None
-    supports_channel_interpolation: bool = False
     # Input-signal expectations (so callers/guardrails can match preprocessing).
     expects_microvolts: bool = True
     # What the backend applies to the microvolt input, in this order, so the
@@ -282,7 +280,6 @@ class FoundationModelSpec(EstimatorSpec):
     expected_passband: tuple[float, float] | None = None
     expected_reference: str | None = None
     supported_train_modes: tuple[str, ...] = ("frozen", "full", "lora")
-    fallback_backends: tuple[str, ...] = ()
     paper_url: str | None = None
     model_notes: str = ""
 

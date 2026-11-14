@@ -4,7 +4,7 @@ BrainDecode Backend
 
 Backend that loads pretrained EEG/MEG models from the braindecode library
 via ``Model.from_pretrained()``. Supports CBraMod, BIOT, LaBraM, EEGPT,
-SignalJEPA, BENDR, CodeBrain, and LUNA.
+SignalJEPA, BENDR and LUNA.
 
 To add a new braindecode model: add one entry to ``_BD_MODEL_MAP`` and one
 ``FoundationModelSpec`` entry in ``coco_pipe/decoding/_specs.py``.
@@ -36,7 +36,6 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "eegpt": ("EEGPT", "braindecode.models"),
     "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
-    "codebrain": ("CodeBrain", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
 }
 
@@ -67,7 +66,7 @@ def _luna_frequency_features(self, x):
 class BrainDecodeBackend(BackendBase):
     """Backend that delegates to braindecode.models.<Model>.from_pretrained().
 
-    Covers CBraMod, BIOT, LaBraM, EEGPT, SignalJEPA, BENDR, CodeBrain, LUNA.
+    Covers CBraMod, BIOT, LaBraM, EEGPT, SignalJEPA, BENDR, LUNA.
 
     Training modes: frozen, full, lora.
     QLoRA is not supported (requires HF quantization in from_pretrained).

@@ -67,11 +67,12 @@ extracted embeddings.
 1.1 Embedding Cache
 ~~~~~~~~~~~~~~~~~~~
 
-``cache_embeddings=True`` writes extracted embeddings to a content-addressed
-disk cache. Because a frozen backbone is a deterministic, target-independent
-function of the window content, the cache key is derived from the input windows
-and the backbone fingerprint — so embeddings are computed once and reused across
-folds and models without leakage. No manual cache management is required.
+``cache_embeddings=True`` (the default) keeps the embeddings of a frozen
+backbone in memory, by window content. A frozen backbone is a deterministic,
+target-independent function of the window, so each window is embedded once and
+reused across folds, and across models that share the backbone, without leakage.
+The cache holds one backbone's embeddings at a time: another backbone replaces
+them. ``clear_frozen_embedding_cache()`` empties it.
 
 1.2 Supported Models & Backends
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
