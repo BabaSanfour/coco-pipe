@@ -172,6 +172,11 @@ record ``Weights`` and ``Seed``, and the writer labels them by the seed, e.g.
        cv=CVConfig(strategy="stratified_group_kfold", n_splits=5, group_key="Subject"),
    )
 
+A random-weights baseline fine-tunes the same architecture from random weights
+(see **Random weights** above): pass them through ``backend_kwargs``, e.g.
+``NeuralFineTuneConfig(..., backend_kwargs={"pretrained": False, "seed": 0})``.
+QLoRA refuses it.
+
 2.1 Training Modes
 ~~~~~~~~~~~~~~~~~~
 
