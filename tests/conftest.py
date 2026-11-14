@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fixtures.hub import offline  # noqa: F401
+
 # --- Native threading guard -------------------------------------------------
 for _thread_var in (
     "OMP_NUM_THREADS",
