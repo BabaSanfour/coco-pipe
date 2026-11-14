@@ -229,6 +229,18 @@ def aggregate_predictions_for_inference(
     else:  # regression
         agg_dict["y_pred"] = "mean"
 
+    # A unit is scored against one target, so its samples must share it; with
+    # several, "first" would pick one at random (e.g. a recording of both classes).
+    n_targets = frame.groupby(group_cols, dropna=False)["y_true"].nunique()
+    if (n_targets > 1).any():
+        mixed = n_targets[n_targets > 1].index.tolist()
+        raise ValueError(
+            f"The target varies within {len(mixed)} inference unit(s) of "
+            f"'{unit_col}' (e.g. {mixed[:3]}). Use a unit inside which the target "
+            "is constant, e.g. one per recording and condition; in a permutation "
+            "test, give a larger grouping as strata_column instead."
+        )
+
     # Execute Aggregation
     res = frame.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
     res = res.rename(columns={unit_col: "InferentialUnitID"})
@@ -799,16 +811,8 @@ def _run_permutation_loop(
         for u in unique_units:
             mask = unit_values == u
             u_y = y[mask]
+            # one label per unit: aggregate_predictions_for_inference refused others
             if experiment_config.task == "classification":
-                if np.unique(u_y).size > 1:
-                    raise ValueError(
-                        f"The label varies within inference unit {u!r}; a "
-                        "permutation test swaps whole units, so each unit needs "
-                        "one label. Use a unit inside which the target is "
-                        "constant, or keep the units and permute inside them "
-                        "with chance.permutation_scheme='within_strata' or "
-                        "'blocks_within_strata'."
-                    )
                 unit_labels_orig.append(u_y[0])
             else:
                 unit_labels_orig.append(np.mean(u_y))
