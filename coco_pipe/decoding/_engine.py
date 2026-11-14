@@ -862,6 +862,11 @@ def extract_metadata(
             meta["search_results"] = compact_search_results(estimator)
         estimator = getattr(estimator, "best_estimator_", estimator)
 
+    # LEACE erasure: the number of directions this fold's eraser removed
+    erasure = getattr(estimator, "named_steps", {}).get("erasure")
+    if erasure is not None and hasattr(erasure, "rank_"):
+        meta["erasure_rank"] = int(erasure.rank_)
+
     # 2. Pipeline / Feature Selection Diagnostics
     if feature_selection_config.enabled and hasattr(estimator, "named_steps"):
         fs_step = estimator.named_steps.get("fs")
