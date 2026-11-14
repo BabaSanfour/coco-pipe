@@ -53,6 +53,9 @@ def test_experiment_places_erasure_first_and_routes_groups():
     assert result.raw["lr"]["status"] == "success"
     predictions = result.get_predictions()
     assert len(predictions) == len(x)
+    # every fold erased the strong subject offsets, and the summary says how many
+    summary = result.summary().loc["lr"]
+    assert 1 <= summary["erasure_rank_min"] <= summary["erasure_rank_max"] < x.shape[1]
 
 
 def test_euclidean_alignment_handles_unseen_fold_subjects():
@@ -68,6 +71,7 @@ def test_euclidean_alignment_handles_unseen_fold_subjects():
     )
     result = Experiment(config).run(x, labels, groups=groups)
     assert result.raw["lr"]["status"] == "success"
+    assert "erasure_rank_min" not in result.summary().columns
 
 
 def test_ea_erasure_refuses_tuning_and_calibration_and_leace_takes_both():

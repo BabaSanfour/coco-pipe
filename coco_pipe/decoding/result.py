@@ -281,7 +281,9 @@ class ExperimentResult:
         summary_df : pd.DataFrame
             DataFrame with models as index and scalar metrics as columns.
             Includes p-values and significance markers ('*') if statistical
-            assessments were executed.
+            assessments were executed, and ``erasure_rank_min`` /
+            ``erasure_rank_max``, the fewest and most directions a fold's LEACE
+            eraser removed, when the model ran with LEACE erasure.
 
         Examples
         --------
@@ -319,6 +321,16 @@ class ExperimentResult:
                         # Add significance marker
                         if s.get("Significant"):
                             row[f"{m}_sig"] = "*"
+
+            # 3. Fold-local LEACE: how many directions the folds' erasers removed
+            ranks = [
+                meta["erasure_rank"]
+                for meta in res.get("metadata", [])
+                if "erasure_rank" in meta
+            ]
+            if ranks:
+                row["erasure_rank_min"] = min(ranks)
+                row["erasure_rank_max"] = max(ranks)
 
             if len(row) > 1:
                 rows.append(row)
