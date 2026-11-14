@@ -1,0 +1,6 @@
+coverage:
+  status:
+    project:
+      default:
+        # coverage may drop by up to 1 point before the check fails
+        threshold: 1%
