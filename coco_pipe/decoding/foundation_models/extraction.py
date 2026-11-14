@@ -44,7 +44,6 @@ def check_capability(
     train_mode: str,
     sfreq: float | None = None,
     ch_names: Sequence[str] | None = None,
-    n_times: int | None = None,
     backend: str = "auto",
     backend_kwargs: Mapping[str, Any] | None = None,
 ) -> CapabilityResult:
@@ -108,10 +107,7 @@ def check_capability(
         spec.pretrained_n_chans is not None
         and len(normalized) != spec.pretrained_n_chans
     )
-    interpolation_requested = bool(
-        (backend_kwargs or {}).get("interpolate_channels", False)
-    )
-    if requires_adaptation and not interpolation_requested:
+    if requires_adaptation:
         # LaBraM takes any subset of its pretraining channels, found by name.
         from braindecode.models.labram import LABRAM_CHANNEL_ORDER
 
@@ -124,8 +120,7 @@ def check_capability(
                 "incompatible_channels",
                 (
                     f"{unknown} are not among the {spec.pretrained_n_chans} "
-                    f"pretraining channels of {spec.display_name}. Drop them or "
-                    "enable channel interpolation."
+                    f"pretraining channels of {spec.display_name}. Drop them."
                 ),
                 {"normalized_channels": normalized},
             )
@@ -137,7 +132,6 @@ def check_capability(
         "normalized_channels": normalized,
         "requires_resampling": sfreq is not None and sfreq != spec.pretrained_sfreq,
         "requires_channel_adaptation": requires_adaptation,
-        "interpolation_requested": interpolation_requested,
         "checkpoint_revision": spec.checkpoint_revision,
         "checkpoint_filename": spec.checkpoint_filename,
         "expects_microvolts": spec.expects_microvolts,
@@ -149,20 +143,6 @@ def check_capability(
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
-    if n_times is not None and sfreq is not None and spec.pretrained_n_times:
-        model_n_times = round(n_times * spec.pretrained_sfreq / sfreq)
-        if model_n_times != spec.pretrained_n_times:
-            return CapabilityResult(
-                model_key,
-                train_mode,
-                "incompatible_window",
-                (
-                    f"{spec.display_name} requires {spec.pretrained_n_times} "
-                    f"samples at {spec.pretrained_sfreq:g} Hz; this input maps "
-                    f"to {model_n_times}."
-                ),
-                {**details, "model_n_times": model_n_times},
-            )
     return CapabilityResult(model_key, train_mode, "available", details=details)
 
 
@@ -675,9 +655,6 @@ class FoundationEmbeddingExtractor:
                     )
                     if original != normalized
                 ],
-                "interpolation_requested": bool(
-                    self.backend_kwargs.get("interpolate_channels", False)
-                ),
                 "pretrained_n_chans": spec.pretrained_n_chans,
                 "input_n_chans": len(prepared.ch_names),
                 **prepared.channel_adaptation(),

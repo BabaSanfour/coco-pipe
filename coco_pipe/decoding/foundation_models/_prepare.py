@@ -39,17 +39,6 @@ class PreparedBackend:
                 down=self.source_sfreq,
                 axis=-1,
             ).astype(np.float32)
-        if (
-            self.spec.pretrained_n_times is not None
-            and values.shape[-1] != self.spec.pretrained_n_times
-        ):
-            raise ValueError(
-                f"{self.spec.display_name} checkpoint requires "
-                f"{self.spec.pretrained_n_times} samples per input at "
-                f"{self.target_sfreq:g} Hz, got {values.shape[-1]}. "
-                "Adjust upstream epoch duration; temporal padding/cropping is "
-                "not performed implicitly."
-            )
         return values
 
     def channel_adaptation(self) -> dict[str, Any]:
@@ -105,9 +94,7 @@ def prepare_backend(
     resolved_names = list(ch_names)
     source_sfreq = float(sfreq)
     target_sfreq = float(spec.pretrained_sfreq)
-    model_n_times = spec.pretrained_n_times or round(
-        values.shape[-1] * target_sfreq / source_sfreq
-    )
+    model_n_times = round(values.shape[-1] * target_sfreq / source_sfreq)
     kwargs = dict(backend_kwargs or {})
     kwargs.setdefault("sfreq", target_sfreq)
     kwargs.setdefault("n_times", model_n_times)

@@ -265,7 +265,7 @@ def test_validation_edge_cases():
         validate_real_checkpoints,
     )
 
-    # 1. validate_real_checkpoints with labram (triggers interpolate_channels)
+    # 1. validate_real_checkpoints with labram
     with patch(
         "coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor"
     ) as mock_extractor_cls:

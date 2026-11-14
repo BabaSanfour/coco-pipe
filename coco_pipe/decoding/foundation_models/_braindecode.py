@@ -40,10 +40,6 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "luna": ("LUNA", "braindecode.models"),
 }
 
-_INTERPOLATED_CLASS: dict[str, str] = {
-    "labram": "InterpolatedLaBraM",
-}
-
 
 def _luna_frequency_features(self, x):
     """LUNA's frequency embedding, its DC and Nyquist bins made real.
@@ -80,7 +76,6 @@ class BrainDecodeBackend(BackendBase):
     ``_forward_logits`` — no dict leaks outside those methods.
     """
 
-    _uses_interpolation: bool = False
     _channel_plan = None
 
     def __init__(
@@ -210,29 +205,13 @@ class BrainDecodeBackend(BackendBase):
                 f"braindecode models support pooling='mean', got {pooling!r}."
             )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
-        n_times = int(
-            metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
-        )
-        kw.pop("n_times", None)
+        n_times = int(kw.pop("n_times", round(sfreq * 2)))
         revision = resolve_revision(
             metadata.hub_repo,
             kw.pop("revision", metadata.checkpoint_revision),
             token=kw.get("token"),
         )
         filename = kw.pop("filename", metadata.checkpoint_filename)
-        interpolate_channels = bool(kw.pop("interpolate_channels", False))
-        uses_interpolation = interpolate_channels and model_key in _INTERPOLATED_CLASS
-        if (
-            interpolate_channels
-            and not uses_interpolation
-            and not _montages.is_special(model_key)
-        ):
-            raise ValueError(
-                f"interpolate_channels=True is not supported for '{model_key}'. "
-                f"Channel interpolation is available for: "
-                f"{sorted(_INTERPOLATED_CLASS)}."
-            )
-
         # Faithful fixed-montage construction (BIOT bipolar derivation, BENDR
         # reorder + computed SCALE, EEGPT name-indexed subset). The plan is the
         # shared source of truth with the capability gate (see extraction.py);
@@ -251,22 +230,11 @@ class BrainDecodeBackend(BackendBase):
                     f"{model_key} cannot be served on this montage: "
                     f"{channel_plan.reason}"
                 )
-        if uses_interpolation:
-            shipped = _INTERPOLATED_CLASS[model_key]
-            if not hasattr(models_module, shipped):
-                raise ImportError(
-                    f"interpolate_channels=True requires {shipped} "
-                    "(braindecode>=1.5), which is not available in the "
-                    "installed braindecode version."
-                )
-            model_cls = getattr(models_module, shipped)
-        else:
-            model_cls = getattr(models_module, class_name)
+        model_cls = getattr(models_module, class_name)
 
         # Montage-dependent models need ``chs_info``: LaBraM/SignalJEPA resolve
         # channel identity from it (SignalJEPA indexes its pretrained per-channel
-        # embeddings by name), and the LaBraM interpolation wrapper builds its
-        # interpolation matrix from it.
+        # embeddings by name).
         if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
             import mne
 
@@ -289,13 +257,18 @@ class BrainDecodeBackend(BackendBase):
             kw.setdefault("embed_dim", 64)
             kw.setdefault("num_queries", 4)
             kw.setdefault("depth", 8)
+            # braindecode>=2 pads windows that do not divide into patches.
+            kw.setdefault("on_non_divisible", "error")
         elif model_key == "cbramod":
             kw.setdefault("n_times", n_times)
         elif model_key == "labram":
-            # The pretrained temporal embedding has a checkpoint-native width.
-            # LaBraM adjusts it dynamically during forward, but overriding
-            # n_times while loading makes the state dict shape incompatible.
-            kw.pop("n_times", None)
+            # One pretrained time embedding per 1 s patch, 16 in the checkpoint.
+            kw.setdefault("n_times", n_times)
+            kw.setdefault("on_non_divisible", "error")
+            if train_mode == "frozen":
+                # The pretrained final norm, not the readout norm that only
+                # fine-tuning trains (braindecode>=2 defaults to the latter).
+                kw.setdefault("use_mean_pooling", False)
         elif model_key == "signaljepa":
             # Load the full 62-row pretrained channel-embedding matrix and index
             # the rows matching the input ``chs_info`` by name (braindecode#991),
@@ -306,9 +279,9 @@ class BrainDecodeBackend(BackendBase):
             kw.setdefault("n_times", n_times)
         elif model_key == "biot":
             # Plain BIOT on the 16-channel TCP bipolar montage built by exact
-            # subtraction (see channel_plan.adapter); never InterpolatedBIOT.
-            kw["chs_info"] = channel_plan.target_chs_info
+            # subtraction (see channel_plan.adapter).
             kw["n_chans"] = channel_plan.model_n_chans
+            kw.pop("chs_info", None)
         elif model_key == "bendr":
             # Plain BENDR on 20 channels (19 reordered EEG + computed SCALE);
             # no chs_info → skip BENDR's exact-name check (the adapter already
@@ -346,24 +319,22 @@ class BrainDecodeBackend(BackendBase):
             with warnings.catch_warnings():
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
+                # LaBraM beyond 16 s: the extra time embeddings would be untrained
+                warnings.filterwarnings("error", "The checkpoint holds")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):
             if not pretrained:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", "Modifying chs_info argument")
+                    warnings.filterwarnings("ignore", "Labram chs_info does not match")
                     model = type(model).from_config(model.get_config())
-            if model_key == "labram" and not uses_interpolation and electrode_names:
+            if model_key == "labram" and electrode_names:
                 # As in the authors' code, each channel takes the position
                 # embedding of its name, so a subset of the pretraining channels
                 # is fed as is.
                 model.forward = partial(model.forward, ch_names=list(electrode_names))
             if model_key == "luna":
-                if n_times % model.patch_size:
-                    raise ValueError(
-                        f"LUNA cuts windows into patches of {model.patch_size} "
-                        f"samples, so n_times must be a multiple of it, got {n_times}."
-                    )
                 model.freq_embed.forward = MethodType(
                     _luna_frequency_features, model.freq_embed
                 )
@@ -410,7 +381,6 @@ class BrainDecodeBackend(BackendBase):
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
-        backend._uses_interpolation = model_key == "labram" and interpolate_channels
         backend.checkpoint_revisions = {metadata.hub_repo: revision}
         backend.weights_seed = None if pretrained else int(seed)
         backend._channel_adapter = (
@@ -622,7 +592,7 @@ class BrainDecodeBackend(BackendBase):
                             f"{self._metadata.display_name} exposes only a pooled "
                             "feature tensor; native token extraction is unavailable."
                         )
-                    if self._metadata.name == "labram" and not self._uses_interpolation:
+                    if self._metadata.name == "labram":
                         # one token per channel and time patch, channel-major
                         tokens = tokens.unflatten(1, (tensor.shape[1], -1))
                     token_chunks.append(self._from_tensor(tokens))
@@ -688,12 +658,6 @@ class BrainDecodeBackend(BackendBase):
                 f"{self._metadata.display_name} does not expose a documented "
                 "native token representation."
             )
-        if self._metadata.name == "labram" and self._uses_interpolation:
-            metadata = {
-                **metadata,
-                "token_axes": ["window", "patch_token", "feature"],
-                "token_observation_axes": ["patch_token"],
-            }
         return metadata
 
     def checkpoint_components(self) -> dict:
@@ -701,7 +665,7 @@ class BrainDecodeBackend(BackendBase):
         return {"model": self._model}
 
     def get_channel_adaptation(self) -> dict:
-        """Describe direct and interpolated channels from the real layer."""
+        """Describe how the input channels reach the model."""
         meta = self.signal_metadata_
         source = list(meta.ch_names) if meta is not None else []
         if self._channel_plan is not None:
@@ -716,33 +680,12 @@ class BrainDecodeBackend(BackendBase):
                 # electrodes; surface them under the legacy key too.
                 "interpolated_channels": list(provenance.get("filled_channels", [])),
             }
-        if not self._uses_interpolation:
-            return {
-                "source_channels": source,
-                "target_channels": source,
-                "interpolated_channels": [],
-                "zero_filled_channels": [],
-                "dropped_channels": [],
-            }
-        layer = self._model.interpolation_layer
-        target = [str(item["ch_name"]) for item in layer.tgt_chs_info]
-        source_lookup = {name.casefold() for name in source}
-        mode = getattr(layer, "mode", "always")
-        direct = (
-            [name for name in target if name.casefold() in source_lookup]
-            if mode == "name_match"
-            else []
-        )
         return {
             "source_channels": source,
-            "target_channels": target,
-            "direct_channels": direct,
-            "interpolated_channels": [name for name in target if name not in direct],
+            "target_channels": source,
+            "interpolated_channels": [],
             "zero_filled_channels": [],
             "dropped_channels": [],
-            "interpolation_method": getattr(layer, "method", None),
-            "interpolation_mode": mode,
-            "interpolation_matrix_shape": list(layer.matrix.shape),
         }
 
     def predict(self, X: np.ndarray) -> np.ndarray:

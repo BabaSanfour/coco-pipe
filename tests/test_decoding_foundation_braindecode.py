@@ -22,8 +22,7 @@ BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"
 LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "Labram": {"n_times": 3000, "n_outputs": 1},
-    "InterpolatedLaBraM": {"n_times": 3000, "n_outputs": 1},
+    "Labram": {"n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
     "BENDR": {"n_outputs": 1},
 }
@@ -49,7 +48,7 @@ def offline(monkeypatch, tmp_path):
             params.setdefault(key, value)
         return cls(**params)
 
-    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "InterpolatedLaBraM", "LUNA")
+    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "LUNA")
     for name in (*classes, "SignalJEPA_Contextual"):
         if hasattr(bm, name):
             monkeypatch.setattr(
@@ -84,8 +83,6 @@ def _load(
     model_key, train_mode="frozen", n_outputs=2, channels=DEFAULT_CHANNELS, **kwargs
 ):
     spec = get_estimator_spec(model_key)
-    if model_key == "labram":
-        kwargs.setdefault("interpolate_channels", True)
     if model_key == "luna":
         # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
         kwargs.setdefault("n_times", 640)
@@ -102,11 +99,7 @@ def _load(
     backend.signal_metadata_ = SignalMetadata(
         sfreq=spec.pretrained_sfreq, ch_names=list(channels)
     )
-    n_times = (
-        spec.pretrained_n_times
-        or kwargs.get("n_times")
-        or round(spec.pretrained_sfreq * 2)
-    )
+    n_times = kwargs.get("n_times") or round(spec.pretrained_sfreq * 2)
     X = np.random.default_rng(0).normal(size=(4, len(channels), n_times))
     return backend, X.astype(np.float32)
 
@@ -356,27 +349,14 @@ def test_extractor_draws_random_weights_from_its_seed(offline):
     assert not np.allclose(other.window_embeddings, first.window_embeddings)
 
 
-def test_labram_interpolates_missing_channels(offline):
-    backend, X = _load("labram")
-    adaptation = backend.get_channel_adaptation()
-    names = {name.upper() for name in DEFAULT_CHANNELS}
-    assert {name.upper() for name in adaptation["source_channels"]} == names
-    assert {name.upper() for name in adaptation["direct_channels"]} <= names
-    assert adaptation["interpolated_channels"]
-    assert adaptation["interpolation_method"]
-    _, tokens = backend.transform(X, return_tokens=True)
-    assert tokens.shape == (4, 128 * 15, 200)
-    assert backend.get_token_output_metadata()["token_axes"] == [
-        "window",
-        "patch_token",
-        "feature",
-    ]
-
-    # without interpolation the 19 channels go in as they are, found by name
-    plain, X = _load("labram", interpolate_channels=False)
+def test_labram_takes_its_channels_by_name(offline):
+    # the 19 channels go in as they are, found by name
+    plain, X = _load("labram")
+    # frozen: the pretrained final norm, not the untrained readout norm
+    assert offline[-1]["use_mean_pooling"] is False
     assert not plain.get_channel_adaptation().get("interpolated_channels")
     _, tokens = plain.transform(X, return_tokens=True)
-    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 15, 200)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 2, 200)
     assert plain.get_token_output_metadata()["token_axes"] == [
         "window",
         "channel",
@@ -408,17 +388,17 @@ def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
         assert not torch.equal(upstream(module, x), clean)
 
 
-def test_luna_refuses_windows_it_cannot_patch(offline):
-    with pytest.raises(ValueError, match="multiple"):
-        _load("luna", n_times=512)
+@pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])
+def test_models_refuse_windows_they_cannot_patch(offline, model_key, n_times):
+    with pytest.raises(ValueError, match="not divisible by patch_size"):
+        _load(model_key, n_times=n_times)
 
 
 def test_labram_tokens_follow_their_channel(offline):
-    plain, X = _load("labram", interpolate_channels=False)
+    plain, X = _load("labram")
     order = np.random.default_rng(0).permutation(len(DEFAULT_CHANNELS))
     moved, _ = _load(
         "labram",
-        interpolate_channels=False,
         channels=[DEFAULT_CHANNELS[index] for index in order],
     )
     moved._model.load_state_dict(plain._model.state_dict())
@@ -461,12 +441,6 @@ def test_load_errors(offline, monkeypatch):
             device="cpu",
             train_mode="frozen",
         )
-
-    import braindecode.models as bm
-
-    monkeypatch.delattr(bm, "InterpolatedLaBraM", raising=False)
-    with pytest.raises(ImportError, match="requires InterpolatedLaBraM"):
-        _load("labram")
 
     real_find_spec = importlib.util.find_spec
     monkeypatch.setattr(

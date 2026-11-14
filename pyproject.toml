@@ -128,7 +128,7 @@ torch = [
 ]
 
 braindecode = [
-  "braindecode>=1.8.1",
+  "braindecode>=2.0",
 ]
 
 hf = [
@@ -144,7 +144,7 @@ peft = [
 foundation = [
   "torch",
   "skorch",
-  "braindecode>=1.8.1",
+  "braindecode>=2.0",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -224,7 +224,7 @@ full = [
   "specparam",
   "antropy",
   "neurokit2",
-  "braindecode>=1.8.1",
+  "braindecode>=2.0",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -287,6 +287,7 @@ filterwarnings = [
   "ignore:scipy.misc is deprecated:DeprecationWarning",
   "ignore:invalid escape sequence:SyntaxWarning",
   "ignore:A window was not provided:UserWarning",
+  "ignore:Skipping device .* does not support Metal:UserWarning",
 ]
 
 [tool.ruff]
