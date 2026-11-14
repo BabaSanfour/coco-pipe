@@ -1,8 +1,11 @@
+import re
+
 from coco_pipe.decoding._specs import (
     ESTIMATOR_SPECS,
     SELECTOR_CAPABILITIES,
     EstimatorCapabilities,
     EstimatorSpec,
+    FoundationModelSpec,
     canonical_estimator_name,
 )
 
@@ -70,3 +73,21 @@ def test_selector_capabilities_to_dict():
     assert d["method"] == "sfs"
     assert "input_ranks" in d
     assert "support" in d
+
+
+def test_every_foundation_model_pins_a_commit():
+    # from_pretrained would otherwise follow the Hub's latest commit
+    models = [
+        "reve",
+        "cbramod",
+        "biot",
+        "labram",
+        "luna",
+        "eegpt",
+        "signaljepa",
+        "bendr",
+    ]
+    for name in models:
+        spec = ESTIMATOR_SPECS[name]
+        assert isinstance(spec, FoundationModelSpec)
+        assert re.fullmatch("[0-9a-f]{40}", spec.checkpoint_revision or ""), name

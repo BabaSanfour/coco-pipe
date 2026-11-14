@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
 
 _POSITION_BANK_REPO = "brain-bzh/reve-positions"
+_POSITION_BANK_REVISION = "befa5b57a455b77cf302daf610c2e9ed8140bace"
 
 
 class HuggingFaceBackend(BackendBase):
@@ -237,14 +238,19 @@ class HuggingFaceBackend(BackendBase):
         }
 
         # The position bank lives in its own repo that is versioned
-        # independently of the backbone: each loads the commit resolved for it.
-        # Quantization likewise only applies to the backbone.
+        # independently of the backbone: each loads the commit resolved for it,
+        # the bank its pinned one. Quantization likewise only applies to the
+        # backbone.
         hub_kw = {key: hf_kw[key] for key in ("token", "cache_dir") if key in hf_kw}
         revisions = {
             metadata.hub_repo: resolve_revision(
-                metadata.hub_repo, hf_kw.get("revision"), **hub_kw
+                metadata.hub_repo,
+                kw.get("revision", metadata.checkpoint_revision),
+                **hub_kw,
             ),
-            _POSITION_BANK_REPO: resolve_revision(_POSITION_BANK_REPO, **hub_kw),
+            _POSITION_BANK_REPO: resolve_revision(
+                _POSITION_BANK_REPO, _POSITION_BANK_REVISION, **hub_kw
+            ),
         }
         pos_kw = {**hf_kw, "revision": revisions[_POSITION_BANK_REPO]}
         hf_kw["revision"] = revisions[metadata.hub_repo]

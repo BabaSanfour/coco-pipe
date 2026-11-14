@@ -312,21 +312,31 @@ def test_windows_with_nan_or_inf_are_rejected(offline):
             call()
 
 
-def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
+def test_load_takes_the_pinned_checkpoint_unless_given_a_revision(offline):
+    pinned = get_estimator_spec("cbramod").checkpoint_revision
     # the commit is resolved first, so the one loaded is the one recorded
     backend, X = _load("cbramod")
-    assert offline[-1]["revision"] == LATEST
-    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": LATEST}
+    assert offline[-1]["revision"] == pinned
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": pinned}
     backend, _ = _load("cbramod", revision="abc123")
     assert offline[-1]["revision"] == "abc123"
     assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": "abc123"}
+    _load("cbramod", revision=None)
+    assert offline[-1]["revision"] == LATEST
 
     # extracted embeddings say which commit made them
+    meta = SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
     result = FoundationEmbeddingExtractor("cbramod", device="cpu").extract(
-        X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+        X, signal_metadata=meta
     )
     assert result.metadata["checkpoint_revisions"] == {
-        "braindecode/cbramod-pretrained": LATEST
+        "braindecode/cbramod-pretrained": pinned
+    }
+    result = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", backend_kwargs={"revision": "abc123"}
+    ).extract(X, signal_metadata=meta)
+    assert result.metadata["checkpoint_revisions"] == {
+        "braindecode/cbramod-pretrained": "abc123"
     }
 
 

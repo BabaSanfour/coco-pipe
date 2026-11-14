@@ -261,6 +261,7 @@ class FoundationModelSpec(EstimatorSpec):
     pretrained_sfreq: float
     preferred_backend: str
     display_name: str = ""
+    # The commit of hub_repo loaded unless backend_kwargs give a revision.
     checkpoint_revision: str | None = None
     checkpoint_filename: str | None = None
     pretrained_n_chans: int | None = None
@@ -647,6 +648,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "reve",
         display_name="REVE",
         hub_repo="brain-bzh/reve-base",
+        checkpoint_revision="dc2a075c287bb2f6c04ee5875bd79535a0f7dba6",
         embedding_dim=512,
         pretrained_sfreq=200.0,
         preferred_backend="hugging_face",
@@ -667,6 +669,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "cbramod",
         display_name="CBraMod",
         hub_repo="braindecode/cbramod-pretrained",
+        checkpoint_revision="584cdc415913739a05d84bf0c1cb3db397764507",
         embedding_dim=200,
         pretrained_sfreq=200.0,
         preferred_backend="braindecode",
@@ -684,6 +687,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "biot",
         display_name="BIOT",
         hub_repo="braindecode/biot-pretrained-prest-16chs",
+        checkpoint_revision="f85518e962fa33a3d0c5e2255b38dfedf108a788",
         embedding_dim=256,
         pretrained_sfreq=200.0,
         preferred_backend="braindecode",
@@ -704,6 +708,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "labram",
         display_name="LaBraM",
         hub_repo="braindecode/labram-pretrained",
+        checkpoint_revision="0563b6c626e7b40d9a36653b763715db94d945d7",
         embedding_dim=200,
         pretrained_sfreq=200.0,
         pretrained_n_chans=128,
@@ -720,6 +725,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "luna",
         display_name="LUNA",
         hub_repo="PulpBio/LUNA",
+        checkpoint_revision="999c1af0fd6fbfb43ed47169c61fe9faa49cfe9f",
         embedding_dim=256,
         pretrained_sfreq=256.0,
         checkpoint_filename="LUNA_base.safetensors",
@@ -739,6 +745,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "eegpt",
         display_name="EEGPT",
         hub_repo="braindecode/eegpt-pretrained",
+        checkpoint_revision="e41cb3ae2ce4fd9eb736862292c91f8128d15618",
         embedding_dim=2048,
         pretrained_sfreq=256.0,
         preferred_backend="braindecode",
@@ -760,6 +767,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "signaljepa",
         display_name="SignalJEPA",
         hub_repo="braindecode/signal-jepa",
+        checkpoint_revision="51232ee0795a60e4378c17befe1e2ea5e94450c4",
         embedding_dim=64,
         pretrained_sfreq=128.0,
         expected_passband=(0.5, 40.0),
@@ -777,6 +785,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         "bendr",
         display_name="BENDR",
         hub_repo="braindecode/braindecode-bendr",
+        checkpoint_revision="191f221cd56de8203899ea9a8d0f43238724f8b6",
         embedding_dim=512,
         pretrained_sfreq=256.0,
         preferred_backend="braindecode",
