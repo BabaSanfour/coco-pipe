@@ -1,13 +1,12 @@
+import logging
 from typing import ClassVar
-from unittest.mock import patch
 
-import numpy as np
+import matplotlib
 import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
 
 from coco_pipe.io.quality import QCResult
-from coco_pipe.report.api import from_experiment_result
 from coco_pipe.report.core import Report
 from coco_pipe.report.decoding import (
     DECODING_PRESETS,
@@ -17,6 +16,7 @@ from coco_pipe.report.decoding import (
     _result_frame,
     add_decoding_features,
     add_decoding_neural_artifacts,
+    add_decoding_performance,
     add_decoding_statistical_assessment,
     add_decoding_temporal,
     add_decoding_topomaps,
@@ -140,19 +140,30 @@ def test_render_unit_reports_from_successful_records(tmp_path):
     assert not (tmp_path / "sensor" / "report.html").exists()
 
 
-def test_all_decoding_report_methods_run():
+def test_report_methods_append_their_sections_in_order():
     result = make_synthetic_result()
     report = Report("Diagnostics")
-    report.add_decoding_overview(result)
-    report.add_decoding_summary(result)
-    report.add_decoding_statistical_assessment(result)
-    report.add_decoding_neural_artifacts(result)
-    report.add_decoding_performance(result)
-    report.add_decoding_features(result)
-    report.add_decoding_temporal(result)
-    html = report.render()
-    assert "Diagnostics" in html
-    assert "Temporal Decoding" in html
+    chained = (
+        report.add_decoding_overview(result)
+        .add_decoding_summary(result)
+        .add_decoding_statistical_assessment(result)
+        .add_decoding_neural_artifacts(result)
+        .add_decoding_performance(result)
+        .add_decoding_features(result)
+        .add_decoding_temporal(result)
+    )
+    assert chained is report
+    assert [section.title for section in report.children] == [
+        "Overview",
+        "Decoding Summary",
+        "Statistical Assessment",
+        "Neural Artifacts",
+        "Performance",
+        "Features",
+        "Temporal Decoding",
+    ]
+    # a filter that matches nothing adds no section
+    assert not Report("Empty").add_decoding_temporal(result, metric="ghost").children
 
 
 def test_decoding_report_feature_metadata_is_explicit():
@@ -170,15 +181,6 @@ def test_decoding_report_feature_metadata_is_explicit():
         sections=["features"],
     ).render()
     assert "Feature Metadata" in with_explicit
-
-
-def test_decoding_report_api_and_core_reexports():
-    result = make_synthetic_result()
-    report = from_experiment_result(result, sections=["overview", "performance"])
-    assert isinstance(report, Report)
-    # add_decoding_* are now dynamically registered extensions
-    assert hasattr(report, "add_decoding_temporal")
-    assert hasattr(report, "add_decoding_summary")
 
 
 def test_decoding_report_rejects_unknown_sections():
@@ -212,7 +214,6 @@ def test_decoding_report_empty_edge_cases():
 
     result = EmptyResult()
     report = Report("Empty")
-    import pandas as pd
 
     # Should not raise any errors, just return self
     report.add_decoding_temporal(result)
@@ -220,188 +221,6 @@ def test_decoding_report_empty_edge_cases():
     report.add_decoding_statistical_assessment(result)
     report.add_decoding_neural_artifacts(result)
     assert len(report.children) == 0
-
-
-def test_decoding_full_coverage():
-    import pandas as pd
-
-    class FullResult:
-        def get_temporal_score_summary(self):
-            return pd.DataFrame(
-                {
-                    "Metric": ["accuracy"],
-                    "Model": ["A"],
-                    "Time": [0.1],
-                    "TrainTime": [0.1],
-                    "TestTime": [0.1],
-                    "Score": [1.0],
-                }
-            )
-
-        def summary(self):
-            return pd.DataFrame({"Metric": ["accuracy"], "Score": [1.0]})
-
-        def get_detailed_scores(self):
-            return pd.DataFrame(
-                {"Metric": ["accuracy"], "Model": ["A"], "Fold": [0], "Score": [1.0]}
-            )
-
-        def get_fit_diagnostics(self):
-            return pd.DataFrame(
-                {
-                    "Model": ["A"],
-                    "Fold": [0],
-                    "FitTime": [0.1],
-                    "PredictTime": [0.1],
-                    "TotalTime": [0.2],
-                    "WarningMessage": ["test"],
-                    "Stage": ["train"],
-                    "WarningCategory": ["test"],
-                }
-            )
-
-        def get_confusion_matrices(self, model=None):
-            return pd.DataFrame(
-                {"TrueLabel": ["A"], "PredictedLabel": ["A"], "Count": [10]}
-            )
-
-        def get_statistical_assessment(self):
-            return pd.DataFrame(
-                {
-                    "Metric": ["accuracy"],
-                    "Model": ["A"],
-                    "Time": [0.1],
-                    "Score": [1.0],
-                    "NullScore": [0.5],
-                    "PValue": [0.01],
-                }
-            )
-
-        def get_model_artifacts(self):
-            return pd.DataFrame({"Model": ["A"], "Epoch": [1], "Loss": [0.1]})
-
-        # properties for ROC/PR
-        classes_ = np.array([0, 1])
-
-        def predict_proba(self, *args, **kwargs):
-            return np.array([[0.1, 0.9]])
-
-        def predict(self, *args, **kwargs):
-            return np.array([1])
-
-    result = FullResult()
-    report = Report("Full")
-    report.add_decoding_temporal(result, metric="accuracy", model="A")
-    report.add_decoding_summary(result)
-    report.add_decoding_statistical_assessment(result, metric="accuracy", model="A")
-    report.add_decoding_neural_artifacts(result, model="A")
-
-    # Try features
-    feature_meta = pd.DataFrame({"Feature": ["F1"], "FeatureFamily": ["EEG"]})
-    report.add_decoding_features(result, feature_metadata=feature_meta)
-
-    # Topomaps
-    report.add_decoding_topomaps(result, feature_metadata=feature_meta)
-
-    assert len(report.children) > 0
-
-
-class MockResultForExceptions:
-    def get_temporal_score_summary(self):
-        return pd.DataFrame({"Metric": ["a"], "Score": [1], "Time": [0.1]})
-
-    def summary(self):
-        return pd.DataFrame({"Metric": ["a"], "Score": [1]})
-
-    def get_detailed_scores(self):
-        return pd.DataFrame({"Metric": ["a"], "Score": [1]})
-
-    def get_fit_diagnostics(self):
-        return pd.DataFrame({"Model": ["A"]})
-
-    def get_confusion_matrices(self, model=None):
-        return pd.DataFrame({"TrueLabel": ["A"], "Count": [1]})
-
-    def get_statistical_assessment(self):
-        return pd.DataFrame({"Metric": ["a"]})
-
-    def get_model_artifacts(self):
-        return pd.DataFrame({"Model": ["A"]})
-
-
-# Plot failures are swallowed and logged by the shared `plot_or_none` helper, so
-# these tests patch the logger in `coco_pipe.report._utils`, not in `decoding`.
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_temporal_score_curve",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_decoding_temporal_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_decoding_temporal(rep, MockResultForExceptions())
-    mock_log.assert_called()
-
-
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_decoding_scores", side_effect=ValueError("Plot error")
-)
-def test_add_decoding_performance_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    from coco_pipe.report.decoding import add_decoding_performance
-
-    add_decoding_performance(rep, MockResultForExceptions())
-    mock_log.assert_called()
-
-
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_temporal_statistical_assessment",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_decoding_statistical_assessment_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_decoding_statistical_assessment(rep, MockResultForExceptions())
-    mock_log.assert_called()
-
-
-@patch(
-    "coco_pipe.viz.decoding.plot_training_history", side_effect=ValueError("Plot error")
-)
-def test_add_decoding_neural_artifacts_exception(mock_plot):
-    rep = Report("Test")
-    # This should just not raise an exception
-    add_decoding_neural_artifacts(rep, MockResultForExceptions())
-
-
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_feature_importance",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_decoding_features_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_decoding_features(
-        rep,
-        MockResultForExceptions(),
-        feature_metadata=pd.DataFrame({"Feature": ["A"]}),
-    )
-    mock_plot.assert_not_called()
-
-
-@patch("coco_pipe.report._utils.logger.debug")
-@patch(
-    "coco_pipe.viz.decoding.plot_feature_sensor_profile",
-    side_effect=ValueError("Plot error"),
-)
-def test_add_decoding_topomaps_exception(mock_plot, mock_log):
-    rep = Report("Test")
-    add_decoding_topomaps(
-        rep,
-        MockResultForExceptions(),
-        feature_metadata=pd.DataFrame({"FeatureFamily": ["A"]}),
-    )
-    mock_plot.assert_not_called()
 
 
 def _walk_elements(element):
@@ -439,16 +258,80 @@ def test_decoding_presets_do_not_duplicate_diagnostics():
     assert DECODING_PRESETS["default"].count("fit_diagnostics") == 1
 
 
+class MalformedResult:
+    """Frames that hold data but lack the columns the plots need."""
+
+    def get_temporal_score_summary(self):
+        return pd.DataFrame({"Metric": ["a"], "Score": [1], "Time": [0.1]})
+
+    def get_detailed_scores(self):
+        return pd.DataFrame({"Metric": ["a"], "Score": [1]})
+
+    def get_statistical_assessment(self):
+        return pd.DataFrame({"Metric": ["a"]})
+
+    def get_model_artifacts(self):
+        return pd.DataFrame({"Model": ["A"]})
+
+
+@pytest.mark.parametrize(
+    "add, title",
+    [
+        (add_decoding_temporal, "Temporal Decoding"),
+        (add_decoding_statistical_assessment, "Statistical Assessment"),
+        (add_decoding_neural_artifacts, "Neural Artifacts"),
+    ],
+)
+def test_plot_that_cannot_be_drawn_leaves_the_data(add, title, caplog):
+    from io import StringIO
+
+    from coco_pipe.report.elements import (
+        DownloadAssetElement,
+        ImageElement,
+        PlotlyElement,
+    )
+
+    report = Report("Test")
+    with caplog.at_level(logging.DEBUG, logger="coco_pipe.report._utils"):
+        add(report, MalformedResult())
+
+    (section,) = report.children
+    assert section.title == title
+    elements = list(_walk_elements(section))
+    assert not any(isinstance(e, ImageElement | PlotlyElement) for e in elements)
+    (download,) = [e for e in elements if isinstance(e, DownloadAssetElement)]
+    assert download.filename.endswith(".csv")
+    assert len(pd.read_csv(StringIO(download.data))) == 1
+    assert "missing required columns" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "add, kwargs",
+    [
+        # no plot can be drawn, and the section holds nothing else
+        (add_decoding_performance, {}),
+        # no feature importances
+        (add_decoding_features, {"feature_metadata": pd.DataFrame({"Feature": ["A"]})}),
+        # no sensor positions
+        (
+            add_decoding_topomaps,
+            {"feature_metadata": pd.DataFrame({"FeatureFamily": ["A"]})},
+        ),
+    ],
+)
+def test_section_without_content_is_left_out(add, kwargs):
+    report = Report("Test")
+    assert add(report, MalformedResult(), **kwargs) is report
+    assert not report.children
+
+
 def test_decoding_sections_force_headless_matplotlib_backend():
-    result = make_synthetic_result()
-
-    with (
-        patch("matplotlib.get_backend", return_value="MacOSX"),
-        patch("matplotlib.use") as use_backend,
-    ):
-        build_decoding_sections(result, sections=[])
-
-    use_backend.assert_called_once_with("Agg", force=True)
+    matplotlib.use("svg", force=True)
+    try:
+        build_decoding_sections(make_synthetic_result(), sections=[])
+        assert matplotlib.get_backend().lower() == "agg"
+    finally:
+        matplotlib.use("Agg", force=True)
 
 
 def test_builders_split_cv_from_probability():
@@ -473,23 +356,19 @@ def test_empty_builder_raises_data_unavailable():
 
 
 def test_decoding_report_error_policy():
-    result = make_synthetic_result()
+    class Broken:
+        def get_detailed_scores(self):
+            raise ValueError("boom")
 
-    with patch.dict(
-        "coco_pipe.report.decoding.DECODING_SECTION_BUILDERS",
-        {"overview": lambda result: (_ for _ in ()).throw(RuntimeError("boom"))},
-    ):
-        with pytest.raises(RuntimeError, match="boom"):
-            build_decoding_sections(result, sections=["overview"], on_error="raise")
-        with pytest.warns(RuntimeWarning, match="boom"):
-            assert not build_decoding_sections(
-                result, sections=["overview"], on_error="warn"
-            )
-        placeholder = build_decoding_sections(
-            result, sections=["overview"], on_error="placeholder"
-        )
-        assert len(placeholder) == 1
-        assert placeholder[0].status == "WARN"
+    with pytest.raises(ValueError, match="boom"):
+        build_decoding_sections(Broken(), sections=["cv"], on_error="raise")
+    with pytest.warns(RuntimeWarning, match="section 'cv' failed: boom"):
+        assert not build_decoding_sections(Broken(), sections=["cv"], on_error="warn")
+    (placeholder,) = build_decoding_sections(
+        Broken(), sections=["cv"], on_error="placeholder"
+    )
+    assert placeholder.status == "WARN"
+    assert "boom" in placeholder.render()
 
 
 def test_accepted_kwargs_and_result_frame_branches():
@@ -610,10 +489,8 @@ def test_section_builders_single_item_and_extra_branches():
     meta = pd.DataFrame(
         {"FeatureFamily": ["EEG"], "Sensor": ["Fp1"], "x": [0.0], "y": [0.0]}
     )
-    with (
-        patch("coco_pipe.report._utils._plot_or_none", return_value=None),
-        pytest.raises(SectionDataUnavailable, match="No sensor maps"),
-    ):
+    # the metadata names no feature of the result, so no family can be drawn
+    with pytest.raises(SectionDataUnavailable, match="No sensor maps"):
         build_topomaps_section(
             make_synthetic_result(),
             feature_metadata=meta,
@@ -704,6 +581,5 @@ def test_statistical_section_states_what_the_null_permuted():
         def get_statistical_assessment(self):
             return permuted
 
-    with patch("coco_pipe.report.decoding._decoding_plot", return_value=None):
-        html = build_statistical_section(Result()).render()
+    html = build_statistical_section(Result()).render()
     assert "shuffled between the blocks of each" in html
