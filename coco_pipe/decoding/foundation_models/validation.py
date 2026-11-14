@@ -88,7 +88,7 @@ def validate_real_checkpoints(
     channels = list(ch_names) if ch_names else list(DEFAULT_CHANNELS)
     for model_key in model_keys:
         spec = get_foundation_model_spec(model_key)
-        n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 10)
+        n_times = round(spec.pretrained_sfreq * 10)
         backend_kwargs: dict[str, Any] = {}
         if token is not None:
             backend_kwargs["token"] = token
@@ -162,7 +162,7 @@ def validate_real_training(
     records: list[dict[str, Any]] = []
     for model_key in model_keys:
         spec = get_foundation_model_spec(model_key)
-        n_times = spec.pretrained_n_times or round(spec.pretrained_sfreq * 10)
+        n_times = round(spec.pretrained_sfreq * 10)
         rng = np.random.default_rng(42)
         X = rng.normal(size=(8, len(channels), n_times)).astype(np.float32)
         y = np.repeat([0, 1], 4)

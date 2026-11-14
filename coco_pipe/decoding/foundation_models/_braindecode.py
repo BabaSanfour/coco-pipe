@@ -205,10 +205,7 @@ class BrainDecodeBackend(BackendBase):
                 f"braindecode models support pooling='mean', got {pooling!r}."
             )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
-        n_times = int(
-            metadata.pretrained_n_times or kw.pop("n_times", round(sfreq * 2))
-        )
-        kw.pop("n_times", None)
+        n_times = int(kw.pop("n_times", round(sfreq * 2)))
         revision = resolve_revision(
             metadata.hub_repo,
             kw.pop("revision", metadata.checkpoint_revision),
@@ -265,10 +262,9 @@ class BrainDecodeBackend(BackendBase):
         elif model_key == "cbramod":
             kw.setdefault("n_times", n_times)
         elif model_key == "labram":
-            # The pretrained temporal embedding has a checkpoint-native width.
-            # LaBraM adjusts it dynamically during forward, but overriding
-            # n_times while loading makes the state dict shape incompatible.
-            kw.pop("n_times", None)
+            # One pretrained time embedding per 1 s patch, 16 in the checkpoint.
+            kw.setdefault("n_times", n_times)
+            kw.setdefault("on_non_divisible", "error")
             if train_mode == "frozen":
                 # The pretrained final norm, not the readout norm that only
                 # fine-tuning trains (braindecode>=2 defaults to the latter).
@@ -323,6 +319,8 @@ class BrainDecodeBackend(BackendBase):
             with warnings.catch_warnings():
                 # braindecode asks for the channel names at forward: given below
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
+                # LaBraM beyond 16 s: the extra time embeddings would be untrained
+                warnings.filterwarnings("error", "The checkpoint holds")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):

@@ -89,12 +89,11 @@ def test_labram_capability_needs_known_channels():
         train_mode="frozen",
         sfreq=200,
         ch_names=channels,
-        n_times=3000,
     )
     assert rejected.status == "incompatible_channels"
     # a subset of its own pretraining channels
     known = check_capability(
-        "labram", train_mode="frozen", sfreq=200, ch_names=["Fp1", "Cz"], n_times=3000
+        "labram", train_mode="frozen", sfreq=200, ch_names=["Fp1", "Cz"]
     )
     assert known.status == "available"
 
@@ -136,24 +135,7 @@ def test_prepare_backend_and_adapt_paths():
     # 100 samples at 100 Hz resampled to 200 Hz -> 200 samples
     assert adapted.shape[-1] == 200
 
-    # 3. ValueError in PreparedBackend.adapt() when length doesn't match spec
-    prepared_mismatch = prepare_backend(
-        "cbramod",
-        np.zeros((2, 19, 50), dtype=np.float32),
-        sfreq=200.0,
-        ch_names=ch19,
-        model=fake_model,
-    )
-    import dataclasses
-
-    prepared_mismatch = dataclasses.replace(
-        prepared_mismatch,
-        spec=dataclasses.replace(prepared_mismatch.spec, pretrained_n_times=200),
-    )
-    with pytest.raises(ValueError, match="checkpoint requires 200 samples"):
-        prepared_mismatch.adapt(np.zeros((2, 19, 50), dtype=np.float32))
-
-    # 4. Fallback channel_adaptation when backend doesn't have get_channel_adaptation
+    # 3. Fallback channel_adaptation when backend doesn't have get_channel_adaptation
     # FakeFoundationModel has no get_channel_adaptation
     adapt_dict = prepared.channel_adaptation()
     assert adapt_dict["source_channels"] == prepared.ch_names
@@ -557,14 +539,3 @@ def test_normalize_inclusive_endpoint_skip_vs_error_on_bad_length():
             model_key="m",
             on_mismatch="error",
         )
-
-
-def test_spec_pretrained_window_seconds_matches_formula():
-    # labram declares a fixed window (3000 samples @ 200 Hz = 15 s)
-    labram = get_foundation_model_spec("labram")
-    assert labram.pretrained_window_seconds == (
-        labram.pretrained_n_times / labram.pretrained_sfreq
-    )
-    assert labram.pretrained_window_seconds == 15.0
-    # cbramod leaves pretrained_n_times unset → no fixed window
-    assert get_foundation_model_spec("cbramod").pretrained_window_seconds is None

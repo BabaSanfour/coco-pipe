@@ -22,7 +22,7 @@ BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"
 LATEST = "0123456789abcdef0123456789abcdef01234567"
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
-    "Labram": {"n_times": 3000, "n_outputs": 1},
+    "Labram": {"n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
     "BENDR": {"n_outputs": 1},
 }
@@ -99,11 +99,7 @@ def _load(
     backend.signal_metadata_ = SignalMetadata(
         sfreq=spec.pretrained_sfreq, ch_names=list(channels)
     )
-    n_times = (
-        spec.pretrained_n_times
-        or kwargs.get("n_times")
-        or round(spec.pretrained_sfreq * 2)
-    )
+    n_times = kwargs.get("n_times") or round(spec.pretrained_sfreq * 2)
     X = np.random.default_rng(0).normal(size=(4, len(channels), n_times))
     return backend, X.astype(np.float32)
 
@@ -360,7 +356,7 @@ def test_labram_takes_its_channels_by_name(offline):
     assert offline[-1]["use_mean_pooling"] is False
     assert not plain.get_channel_adaptation().get("interpolated_channels")
     _, tokens = plain.transform(X, return_tokens=True)
-    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 15, 200)
+    assert tokens.shape == (4, len(DEFAULT_CHANNELS), 2, 200)
     assert plain.get_token_output_metadata()["token_axes"] == [
         "window",
         "channel",
@@ -392,9 +388,10 @@ def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
         assert not torch.equal(upstream(module, x), clean)
 
 
-def test_luna_refuses_windows_it_cannot_patch(offline):
+@pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])
+def test_models_refuse_windows_they_cannot_patch(offline, model_key, n_times):
     with pytest.raises(ValueError, match="not divisible by patch_size"):
-        _load("luna", n_times=512)
+        _load(model_key, n_times=n_times)
 
 
 def test_labram_tokens_follow_their_channel(offline):

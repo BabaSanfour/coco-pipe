@@ -264,7 +264,6 @@ class FoundationModelSpec(EstimatorSpec):
     checkpoint_revision: str | None = None
     checkpoint_filename: str | None = None
     pretrained_n_chans: int | None = None
-    pretrained_n_times: int | None = None
     pretrained_ch_names: list[str] | None = None
     supports_channel_interpolation: bool = False
     # Input-signal expectations (so callers/guardrails can match preprocessing).
@@ -285,17 +284,6 @@ class FoundationModelSpec(EstimatorSpec):
     fallback_backends: tuple[str, ...] = ()
     paper_url: str | None = None
     model_notes: str = ""
-
-    @property
-    def pretrained_window_seconds(self) -> float | None:
-        """Window length in seconds the checkpoint was pretrained on.
-
-        ``None`` when ``pretrained_n_times`` is unknown. Single source of truth
-        for "expected window duration" so preflight and loading agree.
-        """
-        if self.pretrained_n_times is None:
-            return None
-        return self.pretrained_n_times / self.pretrained_sfreq
 
 
 _FM_DEFAULTS: dict[str, Any] = {
@@ -719,12 +707,12 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         embedding_dim=200,
         pretrained_sfreq=200.0,
         pretrained_n_chans=128,
-        pretrained_n_times=3000,
         preferred_backend="braindecode",
         dependency_extra="braindecode",
         input_scale=0.01,
         model_notes=(
-            "Takes any subset of the channels in LABRAM_CHANNEL_ORDER, by name. "
+            "Takes any subset of the channels in LABRAM_CHANNEL_ORDER, by name, "
+            "and windows of a whole number of seconds up to 16 s. "
             "Input in units of 100 µV, as in the authors' code."
         ),
     ),

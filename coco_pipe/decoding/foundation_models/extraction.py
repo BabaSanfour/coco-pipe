@@ -44,7 +44,6 @@ def check_capability(
     train_mode: str,
     sfreq: float | None = None,
     ch_names: Sequence[str] | None = None,
-    n_times: int | None = None,
     backend: str = "auto",
     backend_kwargs: Mapping[str, Any] | None = None,
 ) -> CapabilityResult:
@@ -144,20 +143,6 @@ def check_capability(
         "expected_passband": spec.expected_passband,
         "expected_reference": spec.expected_reference,
     }
-    if n_times is not None and sfreq is not None and spec.pretrained_n_times:
-        model_n_times = round(n_times * spec.pretrained_sfreq / sfreq)
-        if model_n_times != spec.pretrained_n_times:
-            return CapabilityResult(
-                model_key,
-                train_mode,
-                "incompatible_window",
-                (
-                    f"{spec.display_name} requires {spec.pretrained_n_times} "
-                    f"samples at {spec.pretrained_sfreq:g} Hz; this input maps "
-                    f"to {model_n_times}."
-                ),
-                {**details, "model_n_times": model_n_times},
-            )
     return CapabilityResult(model_key, train_mode, "available", details=details)
 
 
