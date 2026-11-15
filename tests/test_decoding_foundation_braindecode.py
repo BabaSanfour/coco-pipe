@@ -552,3 +552,57 @@ def test_extractor_loads_again_for_another_montage(offline):
     again = extract(X[:, ::-1], DEFAULT_CHANNELS[::-1])
     assert len(offline) == 2
     np.testing.assert_allclose(again, first, rtol=1e-5, atol=1e-5)
+
+
+def test_weight_sets_extract_a_recording_as_each_extractor_alone(offline, monkeypatch):
+    import mne
+
+    from coco_pipe.decoding.foundation_models import extract_weight_sets
+    from coco_pipe.io import DataContainer
+
+    # LUNA at 256 Hz, on windows of 2.5 s recorded at 200 Hz
+    conditions = ["EO", "EC", "EO", "EC"]
+    recording = DataContainer(
+        X=np.random.default_rng(0).normal(scale=20, size=(4, 19, 500)),
+        dims=("obs", "channel", "time"),
+        coords={
+            "channel": np.array(DEFAULT_CHANNELS, dtype=object),
+            "time": np.arange(500) / 200.0,
+            "condition": np.array(conditions, dtype=object),
+            "epoch": np.arange(4),
+        },
+        ids=np.array([f"epoch-{epoch}" for epoch in range(4)]),
+        meta={"sfreq": 200.0},
+    )
+    extractors = [
+        FoundationEmbeddingExtractor(
+            "luna", device="cpu", pretrained=seed is None, seed=seed, store_tokens=True
+        )
+        for seed in (None, 0, 1)
+    ]
+    resampled = []
+    resample = mne.filter.resample
+
+    def counted(*args, **kwargs):
+        resampled.append(args[0].shape)
+        return resample(*args, **kwargs)
+
+    monkeypatch.setattr(mne.filter, "resample", counted)
+
+    alone = [extractor.extract_recording(recording) for extractor in extractors]
+    assert len(resampled) == 6
+    together = extract_weight_sets(extractors, recording)
+    assert len(resampled) == 6 + 2  # once per condition
+
+    for one, other in zip(alone, together, strict=True):
+        assert one.keys() == other.keys() == {"EO", "EC"}
+        for condition, result in one.items():
+            shared = other[condition]
+            for name in ("window_embeddings", "token_embeddings", "window_index"):
+                np.testing.assert_array_equal(
+                    getattr(shared, name), getattr(result, name)
+                )
+            assert shared.metadata == result.metadata
+    assert not np.allclose(
+        alone[0]["EC"].window_embeddings, alone[1]["EC"].window_embeddings
+    )

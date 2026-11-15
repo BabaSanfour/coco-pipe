@@ -117,6 +117,20 @@ For a recording the BIDS loader read,
 :meth:`~coco_pipe.decoding.foundation_models.FoundationEmbeddingExtractor.extract_recording`
 gives the result of each condition, its windows numbered by their epoch.
 An extractor on ``device="cuda"`` refuses to be built without a GPU.
+:func:`~coco_pipe.decoding.foundation_models.extract_weight_sets` runs several
+extractors over one recording, typically a model's pretrained weights and random
+ones of several seeds, and resamples the recording once for all of them; each
+result is the one the extractor alone gives:
+
+.. code-block:: python
+
+   from coco_pipe.decoding.foundation_models import extract_weight_sets
+
+   extractors = [
+       FoundationEmbeddingExtractor("luna", pretrained=seed is None, seed=seed)
+       for seed in (None, 0, 1)
+   ]
+   pretrained, seed0, seed1 = extract_weight_sets(extractors, recording)
 
 The result holds:
 
