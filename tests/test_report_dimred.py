@@ -459,6 +459,10 @@ _RECORDS = [{"method": "PCA", "metric": "trust", "value": 0.9, "scope": "global"
             id="interpretation",
         ),
         pytest.param(
+            lambda rep: add_reduction_interpretation(rep, "not a payload"),
+            id="interpretation_payload",
+        ),
+        pytest.param(
             lambda rep: add_reduction_coranking(rep, np.ones((3, 4))),
             id="coranking",
         ),

@@ -463,7 +463,7 @@ def add_reduction_interpretation(
                     frame, analysis=analysis_name, title=name
                 )
             sec.add_element(ImageElement(fig, caption=analysis_name))
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         logger.debug("Interpretation section skipped: %s", exc)
         return self
     if not sec.children:
