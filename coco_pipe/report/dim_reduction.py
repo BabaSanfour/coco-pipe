@@ -550,9 +550,10 @@ def add_reduction_components(
     self : Report
         Target report.
     components : array-like
-        Component matrix of shape ``(n_dims, n_features)``.
+        Component matrix of shape ``(n_dims, n_features)``, as returned by
+        ``DimReduction.get_components()``.
     feature_names : list of str, optional
-        Column labels for the feature axis.
+        Labels for the feature axis.
     name : str
         Section title.
 
@@ -576,7 +577,10 @@ def add_reduction_components(
 
     sec = Section(title=name)
     try:
-        plot_result = plot_component_loadings(components, feature_names=feature_names)
+        # the plot takes the loadings as (n_features, n_components)
+        plot_result = plot_component_loadings(
+            np.asarray(components).T, feature_names=feature_names
+        )
         sec.add_element(
             ImageElement(
                 plot_result[0] if isinstance(plot_result, tuple) else plot_result,

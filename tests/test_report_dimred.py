@@ -383,6 +383,23 @@ def test_add_reduction_interpretation_ranks_the_features():
     )
 
 
+def test_add_reduction_components_plots_the_features_on_the_rows():
+    reduction, _, _ = _scored_pca()
+    components = reduction.get_components()
+    assert components.shape == (2, len(FEATURES))
+
+    report = Report()
+    report.add_reduction_components(components, feature_names=FEATURES)
+    (section,) = report.children
+    (image,) = section.children
+    axes = image.src.axes[0]
+    assert [label.get_text() for label in axes.get_yticklabels()] == FEATURES
+    assert [label.get_text() for label in axes.get_xticklabels()] == [
+        "Component 1",
+        "Component 2",
+    ]
+
+
 def test_section_builders_add_one_section_each():
     reduction, X, X_emb = _scored_pca()
     coranking = reduction.get_summary()["diagnostics"]["coranking_matrix_"]

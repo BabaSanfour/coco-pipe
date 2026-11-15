@@ -103,7 +103,8 @@ When the reducer is linear, two extra diagnostics are available:
 
    plot_eigenvalues({"PCA": reducer.reducer.explained_variance_ratio_},
                     max_components=10)
-   plot_component_loadings(reducer.get_components(), feature_names=feature_names)
+   # get_components() is (n_dims, n_features); the plot takes features as rows
+   plot_component_loadings(reducer.get_components().T, feature_names=feature_names)
 
 ---
 
