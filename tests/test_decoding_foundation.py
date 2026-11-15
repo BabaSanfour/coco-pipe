@@ -78,7 +78,8 @@ def test_load_fm_unknown_backend_raises_value_error():
 
 def test_load_fm_raises_import_error_when_the_backend_is_not_installed(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", None)
-    with pytest.raises(ImportError, match="pip install"):
+    # the hint names an extra that exists ("hf", not the group "transformers")
+    with pytest.raises(ImportError, match=r'pip install "coco-pipe\[hf\]"'):
         load("reve", backend="auto")
 
 
