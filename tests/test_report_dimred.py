@@ -287,6 +287,42 @@ def test_make_reduction_report_takes_components_from_a_mapping():
     assert _titles(report) == ["M Component Loadings"]
 
 
+def test_make_reduction_report_shows_each_analysis_of_the_interpretation():
+    reduction, X, X_emb = _scored_pca()
+    reduction.interpret(
+        X,
+        X_emb=X_emb,
+        analyses=["correlation", "perturbation"],
+        feature_names=FEATURES,
+        random_state=0,
+    )
+
+    report = make_reduction_report([reduction], sections=["interpretation"])
+    (section,) = report.children
+    assert section.title == "PCA Interpretation"
+    correlation, perturbation = section.children
+    assert [correlation.caption, perturbation.caption] == [
+        "correlation",
+        "perturbation",
+    ]
+    # correlations are a feature x dimension heatmap
+    axes = correlation.src.axes[0]
+    assert sorted(label.get_text() for label in axes.get_yticklabels()) == FEATURES
+    assert [label.get_text() for label in axes.get_xticklabels()] == [
+        "Dimension 1",
+        "Dimension 2",
+    ]
+
+    # the summary's analysis payload shows the same analyses
+    report = Report()
+    report.add_reduction_interpretation(reduction.get_summary()["interpretation"])
+    (section,) = report.children
+    assert [image.caption for image in section.children] == [
+        "correlation",
+        "perturbation",
+    ]
+
+
 def test_make_reduction_report_interactive_warning():
     with pytest.warns(UserWarning, match="not yet implemented"):
         make_reduction_report([], interactive=True)

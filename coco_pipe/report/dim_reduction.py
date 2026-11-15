@@ -408,10 +408,10 @@ def add_reduction_interpretation(
     self: Report,
     interpretation: Any,
     *,
-    analysis: str = "loadings",
+    analysis: str | None = None,
     name: str = "Interpretation",
 ) -> Report:
-    """Add a component-interpretation plot to *self*.
+    """Add feature-interpretation plots to *self*.
 
     Parameters
     ----------
@@ -419,8 +419,11 @@ def add_reduction_interpretation(
         Target report.
     interpretation : dict or list
         Interpretation records returned by the reduction object.
-    analysis : str
-        Which analysis to visualise (e.g. ``"loadings"``).
+    analysis : str, optional
+        Which analysis to visualise (``"correlation"``, ``"perturbation"`` or
+        ``"gradient"``). ``None`` plots every analysis present, one plot each.
+        Correlations are plotted as a feature x dimension heatmap, the other
+        analyses as ranked feature scores.
     name : str
         Section title.
 
@@ -428,33 +431,42 @@ def add_reduction_interpretation(
     -------
     Report
         *self* with the new section appended, or unchanged if *interpretation*
-        is falsy.
+        is falsy or cannot be plotted.
 
     See Also
     --------
     coco_pipe.viz.dim_reduction.plot_feature_importance
+    coco_pipe.viz.dim_reduction.plot_feature_correlation_heatmap
 
     Examples
     --------
-    >>> report.add_reduction_interpretation(result.get_summary()["interpretation"])
+    >>> summary = result.get_summary()
+    >>> report.add_reduction_interpretation(summary["interpretation_records"])
     """
     if not interpretation:
         return self
-    from coco_pipe.viz.dim_reduction import plot_feature_importance
+    from coco_pipe.viz._utils import prepare_interpretation_frame
+    from coco_pipe.viz.dim_reduction import (
+        plot_feature_correlation_heatmap,
+        plot_feature_importance,
+    )
 
     sec = Section(title=name)
     try:
-        plot_result = plot_feature_importance(
-            interpretation, analysis=analysis, title=name
-        )
-        sec.add_element(
-            ImageElement(
-                plot_result[0] if isinstance(plot_result, tuple) else plot_result,
-                caption=analysis,
-            )
-        )
+        frame = prepare_interpretation_frame(interpretation)
+        analyses = frame["Analysis"].unique() if analysis is None else [analysis]
+        for analysis_name in analyses:
+            if analysis_name == "correlation":
+                fig, _ = plot_feature_correlation_heatmap(frame, title=name)
+            else:
+                fig, _ = plot_feature_importance(
+                    frame, analysis=analysis_name, title=name
+                )
+            sec.add_element(ImageElement(fig, caption=analysis_name))
     except ValueError as exc:
         logger.debug("Interpretation section skipped: %s", exc)
+        return self
+    if not sec.children:
         return self
     self.add_section(sec)
     return self
