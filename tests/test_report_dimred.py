@@ -167,6 +167,18 @@ def test_add_reduction_plots_trajectory_series_on_their_time_axis():
     np.testing.assert_array_equal(series.data[0].x, times + 5)
 
 
+def test_add_reduction_plots_turning_angles_on_the_inner_time_points():
+    times = np.arange(8) * 10.0
+    reduction, X_emb = _scored_trajectory(times)
+
+    rep = Report()
+    rep.add_reduction(reduction, X_emb=X_emb)
+    plots = {plot.layout.title.text: plot for plot in _plots(rep.children[0])}
+    np.testing.assert_array_equal(plots["Trajectory Speed"].data[0].x, times)
+    for title in ("Trajectory Curvature", "Trajectory Turning Angle"):
+        np.testing.assert_array_equal(plots[title].data[0].x, times[1:-1])
+
+
 def test_add_reduction_reads_the_summary_contract():
     rep = Report("Summary Test")
     with pytest.raises(TypeError, match="must implement get_summary"):

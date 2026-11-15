@@ -1136,11 +1136,18 @@ def add_reduction(
         values = diagnostics.get(metric_key)
         if values is None:
             continue
+        metric_times = time_values
+        if time_values is not None and metric_key in (
+            "trajectory_curvature_",
+            "trajectory_turning_angle_",
+        ):
+            # an angle sits on the inner point of each pair of steps
+            metric_times = time_values[1:-1]
         sec.add_element(
             PlotlyElement(
                 plot_trajectory_metric_series(
                     values,
-                    times=time_values,
+                    times=metric_times,
                     labels=labels,
                     title=metric_key.rstrip("_").replace("_", " ").title(),
                 ),
