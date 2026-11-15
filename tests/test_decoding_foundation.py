@@ -15,7 +15,6 @@ from coco_pipe.decoding.foundation_models._loader import (
 )
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
-from tests.fixtures.hub import LATEST
 
 
 def test_backend_base_cannot_be_instantiated_directly():
@@ -121,7 +120,7 @@ def test_validate_real_checkpoints_embeds_different_windows(offline):
     assert record["status"] == "verified"
     assert record["observed_embedding_dim"] == spec.embedding_dim
     assert record["relative_spread"] > validation.DEGENERATE_SPREAD
-    assert record["checkpoint_revisions"] == {spec.hub_repo: LATEST}
+    assert record["checkpoint_revisions"] == {spec.hub_repo: spec.checkpoint_revision}
     assert record["channel_adaptation"]["source_channels"] == DEFAULT_CHANNELS
     assert offline[-1]["token"] == "hf-token"
 

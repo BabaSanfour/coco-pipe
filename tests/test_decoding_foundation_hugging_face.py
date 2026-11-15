@@ -147,20 +147,21 @@ def test_hugging_face_needs_transformers(monkeypatch):
 
 
 def test_each_repository_loads_the_commit_resolved_for_it(hub):
+    # the backbone loads the spec's pinned commit, the position bank its own pin
+    bank = "befa5b57a455b77cf302daf610c2e9ed8140bace"
     backend = _load()
     assert all(kwargs["trust_remote_code"] for _, kwargs in hub)
     assert (
         {repo: kwargs["revision"] for repo, kwargs in hub}
         == backend.checkpoint_revisions
-        == {SPEC.hub_repo: _latest(SPEC.hub_repo), POSITIONS: _latest(POSITIONS)}
+        == {SPEC.hub_repo: SPEC.checkpoint_revision, POSITIONS: bank}
     )
-    # a pinned revision names the backbone's commit; the bank keeps its own
+    # a given revision replaces the backbone's pin; None follows the Hub's latest
     pinned = _load(revision="abc123")
-    assert pinned.checkpoint_revisions == {
-        SPEC.hub_repo: "abc123",
-        POSITIONS: _latest(POSITIONS),
-    }
+    assert pinned.checkpoint_revisions == {SPEC.hub_repo: "abc123", POSITIONS: bank}
     assert pinned.get_embedding_info() == SPEC
+    latest = _load(revision=None)
+    assert latest.checkpoint_revisions[SPEC.hub_repo] == _latest(SPEC.hub_repo)
 
 
 def test_train_modes_choose_what_trains(hub):
