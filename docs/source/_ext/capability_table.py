@@ -257,7 +257,6 @@ class FoundationTableDirective(Directive):
             "Emb. dim",
             "sfreq",
             "Channels",
-            "Interpolation",
             "Train modes",
             "Backend",
         ]
@@ -279,16 +278,6 @@ class FoundationTableDirective(Directive):
                     False,
                 ),
                 (str(channels) if channels else "varies", False),
-                (
-                    _yes_no(
-                        getattr(
-                            spec,
-                            "supports_channel_interpolation",
-                            False,
-                        )
-                    ),
-                    False,
-                ),
                 (", ".join(train_modes) or "none", True),
                 (getattr(spec, "preferred_backend", "unknown"), True),
             ]

@@ -103,10 +103,12 @@ def load(
     backend_cls = _BACKEND_MAP[backend_name]
 
     if not backend_cls.is_available():
+        # the dependency group "transformers" is installed by the extra "hf"
+        extra = {"transformers": "hf"}.get(spec.dependency_extra, spec.dependency_extra)
         raise ImportError(
             f"Model '{model_key}' requires the '{backend_name}' backend "
             f"but its dependencies are not installed.\n"
-            f'To install: pip install "coco-pipe[{spec.dependency_extra}]"'
+            f'To install: pip install "coco-pipe[{extra}]"'
         )
 
     backend_obj = backend_cls.load(

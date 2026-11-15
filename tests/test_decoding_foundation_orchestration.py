@@ -402,6 +402,9 @@ def test_frozen_backbone_embedding_cache_matches_uncached_and_memoizes():
         other.backend_.transform(other.prepared_.adapt(X)),
         rtol=1e-6,
     )
+    # and replaces them: the cache holds one backbone's embeddings at a time
+    np.testing.assert_allclose(cached.transform(X), expected, rtol=1e-6)
+    assert call_count["n"] == 2 * len(X)
     clear_frozen_embedding_cache()
 
 

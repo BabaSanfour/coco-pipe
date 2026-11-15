@@ -14,69 +14,12 @@ from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
+from tests.fixtures.hub import LATEST
 
 pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
-LATEST = "0123456789abcdef0123456789abcdef01234567"
-# Settings a checkpoint's config would otherwise provide.
-CHECKPOINT_DEFAULTS = {
-    "Labram": {"n_outputs": 1},
-    "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
-    "BENDR": {"n_outputs": 1},
-}
-
-
-@pytest.fixture
-def offline(monkeypatch, tmp_path):
-    """Build models from their classes; return the kwargs each load received."""
-    import braindecode.models as bm
-    import huggingface_hub
-    import mne
-
-    calls = []
-
-    def build(cls, repo_id, **kwargs):
-        calls.append(kwargs)
-        params = {
-            key: value
-            for key, value in kwargs.items()
-            if key not in {"revision", "filename", "token"}
-        }
-        for key, value in CHECKPOINT_DEFAULTS.get(cls.__name__, {}).items():
-            params.setdefault(key, value)
-        return cls(**params)
-
-    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "LUNA")
-    for name in (*classes, "SignalJEPA_Contextual"):
-        if hasattr(bm, name):
-            monkeypatch.setattr(
-                getattr(bm, name), "from_pretrained", classmethod(build)
-            )
-
-    # EEGPT reads its weights file itself: give it a randomly initialised one.
-    info = mne.create_info(list(DEFAULT_CHANNELS), 250.0, "eeg")
-    info.set_montage("colin27_1020")
-    eegpt = bm.EEGPT(
-        chs_info=info["chs"],
-        n_chans=len(DEFAULT_CHANNELS),
-        n_times=500,
-        sfreq=250.0,
-        n_outputs=1,
-        chan_proj_type="none",
-    )
-    weights = tmp_path / "eegpt.pt"
-    torch.save(eegpt.state_dict(), weights)
-
-    def download(repo_id, filename, revision=None, **kwargs):
-        if filename == "config.json":
-            # a cached snapshot folder is named by its commit
-            return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
-        return str(weights)
-
-    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
-    return calls
 
 
 def _load(
@@ -312,21 +255,31 @@ def test_windows_with_nan_or_inf_are_rejected(offline):
             call()
 
 
-def test_load_takes_the_latest_checkpoint_unless_given_a_revision(offline):
+def test_load_takes_the_pinned_checkpoint_unless_given_a_revision(offline):
+    pinned = get_estimator_spec("cbramod").checkpoint_revision
     # the commit is resolved first, so the one loaded is the one recorded
     backend, X = _load("cbramod")
-    assert offline[-1]["revision"] == LATEST
-    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": LATEST}
+    assert offline[-1]["revision"] == pinned
+    assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": pinned}
     backend, _ = _load("cbramod", revision="abc123")
     assert offline[-1]["revision"] == "abc123"
     assert backend.checkpoint_revisions == {"braindecode/cbramod-pretrained": "abc123"}
+    _load("cbramod", revision=None)
+    assert offline[-1]["revision"] == LATEST
 
     # extracted embeddings say which commit made them
+    meta = SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
     result = FoundationEmbeddingExtractor("cbramod", device="cpu").extract(
-        X, signal_metadata=SignalMetadata(sfreq=200.0, ch_names=DEFAULT_CHANNELS)
+        X, signal_metadata=meta
     )
     assert result.metadata["checkpoint_revisions"] == {
-        "braindecode/cbramod-pretrained": LATEST
+        "braindecode/cbramod-pretrained": pinned
+    }
+    result = FoundationEmbeddingExtractor(
+        "cbramod", device="cpu", backend_kwargs={"revision": "abc123"}
+    ).extract(X, signal_metadata=meta)
+    assert result.metadata["checkpoint_revisions"] == {
+        "braindecode/cbramod-pretrained": "abc123"
     }
 
 
@@ -386,6 +339,20 @@ def test_luna_phase_of_real_bins_ignores_rounding_noise(offline, monkeypatch):
     with torch.no_grad():
         assert torch.equal(module(x), clean)
         assert not torch.equal(upstream(module, x), clean)
+
+
+def test_luna_refuses_a_channel_without_a_position(offline):
+    with pytest.raises(ValueError, match="X1"):
+        _load("luna", channels=[*DEFAULT_CHANNELS[:-1], "X1"])
+
+
+def test_luna_finds_positions_whatever_the_case_of_the_names(offline):
+    def embed(channels):
+        backend, X = _load("luna", channels=channels, pretrained=False, seed=0)
+        return backend.transform(X)
+
+    upper = [name.upper() for name in DEFAULT_CHANNELS]
+    np.testing.assert_array_equal(embed(upper), embed(DEFAULT_CHANNELS))
 
 
 @pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])
@@ -528,3 +495,57 @@ def test_extractor_loads_again_for_another_montage(offline):
     again = extract(X[:, ::-1], DEFAULT_CHANNELS[::-1])
     assert len(offline) == 2
     np.testing.assert_allclose(again, first, rtol=1e-5, atol=1e-5)
+
+
+def test_weight_sets_extract_a_recording_as_each_extractor_alone(offline, monkeypatch):
+    import mne
+
+    from coco_pipe.decoding.foundation_models import extract_weight_sets
+    from coco_pipe.io import DataContainer
+
+    # LUNA at 256 Hz, on windows of 2.5 s recorded at 200 Hz
+    conditions = ["EO", "EC", "EO", "EC"]
+    recording = DataContainer(
+        X=np.random.default_rng(0).normal(scale=20, size=(4, 19, 500)),
+        dims=("obs", "channel", "time"),
+        coords={
+            "channel": np.array(DEFAULT_CHANNELS, dtype=object),
+            "time": np.arange(500) / 200.0,
+            "condition": np.array(conditions, dtype=object),
+            "epoch": np.arange(4),
+        },
+        ids=np.array([f"epoch-{epoch}" for epoch in range(4)]),
+        meta={"sfreq": 200.0},
+    )
+    extractors = [
+        FoundationEmbeddingExtractor(
+            "luna", device="cpu", pretrained=seed is None, seed=seed, store_tokens=True
+        )
+        for seed in (None, 0, 1)
+    ]
+    resampled = []
+    resample = mne.filter.resample
+
+    def counted(*args, **kwargs):
+        resampled.append(args[0].shape)
+        return resample(*args, **kwargs)
+
+    monkeypatch.setattr(mne.filter, "resample", counted)
+
+    alone = [extractor.extract_recording(recording) for extractor in extractors]
+    assert len(resampled) == 6
+    together = extract_weight_sets(extractors, recording)
+    assert len(resampled) == 6 + 2  # once per condition
+
+    for one, other in zip(alone, together, strict=True):
+        assert one.keys() == other.keys() == {"EO", "EC"}
+        for condition, result in one.items():
+            shared = other[condition]
+            for name in ("window_embeddings", "token_embeddings", "window_index"):
+                np.testing.assert_array_equal(
+                    getattr(shared, name), getattr(result, name)
+                )
+            assert shared.metadata == result.metadata
+    assert not np.allclose(
+        alone[0]["EC"].window_embeddings, alone[1]["EC"].window_embeddings
+    )

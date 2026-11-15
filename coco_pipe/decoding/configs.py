@@ -603,7 +603,6 @@ class ClassicalModelConfig(ClassicalEstimatorConfig):
     method: Literal["ClassicalModel"] = "ClassicalModel"
     estimator: str
     params: dict[str, Any] = Field(default_factory=dict)
-    input_kind: Literal["tabular", "embeddings"] = "tabular"
 
 
 class DeviceConfig(BaseModel):

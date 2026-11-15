@@ -67,11 +67,12 @@ extracted embeddings.
 1.1 Embedding Cache
 ~~~~~~~~~~~~~~~~~~~
 
-``cache_embeddings=True`` writes extracted embeddings to a content-addressed
-disk cache. Because a frozen backbone is a deterministic, target-independent
-function of the window content, the cache key is derived from the input windows
-and the backbone fingerprint — so embeddings are computed once and reused across
-folds and models without leakage. No manual cache management is required.
+``cache_embeddings=True`` (the default) keeps the embeddings of a frozen
+backbone in memory, by window content. A frozen backbone is a deterministic,
+target-independent function of the window, so each window is embedded once and
+reused across folds, and across models that share the backbone, without leakage.
+The cache holds one backbone's embeddings at a time: another backbone replaces
+them. ``clear_frozen_embedding_cache()`` empties it.
 
 1.2 Supported Models & Backends
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -116,6 +117,20 @@ For a recording the BIDS loader read,
 :meth:`~coco_pipe.decoding.foundation_models.FoundationEmbeddingExtractor.extract_recording`
 gives the result of each condition, its windows numbered by their epoch.
 An extractor on ``device="cuda"`` refuses to be built without a GPU.
+:func:`~coco_pipe.decoding.foundation_models.extract_weight_sets` runs several
+extractors over one recording, typically a model's pretrained weights and random
+ones of several seeds, and resamples the recording once for all of them; each
+result is the one the extractor alone gives:
+
+.. code-block:: python
+
+   from coco_pipe.decoding.foundation_models import extract_weight_sets
+
+   extractors = [
+       FoundationEmbeddingExtractor("luna", pretrained=seed is None, seed=seed)
+       for seed in (None, 0, 1)
+   ]
+   pretrained, seed0, seed1 = extract_weight_sets(extractors, recording)
 
 The result holds:
 
@@ -171,6 +186,11 @@ record ``Weights`` and ``Seed``, and the writer labels them by the seed, e.g.
        metrics=["balanced_accuracy"],
        cv=CVConfig(strategy="stratified_group_kfold", n_splits=5, group_key="Subject"),
    )
+
+A random-weights baseline fine-tunes the same architecture from random weights
+(see **Random weights** above): pass them through ``backend_kwargs``, e.g.
+``NeuralFineTuneConfig(..., backend_kwargs={"pretrained": False, "seed": 0})``.
+QLoRA refuses it.
 
 2.1 Training Modes
 ~~~~~~~~~~~~~~~~~~

@@ -16,6 +16,7 @@ from .extraction import (
     FoundationEmbeddingExtractor,
     FoundationEmbeddingResult,
     check_capability,
+    extract_weight_sets,
     normalize_inclusive_endpoint,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "FrozenBackboneTransformer",
     "check_capability",
     "clear_frozen_embedding_cache",
+    "extract_weight_sets",
     "load",
     "normalize_channel_names",
     "normalize_inclusive_endpoint",

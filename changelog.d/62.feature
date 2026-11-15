@@ -1,0 +1,1 @@
+`extract_weight_sets(extractors, recording)` extracts one recording with several extractors, typically a model's pretrained weights and random ones of several seeds, and resamples each condition's windows once for all of them instead of once per extractor (about a third of LUNA's extraction time per weight set). Each result is the one the extractor alone gives, bit for bit.

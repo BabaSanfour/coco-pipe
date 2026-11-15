@@ -1,16 +1,19 @@
-import warnings
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import json
+import sys
 
 import numpy as np
 import pytest
-from sklearn.base import BaseEstimator, TransformerMixin
 
 from coco_pipe.decoding._specs import SignalMetadata
+from coco_pipe.decoding.foundation_models import validation
 from coco_pipe.decoding.foundation_models._base import BackendBase
-from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models._hugging_face import HuggingFaceBackend
-from coco_pipe.decoding.foundation_models._loader import load
+from coco_pipe.decoding.foundation_models._loader import (
+    load,
+    register_backend,
+    unregister_backend,
+)
+from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
 
 
@@ -47,80 +50,20 @@ def test_configure_peft_raises_not_implemented_by_default():
         _Bare().configure_peft({})
 
 
-def test_backend_is_sklearn_estimator():
-    meta = get_estimator_spec("cbramod")
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=MagicMock(),
-        n_outputs=2,
+def test_loaded_model_takes_the_channels_it_was_loaded_for(offline):
+    channels = SignalMetadata(sfreq=200.0, ch_names=list(DEFAULT_CHANNELS))
+    backend = load(
+        "labram",
         device="cpu",
-        train_mode="frozen",
-        task="classification",
+        signal_metadata=channels,
+        electrode_names=list(DEFAULT_CHANNELS),
+        sfreq=200.0,
     )
-    assert isinstance(adapter, BaseEstimator)
-    assert isinstance(adapter, TransformerMixin)
-    for attr in ("fit", "transform", "predict", "get_params", "set_params"):
-        assert hasattr(adapter, attr)
+    X = np.random.default_rng(0).normal(scale=20.0, size=(2, 19, 400))
 
-
-def _make_bd_adapter(model_key="cbramod", sfreq=200.0):
-    import torch
-
-    meta = get_estimator_spec(model_key)
-    n_ch = meta.pretrained_n_chans or 19
-    feat_dim = meta.embedding_dim
-    model = MagicMock()
-    model.return_value = {
-        "features": torch.zeros(4, feat_dim),
-        "logits": torch.zeros(4, 2),
-    }
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=model,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    adapter.signal_metadata_ = SignalMetadata(
-        sfreq=sfreq, ch_names=[f"ch{i}" for i in range(n_ch)]
-    )
-    return adapter, n_ch
-
-
-def test_validate_raises_before_fit():
-    meta = get_estimator_spec("cbramod")
-    adapter = BrainDecodeBackend(
-        metadata=meta,
-        model=MagicMock(),
-        n_outputs=None,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    with pytest.raises(RuntimeError, match="fitted"):
-        adapter.transform(np.zeros((2, 19, 400)))
-
-
-def test_validate_warns_on_sfreq_mismatch():
-    adapter, n_ch = _make_bd_adapter("eegpt", sfreq=200.0)
-    X = np.zeros((4, n_ch, 400), dtype=np.float32)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        adapter.transform(X)
-    assert any("sfreq" in str(w.message) for w in caught)
-
-
-def test_validate_raises_on_channel_count_mismatch():
-    adapter, _ = _make_bd_adapter("labram")
-    with pytest.raises(ValueError, match="128 channels"):
-        adapter.transform(np.zeros((2, 32, 400)))
-
-
-def test_signal_metadata_stored_after_transform():
-    adapter, n_ch = _make_bd_adapter()
-    assert adapter.signal_metadata_ is not None
-    assert len(adapter.signal_metadata_.ch_names) == n_ch
+    assert backend.transform(X).shape == (2, get_estimator_spec("labram").embedding_dim)
+    with pytest.raises(ValueError, match="expects 19 channels, got 18"):
+        backend.transform(X[:, :18])
 
 
 def test_load_fm_unknown_key_raises_key_error():
@@ -133,22 +76,14 @@ def test_load_fm_unknown_backend_raises_value_error():
         load("reve", backend="nonexistent")
 
 
-def test_load_fm_auto_raises_import_error_when_no_backend_available(monkeypatch):
-    monkeypatch.setattr(
-        BrainDecodeBackend, "is_available", classmethod(lambda cls: False)
-    )
-    monkeypatch.setattr(
-        HuggingFaceBackend, "is_available", classmethod(lambda cls: False)
-    )
-    with pytest.raises(ImportError, match="pip install"):
+def test_load_fm_raises_import_error_when_the_backend_is_not_installed(monkeypatch):
+    monkeypatch.setitem(sys.modules, "transformers", None)
+    # the hint names an extra that exists ("hf", not the group "transformers")
+    with pytest.raises(ImportError, match=r'pip install "coco-pipe\[hf\]"'):
         load("reve", backend="auto")
 
 
 def test_register_backend_errors():
-    from coco_pipe.decoding.foundation_models._loader import (
-        register_backend,
-    )
-
     with pytest.raises(KeyError, match="already registered"):
         register_backend("hugging_face", HuggingFaceBackend)
 
@@ -160,129 +95,80 @@ def test_register_backend_errors():
 
 
 def test_unregister_backend_errors():
-    from coco_pipe.decoding.foundation_models._loader import unregister_backend
-
     with pytest.raises(ValueError, match="cannot be unregistered"):
         unregister_backend("hugging_face")
 
 
-def test_resolve_device_override():
+def test_resolve_device(monkeypatch):
+    torch = pytest.importorskip("torch")
     from coco_pipe.utils import resolve_device
 
     assert resolve_device("cpu") == "cpu"
-    # Test auto device resolution under different environments
-    with patch("torch.cuda.is_available", return_value=True):
-        assert resolve_device("cuda") == "cuda"
-        assert resolve_device("auto") == "cuda"
+    # no GPU in CI: CUDA is reported present or absent
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert resolve_device("cuda") == "cuda"
+    assert resolve_device("auto") == "cuda"
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA is not available"):
+        resolve_device("cuda")
 
 
-@patch("coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor")
-def test_validate_real_checkpoints(mock_extractor_cls):
-    from coco_pipe.decoding.foundation_models.validation import (
-        validate_real_checkpoints,
+def test_validate_real_checkpoints_embeds_different_windows(offline):
+    spec = get_estimator_spec("cbramod")
+
+    (record,) = validation.validate_real_checkpoints(["cbramod"], token="hf-token")
+
+    assert record["status"] == "verified"
+    assert record["observed_embedding_dim"] == spec.embedding_dim
+    assert record["relative_spread"] > validation.DEGENERATE_SPREAD
+    assert record["checkpoint_revisions"] == {spec.hub_repo: spec.checkpoint_revision}
+    assert record["channel_adaptation"]["source_channels"] == DEFAULT_CHANNELS
+    assert offline[-1]["token"] == "hf-token"
+
+
+def test_validate_real_training_fits_and_reloads_a_checkpoint(offline):
+    linear_probe, qlora = validation.validate_real_training(
+        ["cbramod"], train_modes=["linear_probe", "qlora"]
     )
 
-    # Mock extractor instance and output
-    mock_extractor = MagicMock()
-    mock_extractor_cls.return_value = mock_extractor
-
-    mock_result = MagicMock()
-    mock_result.window_embeddings = MagicMock(shape=(1, 256))
-    revisions = {"braindecode/cbramod-pretrained": "584cdc4"}
-    mock_result.metadata = {
-        "channel_adaptation": "none",
-        "checkpoint_revisions": revisions,
+    assert linear_probe["status"] == "verified"
+    assert linear_probe["checkpoint_reload"]
+    assert linear_probe["probability_shape"] == [2, 2]
+    assert linear_probe["training_history_rows"] == 1
+    assert linear_probe["trainable_parameters"] > 0
+    # braindecode models do not quantize
+    assert qlora == {
+        "model_key": "cbramod",
+        "train_mode": "qlora",
+        "status": "unsupported",
     }
-    mock_extractor.extract.return_value = mock_result
-
-    records = validate_real_checkpoints(model_keys=["cbramod"], token="dummy-token")
-    assert len(records) == 1
-    assert records[0]["model_key"] == "cbramod"
-    assert records[0]["status"] in ("verified", "dimension_mismatch")
-    assert records[0]["checkpoint_revisions"] == revisions
 
 
-@patch("coco_pipe.decoding.foundation_models.validation.FoundationClassifier")
-def test_validate_real_training(mock_classifier_cls):
-    from coco_pipe.decoding.foundation_models.validation import validate_real_training
+def test_validation_cli_writes_the_records_and_fails_on_a_failed_model(
+    offline, monkeypatch, tmp_path, capsys
+):
+    import braindecode.models as bm
 
-    mock_classifier = MagicMock()
-    mock_classifier_cls.return_value = mock_classifier
-    mock_classifier.fit.return_value = mock_classifier
-    mock_classifier.predict_proba.return_value = np.zeros((2, 2))
+    def run(*args):
+        output = tmp_path / "records.json"
+        monkeypatch.setattr(sys, "argv", ["validation", *args, "--output", str(output)])
+        validation.main()
+        records = json.loads(output.read_text())
+        assert json.loads(capsys.readouterr().out) == records
+        return records
 
-    mock_path = MagicMock()
-    mock_path.exists.return_value = True
-    mock_classifier.checkpoint_path_ = mock_path
+    (record,) = run("--models", "cbramod")
+    assert record["status"] == "verified"
+    (record,) = run("--models", "cbramod", "--training", "--train-modes", "qlora")
+    assert record["status"] == "unsupported"
 
-    mock_classifier.get_training_history.return_value = [1]
+    def unreachable(cls, repo_id, **kwargs):
+        raise OSError("the Hub cannot be reached")
 
-    mock_classifier._checkpoint_components.return_value = {}
-
-    records = validate_real_training(
-        model_keys=["cbramod"],
-        train_modes=["linear_probe"],
-        token="dummy-token",
-    )
-    assert len(records) == 1
-    assert records[0]["model_key"] == "cbramod"
-    assert records[0]["status"] == "verified"
-
-
-@patch("coco_pipe.decoding.foundation_models.validation.validate_real_checkpoints")
-@patch("coco_pipe.decoding.foundation_models.validation.validate_real_training")
-def test_validation_main(mock_training, mock_checkpoints):
-    import tempfile
-
-    from coco_pipe.decoding.foundation_models.validation import main
-
-    mock_checkpoints.return_value = [{"model_key": "cbramod", "status": "verified"}]
-    mock_training.return_value = [{"model_key": "cbramod", "status": "verified"}]
-
-    with patch("sys.argv", ["validation.py", "--models", "cbramod"]):
-        main()
-
-    with patch("sys.argv", ["validation.py", "--models", "cbramod", "--training"]):
-        main()
-
-    # Output file and failed exit code path
-    with tempfile.TemporaryDirectory() as tmpdir:
-        out_file = Path(tmpdir) / "out.json"
-        mock_checkpoints.return_value = [{"model_key": "cbramod", "status": "failed"}]
-        with (
-            patch(
-                "sys.argv",
-                ["validation.py", "--models", "cbramod", "--output", str(out_file)],
-            ),
-            pytest.raises(SystemExit),
-        ):
-            main()
-        assert out_file.exists()
-
-
-def test_validation_edge_cases():
-    from coco_pipe.decoding.foundation_models.validation import (
-        validate_real_checkpoints,
-    )
-
-    # 1. validate_real_checkpoints with labram
-    with patch(
-        "coco_pipe.decoding.foundation_models.validation.FoundationEmbeddingExtractor"
-    ) as mock_extractor_cls:
-        mock_extractor = MagicMock()
-        mock_extractor_cls.return_value = mock_extractor
-        mock_result = MagicMock()
-        mock_result.window_embeddings = MagicMock(shape=(1, 200))
-        mock_result.metadata = {
-            "channel_adaptation": "none",
-            "checkpoint_revisions": {"braindecode/labram-pretrained": "0563b6c"},
-        }
-        mock_extractor.extract.return_value = mock_result
-
-        records = validate_real_checkpoints(model_keys=["labram"], token="dummy-token")
-        assert len(records) == 1
-
-        # 2. validate_real_checkpoints raises exception
-        mock_extractor_cls.side_effect = Exception("extractor failed")
-        records = validate_real_checkpoints(model_keys=["cbramod"], token="dummy-token")
-        assert records[0]["status"] == "failed"
+    monkeypatch.setattr(bm.CBraMod, "from_pretrained", classmethod(unreachable))
+    with pytest.raises(SystemExit) as exit_:
+        run("--models", "cbramod")
+    assert exit_.value.code == 1
+    (record,) = json.loads((tmp_path / "records.json").read_text())
+    assert record["status"] == "failed"
+    assert record["reason"] == "OSError: the Hub cannot be reached"

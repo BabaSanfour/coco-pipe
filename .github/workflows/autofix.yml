@@ -17,9 +17,10 @@ jobs:
       pull-requests: write
 
     steps:
+      # the branch, not the commit: the commit step pushes to it
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.head_ref }}
 
       - uses: actions/setup-python@v7.1.0
         with:

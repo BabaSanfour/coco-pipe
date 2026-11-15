@@ -7,8 +7,6 @@ Dim-reduction-specific Report.add_* tests live in tests/test_report_dimred.py.
 import base64
 import gzip
 import json
-from typing import ClassVar
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -54,8 +52,7 @@ def test_report_config_and_metadata():
     # Title override via dict
     rep = Report(title="Old", config={"title": "New", "x": 1})
     assert rep.title == "New"
-    if rep.config.model_extra is not None:
-        assert rep.config.model_extra["x"] == 1
+    assert rep.config.x == 1
 
     # Pass a ReportConfig object
     cfg = ReportConfig(title="Object")
@@ -65,13 +62,6 @@ def test_report_config_and_metadata():
     # Fallback for a broken config dict
     rep_fallback = Report("Fallback", config={"unexpected": object()})
     assert rep_fallback.title == "Fallback"
-
-
-def test_report_config_coercion_keeps_extra_fields():
-    rep = Report(title="T", config={"some_param": 1})
-    assert rep.title == "T"
-    # Pydantic 2 allows extras via the model config
-    assert rep.config.some_param == 1
 
 
 def test_container_element_markdown_fallback():
@@ -236,38 +226,46 @@ def test_global_data_store_payload():
     assert data_registry[uuid_str]["data"][0]["y"] == [3, 4]
 
 
-# ----- Bound-method API surface (regression: monkey-patch binding) -----------
+# ----- Bound-method API surface --------------------------------------------
 
 
-def test_fluent_stubs():
-    """Verify every add_decoding_* / add_reduction_* method is bound to Report."""
-    rep = Report()
-    method_names = [
-        "add_decoding_overview",
-        "add_decoding_temporal",
-        "add_decoding_summary",
-        "add_decoding_statistical_assessment",
-        "add_decoding_neural_artifacts",
-        "add_decoding_performance",
-        "add_decoding_features",
-        "add_decoding_topomaps",
-        "add_reduction",
-        "add_comparison",
-        "add_reduction_overview",
-        "add_reduction_embedding",
-        "add_reduction_metrics",
-        "add_reduction_diagnostics",
-        "add_reduction_interpretation",
-        "add_reduction_coranking",
-        "add_reduction_components",
-        "add_reduction_trajectory",
-        "add_reduction_trajectory_separation",
-    ]
-    for name in method_names:
-        with patch.object(Report, name) as m:
-            m.return_value = rep
-            getattr(rep, name)(None)
-            m.assert_called()
+def test_fluent_methods_are_the_section_builders():
+    """Every add_decoding_* / add_reduction_* method is bound to Report."""
+    from coco_pipe.report import decoding, dim_reduction
+
+    for module, names in (
+        (
+            decoding,
+            [
+                "add_decoding_overview",
+                "add_decoding_temporal",
+                "add_decoding_summary",
+                "add_decoding_statistical_assessment",
+                "add_decoding_neural_artifacts",
+                "add_decoding_performance",
+                "add_decoding_features",
+                "add_decoding_topomaps",
+            ],
+        ),
+        (
+            dim_reduction,
+            [
+                "add_reduction",
+                "add_comparison",
+                "add_reduction_overview",
+                "add_reduction_embedding",
+                "add_reduction_metrics",
+                "add_reduction_diagnostics",
+                "add_reduction_interpretation",
+                "add_reduction_coranking",
+                "add_reduction_components",
+                "add_reduction_trajectory",
+                "add_reduction_trajectory_separation",
+            ],
+        ),
+    ):
+        for name in names:
+            assert getattr(Report(), name).__func__ is getattr(module, name)
 
 
 def test_asset_mode_defaults_to_cdn():
@@ -361,25 +359,11 @@ def test_report_provenance_fallback():
     assert rep.config.provenance is not None
 
 
-def test_apply_theme_exceptions():
-    with (
-        patch("coco_pipe.viz.theme.set_coco_theme", side_effect=Exception("theme err")),
-        patch(
-            "coco_pipe.viz.interactive._utils._register_coco_template",
-            side_effect=Exception("tpl err"),
-        ),
-    ):
-        Report(title="T")  # should catch silently
-
-
-def test_resolve_config_fallback():
-    from coco_pipe.report.core import Report
-
-    # provenance must be a dict or valid model, passing an int fails validation
+def test_invalid_config_is_kept_as_run_params():
     rep = Report(config={"provenance": 123}, title="T")
-    assert (
-        getattr(rep.config, "run_params", None) is not None or rep.config.title == "T"
-    )
+    assert rep.title == "T"
+    assert rep.config.run_params == {"provenance": 123, "title": "T"}
+    assert rep.config.provenance is not None
 
 
 def test_add_container_constant_columns():
@@ -413,69 +397,43 @@ def test_add_container_constant_columns():
         assert f"Found 1 constant column(s): {label}." in messages
 
 
-def test_add_container_plot_exception():
-    rep = Report("T")
-
-    class DummyContainer:
-        dims: ClassVar[list] = ["a"]
-        shape: ClassVar[list] = [2]
-        coords: ClassVar[dict] = {}
-        X = np.array([1, 2])
+def test_add_container_reports_a_plot_it_cannot_draw():
+    class NoValues:
+        dims = ("obs",)
+        shape = (2,)
+        coords = None
+        X = None
         y = None
 
-    with patch("matplotlib.pyplot.subplots", side_effect=Exception("plot err")):
-        rep.add_container(DummyContainer())
+    rep = Report("T")
+    rep.add_container(NoValues())
     sec = rep.children[-1]
     assert "Could not generate plot" in sec.children[-1].html
 
 
-def test_add_raw_preview2():
+def test_add_raw_preview_flags_a_flat_signal():
     rep = Report("T")
-
-    class DummyData:
-        X = np.array([1, 1, 1, 1])  # flatline
-
-    with patch("coco_pipe.report.core.check_flatline") as mock_flat:
-
-        class DummyRes:
-            is_issue = True
-            status = "FAIL"
-            message = "Flatline"
-
-        mock_flat.return_value = DummyRes()
-
-        with patch(
-            "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview"
-        ) as mock_preview:
-            mock_preview.return_value = "fig"
-            rep.add_raw_preview(DummyData())
-            sec = rep.children[-1]
-            assert len(sec.findings) > 0
+    rep.add_raw_preview(np.ones((50, 2)))
+    (sec,) = rep.children
+    assert [(f["check_name"], f["status"]) for f in sec.findings] == [
+        ("Signal Quality", "FAIL")
+    ]
+    assert sec.status == "FAIL"
+    assert len(sec.children[-1].figure.data) == 2
 
 
-def test_add_raw_preview_exceptions():
+@pytest.mark.parametrize(
+    "shape, n_traces, n_points",
+    [((6,), 1, 6), ((2, 3, 4), 4, 6)],
+    ids=["1d", "3d"],
+)
+def test_add_raw_preview_plots_one_trace_per_column(shape, n_traces, n_points):
+    data = np.random.default_rng(0).normal(size=shape)
     rep = Report("T")
-    with (
-        patch(
-            "coco_pipe.report.core.check_flatline", side_effect=Exception("check err")
-        ),
-        patch(
-            "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview",
-            return_value="fig",
-        ),
-    ):
-        rep.add_raw_preview(np.array([1, 2]))
-
-
-def test_add_raw_preview_dims():
-    rep = Report("T")
-    with patch(
-        "coco_pipe.viz.interactive.dim_reduction.plot_raw_preview", return_value="fig"
-    ):
-        # 1D
-        rep.add_raw_preview(np.array([1, 2]))
-        # 3D
-        rep.add_raw_preview(np.array([[[1, 2], [3, 4]]]))
+    rep.add_raw_preview(data)
+    figure = rep.children[0].children[-1].figure
+    assert len(figure.data) == n_traces
+    assert all(len(trace.y) == n_points for trace in figure.data)
 
 
 def test_add_summary_card():
@@ -485,11 +443,21 @@ def test_add_summary_card():
     assert len(rep.children[0].children) == 2
 
 
-def test_show():
-    rep = Report("T")
-    with patch("webbrowser.open") as mock_open:
-        rep.show()
-        assert mock_open.called
+def test_show_opens_the_rendered_report(monkeypatch):
+    import webbrowser
+    from pathlib import Path
+
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    Report("Shown Report").show()
+    (url,) = opened
+    path = Path(url.removeprefix("file://"))
+    try:
+        html = path.read_text(encoding="utf-8")
+    finally:
+        path.unlink()
+    assert "<!DOCTYPE html>" in html
+    assert "Shown Report" in html
 
 
 def test_repr_html():

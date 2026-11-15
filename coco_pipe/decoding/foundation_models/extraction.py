@@ -519,6 +519,32 @@ class FoundationEmbeddingExtractor:
         ``window_index`` is the number of each window in its recording; by
         default the windows are numbered in the order given.
         """
+        return self._extract(
+            epochs,
+            signal_metadata=signal_metadata,
+            window_start=window_start,
+            window_stop=window_stop,
+            window_index=window_index,
+            metadata=metadata,
+            inputs={},
+        )
+
+    def _extract(
+        self,
+        epochs: np.ndarray,
+        *,
+        signal_metadata: SignalMetadata,
+        window_start: Sequence[int] | None,
+        window_stop: Sequence[int] | None,
+        window_index: Sequence[int] | None,
+        metadata: Mapping[str, Any] | None,
+        inputs: dict[tuple[float, float], np.ndarray],
+    ) -> FoundationEmbeddingResult:
+        """Extract ``epochs``, reusing their resampled windows in ``inputs``.
+
+        ``inputs`` maps (input rate, model rate) to ``epochs`` resampled, for
+        extractors that share them (see :func:`extract_weight_sets`).
+        """
         X = np.asarray(epochs, dtype=np.float32)
         if X.ndim != 3:
             raise ValueError("epochs must have shape (window, channel, time).")
@@ -569,9 +595,14 @@ class FoundationEmbeddingExtractor:
                 f"resample=False but input sfreq ({prepared.source_sfreq} Hz) != "
                 f"model sfreq ({prepared.target_sfreq} Hz); the model receives "
                 "mismatched-rate data and the embeddings will be unreliable.",
-                stacklevel=2,
+                stacklevel=3,
             )
-        model_input = prepared.adapt(X) if self.resample else X
+        model_input = X
+        if self.resample:
+            rates = (prepared.source_sfreq, prepared.target_sfreq)
+            if rates not in inputs:
+                inputs[rates] = prepared.adapt(X)
+            model_input = inputs[rates]
         resampled = self.resample and prepared.source_sfreq != prepared.target_sfreq
         if spec.expected_passband is not None:
             band = spec.expected_passband
@@ -579,7 +610,7 @@ class FoundationEmbeddingExtractor:
                 f"{spec.display_name or spec.name} expects data filtered between "
                 f"{band[0]} and {band[1]} Hz. Ensure your input is bandpassed, "
                 "as extraction does not filter automatically.",
-                stacklevel=2,
+                stacklevel=3,
             )
         token_metadata = None
         if self.store_tokens:
@@ -636,14 +667,10 @@ class FoundationEmbeddingExtractor:
             "input_sfreq": float(prepared.source_sfreq),
             "model_sfreq": float(prepared.target_sfreq),
             "pretrained_sfreq": float(spec.pretrained_sfreq),
-            "original_sfreq": float(signal_metadata.sfreq),
             "resampled": resampled,
             "requires_resampling": prepared.source_sfreq != prepared.target_sfreq,
             "original_channels": list(signal_metadata.ch_names),
             "model_channels": prepared.ch_names,
-            "channel_mapping": dict(
-                zip(signal_metadata.ch_names, prepared.ch_names, strict=False)
-            ),
             "channel_adaptation": {
                 "legacy_1020_renamed": [
                     {
@@ -717,24 +744,45 @@ class FoundationEmbeddingExtractor:
         ``condition`` and ``epoch`` coordinates. Each condition's result numbers
         its windows by their epoch, and their samples count as if the epochs
         were back to back. :func:`~coco_pipe.io.write_recording_embeddings`
-        takes the results.
+        takes the results. :func:`extract_weight_sets` extracts a recording with
+        several extractors, resampling it once.
         """
-        rows = recording.obs_table()
-        X = np.asarray(recording.X, dtype=np.float32)
-        signal_metadata = SignalMetadata(
-            sfreq=float(recording.meta["sfreq"]),
-            ch_names=[str(name) for name in recording.coords["channel"]],
-        )
-        conditions = rows["condition"].astype(str).to_numpy()
-        results = {}
-        for condition in sorted(set(conditions)):
-            part = conditions == condition
-            epochs = rows["epoch"].to_numpy(dtype=int)[part]
-            results[condition] = self.extract(
-                X[part],
+        return extract_weight_sets([self], recording)[0]
+
+
+def extract_weight_sets(
+    extractors: Sequence[FoundationEmbeddingExtractor], recording: DataContainer
+) -> list[dict[str, FoundationEmbeddingResult]]:
+    """Extract one recording with several extractors, resampling it once.
+
+    The extractors are typically one model's weight sets, its pretrained weights
+    and random ones of several seeds, each keeping its model loaded. Each
+    condition's windows are resampled once for all the extractors whose models
+    take the same rate, instead of once per extractor; the models' own input
+    scaling stays theirs. Returns, in the order of ``extractors``, what each
+    one's :meth:`~FoundationEmbeddingExtractor.extract_recording` returns.
+    """
+    rows = recording.obs_table()
+    X = np.asarray(recording.X, dtype=np.float32)
+    signal_metadata = SignalMetadata(
+        sfreq=float(recording.meta["sfreq"]),
+        ch_names=[str(name) for name in recording.coords["channel"]],
+    )
+    conditions = rows["condition"].astype(str).to_numpy()
+    results: list[dict[str, FoundationEmbeddingResult]] = [{} for _ in extractors]
+    for condition in sorted(set(conditions)):
+        part = conditions == condition
+        windows = X[part]
+        epochs = rows["epoch"].to_numpy(dtype=int)[part]
+        inputs: dict[tuple[float, float], np.ndarray] = {}
+        for extractor, result in zip(extractors, results, strict=True):
+            result[condition] = extractor._extract(
+                windows,
                 signal_metadata=signal_metadata,
                 window_start=epochs * X.shape[-1],
                 window_stop=(epochs + 1) * X.shape[-1],
                 window_index=epochs,
+                metadata=None,
+                inputs=inputs,
             )
-        return results
+    return results

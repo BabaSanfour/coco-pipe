@@ -1,0 +1,1 @@
+Every foundation model loads a pinned commit of its checkpoint (`FoundationModelSpec.checkpoint_revision`; REVE's position bank too) instead of the Hub's latest one, so a checkpoint updated upstream no longer changes the embeddings. `backend_kwargs={"revision": ...}` loads another commit, and `revision=None` the latest. The pins are the commits that made the current embeddings.

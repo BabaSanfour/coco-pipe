@@ -163,7 +163,7 @@ def test_permutation_assessment_needs_one_label_per_unit():
         {"lr": LogisticRegressionConfig()},
         _assessment("custom", "site", method="permutation", n_permutations=3),
     )
-    with pytest.raises(ValueError, match="label varies within inference unit"):
+    with pytest.raises(ValueError, match="target varies within 4 inference unit"):
         experiment.run(X, y, groups=GROUPS, sample_metadata=metadata)
 
 
@@ -426,6 +426,14 @@ def test_aggregate_predictions_for_inference_errors():
         aggregate_predictions_for_inference(
             frame, "accuracy", unit_of_inference="Subject", custom_aggregation="mean"
         )
+    # S1 holds both classes: no single target to score the unit against
+    with pytest.raises(ValueError, match="target varies within 1 inference unit"):
+        aggregate_predictions_for_inference(
+            frame,
+            "accuracy",
+            unit_of_inference="Subject",
+            custom_aggregation="majority",
+        )
 
 
 def test_multiple_comparison_corrections():
@@ -658,8 +666,10 @@ def test_schemes_check_their_columns_and_scoring_unit():
             permutation_scheme="within_strata",
             strata_column="Site",
         )
-    # a subject-level score takes one label per subject, which a within-subject
-    # shuffle does not keep
+    # a subject-level score takes one label per subject, which shuffling the
+    # samples of a site (two subjects, one per class) does not keep
+    X, y = _grouped_data()
+    metadata = pd.DataFrame({"Subject": GROUPS, "Session": "01", "Site": GROUPS // 2})
     assessment = StatisticalAssessmentConfig(
         enabled=True,
         metrics=["accuracy"],
@@ -667,12 +677,12 @@ def test_schemes_check_their_columns_and_scoring_unit():
         chance=ChanceAssessmentConfig(
             n_permutations=3,
             permutation_scheme="within_strata",
-            strata_column="Subject",
+            strata_column="Site",
         ),
     )
     experiment = _experiment({"lr": LogisticRegressionConfig()}, assessment)
     with pytest.raises(ValueError, match="spans more than one sample"):
-        experiment.run(X, y, groups=SUBJECTS)
+        experiment.run(X, y, groups=GROUPS, sample_metadata=metadata)
 
 
 def test_strata_can_be_the_cv_groups():

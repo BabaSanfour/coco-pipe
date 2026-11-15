@@ -63,6 +63,9 @@ def test_reducer_registry_covers_every_reducer():
     assert names == set(SETTINGS) | {"ParametricUMAPReducer"}
 
 
+# umap-learn 0.6 warns when an inverse-transformed point falls outside the
+# embedding's hull; UMAP is not deterministic, so a training point sometimes does
+@pytest.mark.filterwarnings("ignore:.*outside the embedding convex hull:UserWarning")
 @pytest.mark.parametrize("name", sorted(SETTINGS))
 def test_reducer_follows_its_declared_capabilities(name, tmp_path):
     cls = getattr(reducers, name)

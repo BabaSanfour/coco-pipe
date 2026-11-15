@@ -1047,7 +1047,7 @@ which a feature was selected:
 5. Compatibility Notes
 ----------------------
 
-- Feature selection is only valid for 2D tabular inputs (``input_kind in {"tabular_2d", "embedding_2d"}``).
+- Feature selection is only valid for estimators whose spec takes 2D inputs (``input_kinds`` with ``"tabular_2d"`` or ``"embedding_2d"``).
 - Feature selection is **incompatible** with temporal estimators (``SlidingEstimator``, ``GeneralizingEstimator``).
   The registry blocks this at validation time.
 - ``k_best`` does not support ranked importances beyond fold scores/p-values.

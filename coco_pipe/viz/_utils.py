@@ -744,11 +744,13 @@ def prepare_interpretation_frame(
             )
             return pd.DataFrame.from_records(records) if records else empty
 
-        correlation_payload = interpretation.get("correlation")
-        if isinstance(correlation_payload, Mapping):
+        # the ``analysis`` payload itself, as in ``get_summary()["interpretation"]``
+        if any(
+            isinstance(interpretation.get(name), Mapping)
+            for name in ("correlation", "perturbation", "gradient")
+        ):
             records = _records_from_interpretation_payload(
-                {"correlation": correlation_payload},
-                default_method=default_method,
+                interpretation, default_method=default_method
             )
             return pd.DataFrame.from_records(records) if records else empty
 

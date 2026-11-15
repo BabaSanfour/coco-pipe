@@ -12,16 +12,19 @@ import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
-from .._cache import make_feature_cache_key
 from ._channels import normalize_channel_names
 from ._prepare import prepare_backend
 
-_FROZEN_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
+# The embeddings of one frozen backbone, by window content: each fold of a
+# cross-validation, and each head on that backbone, embeds a window once instead
+# of once per fold. Another backbone replaces them, so the cache holds at most
+# one embedding per window.
+_FROZEN_EMBEDDING_CACHE: dict[str, Any] = {"fingerprint": None, "rows": {}}
 
 
 def clear_frozen_embedding_cache() -> None:
     """Empty the shared frozen-backbone embedding cache."""
-    _FROZEN_EMBEDDING_CACHE.clear()
+    _FROZEN_EMBEDDING_CACHE.update(fingerprint=None, rows={})
 
 
 def _trained_state(module: Any) -> dict[str, Any]:
@@ -124,25 +127,20 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
             return values.reshape(len(values), -1)
 
         fingerprint = self._fingerprint()
+        if _FROZEN_EMBEDDING_CACHE["fingerprint"] != fingerprint:
+            _FROZEN_EMBEDDING_CACHE.update(fingerprint=fingerprint, rows={})
+        cache = _FROZEN_EMBEDDING_CACHE["rows"]
         keys = [
-            make_feature_cache_key(
-                [hashlib.sha256(np.ascontiguousarray(row).tobytes()).hexdigest()],
-                [],
-                "frozen_backbone",
-                fingerprint,
-                sort_ids=False,
-            )
+            hashlib.sha256(np.ascontiguousarray(row).tobytes()).hexdigest()
             for row in adapted
         ]
-        missing = [
-            i for i, key in enumerate(keys) if key not in _FROZEN_EMBEDDING_CACHE
-        ]
+        missing = [i for i, key in enumerate(keys) if key not in cache]
         if missing:
             computed = np.asarray(self.backend_.transform(adapted[missing]))
             computed = computed.reshape(len(computed), -1)
             for offset, index in enumerate(missing):
-                _FROZEN_EMBEDDING_CACHE[keys[index]] = computed[offset]
-        return np.stack([_FROZEN_EMBEDDING_CACHE[key] for key in keys])
+                cache[keys[index]] = computed[offset]
+        return np.stack([cache[key] for key in keys])
 
     def release_memory(self) -> None:
         """Release the fitted backend's torch modules (see BackendBase)."""
