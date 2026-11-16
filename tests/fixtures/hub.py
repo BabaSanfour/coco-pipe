@@ -21,10 +21,6 @@ def offline(monkeypatch, tmp_path):
     """Build models from their classes; return the kwargs each load received."""
     import braindecode.models as bm
     import huggingface_hub
-    import mne
-    import torch
-
-    from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 
     calls = []
 
@@ -39,32 +35,20 @@ def offline(monkeypatch, tmp_path):
             params.setdefault(key, value)
         return cls(**params)
 
-    classes = ("BENDR", "BIOT", "CBraMod", "Labram", "LUNA")
-    for name in (*classes, "SignalJEPA_Contextual"):
-        if hasattr(bm, name):
-            monkeypatch.setattr(
-                getattr(bm, name), "from_pretrained", classmethod(build)
-            )
-
-    # EEGPT reads its weights file itself: give it a randomly initialised one.
-    info = mne.create_info(list(DEFAULT_CHANNELS), 250.0, "eeg")
-    info.set_montage("colin27_1020")
-    eegpt = bm.EEGPT(
-        chs_info=info["chs"],
-        n_chans=len(DEFAULT_CHANNELS),
-        n_times=500,
-        sfreq=250.0,
-        n_outputs=1,
-        chan_proj_type="none",
-    )
-    weights = tmp_path / "eegpt.pt"
-    torch.save(eegpt.state_dict(), weights)
+    for name in (
+        "BENDR",
+        "BIOT",
+        "CBraMod",
+        "EEGPT",
+        "Labram",
+        "LUNA",
+        "SignalJEPA_Contextual",
+    ):
+        monkeypatch.setattr(getattr(bm, name), "from_pretrained", classmethod(build))
 
     def download(repo_id, filename, revision=None, **kwargs):
-        if filename == "config.json":
-            # a cached snapshot folder is named by its commit
-            return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
-        return str(weights)
+        # a cached snapshot folder is named by its commit
+        return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     return calls
