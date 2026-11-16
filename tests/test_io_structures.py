@@ -779,6 +779,12 @@ def test_balance_equalises_classes():
     assert np.bincount(auto.y).tolist() == [10, 10]
     by_coord = container.balance(target="group", strategy="undersample")
     assert np.unique(by_coord.coords["group"], return_counts=True)[1].tolist() == [4, 4]
+    # whole units: 5 subjects of class 0 and 1 of class 1, two rows each
+    subject = np.repeat([f"s{i}" for i in range(6)], 2)
+    units = container.replace(coords={"subject": subject})
+    by_unit = units.balance(target="y", groups="subject", random_state=0)
+    assert np.bincount(by_unit.y).tolist() == [2, 2]
+    assert len(set(by_unit.coords["subject"])) == 2
 
 
 def test_balance_keeps_covariate_mix():
@@ -794,16 +800,17 @@ def test_balance_keeps_covariate_mix():
     # class 1 is 40% M, and class 0 keeps roughly that mix
     assert np.sum(balanced.select(y={"==": 0}).coords["sex"] == "M") in [1, 2, 3]
 
-    # strata holding a single class fall back to balancing overall
+    # strata holding a single class cannot be undersampled
     single = DataContainer(
         X=np.zeros((4, 1)),
         dims=("obs", "f"),
         coords={"cov": np.array(["a", "a", "b", "b"])},
         y=np.array([0, 0, 1, 1]),
     )
-    for strategy in ("undersample", "oversample"):
-        balanced = single.balance(target="y", covariates=["cov"], strategy=strategy)
-        assert np.bincount(balanced.y).tolist() == [2, 2]
+    with pytest.raises(ValueError, match="No stratum"):
+        single.balance(target="y", covariates=["cov"], strategy="undersample")
+    balanced = single.balance(target="y", covariates=["cov"], strategy="oversample")
+    assert np.bincount(balanced.y).tolist() == [2, 2]
 
 
 def test_balance_errors():
@@ -815,6 +822,9 @@ def test_balance_errors():
     with_y = DataContainer(np.zeros((2, 1)), dims=("obs", "f"), y=np.array([0, 1]))
     with pytest.raises(ValueError, match="Covariate 'missing' not found"):
         with_y.balance(covariates=["missing"], target="y")
+    mixed = with_y.replace(coords={"subject": np.array(["s1", "s1"])})
+    with pytest.raises(ValueError, match="constant within each group"):
+        mixed.balance(target="y", groups="subject")
 
 
 def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():

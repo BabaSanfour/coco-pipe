@@ -1,0 +1,1 @@
+`DataContainer.balance` takes `groups`: rows sharing those coordinates, for example `["subject", "condition"]`, are sampled as one unit, so balancing epoch-level data keeps or drops whole subjects instead of single epochs. The target and covariates must be constant within a unit.
