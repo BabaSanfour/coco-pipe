@@ -604,6 +604,7 @@ class DataContainer:
         strategy: str = "undersample",
         covariates: list[str] | None = None,
         random_state: int = 42,
+        groups: str | list[str] | None = None,
         **kwargs,
     ) -> "DataContainer":
         """
@@ -637,6 +638,11 @@ class DataContainer:
         random_state : int, default=42
             Seed for the random number generator.
             Change this value to produce different random subsets (e.g., for bagging).
+        groups : str or list of str, optional
+            Coordinates whose combination makes one unit, e.g. ``"subject"`` or
+            ``["subject", "condition"]``: units are sampled whole, with every row,
+            instead of rows one by one. The target and covariates must be constant
+            within a unit.
         **kwargs : dict
             Additional arguments passed to internal logic:
 
@@ -689,7 +695,18 @@ class DataContainer:
 
         df_meta = pd.DataFrame(data_dict)
         # Index is implicitly RangeIndex (0..N-1), which matches DataContainer
-        # positional indices
+        # positional indices; with groups, one row per unit indexed by its code.
+        units = None
+        if groups is not None:
+            names = [groups] if isinstance(groups, str) else list(groups)
+            units = pd.factorize(
+                pd.MultiIndex.from_arrays([np.asarray(self.coords[n]) for n in names])
+            )[0]
+            if df_meta.groupby(units).nunique(dropna=False).gt(1).any(axis=None):
+                raise ValueError(
+                    "The target and covariates must be constant within each group."
+                )
+            df_meta = df_meta.groupby(units).first()
 
         # 2. Get Indices
         if target not in df_meta.columns:
@@ -775,28 +792,24 @@ class DataContainer:
                 )
 
             if not indices_parts:
-                # Fallback: global balance
-                sz = dict.fromkeys(
-                    counts.index, min_c if strategy == "undersample" else max_c
+                raise ValueError(
+                    "No stratum of the covariates holds more than one class, so the "
+                    "classes cannot be balanced within strata."
                 )
-                indices_val = sample_indices(
-                    df_meta,
-                    target,
-                    sz,
-                    rng,
-                    strategy != "undersample",
-                    kwargs.get("prefer_clean_rows", False),
-                    exclude,
-                )
-            else:
-                combined = pd.concat([pd.Series(i) for i in indices_parts]).sample(
-                    frac=1.0, random_state=rng
-                )
-                indices_val = pd.Index(combined.values)
+            combined = pd.concat([pd.Series(i) for i in indices_parts]).sample(
+                frac=1.0, random_state=rng
+            )
+            indices_val = pd.Index(combined.values)
 
         # 3. Apply Indexing
         # indices is a pandas Index (Int64 or similar). Convert to values for safe
-        # numpy indexing.
+        # numpy indexing; a sampled unit brings all of its rows.
+        if units is not None:
+            return self.isel(
+                obs=np.concatenate(
+                    [np.flatnonzero(units == u) for u in indices_val.values]
+                )
+            )
         return self.isel(obs=indices_val.values)
 
     def select(self, ignore_case: bool = False, **selections) -> "DataContainer":

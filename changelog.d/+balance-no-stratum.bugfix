@@ -1,0 +1,1 @@
+`DataContainer.balance` with covariates and `strategy="undersample"` raises when no stratum holds more than one class. It fell back to balancing without the covariates, so the sample it returned did not keep their mix.
