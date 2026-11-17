@@ -210,7 +210,7 @@ class BrainDecodeBackend(BackendBase):
         # Montage-dependent models need ``chs_info``. LaBraM and SignalJEPA
         # (with its pretrained channel embeddings) find channels by name; LUNA,
         # and SignalJEPA with channel_embedding="scratch", embed their positions,
-        # where braindecode gives a channel without one a made-up position.
+        # where braindecode gives made-up positions to channels that have none.
         if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
             import mne
 
@@ -227,16 +227,6 @@ class BrainDecodeBackend(BackendBase):
                     on_missing="raise" if needs_positions else "ignore",
                 )
                 kw["chs_info"] = info["chs"]
-            unplaced = [
-                ch["ch_name"]
-                for ch in kw["chs_info"]
-                if not np.isfinite(ch["loc"][:3]).all()
-            ]
-            if needs_positions and unplaced:
-                raise ValueError(
-                    f"{metadata.display_name} embeds channel positions, but "
-                    f"{unplaced} have none."
-                )
         if model_key == "luna":
             kw.setdefault("n_times", n_times)
             kw.setdefault("embed_dim", 64)
@@ -384,7 +374,10 @@ class BrainDecodeBackend(BackendBase):
             context = model.contextualizer(model.encoder(tensor))
             return context[:, :, 1:].transpose(1, 2)
         out = model(tensor, return_features=True)
-        return out["features"] if isinstance(out, dict) else out
+        if not isinstance(out, dict):
+            return out
+        # BIOT's features are the mean of its tokens
+        return out["tokens"] if model_key == "biot" else out["features"]
 
     def _get_skorch_module(self):
         import torch.nn as nn
@@ -437,43 +430,16 @@ class BrainDecodeBackend(BackendBase):
         batch_size = self._eval_batch_size()
         embedding_chunks = []
         token_chunks = []
-        token_module = None
-        if return_tokens:
-            if self._metadata.name == "biot":
-                token_module = self._model.encoder.transformer
-            elif self._metadata.name == "bendr":
-                token_module = self._model.contextualizer
-
-        captured_tokens = []
-
-        def _capture_tokens(_module, _inputs, output):
-            captured_tokens.append(output)
-
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
-                if token_module is None:
-                    feats = self._forward_features(
-                        self._model, tensor, self._metadata.name
-                    )
-                    if return_tokens:
-                        tokens = feats
+                tokens = self._forward_features(
+                    self._model, tensor, self._metadata.name
+                )
+                if tokens.ndim < 3:
+                    pooled = tokens
                 else:
-                    captured_tokens.clear()
-                    with token_module.register_forward_hook(_capture_tokens):
-                        feats = self._forward_features(
-                            self._model, tensor, self._metadata.name
-                        )
-                    if not captured_tokens:
-                        raise RuntimeError(
-                            f"{self._metadata.display_name} native token tensor "
-                            "was not captured."
-                        )
-                    tokens = captured_tokens[0]
-                if feats.ndim < 3:
-                    pooled = feats
-                else:
-                    pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
+                    pooled = tokens.flatten(start_dim=1, end_dim=-2).mean(dim=1)
                 embedding_chunks.append(self._from_tensor(pooled))
                 if return_tokens:
                     if tokens.ndim < 3:
@@ -505,9 +471,9 @@ class BrainDecodeBackend(BackendBase):
                 "token_feature_axis": "feature",
             },
             "biot": {
-                "token_source": "encoder.transformer_output",
-                "token_axes": ["window", "channel_time_patch", "feature"],
-                "token_observation_axes": ["channel_time_patch"],
+                "token_source": "return_features.tokens",
+                "token_axes": ["window", "channel", "time_patch", "feature"],
+                "token_observation_axes": ["channel", "time_patch"],
                 "token_feature_axis": "feature",
             },
             "labram": {
@@ -536,7 +502,7 @@ class BrainDecodeBackend(BackendBase):
             },
             "bendr": {
                 "token_source": "contextualizer_output",
-                "token_axes": ["window", "feature", "context_token"],
+                "token_axes": ["window", "context_token", "feature"],
                 "token_observation_axes": ["context_token"],
                 "token_feature_axis": "feature",
             },

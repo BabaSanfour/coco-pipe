@@ -87,8 +87,8 @@ jobs:
   upstream-main:
     # Two fixes are not released yet: mne-bids PR #1679 (BIDSDataset reads saved
     # FIF epochs with mne_bids.read_epochs_bids) and braindecode 2.1 (LUNA's
-    # features). The matrix above, on the released packages, skips the tests
-    # that need them.
+    # features, BIOT's tokens). The matrix above, on the released packages,
+    # skips the tests that need them.
     name: Unreleased mne-bids and braindecode
     needs: quality
     runs-on: ubuntu-latest

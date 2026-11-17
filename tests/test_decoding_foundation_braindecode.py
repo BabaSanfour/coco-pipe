@@ -21,20 +21,20 @@ pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
-# LUNA's return_features is in braindecode main, not in 2.0
+# LUNA's features and BIOT's tokens are in braindecode main, not in 2.0
 LUNA = importlib.import_module("braindecode.models").LUNA
-LUNA_FEATURES = "return_features" in inspect.signature(LUNA.forward).parameters
+BRAINDECODE_MAIN = "return_features" in inspect.signature(LUNA.forward).parameters
 
 
-def _skip_luna_before_main(model_key):
-    if model_key == "luna" and not LUNA_FEATURES:
-        pytest.skip("LUNA needs braindecode main")
+def _skip_before_main(model_key):
+    if model_key in {"biot", "luna"} and not BRAINDECODE_MAIN:
+        pytest.skip(f"{model_key} needs braindecode main")
 
 
 def _load(
     model_key, train_mode="frozen", n_outputs=2, channels=DEFAULT_CHANNELS, **kwargs
 ):
-    _skip_luna_before_main(model_key)
+    _skip_before_main(model_key)
     spec = get_estimator_spec(model_key)
     if model_key == "luna":
         # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
@@ -418,40 +418,8 @@ def test_transform_checks_its_input(offline):
         backend.transform(X)
 
 
-def test_token_hook_is_removed_when_forward_fails():
-    class _Transformer(torch.nn.Module):
-        def forward(self, x):
-            return x.transpose(1, 2)
-
-    class _BrokenBIOT(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.encoder = torch.nn.Module()
-            self.encoder.transformer = _Transformer()
-
-        def forward(self, x, return_features=False):
-            self.encoder.transformer(x)
-            raise RuntimeError("forward failed")
-
-    metadata = get_estimator_spec("biot")
-    model = _BrokenBIOT()
-    backend = BrainDecodeBackend(
-        metadata=metadata,
-        model=model,
-        n_outputs=2,
-        device="cpu",
-        train_mode="frozen",
-        task="classification",
-    )
-    backend.signal_metadata_ = SignalMetadata(
-        sfreq=metadata.pretrained_sfreq, ch_names=[f"ch{i}" for i in range(19)]
-    )
-    with pytest.raises(RuntimeError, match="forward failed"):
-        backend.transform(np.zeros((2, 19, 400), dtype=np.float32), return_tokens=True)
-    assert not model.encoder.transformer._forward_hooks
-
-
 def test_extractor_loads_again_for_another_montage(offline):
+    _skip_before_main("biot")
     X = np.random.default_rng(0).normal(scale=20, size=(3, 19, 2000))
     extractor = FoundationEmbeddingExtractor(
         "biot", device="cpu", normalize_embeddings=False
@@ -476,7 +444,7 @@ def test_extractor_loads_again_for_another_montage(offline):
 def test_weight_sets_extract_a_recording_as_each_extractor_alone(offline, monkeypatch):
     import mne
 
-    _skip_luna_before_main("luna")
+    _skip_before_main("luna")
 
     from coco_pipe.decoding.foundation_models import extract_weight_sets
     from coco_pipe.io import DataContainer

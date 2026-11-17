@@ -106,7 +106,10 @@ Two features need a package's `main` until its next release:
   ([#1565](https://github.com/braindecode/braindecode/pull/1565)), the
   device-independent phase of its frequency embedding
   ([#1566](https://github.com/braindecode/braindecode/pull/1566)) and its
-  `reset_head` ([#1568](https://github.com/braindecode/braindecode/pull/1568)).
+  `reset_head` ([#1568](https://github.com/braindecode/braindecode/pull/1568)),
+  and its refusal of channels with no position
+  ([#1569](https://github.com/braindecode/braindecode/pull/1569)). BIOT needs it
+  for its tokens ([#1570](https://github.com/braindecode/braindecode/pull/1570)).
 
 ```bash
 pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"

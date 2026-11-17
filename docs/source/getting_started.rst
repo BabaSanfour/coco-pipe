@@ -45,7 +45,8 @@ Two features need a package's ``main`` until its next release. Reading saved
 epochs (``*_epo.fif``) from a BIDS dataset needs mne-bids with PR
 `#1679 <https://github.com/mne-tools/mne-bids/pull/1679>`_. LUNA needs
 braindecode 2.1, for its features, the device-independent phase of its frequency
-embedding and its ``reset_head``.
+embedding, its ``reset_head`` and its refusal of channels with no position. BIOT
+needs braindecode 2.1 for its tokens.
 
 .. code-block:: bash
 
