@@ -886,8 +886,9 @@ class Experiment:
                     if self.config.erasure.enabled
                     else None
                 ),
+                fold_index=fold_index,
             )
-            for train_idx, test_idx in splits
+            for fold_index, (train_idx, test_idx) in enumerate(splits)
         )
 
         fold_scores = defaultdict(list)

@@ -226,6 +226,42 @@ QLoRA refuses it.
    * - ``dropout``
      - Dropout on LoRA layers. Default 0.0.
 
+2.3 Regularisation and Fine-Tuned Features
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``TrainerConfig`` sets the dropout of the backbone and of the head, and the
+weight decay of the head apart from that of the backbone. ``None`` keeps the
+model's own. Like ``lr``, each can be tuned with a grid such as
+``grids={"model": {"trainer__head_dropout": [0.1, 0.3, 0.5]}}``.
+
+.. code-block:: python
+
+   NeuralFineTuneConfig(
+       ...,
+       trainer=TrainerConfig(
+           backbone_dropout=0.2,    # every dropout outside the head
+           head_dropout=0.5,        # a dropout on the head's input
+           weight_decay=0.01,
+           head_weight_decay=0.1,   # AdamW weight decay of the head alone
+       ),
+       checkpoints=CheckpointConfig(output_dir="checkpoints", save_features=True),
+   )
+
+``backbone_dropout`` reaches the dropout modules of the backbone and the
+attention dropouts that torch's ``MultiheadAttention`` (CBraMod, LUNA),
+braindecode's ``MultiHeadAttention`` (ST-EEGFormer, CTNet) and LUNA's rotary
+attention keep as a number. Stochastic depth is left as it is. REVE has no
+dropout and refuses it. ``head_dropout`` puts a dropout on the input of the
+head, unless the head starts with one, and also sets the dropouts inside the
+head (LUNA's).
+
+With ``save_features=True``, each outer fold writes the embeddings of its
+training and test windows, from the fine-tuned weights, next to the fold's
+checkpoint (``<checkpoint>_features.npz``). They are the vectors that
+``FoundationClassifier.transform`` gives, which its docstring and that of
+``FoundationClassifier.save_features`` describe with the file's arrays.
+``result.get_model_artifacts()`` lists each fold's file as ``features_path``.
+
 ---
 
 3. Diagnostic Artifacts

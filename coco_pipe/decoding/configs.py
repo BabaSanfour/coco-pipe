@@ -641,7 +641,7 @@ class LoRAConfig(BaseModel):
 
 
 class CheckpointConfig(BaseModel):
-    """Where to save the weights of each fine-tune.
+    """Where to save the weights of each fine-tune, and its embeddings.
 
     The weights at the end of training are saved, which are those of the
     epoch with the lowest validation loss when early stopping restores them.
@@ -651,6 +651,20 @@ class CheckpointConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     output_dir: Path | None = None
+    save_features: bool = Field(
+        False,
+        description=(
+            "After each outer fold's fit, also write the fine-tuned backbone's "
+            "window embeddings of that fold's training and test rows next to the "
+            "checkpoint, as described in FoundationClassifier.save_features."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _features_need_output_dir(self) -> CheckpointConfig:
+        if self.save_features and self.output_dir is None:
+            raise ValueError("save_features writes into output_dir: set it.")
+        return self
 
 
 class TrainerConfig(BaseModel):
@@ -664,6 +678,29 @@ class TrainerConfig(BaseModel):
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
     lr: float = Field(1e-3, gt=0, description="AdamW learning rate.")
     weight_decay: float = Field(0.01, ge=0, description="AdamW weight decay.")
+    head_weight_decay: float | None = Field(
+        None,
+        ge=0,
+        description="AdamW weight decay of the head. None uses weight_decay.",
+    )
+    backbone_dropout: float | None = Field(
+        None,
+        ge=0,
+        lt=1,
+        description=(
+            "Probability of every dropout outside the head, attention dropout "
+            "included. None keeps the model's. REVE has no dropout and refuses it."
+        ),
+    )
+    head_dropout: float | None = Field(
+        None,
+        ge=0,
+        lt=1,
+        description=(
+            "Probability of a dropout put on the head's input, and of any dropout "
+            "inside the head (LUNA's). None adds none and keeps the head's own."
+        ),
+    )
     lr_warmup_epochs: int = Field(
         0,
         ge=0,
