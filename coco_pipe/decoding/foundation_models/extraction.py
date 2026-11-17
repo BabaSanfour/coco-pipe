@@ -62,6 +62,13 @@ def check_capability(
             "unsupported",
             f"{spec.display_name} does not advertise train_mode={train_mode!r}.",
         )
+    if spec.hub_repo is None and (backend_kwargs or {}).get("pretrained", True):
+        return CapabilityResult(
+            model_key,
+            train_mode,
+            "unsupported",
+            f"{spec.display_name} has no pretrained weights: set pretrained=False.",
+        )
     try:
         resolved_backend = spec.preferred_backend if backend == "auto" else backend
         backend_cls = _BACKEND_MAP.get(resolved_backend)

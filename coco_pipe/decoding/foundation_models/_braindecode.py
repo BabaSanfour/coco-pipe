@@ -4,7 +4,8 @@ BrainDecode Backend
 
 Backend that loads pretrained EEG/MEG models from the braindecode library
 via ``Model.from_pretrained()``. Supports CBraMod, BIOT, LaBraM, EEGPT,
-SignalJEPA, BENDR and LUNA.
+SignalJEPA, BENDR, LUNA and ST-EEGFormer, and builds CTNet, Deep4Net, EEGNet
+and ShallowFBCSPNet, which have no checkpoint, from random weights.
 
 To add a new braindecode model: add one entry to ``_BD_MODEL_MAP`` and one
 ``FoundationModelSpec`` entry in ``coco_pipe/decoding/_specs.py``.
@@ -36,13 +37,19 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
+    "steegformer_largev2": ("STEEGFormer", "braindecode.models"),
+    "ctnet": ("CTNet", "braindecode.models"),
+    "deep4net": ("Deep4Net", "braindecode.models"),
+    "eegnet": ("EEGNet", "braindecode.models"),
+    "shallowfbcspnet": ("ShallowFBCSPNet", "braindecode.models"),
 }
 
 
 class BrainDecodeBackend(BackendBase):
     """Backend that delegates to braindecode.models.<Model>.from_pretrained().
 
-    Covers CBraMod, BIOT, LaBraM, EEGPT, SignalJEPA, BENDR, LUNA.
+    Covers CBraMod, BIOT, LaBraM, EEGPT, SignalJEPA, BENDR, LUNA, ST-EEGFormer,
+    and CTNet, Deep4Net, EEGNet, ShallowFBCSPNet from random weights.
 
     Training modes: frozen, full, lora.
     QLoRA is not supported (requires HF quantization in from_pretrained).
@@ -149,7 +156,9 @@ class BrainDecodeBackend(BackendBase):
         ImportError
             If braindecode or torch is not installed.
         ValueError
-            If ``model_key`` is not in ``_BD_MODEL_MAP``.
+            If ``model_key`` is not in ``_BD_MODEL_MAP``, if the model does not
+            support ``train_mode``, or if pretrained weights are asked of a
+            model without a checkpoint.
         NotImplementedError
             If ``train_mode="qlora"``.
         """
@@ -170,6 +179,17 @@ class BrainDecodeBackend(BackendBase):
                 "support which is not available via braindecode.from_pretrained. "
                 "Use train_mode='lora' instead, or switch to hugging_face (REVE)."
             )
+        if train_mode not in metadata.supported_train_modes:
+            raise ValueError(
+                f"{metadata.display_name} supports train_mode in "
+                f"{metadata.supported_train_modes}, got {train_mode!r} "
+                "('frozen' is the linear probe)."
+            )
+        if metadata.hub_repo is None and pretrained:
+            raise ValueError(
+                f"{metadata.display_name} has no pretrained weights: train it from "
+                "random weights, with pretrained=False and a seed."
+            )
 
         class_name, module_path = _BD_MODEL_MAP[model_key]
         models_module = importlib.import_module(module_path)
@@ -181,11 +201,11 @@ class BrainDecodeBackend(BackendBase):
             )
         sfreq = float(kw.pop("sfreq", metadata.pretrained_sfreq))
         n_times = int(kw.pop("n_times", round(sfreq * 2)))
-        revision = resolve_revision(
-            metadata.hub_repo,
-            kw.pop("revision", metadata.checkpoint_revision),
-            token=kw.get("token"),
-        )
+        revision = kw.pop("revision", metadata.checkpoint_revision)
+        if metadata.hub_repo is not None:
+            revision = resolve_revision(
+                metadata.hub_repo, revision, token=kw.get("token")
+            )
         filename = kw.pop("filename", metadata.checkpoint_filename)
         # Faithful fixed-montage construction (BIOT bipolar derivation, BENDR
         # reorder + computed SCALE, EEGPT name-indexed subset). The plan is the
@@ -277,6 +297,32 @@ class BrainDecodeBackend(BackendBase):
             # reorders into BENDR_CHANNEL_ORDER).
             kw["n_chans"] = channel_plan.model_n_chans
             kw.pop("chs_info", None)
+        elif model_key == "steegformer_largev2":
+            from braindecode.models.steegformer import STEEGFORMER_CHANNEL_ORDER
+
+            # largeV2 adds its HBN slots after the published vocabulary, whose
+            # names keep their slots (HBN's Cz is Cz's), but braindecode finds
+            # slots by name only for the 145-slot variants: they are given here.
+            slots = {
+                name.upper(): i for i, name in enumerate(STEEGFORMER_CHANNEL_ORDER)
+            }
+            unknown = [name for name in electrode_names if name.upper() not in slots]
+            if unknown:
+                raise ValueError(
+                    f"{unknown} are not in the channel vocabulary of "
+                    f"{metadata.display_name}. Drop them."
+                )
+            kw.update(
+                n_chans=len(electrode_names),
+                n_times=n_times,
+                chan_pos_idx=[slots[name.upper()] for name in electrode_names],
+            )
+            kw.setdefault("on_non_divisible", "error")
+        elif metadata.hub_repo is None:
+            kw.update(n_chans=len(electrode_names), n_times=n_times, sfreq=sfreq)
+            if model_key == "eegnet":
+                # the max-norm dense head of the paper; braindecode deprecates False
+                kw.setdefault("final_layer_with_constraint", True)
 
         load_kwargs = dict(kw)
         load_kwargs["revision"] = revision
@@ -290,15 +336,18 @@ class BrainDecodeBackend(BackendBase):
         )
         if effective_outputs is not None:
             load_kwargs["n_outputs"] = effective_outputs
-        with warnings.catch_warnings():
-            # braindecode asks for the channel names at forward: given below
-            warnings.filterwarnings("ignore", "Labram chs_info does not match")
-            # LaBraM beyond 16 s: the extra time embeddings would be untrained
-            warnings.filterwarnings("error", "The checkpoint holds")
-            model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        if metadata.hub_repo is not None:
+            with warnings.catch_warnings():
+                # braindecode asks for the channel names at forward: given below
+                warnings.filterwarnings("ignore", "Labram chs_info does not match")
+                # LaBraM beyond 16 s: the extra time embeddings would be untrained
+                warnings.filterwarnings("error", "The checkpoint holds")
+                model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):
-            if not pretrained:
+            if metadata.hub_repo is None:
+                model = model_cls(n_outputs=n_outputs, **kw)
+            elif not pretrained:
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", "Modifying chs_info argument")
                     warnings.filterwarnings("ignore", "Labram chs_info does not match")
@@ -326,7 +375,7 @@ class BrainDecodeBackend(BackendBase):
                 model = get_peft_model(model, lora_cfg)
             # full: no changes — all params trainable
 
-            if n_outputs is not None:
+            if n_outputs is not None and metadata.hub_repo is not None:
                 model.reset_head(n_outputs)
             if train_mode == "frozen" and n_outputs is not None:
                 for head_name in ("final_layer", "classifier", "head"):
@@ -347,7 +396,8 @@ class BrainDecodeBackend(BackendBase):
         )
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
-        backend.checkpoint_revisions = {metadata.hub_repo: revision}
+        if metadata.hub_repo is not None:
+            backend.checkpoint_revisions = {metadata.hub_repo: revision}
         backend.weights_seed = None if pretrained else int(seed)
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None

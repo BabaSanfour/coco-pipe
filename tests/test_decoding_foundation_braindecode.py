@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 from coco_pipe.decoding._specs import SignalMetadata
-from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
+from coco_pipe.decoding.foundation_models import (
+    FoundationClassifier,
+    FoundationEmbeddingExtractor,
+    check_capability,
+)
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
@@ -191,6 +195,7 @@ AUTHORS_INPUT = {
     "biot": lambda X: X / np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True),
     "luna": _zscore,
     "eegpt": lambda X: (X - X.mean(1, keepdims=True)) / 1000,
+    "steegformer_largev2": _zscore,
 }
 
 
@@ -340,6 +345,60 @@ def test_luna_finds_positions_whatever_the_case_of_the_names(offline):
 
     upper = [name.upper() for name in DEFAULT_CHANNELS]
     np.testing.assert_array_equal(embed(upper), embed(DEFAULT_CHANNELS))
+
+
+def test_steegformer_finds_the_slot_of_each_channel_by_name(offline):
+    from braindecode.models.steegformer import STEEGFORMER_CHANNEL_ORDER
+
+    backend, _ = _load("steegformer_largev2", pretrained=False, seed=0)
+    slots = [STEEGFORMER_CHANNEL_ORDER.index(name) for name in DEFAULT_CHANNELS]
+    assert backend._model.channel_indices.tolist() == slots
+    with pytest.raises(ValueError, match="X1"):
+        _load("steegformer_largev2", channels=[*DEFAULT_CHANNELS[:-1], "X1"])
+
+
+@pytest.mark.parametrize(
+    "model_key", ["ctnet", "deep4net", "eegnet", "shallowfbcspnet"]
+)
+def test_networks_without_checkpoint_train_from_their_seed(model_key):
+    sfreq = get_estimator_spec(model_key).pretrained_sfreq
+    X = np.random.default_rng(0).normal(scale=20, size=(8, 19, round(sfreq * 10)))
+    y = np.repeat([0, 1], 4)
+
+    def fit(seed):
+        return FoundationClassifier(
+            model_key,
+            device="cpu",
+            sfreq=sfreq,
+            ch_names=DEFAULT_CHANNELS,
+            trainer={"max_epochs": 1, "batch_size": 4},
+            backend_kwargs={"pretrained": False, "seed": seed},
+        ).fit(X, y, groups=np.repeat(np.arange(4), 2))
+
+    first, again, other = fit(0), fit(0), fit(1)
+    assert first.backend_.checkpoint_revisions == {}
+    np.testing.assert_allclose(first.predict_proba(X), again.predict_proba(X))
+    assert not np.allclose(first.predict_proba(X), other.predict_proba(X))
+
+
+@pytest.mark.parametrize(
+    "train_mode, weights, message",
+    [
+        ("full", {}, "no pretrained weights"),
+        ("linear_probe", {"pretrained": False, "seed": 0}, "supports train_mode"),
+    ],
+)
+def test_networks_without_checkpoint_train_only_in_full(train_mode, weights, message):
+    signal = {"sfreq": 128.0, "ch_names": DEFAULT_CHANNELS}
+    capability = check_capability(
+        "eegnet", train_mode, backend_kwargs=weights, **signal
+    )
+    assert capability.status == "unsupported"
+    classifier = FoundationClassifier(
+        "eegnet", train_mode=train_mode, device="cpu", backend_kwargs=weights, **signal
+    )
+    with pytest.raises(ValueError, match=message):
+        classifier.fit(np.ones((4, 19, 1280)), np.array([0, 1, 0, 1]))
 
 
 @pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])

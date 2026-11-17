@@ -86,6 +86,7 @@ def test_every_foundation_model_pins_a_commit():
         "eegpt",
         "signaljepa",
         "bendr",
+        "steegformer_largev2",
     ]
     for name in models:
         spec = ESTIMATOR_SPECS[name]
