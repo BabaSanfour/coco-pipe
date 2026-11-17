@@ -7,6 +7,7 @@ import pytest
 from coco_pipe.decoding import (
     Experiment,
     ExperimentConfig,
+    grouped_chance_assessment,
     paired_prediction_test,
     permute_labels_within_strata,
 )
@@ -132,6 +133,20 @@ def test_binomial_assessment_of_a_temporal_decoder():
     rows = result.get_statistical_assessment().sort_values("Time")
     assert len(rows) == 4
     np.testing.assert_allclose(rows["Observed"], _accuracy_by_time(result))
+
+
+def test_binomial_majority_chance_is_the_largest_class_share_of_units():
+    # 6 of the 8 subjects are class 1, so always predicting 1 scores 0.75
+    X, _ = _grouped_data()
+    y = (GROUPS < 6).astype(int)
+    metadata = pd.DataFrame({"Subject": GROUPS, "Session": "01"})
+    experiment = _experiment(
+        {"lr": LogisticRegressionConfig()},
+        grouped_chance_assessment("binomial", unit_column="Subject", p0="majority"),
+    )
+    result = experiment.run(X, y, groups=GROUPS, sample_metadata=metadata)
+    (row,) = result.raw["lr"]["statistical_assessment"]
+    assert (row["P0"], row["NEff"]) == (0.75, 8)
 
 
 @pytest.mark.parametrize(
@@ -866,6 +881,8 @@ def test_sign_flip_needs_one_group_per_fold_and_a_chance_level():
     result = _sign_flip_run(X, y, SUBJECTS, metric="f1", p0=0.5, n_permutations=10)
     (row,) = result.raw["m"]["statistical_assessment"]
     assert row["P0"] == 0.5
+    with pytest.raises(ValueError, match="binomial test only"):
+        _sign_flip_run(X, y, SUBJECTS, p0="majority", n_permutations=10)
 
 
 def test_sign_flip_warns_when_accuracy_chance_ignores_unbalanced_groups(caplog):

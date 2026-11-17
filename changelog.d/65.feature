@@ -1,0 +1,1 @@
+Dimensionality-reduction pipelines write each fit as one `.npz` file and each evaluation as one `.json` file, instead of a folder of files per artifact, so a large grid uses about three times fewer files. Run folders written in the old layout are fitted again on resume. `load_eval_artifact` reads an evaluation file.
