@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import shutil
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import cache
@@ -54,8 +53,8 @@ from coco_pipe.dim_reduction._constants import (
     ErrorMode,
 )
 from coco_pipe.dim_reduction.artifacts import (
-    _load_eval_payload,
     build_record,
+    load_eval_artifact,
     load_fit_artifact,
     save_eval_artifact,
     save_fit_artifact,
@@ -155,7 +154,7 @@ def run_fit(
 ) -> dict[str, Any]:
     """Fit one reducer variant and return a fit-runs inventory record.
 
-    If ``_SUCCESS`` already exists in *out_path* and *overwrite* is ``False``
+    If the artifact *out_path* already exists and *overwrite* is ``False``
     the existing artifact is loaded and its inventory record is returned
     immediately (checkpoint resume).
 
@@ -167,12 +166,12 @@ def run_fit(
     container:
         Data container for this analysis unit.  Must have ``ids``.
     out_path:
-        Artifact directory to write (or resume from).
+        Artifact file to write (or resume from).
     output_root:
         Root of the entire run output.  Used for relative-path computation in
         the returned inventory record.
     overwrite:
-        When ``True``, an existing *out_path* directory is deleted before
+        When ``True``, an existing *out_path* artifact is deleted before
         fitting.
     errors:
         ``"raise"`` (default) propagates exceptions; ``"record"`` catches them,
@@ -186,8 +185,7 @@ def run_fit(
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
     try:
-        success_marker = out_path / "_SUCCESS"
-        if success_marker.exists() and not overwrite:
+        if out_path.exists() and not overwrite:
             artifact = load_fit_artifact(out_path)
             return build_record(
                 artifact["fit"],
@@ -197,8 +195,8 @@ def run_fit(
                 artifact["metrics"],
             )
 
-        if overwrite and out_path.exists():
-            shutil.rmtree(out_path)
+        if overwrite:
+            out_path.unlink(missing_ok=True)
 
         X = np.asarray(container.X)
         if X.ndim != 2:
@@ -318,7 +316,7 @@ def run_fit_group(
     pending: list[dict[str, Any]] = []
     for request in requests:
         out_path = request["out_path"]
-        if (out_path / "_SUCCESS").exists() and not request["overwrite"]:
+        if out_path.exists() and not request["overwrite"]:
             artifact = load_fit_artifact(out_path)
             records.append(
                 build_record(
@@ -382,8 +380,8 @@ def run_fit_group(
         out_path = request["out_path"]
         n_components = int(fit_payload["n_components"])
         try:
-            if request["overwrite"] and out_path.exists():
-                shutil.rmtree(out_path)
+            if request["overwrite"]:
+                out_path.unlink(missing_ok=True)
             embedding = full_embedding[:, :n_components]
             components = (
                 None if full_components is None else full_components[:n_components]
@@ -518,8 +516,8 @@ def run_eval(
 ) -> dict[str, Any]:
     """Run one post-hoc evaluation and return an eval-runs inventory record.
 
-    The fit provenance is read from ``fit_artifact["fit"]``.  If ``_SUCCESS``
-    already exists in *out_path* and *overwrite* is ``False`` the existing eval
+    The fit provenance is read from ``fit_artifact["fit"]``.  If the artifact
+    *out_path* already exists and *overwrite* is ``False`` the existing eval
     artifact is loaded and its inventory record is returned immediately
     (checkpoint resume).
 
@@ -534,11 +532,11 @@ def run_eval(
         Eval specification dict with keys ``name``, ``target_col``,
         ``group_col``, ``filters``, ``label_map``.
     out_path:
-        Artifact directory to write (or resume from).
+        Artifact file to write (or resume from).
     output_root:
         Root of the entire run output.
     overwrite:
-        When ``True``, an existing *out_path* directory is deleted before
+        When ``True``, an existing *out_path* artifact is deleted before
         evaluating.
     errors:
         ``"raise"`` (default) propagates exceptions; ``"record"`` catches them,
@@ -554,9 +552,8 @@ def run_eval(
         raise ValueError("errors must be 'raise' or 'record'.")
     fit_payload = dict(fit_artifact["fit"])
     try:
-        success_marker = out_path / "_SUCCESS"
-        if success_marker.exists() and not overwrite:
-            eval_payload = _load_eval_payload(out_path)
+        if out_path.exists() and not overwrite:
+            eval_payload = load_eval_artifact(out_path)
             return build_record(
                 eval_payload,
                 out_path,
@@ -565,8 +562,8 @@ def run_eval(
                 eval_payload.get("metrics"),
             )
 
-        if overwrite and out_path.exists():
-            shutil.rmtree(out_path)
+        if overwrite:
+            out_path.unlink(missing_ok=True)
 
         selected_index, selected_ids, labels, groups = prepare_eval_inputs(
             container=container,
@@ -969,7 +966,9 @@ def build_fit_request(
             artifact_path = artifact_path_factory(fit_payload, output_root)
         else:
             stem = fit_payload["artifact_stem"]
-            artifact_path = output_root / ARTIFACTS_DIRNAME / FITS_SUBDIR / stem
+            artifact_path = (
+                output_root / ARTIFACTS_DIRNAME / FITS_SUBDIR / f"{stem}.npz"
+            )
 
     return {
         "fit_payload": fit_payload,
@@ -1008,7 +1007,7 @@ def build_eval_request(
             artifact_path = artifact_path_factory(fit_payload, eval_spec, output_root)
         else:
             artifact_path = (
-                output_root / ARTIFACTS_DIRNAME / EVALS_SUBDIR / artifact_stem
+                output_root / ARTIFACTS_DIRNAME / EVALS_SUBDIR / f"{artifact_stem}.json"
             )
     return {
         "fit_artifact": fit_artifact,

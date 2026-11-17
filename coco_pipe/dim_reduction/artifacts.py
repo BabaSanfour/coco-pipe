@@ -10,12 +10,14 @@ format without duplicating the serialization logic.
 Public API
 ----------
 save_fit_artifact
-    Write embedding, ids, fit payload, metrics, and diagnostics to a
-    directory and stamp it with ``_SUCCESS``.
+    Write embedding, ids, fit payload, metrics, and diagnostics to one
+    ``.npz`` file.
 save_eval_artifact
-    Write an eval payload to a directory and stamp it with ``_SUCCESS``.
+    Write an eval payload to one JSON file.
+load_eval_artifact
+    Read an eval artifact back into a dict.
 load_fit_artifact
-    Read a fit artifact directory back into a dict.
+    Read a fit artifact back into a dict.
 load_fit_runs
     Read a JSON runs inventory file back into a list of dicts.
 update_runs
@@ -40,6 +42,7 @@ EVAL_RUN_KEY_FIELDS
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,10 +52,7 @@ import numpy as np
 
 from coco_pipe.dim_reduction._constants import (
     EVAL_METRIC_COLUMNS,
-    EVAL_NAME,
     EVAL_RUN_KEY_FIELDS,
-    FIT_ARRAYS_NAME,
-    FIT_META_NAME,
     FIT_METRIC_COLUMNS,
     FIT_RUN_KEY_FIELDS,
     SEPARATION_METRIC_KEY,
@@ -72,6 +72,7 @@ __all__ = [
     "build_availability_record",
     # Record builder
     "build_record",
+    "load_eval_artifact",
     "load_fit_artifact",
     "load_fit_runs",
     "save_eval_artifact",
@@ -91,22 +92,17 @@ def save_fit_artifact(
     metrics_payload: dict[str, Any],
     diagnostics: dict[str, Any],
 ) -> None:
-    """Write a fit artifact to *path* and stamp it with ``_SUCCESS``.
+    """Write a fit artifact: one ``.npz`` file at *path*.
 
-    The artifact directory receives three files (a compact layout that keeps the
-    inode count low for high-cardinality analysis modes):
-
-    - ``fit.npz`` — embedding, ids, and reducer diagnostics in one archive
-    - ``fit.json`` — the fit payload and geometry quality metrics
-    - ``_SUCCESS`` — sentinel that marks the artifact as complete
-
-    :func:`load_fit_artifact` also reads the older seven-file layout, so existing
-    artifacts remain loadable.
+    The file holds the embedding, the ids, the reducer diagnostics and, as JSON,
+    the fit payload and its metrics. It is written atomically, so a file at
+    *path* is a complete artifact: one file per fit keeps the file count low for
+    analysis modes with many units.
 
     Parameters
     ----------
     path:
-        Target directory.  Created (including parents) if it does not exist.
+        Target ``.npz`` file. Parent directories are created.
     embedding:
         Array of shape ``(n_obs, n_dims)``.
     ids:
@@ -117,71 +113,30 @@ def save_fit_artifact(
     metrics_payload:
         Serialisable dict of geometry quality metrics (trustworthiness, …).
     diagnostics:
-        Serialisable dict of reducer-internal diagnostics.  May be empty.
+        Reducer-internal diagnostics.  May be empty.
     """
-    path.mkdir(parents=True, exist_ok=True)
     stem = str(fit_payload.get("artifact_stem") or "dim_reduction_fit")
+    meta = {"artifact_stem": stem, "fit": fit_payload, "metrics": metrics_payload}
     save_npz(
-        path / FIT_ARRAYS_NAME,
+        path,
         embedding=np.asarray(embedding),
         ids=np.asarray(ids, dtype=object),
         diagnostics=np.asarray([diagnostics], dtype=object),
+        meta=np.asarray(json.dumps(meta)),
     )
-    write_json(
-        path / FIT_META_NAME,
-        {"artifact_stem": stem, "fit": fit_payload, "metrics": metrics_payload},
-        indent=2,
-    )
-    (path / "_SUCCESS").write_text("ok\n", encoding="utf-8")
 
 
 def save_eval_artifact(path: Path, eval_payload: dict[str, Any]) -> None:
-    """Write an eval artifact to *path* and stamp it with ``_SUCCESS``.
+    """Write an eval artifact: *eval_payload* as one JSON file at *path*.
 
-    The artifact directory receives two files:
-
-    - ``eval.json`` — the full eval payload
-    - ``_SUCCESS`` — sentinel that marks the artifact as complete
-
-    :func:`_load_eval_payload` also reads the older ``<stem>_eval.json`` layout.
-
-    Parameters
-    ----------
-    path:
-        Target directory.  Created (including parents) if it does not exist.
-    eval_payload:
-        Serialisable dict describing the post-hoc evaluation results.  The key
-        ``"artifact_stem"`` is recorded for provenance when present.
+    It is written atomically, so a file at *path* is a complete artifact.
     """
-    path.mkdir(parents=True, exist_ok=True)
-    write_json(path / EVAL_NAME, eval_payload, indent=2)
-    (path / "_SUCCESS").write_text("ok\n", encoding="utf-8")
+    write_json(path, eval_payload, indent=2)
 
 
-def _load_eval_payload(path: Path) -> dict[str, Any]:
-    """Load an eval payload from an artifact directory.
-
-    Resolution order:
-
-    1. Read ``artifact_manifest.json`` and follow the ``"eval"`` key.
-    2. Fall back to ``eval.json`` directly.
-    3. Glob for ``*_eval.json`` and return the first match.
-
-    Raises :class:`FileNotFoundError` when no eval file can be located.
-    """
-    manifest_path = path / "artifact_manifest.json"
-    if manifest_path.exists():
-        manifest = read_json(manifest_path)
-        eval_path = path / manifest.get("eval", "eval.json")
-        if eval_path.exists():
-            return read_json(eval_path)
-    eval_path = path / "eval.json"
-    if eval_path.exists():
-        return read_json(eval_path)
-    matches = sorted(path.glob("*_eval.json"))
-    if matches:
-        return read_json(matches[0])
-    raise FileNotFoundError(f"No eval payload found in {path}")
+def load_eval_artifact(path: Path) -> dict[str, Any]:
+    """Load an eval artifact written by :func:`save_eval_artifact`."""
+    return read_json(path)
 
 
 def _embedding_container(
@@ -213,17 +168,12 @@ def _embedding_container(
 
 
 def load_fit_artifact(path: Path) -> dict[str, Any]:
-    """Load a fit artifact directory into a dict.
-
-    The compact ``fit.npz`` + ``fit.json`` layout written by
-    :func:`save_fit_artifact` is read first; if absent, the legacy seven-file
-    layout is resolved via ``artifact_manifest.json`` then a glob fallback so
-    artifacts written by earlier versions remain loadable.
+    """Load a fit artifact written by :func:`save_fit_artifact`.
 
     Parameters
     ----------
     path:
-        Artifact directory written by :func:`save_fit_artifact`.
+        The artifact's ``.npz`` file.
 
     Returns
     -------
@@ -234,74 +184,19 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
         view of the embedding (or ``None`` for non-2D embeddings); the
         ``embedding`` and ``ids`` arrays remain for direct array access.
     """
-    arrays_path = path / FIT_ARRAYS_NAME
-    meta_path = path / FIT_META_NAME
-    if arrays_path.exists() and meta_path.exists():
-        meta = read_json(meta_path)
-        with np.load(arrays_path, allow_pickle=True) as npz:
-            embedding = npz["embedding"]
-            ids = npz["ids"]
-            diagnostics = (
-                dict(npz["diagnostics"][0]) if "diagnostics" in npz.files else {}
-            )
-        fit = meta.get("fit", {})
-        return {
-            "embedding": embedding,
-            "ids": ids,
-            "fit": fit,
-            "metrics": meta.get("metrics", {}),
-            "diagnostics": diagnostics,
-            "manifest": {"artifact_stem": meta.get("artifact_stem")},
-            "path": path,
-            "embedding_container": _embedding_container(embedding, ids, fit),
-        }
-
-    # --- Legacy seven-file layout fallback ---
-    manifest_path = path / "artifact_manifest.json"
-    manifest = read_json(manifest_path) if manifest_path.exists() else {}
-    fit_path = path / manifest.get("fit", "fit.json")
-    metrics_path = path / manifest.get("metrics", "metrics.json")
-    embedding_path = path / manifest.get("embedding", "embedding.npy")
-    ids_path = path / manifest.get("ids", "ids.npy")
-    diagnostics_path = path / manifest.get("diagnostics", "diagnostics.npz")
-
-    if not fit_path.exists():
-        fit_matches = sorted(path.glob("*_fit.json"))
-        if fit_matches:
-            fit_path = fit_matches[0]
-    if not metrics_path.exists():
-        metrics_matches = sorted(path.glob("*_metrics.json"))
-        if metrics_matches:
-            metrics_path = metrics_matches[0]
-    if not embedding_path.exists():
-        embedding_matches = sorted(path.glob("*_embedding.npy"))
-        if embedding_matches:
-            embedding_path = embedding_matches[0]
-    if not ids_path.exists():
-        ids_matches = sorted(path.glob("*_ids.npy"))
-        if ids_matches:
-            ids_path = ids_matches[0]
-    if not diagnostics_path.exists():
-        diagnostics_matches = sorted(path.glob("*_diagnostics.npz"))
-        if diagnostics_matches:
-            diagnostics_path = diagnostics_matches[0]
-
-    diagnostics: dict[str, Any] = {}
-    if diagnostics_path.exists():
-        with np.load(diagnostics_path, allow_pickle=True) as npz:
-            diagnostics = dict(npz["payload"][0])
-
-    fit = read_json(fit_path)
-    metrics = read_json(metrics_path)
-    embedding = np.load(embedding_path, allow_pickle=True)
-    ids = np.load(ids_path, allow_pickle=True)
+    with np.load(path, allow_pickle=True) as npz:
+        embedding = npz["embedding"]
+        ids = npz["ids"]
+        diagnostics = dict(npz["diagnostics"][0])
+        meta = json.loads(str(npz["meta"]))
+    fit = meta["fit"]
     return {
         "embedding": embedding,
         "ids": ids,
         "fit": fit,
-        "metrics": metrics,
+        "metrics": meta["metrics"],
         "diagnostics": diagnostics,
-        "manifest": manifest,
+        "manifest": {"artifact_stem": meta["artifact_stem"]},
         "path": path,
         "embedding_container": _embedding_container(embedding, ids, fit),
     }

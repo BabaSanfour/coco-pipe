@@ -46,12 +46,12 @@ def test_run_fit(tmp_path, dummy_container):
         "condition": "test",
         "unit_key": "test_unit",
     }
-    out_path = tmp_path / "fit_out"
+    out_path = tmp_path / "fit_out.npz"
 
     # Run fit
     record = run_fit(fit_payload, dummy_container, out_path, tmp_path, overwrite=True)
     assert record["status"] == "success"
-    assert (out_path / "_SUCCESS").exists()
+    assert out_path.is_file()
 
     # Run fit again without overwrite (loads artifact)
     record2 = run_fit(fit_payload, dummy_container, out_path, tmp_path, overwrite=False)
@@ -63,7 +63,7 @@ def test_run_fit(tmp_path, dummy_container):
 
 
 def test_run_fit_errors(tmp_path):
-    out_path = tmp_path / "fit_out"
+    out_path = tmp_path / "fit_out.npz"
     with pytest.raises(ValueError, match="2D matrix"):
         run_fit(
             {"reducer": "PCA", "n_components": 2},
@@ -107,7 +107,7 @@ def test_run_eval(tmp_path, dummy_container):
         "input_mode": "raw",
         "representation": "power",
     }
-    fit_out = tmp_path / "fit_out"
+    fit_out = tmp_path / "fit_out.npz"
     run_fit(fit_payload, dummy_container, fit_out, tmp_path, True)
 
     fit_artifact = load_fit_artifact(fit_out)
@@ -119,7 +119,7 @@ def test_run_eval(tmp_path, dummy_container):
         "filters": [],
         "label_map": {},
     }
-    eval_out = tmp_path / "eval_out"
+    eval_out = tmp_path / "eval_out.json"
 
     # Run eval
     record = run_eval(
@@ -131,7 +131,7 @@ def test_run_eval(tmp_path, dummy_container):
         overwrite=True,
     )
     assert record["status"] == "success"
-    assert (eval_out / "_SUCCESS").exists()
+    assert eval_out.is_file()
     assert 0.0 <= record[SEPARATION_RF_METRIC_KEY] <= 1.0
     assert 0.0 <= record[SEPARATION_METRIC_KEY] <= 1.0
 
