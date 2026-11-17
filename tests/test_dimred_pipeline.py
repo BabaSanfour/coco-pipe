@@ -17,6 +17,7 @@ from coco_pipe.dim_reduction.pipeline import (
     prepare_eval_inputs,
     run_eval,
     run_fit,
+    run_fit_group,
     valid_component_sweep,
     valid_n_components_for_container,
 )
@@ -318,6 +319,37 @@ def test_build_fit_request(tmp_path, dummy_container):
     request["fit_payload"]["n_components"] = -1
     res2 = run_fit(**request, errors="record")
     assert res2["status"] == "failed"
+
+
+def test_run_fit_group_slices_resumes_and_overwrites(tmp_path, dummy_container):
+    unit_spec = {"unit_type": "all", "unit_name": "all", "unit_key": "all"}
+    unit_spec["container"] = dummy_container
+
+    def requests(overwrite):
+        return [
+            build_fit_request(
+                container=dummy_container,
+                scope="test",
+                condition="test",
+                unit_spec=unit_spec,
+                reducer="PCA",
+                n_components=n,
+                input_signature={"input_mode": "raw"},
+                output_root=tmp_path,
+                overwrite=overwrite,
+                subject_col="subject",
+            )
+            for n in (2, 3)
+        ]
+
+    first = run_fit_group(requests(overwrite=True))
+    paths = [request["out_path"] for request in requests(overwrite=False)]
+    assert [record["status"] for record in first] == ["success", "success"]
+    assert all(path.is_file() for path in paths)
+    assert load_fit_artifact(paths[0])["embedding"].shape == (100, 2)
+    assert len(run_fit_group(requests(overwrite=False))) == 2
+    again = run_fit_group(requests(overwrite=True))
+    assert [record["status"] for record in again] == ["success", "success"]
 
 
 def test_build_fit_request_identity_tracks_container_and_unit(
