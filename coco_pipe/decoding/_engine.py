@@ -239,6 +239,7 @@ def fit_and_score_fold(
     sample_weight: np.ndarray | None = None,
     score_by: str | None = None,
     erasure_condition_column: str | None = None,
+    fold_index: int | None = None,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -288,6 +289,8 @@ def fit_and_score_fold(
     erasure_condition_column : str, optional
         Sample-metadata column whose training-fold slice is given to the
         erasure step's fit as ``condition``.
+    fold_index : int, optional
+        Index of this fold, recorded in the fine-tuned features a model saves.
 
     Returns
     -------
@@ -483,7 +486,24 @@ def fit_and_score_fold(
     captured_warnings.extend(warning_records_to_dict("score", warning_records))
     score_time = time.perf_counter() - score_start
 
-    # 6. Extract Metadata
+    # 6. Save the fine-tuned features of the fold's rows, if the model is set to
+    final_estimator = getattr(prediction_estimator, "named_steps", {}).get(
+        "clf", prediction_estimator
+    )
+    if callable(getattr(final_estimator, "save_features", None)):
+        final_estimator.save_features(
+            fold_index,
+            X_train,
+            X_test,
+            train_ids=sample_ids[train_idx],
+            test_ids=sample_ids[test_idx],
+            y_train=y_train,
+            y_test=y_test,
+            train_groups=groups_train,
+            test_groups=test_groups,
+        )
+
+    # 7. Extract Metadata
     meta = extract_metadata(
         estimator,
         spec,
@@ -492,7 +512,7 @@ def fit_and_score_fold(
         feature_names=feature_names,
     )
 
-    # 7. Release the fitted backbone. Foundation fits hold large torch modules;
+    # 8. Release the fitted backbone. Foundation fits hold large torch modules;
     # tearing them down here keeps peak host/GPU memory bounded to one fold
     # instead of accumulating loaded backbones across the CV loop. Gated to the
     # foundation family so classical folds skip the gc/torch overhead entirely.
