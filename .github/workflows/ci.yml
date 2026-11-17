@@ -84,11 +84,12 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: BabaSanfour/coco-pipe
 
-  saved-epochs:
-    # BIDSDataset reads saved epochs with mne_bids.read_epochs_bids, which
-    # reads FIF epochs only with mne-bids PR #1679 (not merged): the matrix
-    # above, on released mne-bids, skips those tests.
-    name: Saved epochs (mne-bids PR #1679)
+  upstream-main:
+    # Two fixes are not released yet: mne-bids PR #1679 (BIDSDataset reads saved
+    # FIF epochs with mne_bids.read_epochs_bids) and braindecode 2.1 (LUNA's
+    # features, BIOT's tokens). The matrix above, on the released packages,
+    # skips the tests that need them.
+    name: Unreleased mne-bids and braindecode
     needs: quality
     runs-on: ubuntu-latest
 
@@ -100,29 +101,29 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install package with mne-bids PR #1679
+      - name: Install package with mne-bids and braindecode main
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[full,test]"
-          python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@refs/pull/1679/head"
+          python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main" "braindecode @ git+https://github.com/braindecode/braindecode.git@master"
 
-      - name: Run the tests that read saved epochs, none skipped
+      - name: Run the tests that need them, none skipped
         run: |
-          pytest tests/test_io_dataset.py tests/test_io_load.py tests/test_report_api.py -rs | tee pytest.log
-          ! grep -q "needs mne-bids PR #1679" pytest.log
+          pytest tests/test_io_dataset.py tests/test_io_load.py tests/test_report_api.py tests/test_decoding_foundation_braindecode.py -rs | tee pytest.log
+          ! grep -qE "needs mne-bids PR #1679|needs braindecode main" pytest.log
 
   pytest:
     name: pytest
-    needs: [test, saved-epochs]
+    needs: [test, upstream-main]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require the full test matrix and the saved-epoch tests to pass
+      - name: Require the full test matrix and the upstream main tests to pass
         run: |
           result="${{ needs.test.result }}"
-          saved="${{ needs.saved-epochs.result }}"
-          echo "test matrix result: $result, saved epochs: $saved"
-          test "$result" = "success" && test "$saved" = "success"
+          upstream="${{ needs.upstream-main.result }}"
+          echo "test matrix result: $result, upstream main: $upstream"
+          test "$result" = "success" && test "$upstream" = "success"
 
   foundation:
     name: Heavy foundation tests

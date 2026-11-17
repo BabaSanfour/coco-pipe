@@ -17,7 +17,6 @@ import importlib
 import importlib.util
 import warnings
 from functools import partial
-from types import MethodType
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,29 +37,6 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "bendr": ("BENDR", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
 }
-
-
-def _luna_frequency_features(self, x):
-    """LUNA's frequency embedding, its DC and Nyquist bins made real.
-
-    As braindecode's ``_FrequencyFeatureEmbedder.forward``, except that the
-    imaginary part of those bins is set to 0: GPU FFTs leave rounding noise
-    there, whose sign flips their phase between pi and -pi.
-    """
-    import torch
-    import torch.nn.functional as F
-    from einops import rearrange
-
-    batch, n_chans, n_times = x.shape
-    if n_times % self.patch_size:
-        x = F.pad(x, (0, self.patch_size - n_times % self.patch_size))
-    spectrum = torch.fft.rfft(x.view(batch, n_chans, -1, self.patch_size), dim=-1)
-    real = torch.zeros(spectrum.shape[-1], dtype=torch.bool, device=x.device)
-    real[0] = True
-    real[-1] = self.patch_size % 2 == 0
-    spectrum = torch.complex(spectrum.real, torch.where(real, 0.0, spectrum.imag))
-    features = torch.cat((spectrum.abs(), spectrum.angle()), dim=-1)
-    return rearrange(self.frequency_to_embed(features), "B C t D -> B (C t) D")
 
 
 class BrainDecodeBackend(BackendBase):
@@ -234,7 +210,7 @@ class BrainDecodeBackend(BackendBase):
         # Montage-dependent models need ``chs_info``. LaBraM and SignalJEPA
         # (with its pretrained channel embeddings) find channels by name; LUNA,
         # and SignalJEPA with channel_embedding="scratch", embed their positions,
-        # where braindecode gives a channel without one a made-up position.
+        # where braindecode gives made-up positions to channels that have none.
         if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
             import mne
 
@@ -251,16 +227,6 @@ class BrainDecodeBackend(BackendBase):
                     on_missing="raise" if needs_positions else "ignore",
                 )
                 kw["chs_info"] = info["chs"]
-            unplaced = [
-                ch["ch_name"]
-                for ch in kw["chs_info"]
-                if not np.isfinite(ch["loc"][:3]).all()
-            ]
-            if needs_positions and unplaced:
-                raise ValueError(
-                    f"{metadata.display_name} embeds channel positions, but "
-                    f"{unplaced} have none."
-                )
         if model_key == "luna":
             kw.setdefault("n_times", n_times)
             kw.setdefault("embed_dim", 64)
@@ -286,6 +252,20 @@ class BrainDecodeBackend(BackendBase):
             # braindecode builds a classification head either way, sized from
             # the window length.
             kw.setdefault("n_times", n_times)
+        elif model_key == "eegpt":
+            # EEGPT finds each channel's embedding by name (chans_id), so it
+            # loads on a subset of its 62 pretraining channels, with no channel
+            # projection, which the checkpoint does not hold.
+            import mne
+
+            names = channel_plan.model_ch_names
+            info = mne.create_info(names, metadata.pretrained_sfreq, "eeg")
+            kw.update(
+                chs_info=info["chs"],
+                n_chans=len(names),
+                n_times=n_times,
+                chan_proj_type="none",
+            )
         elif model_key == "biot":
             # Plain BIOT on the 16-channel TCP bipolar montage built by exact
             # subtraction (see channel_plan.adapter).
@@ -310,27 +290,12 @@ class BrainDecodeBackend(BackendBase):
         )
         if effective_outputs is not None:
             load_kwargs["n_outputs"] = effective_outputs
-        if model_key == "eegpt":
-            # EEGPT's checkpoint stores a 62-channel layout; from_pretrained
-            # cannot rebuild it on a subset montage. Build the model on the
-            # input channels (chan_proj_type="none") and reconcile the
-            # name-indexed state dict (see _load_eegpt).
-            model = cls._load_eegpt(
-                metadata,
-                channel_plan,
-                n_times=n_times,
-                n_outputs=effective_outputs,
-                revision=revision,
-                filename=filename,
-                device=device,
-            )
-        else:
-            with warnings.catch_warnings():
-                # braindecode asks for the channel names at forward: given below
-                warnings.filterwarnings("ignore", "Labram chs_info does not match")
-                # LaBraM beyond 16 s: the extra time embeddings would be untrained
-                warnings.filterwarnings("error", "The checkpoint holds")
-                model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+        with warnings.catch_warnings():
+            # braindecode asks for the channel names at forward: given below
+            warnings.filterwarnings("ignore", "Labram chs_info does not match")
+            # LaBraM beyond 16 s: the extra time embeddings would be untrained
+            warnings.filterwarnings("error", "The checkpoint holds")
+            model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):
             if not pretrained:
@@ -343,10 +308,6 @@ class BrainDecodeBackend(BackendBase):
                 # embedding of its name, so a subset of the pretraining channels
                 # is fed as is.
                 model.forward = partial(model.forward, ch_names=list(electrode_names))
-            if model_key == "luna":
-                model.freq_embed.forward = MethodType(
-                    _luna_frequency_features, model.freq_embed
-                )
 
             if train_mode == "frozen":
                 for param in model.parameters():
@@ -366,11 +327,7 @@ class BrainDecodeBackend(BackendBase):
             # full: no changes — all params trainable
 
             if n_outputs is not None:
-                try:
-                    model.reset_head(n_outputs)
-                except NotImplementedError:
-                    if model_key != "luna":
-                        raise
+                model.reset_head(n_outputs)
             if train_mode == "frozen" and n_outputs is not None:
                 for head_name in ("final_layer", "classifier", "head"):
                     head = getattr(model, head_name, None)
@@ -399,79 +356,6 @@ class BrainDecodeBackend(BackendBase):
         return backend
 
     @classmethod
-    def _load_eegpt(
-        cls,
-        metadata: FoundationModelSpec,
-        channel_plan,
-        *,
-        n_times: int,
-        n_outputs: int | None,
-        revision: str | None,
-        filename: str | None,
-        device: str,
-    ):
-        """Build EEGPT on the input montage and load the name-indexed checkpoint.
-
-        EEGPT identifies channels by name through a learnable channel-embedding
-        table indexed by ``chans_id``. The published checkpoint stores a
-        62-channel layout, so ``from_pretrained`` cannot rebuild it on a subset
-        montage. Instead we build the model with ``chan_proj_type="none"`` on the
-        kept channels (``chans_id`` recomputed from their names) and load every
-        pretrained weight, dropping only the derived ``chans_id`` buffer and the
-        unused classification head.
-        """
-        import mne
-        import torch
-        from braindecode.models import EEGPT
-        from huggingface_hub import hf_hub_download
-
-        names = channel_plan.model_ch_names
-        info = mne.create_info(names, sfreq=metadata.pretrained_sfreq, ch_types="eeg")
-        # Positions are unused by EEGPT (channels are identified by name via
-        # chans_id); resolve them best-effort and stay quiet on misses.
-        info.set_montage("colin27_1020", match_case=False, on_missing="ignore")
-        model = EEGPT(
-            n_chans=len(names),
-            n_times=n_times,
-            chs_info=info["chs"],
-            n_outputs=n_outputs if n_outputs is not None else 1,
-            chan_proj_type="none",
-        )
-        weights = filename or "model.safetensors"
-        path = hf_hub_download(metadata.hub_repo, weights, revision=revision)
-        if path.endswith(".safetensors"):
-            from safetensors.torch import load_file
-
-            state = load_file(path)
-        else:
-            state = torch.load(path, map_location="cpu")
-        target = model.state_dict()
-        reconciled = {}
-        for key, value in state.items():
-            if key == "chans_id":
-                continue  # derived buffer, recomputed from chs_info
-            if (
-                key in target
-                and hasattr(value, "shape")
-                and value.shape != target[key].shape
-            ):
-                continue  # head/probe with a different n_outputs — left fresh
-            reconciled[key] = value
-        result = model.load_state_dict(reconciled, strict=False)
-        backbone_missing = [
-            k
-            for k in result.missing_keys
-            if k != "chans_id" and not k.startswith("final_layer")
-        ]
-        if backbone_missing or result.unexpected_keys:
-            raise RuntimeError(
-                "EEGPT checkpoint reconciliation left weights unloaded "
-                f"(missing={backbone_missing}, unexpected={result.unexpected_keys}); "
-                "embeddings would be partly random."
-            )
-        return model
-
-    @classmethod
     def _forward_logits(cls, model, tensor, model_key: str):
         if model_key == "bendr":
             # The head reads the features of ``transform``, not BENDR's start
@@ -489,22 +373,11 @@ class BrainDecodeBackend(BackendBase):
             # vary between inputs. Return the contextualized time tokens instead.
             context = model.contextualizer(model.encoder(tensor))
             return context[:, :, 1:].transpose(1, 2)
-        if model_key != "luna":
-            out = model(tensor, return_features=True)
-            return out["features"] if isinstance(out, dict) else out
-        captured = {}
-
-        def _capture(_module, _inputs, output):
-            captured["latent"] = output
-
-        hook = model.norm.register_forward_hook(_capture)
-        try:
-            model(tensor)
-        finally:
-            hook.remove()
-        if "latent" not in captured:
-            raise RuntimeError("LUNA latent representation was not captured.")
-        return captured["latent"]
+        out = model(tensor, return_features=True)
+        if not isinstance(out, dict):
+            return out
+        # BIOT's features are the mean of its tokens
+        return out["tokens"] if model_key == "biot" else out["features"]
 
     def _get_skorch_module(self):
         import torch.nn as nn
@@ -557,43 +430,16 @@ class BrainDecodeBackend(BackendBase):
         batch_size = self._eval_batch_size()
         embedding_chunks = []
         token_chunks = []
-        token_module = None
-        if return_tokens:
-            if self._metadata.name == "biot":
-                token_module = self._model.encoder.transformer
-            elif self._metadata.name == "bendr":
-                token_module = self._model.contextualizer
-
-        captured_tokens = []
-
-        def _capture_tokens(_module, _inputs, output):
-            captured_tokens.append(output)
-
         with self._no_grad():
             for start in range(0, len(X), batch_size):
                 tensor = self._to_tensor(X[start : start + batch_size])
-                if token_module is None:
-                    feats = self._forward_features(
-                        self._model, tensor, self._metadata.name
-                    )
-                    if return_tokens:
-                        tokens = feats
+                tokens = self._forward_features(
+                    self._model, tensor, self._metadata.name
+                )
+                if tokens.ndim < 3:
+                    pooled = tokens
                 else:
-                    captured_tokens.clear()
-                    with token_module.register_forward_hook(_capture_tokens):
-                        feats = self._forward_features(
-                            self._model, tensor, self._metadata.name
-                        )
-                    if not captured_tokens:
-                        raise RuntimeError(
-                            f"{self._metadata.display_name} native token tensor "
-                            "was not captured."
-                        )
-                    tokens = captured_tokens[0]
-                if feats.ndim < 3:
-                    pooled = feats
-                else:
-                    pooled = feats.flatten(start_dim=1, end_dim=-2).mean(dim=1)
+                    pooled = tokens.flatten(start_dim=1, end_dim=-2).mean(dim=1)
                 embedding_chunks.append(self._from_tensor(pooled))
                 if return_tokens:
                     if tokens.ndim < 3:
@@ -625,9 +471,9 @@ class BrainDecodeBackend(BackendBase):
                 "token_feature_axis": "feature",
             },
             "biot": {
-                "token_source": "encoder.transformer_output",
-                "token_axes": ["window", "channel_time_patch", "feature"],
-                "token_observation_axes": ["channel_time_patch"],
+                "token_source": "return_features.tokens",
+                "token_axes": ["window", "channel", "time_patch", "feature"],
+                "token_observation_axes": ["channel", "time_patch"],
                 "token_feature_axis": "feature",
             },
             "labram": {
@@ -637,7 +483,7 @@ class BrainDecodeBackend(BackendBase):
                 "token_feature_axis": "feature",
             },
             "luna": {
-                "token_source": "norm_forward_output",
+                "token_source": "return_features.features",
                 "token_axes": ["window", "time_patch", "feature"],
                 "token_observation_axes": ["time_patch"],
                 "token_feature_axis": "feature",
@@ -656,7 +502,7 @@ class BrainDecodeBackend(BackendBase):
             },
             "bendr": {
                 "token_source": "contextualizer_output",
-                "token_axes": ["window", "feature", "context_token"],
+                "token_axes": ["window", "context_token", "feature"],
                 "token_observation_axes": ["context_token"],
                 "token_feature_axis": "feature",
             },

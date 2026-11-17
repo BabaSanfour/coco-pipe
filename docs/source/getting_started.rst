@@ -41,14 +41,17 @@ Install one or more extras together with the core package:
 
    pip install "coco-pipe[descriptors,dim-red,eeg]"
 
-Reading saved epochs (``*_epo.fif``) from a BIDS dataset needs mne-bids with
-PR `#1679 <https://github.com/mne-tools/mne-bids/pull/1679>`_, which is not
-merged yet: neither a release nor mne-bids ``main`` has it. Until it is,
-install the PR:
+Two features need a package's ``main`` until its next release. Reading saved
+epochs (``*_epo.fif``) from a BIDS dataset needs mne-bids with PR
+`#1679 <https://github.com/mne-tools/mne-bids/pull/1679>`_. LUNA needs
+braindecode 2.1, for its features, the device-independent phase of its frequency
+embedding, its ``reset_head`` and its refusal of channels with no position. BIOT
+needs braindecode 2.1 for its tokens.
 
 .. code-block:: bash
 
-   pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@refs/pull/1679/head"
+   pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
+   pip install "braindecode @ git+https://github.com/braindecode/braindecode.git@master"
 
 The ``DataContainer``
 =====================
