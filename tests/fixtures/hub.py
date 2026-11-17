@@ -13,6 +13,14 @@ CHECKPOINT_DEFAULTS = {
     "Labram": {"n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
     "BENDR": {"n_outputs": 1},
+    # largeV2 but two blocks deep, not 24, to keep the tests light
+    "STEEGFormer": {
+        "n_outputs": 4,
+        "embed_dim": 1024,
+        "num_heads": 16,
+        "depth": 2,
+        "n_chans_pos": 256,
+    },
 }
 
 
@@ -43,10 +51,16 @@ def offline(monkeypatch, tmp_path):
         "Labram",
         "LUNA",
         "SignalJEPA_Contextual",
+        "STEEGFormer",
     ):
         monkeypatch.setattr(getattr(bm, name), "from_pretrained", classmethod(build))
 
+    hub_download = huggingface_hub.hf_hub_download
+
     def download(repo_id, filename, revision=None, **kwargs):
+        if filename == "steegformer_channels.json":
+            # STEEGFormer's channel vocabulary, a pinned file of 2 kB
+            return hub_download(repo_id, filename, revision=revision, **kwargs)
         # a cached snapshot folder is named by its commit
         return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
 
