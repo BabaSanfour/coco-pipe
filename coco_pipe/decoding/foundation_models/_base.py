@@ -133,6 +133,64 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 return candidate
         raise NotImplementedError(f"{type(self).__name__} does not expose its head.")
 
+    def set_dropout(
+        self, backbone: float | None = None, head: float | None = None
+    ) -> None:
+        """Set the dropout probability of the backbone, of the head, or both.
+
+        ``backbone`` goes to every dropout outside the head, including the
+        attention dropouts that some models keep as a number (see
+        ``_training.set_dropout``). ``head`` goes to every dropout inside the
+        head, and to one on its input, which is put there when the head does
+        not start with one. ``None`` keeps the model's own.
+
+        Raises
+        ------
+        ValueError
+            If ``backbone`` is given and the backbone has no dropout (REVE).
+        """
+        import torch
+
+        from . import _training
+
+        head_module = self.head_module()
+        starts_with_dropout = isinstance(head_module, torch.nn.Sequential) and (
+            isinstance(head_module[0], torch.nn.Dropout)
+        )
+        if head is not None and not starts_with_dropout:
+            wrapped = torch.nn.Sequential(torch.nn.Dropout(head), head_module)
+            if getattr(self, "_head", None) is head_module:
+                self._head = wrapped
+            else:
+                holders = [
+                    (parent, name)
+                    for component in self.checkpoint_components().values()
+                    for parent in component.modules()
+                    for name, child in parent.named_children()
+                    if child is head_module
+                ]
+                for parent, name in holders:
+                    setattr(parent, name, wrapped)
+            head_module = wrapped
+        if head is not None:
+            _training.set_dropout(head_module.modules(), head)
+        if backbone is not None:
+            in_head = {id(module) for module in head_module.modules()}
+            changed = _training.set_dropout(
+                (
+                    module
+                    for component in self.checkpoint_components().values()
+                    for module in component.modules()
+                    if id(module) not in in_head
+                ),
+                backbone,
+            )
+            if not changed:
+                raise ValueError(
+                    f"{self.get_embedding_info().display_name} has no dropout in "
+                    "its backbone: leave backbone_dropout unset."
+                )
+
     @abstractmethod
     def reset_head(self, n_outputs: int) -> BackendBase:
         """Replace the classification head without changing backbone weights.
@@ -232,6 +290,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             max_epochs : int, default 10
             lr : float, default 1e-3
             weight_decay : float, default 0.01
+            head_weight_decay : float or None, default None (weight_decay)
+            backbone_dropout : float or None, default None (the model's)
+            head_dropout : float or None, default None (no dropout added)
             batch_size : int, default 32
             lr_warmup_epochs : int, default 0
             accumulate_grad_batches : int, default 1
@@ -390,6 +451,17 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         )
         if self._n_outputs != out_dim:
             self.reset_head(out_dim)
+        backbone_dropout = fit_params.get("backbone_dropout")
+        head_dropout = fit_params.get("head_dropout")
+        if backbone_dropout is not None or head_dropout is not None:
+            self.set_dropout(backbone_dropout, head_dropout)
+        optimizer = torch.optim.AdamW
+        if fit_params.get("head_weight_decay") is not None:
+            optimizer = partial(
+                _training.adamw_with_head_decay,
+                head=self.head_module(),
+                head_weight_decay=fit_params["head_weight_decay"],
+            )
         net_cls = (
             NeuralNetClassifier
             if self._task == "classification"
@@ -510,7 +582,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 module__output_dim=out_dim,
                 device=self._device,
                 max_epochs=max_epochs,
-                optimizer=torch.optim.AdamW,
+                optimizer=optimizer,
                 optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
                 lr=lr,
                 batch_size=fit_params.get("batch_size", 32),
