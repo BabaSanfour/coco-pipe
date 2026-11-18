@@ -258,6 +258,57 @@ group. Each window's embedding comes from the one fold that held it out, so
 none comes from a model trained on it; folds fit separate models, so
 embeddings of different folds lie in different spaces.
 
+2.4 Continued Pretraining
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``continue_pretraining`` goes on with the self-supervised pretraining of
+CBraMod, LUNA or REVE on unlabelled windows, then the weights it saves are
+loaded in place of the checkpoint's with ``backend_kwargs={"checkpoint_dir":
+...}``, for embedding extraction and for every train mode but ``qlora``.
+
+.. code-block:: python
+
+   from coco_pipe.decoding.foundation_models import continue_pretraining
+
+   info = continue_pretraining(
+       "cbramod", X, ch_names, sfreq,   # X: (window, channel, time), µV
+       output_dir="pretrained/cbramod",
+       epochs=10, lr=1e-4, batch_size=64,
+       groups=recording_ids,            # held-out windows from held-out recordings
+       device="cuda",
+   )
+   FoundationEmbeddingModelConfig(
+       model_key="cbramod", ...,
+       backend_kwargs={"checkpoint_dir": "pretrained/cbramod"},
+   )
+
+The model is loaded and its input prepared as for embedding extraction, so
+the input matches its authors' pretraining. Each model keeps its own
+objective, and ``mask_ratio`` defaults to its authors' share of masked tokens:
+
+- **CBraMod**: patches masked with probability 0.5 and the MSE of their
+  reconstruction by ``proj_out``, as in the authors' ``pretrain_trainer.py``.
+- **LUNA**: half the patches of each window masked, the smooth L1 loss on
+  them plus 0.05 times that on the other patches, plus 0.8 times the
+  query-specialization loss, as in ``tasks/pretrain_task_LUNA.py`` and
+  ``config/experiment/LUNA_pretrain.yaml`` of pulp-bio/BioFoundation.
+- **REVE**: an approximation. Its decoder and pretraining code are not
+  released, so a new two-layer decoder is trained with the encoder, in a
+  masked autoencoder on 55 % of the tokens with the L1 loss, as in the paper,
+  but with tokens masked at random rather than in spatio-temporal blocks,
+  without channel dropout and without the secondary loss on the pooled token.
+
+Training uses AdamW, a linear warmup then a cosine decay by step, gradients
+clipped to a norm of 1, and bfloat16 autocast on CUDA. After each epoch the
+reconstruction loss on the training windows and on the held-out windows is
+logged, and ``output_dir`` receives ``encoder.pt`` and ``pretraining.json``
+(settings, base revision, losses). A checkpoint loads only into the model and
+revision it continues.
+
+Continued weights are derived models under the licence of their checkpoint.
+LUNA's (CC BY-ND 4.0) must not be redistributed. REVE's may be, only under the
+REVE Responsible Use License. CBraMod's are BSD-3-Clause.
+
 ---
 
 3. Diagnostic Artifacts
