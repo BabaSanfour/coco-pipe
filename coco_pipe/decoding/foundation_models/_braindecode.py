@@ -352,6 +352,19 @@ class BrainDecodeBackend(BackendBase):
                     warnings.filterwarnings("ignore", "Modifying chs_info argument")
                     warnings.filterwarnings("ignore", "Labram chs_info does not match")
                     model = type(model).from_config(model.get_config())
+            if model_key == "cbramod":
+                # proj_out reconstructs the masked patches in pretraining: the
+                # authors drop it and read the encoder (wjq-learning/CBraMod,
+                # models/model_for_tuab.py, line 19).
+                import torch.nn as nn
+
+                proj = model.proj_out[0]
+                if proj.in_features != proj.out_features:
+                    raise ValueError(
+                        f"CBraMod with emb_dim={proj.out_features} and d_model="
+                        f"{proj.in_features}: its head cannot read the encoder."
+                    )
+                model.proj_out = nn.Identity()
             if model_key == "labram" and electrode_names:
                 # As in the authors' code, each channel takes the position
                 # embedding of its name, so a subset of the pretraining channels
@@ -407,9 +420,10 @@ class BrainDecodeBackend(BackendBase):
 
     @classmethod
     def _forward_logits(cls, model, tensor, model_key: str):
-        if model_key == "bendr":
+        if model_key == "bendr" or (model_key == "labram" and model.fc_norm is None):
             # The head reads the features of ``transform``, not BENDR's start
-            # token (see ``_forward_features``).
+            # token (see ``_forward_features``) nor the [CLS] token of frozen
+            # LaBraM, which neither pretraining nor the authors' fine-tuning read.
             features = cls._forward_features(model, tensor, model_key).mean(dim=1)
             return model.final_layer(features)
         out = model(tensor)
