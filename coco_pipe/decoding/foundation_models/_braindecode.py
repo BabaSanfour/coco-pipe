@@ -25,6 +25,7 @@ import numpy as np
 from .._specs import SignalMetadata
 from . import _montages
 from ._base import BackendBase, check_weights, resolve_revision, seeded
+from ._pretraining import load_continued_weights
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -144,7 +145,9 @@ class BrainDecodeBackend(BackendBase):
         seed : int or None
             The seed of random weights; only with ``pretrained=False``.
         **kw
-            Extra keyword arguments forwarded to ``Model.from_pretrained``.
+            Extra keyword arguments forwarded to ``Model.from_pretrained``, but
+            ``checkpoint_dir``: a folder written by ``continue_pretraining``,
+            whose weights replace the checkpoint's.
 
         Returns
         -------
@@ -173,6 +176,9 @@ class BrainDecodeBackend(BackendBase):
                 f"Supported: {sorted(_BD_MODEL_MAP)}"
             )
         check_weights(pretrained, seed)
+        checkpoint_dir = kw.pop("checkpoint_dir", None)
+        if checkpoint_dir is not None and not pretrained:
+            raise ValueError("checkpoint_dir holds pretrained weights: not with seed.")
         if train_mode == "qlora":
             raise NotImplementedError(
                 "QLoRA for BrainDecodeBackend requires HuggingFace quantization "
@@ -343,6 +349,11 @@ class BrainDecodeBackend(BackendBase):
                 # LaBraM beyond 16 s: the extra time embeddings would be untrained
                 warnings.filterwarnings("error", "The checkpoint holds")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
+            continued = {}
+            if checkpoint_dir is not None:
+                continued = load_continued_weights(
+                    model, checkpoint_dir, model_key, revision
+                )
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):
             if metadata.hub_repo is None:
@@ -352,6 +363,19 @@ class BrainDecodeBackend(BackendBase):
                     warnings.filterwarnings("ignore", "Modifying chs_info argument")
                     warnings.filterwarnings("ignore", "Labram chs_info does not match")
                     model = type(model).from_config(model.get_config())
+            if model_key == "cbramod":
+                # proj_out reconstructs the masked patches in pretraining: the
+                # authors drop it and read the encoder (wjq-learning/CBraMod,
+                # models/model_for_tuab.py, line 19).
+                import torch.nn as nn
+
+                proj = model.proj_out[0]
+                if proj.in_features != proj.out_features:
+                    raise ValueError(
+                        f"CBraMod with emb_dim={proj.out_features} and d_model="
+                        f"{proj.in_features}: its head cannot read the encoder."
+                    )
+                model.proj_out = nn.Identity()
             if model_key == "labram" and electrode_names:
                 # As in the authors' code, each channel takes the position
                 # embedding of its name, so a subset of the pretraining channels
@@ -397,7 +421,7 @@ class BrainDecodeBackend(BackendBase):
         if electrode_names:
             backend._expected_n_chans = len(electrode_names)
         if metadata.hub_repo is not None:
-            backend.checkpoint_revisions = {metadata.hub_repo: revision}
+            backend.checkpoint_revisions = {metadata.hub_repo: revision, **continued}
         backend.weights_seed = None if pretrained else int(seed)
         backend._channel_adapter = (
             channel_plan.adapter if channel_plan is not None else None
@@ -407,9 +431,10 @@ class BrainDecodeBackend(BackendBase):
 
     @classmethod
     def _forward_logits(cls, model, tensor, model_key: str):
-        if model_key == "bendr":
+        if model_key == "bendr" or (model_key == "labram" and model.fc_norm is None):
             # The head reads the features of ``transform``, not BENDR's start
-            # token (see ``_forward_features``).
+            # token (see ``_forward_features``) nor the [CLS] token of frozen
+            # LaBraM, which neither pretraining nor the authors' fine-tuning read.
             features = cls._forward_features(model, tensor, model_key).mean(dim=1)
             return model.final_layer(features)
         out = model(tensor)

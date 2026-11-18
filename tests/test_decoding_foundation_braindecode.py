@@ -92,6 +92,37 @@ def test_backbones_embed_and_expose_their_tokens(offline, model_key):
         backend.pool_tokens(tokens, "attention")
 
 
+def test_cbramod_features_and_head_read_the_encoder(offline):
+    # proj_out, the head that reconstructs masked patches, is not read
+    backend, X = _load("cbramod")
+    model = backend.checkpoint_components()["model"]
+    encoded, head_input = [], []
+    model.encoder.register_forward_hook(lambda _, __, out: encoded.append(out))
+    model.final_layer.register_forward_pre_hook(
+        lambda _, args: head_input.append(args[0])
+    )
+
+    backend.fit(X, np.array([0, 1, 0, 1]), max_epochs=1, validation_fraction=0)
+    torch.testing.assert_close(head_input[-1], encoded[-1])
+    _, tokens = backend.transform(X, return_tokens=True)
+    np.testing.assert_allclose(tokens, encoded[-1].numpy(), rtol=1e-5, atol=1e-6)
+
+
+def test_frozen_labram_head_reads_its_features(offline):
+    # not the [CLS] token, which pretraining never reads
+    backend, X = _load("labram")
+    head_input = []
+    backend.head_module().register_forward_pre_hook(
+        lambda _, args: head_input.append(args[0].detach())
+    )
+
+    backend.fit(X, np.array([0, 1, 0, 1]), max_epochs=1, validation_fraction=0)
+    backend.predict_proba(X)
+    np.testing.assert_allclose(
+        head_input[-1].numpy(), backend.transform(X), rtol=1e-5, atol=1e-6
+    )
+
+
 def _weights(backend):
     return {
         f"{name}.{key}": value
