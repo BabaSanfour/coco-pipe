@@ -1,6 +1,7 @@
 """Continued pretraining of real braindecode models with random weights, and
 of a small REVE-shaped model, without the network (see tests/fixtures/hub.py)."""
 
+import inspect
 import json
 from types import SimpleNamespace
 
@@ -17,6 +18,13 @@ torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
 reve = pytest.importorskip("braindecode.models.reve")
 FourierEmb4D, TransformerBackbone = reve.FourierEmb4D, reve.TransformerBackbone
+# LUNA's features are in braindecode main, not in 2.0
+LUNA_FEATURES = (
+    "return_features"
+    in inspect.signature(
+        __import__("braindecode.models", fromlist=["LUNA"]).LUNA.forward
+    ).parameters
+)
 
 CHANNELS = ["Fp1", "Fp2", "Cz", "O1"]
 
@@ -73,7 +81,19 @@ def reve_hub(monkeypatch):
     monkeypatch.setattr(transformers.AutoModel, "from_pretrained", from_pretrained)
 
 
-@pytest.mark.parametrize("model_key", ["cbramod", "luna", "reve"])
+@pytest.mark.parametrize(
+    "model_key",
+    [
+        "cbramod",
+        pytest.param(
+            "luna",
+            marks=pytest.mark.skipif(
+                not LUNA_FEATURES, reason="luna needs braindecode main"
+            ),
+        ),
+        "reve",
+    ],
+)
 def test_continued_weights_reach_embedding_and_fine_tuning(
     offline, reve_hub, tmp_path, model_key
 ):
