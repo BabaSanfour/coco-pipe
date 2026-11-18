@@ -1,0 +1,1 @@
+`continue_pretraining` goes on with the masked-reconstruction pretraining of CBraMod, LUNA or REVE (an approximation, with a new decoder) on unlabelled windows, and saves the weights with the settings and losses. `backend_kwargs={"checkpoint_dir": ...}` loads them in place of the checkpoint's, for embedding extraction and fine-tuning.
