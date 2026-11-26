@@ -13,6 +13,7 @@ from .artifacts import (
     load_fit_artifact,
     load_fit_runs,
     save_fit_artifact,
+    slice_fit_artifact,
     update_runs,
     write_run_status,
 )
@@ -152,6 +153,7 @@ __all__ = [
     # Artifact persistence
     "save_fit_artifact",
     "shepard_diagram_data",
+    "slice_fit_artifact",
     "supports_nested_components",
     "trajectory_acceleration",
     "trajectory_auc_speed",

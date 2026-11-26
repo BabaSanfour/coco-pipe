@@ -974,7 +974,10 @@ def build_flat_condition_section(
 
     container = ctx.container_builder(condition)
     artifacts = {
-        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        str(row["fit_id"]): load_fit_artifact(
+            ctx.output_root / row["artifact_path"],
+            n_components=int(row["n_components"]),
+        )
         for _, row in condition_runs.iterrows()
     }
     fam_label = ctx.family_label
@@ -1514,7 +1517,10 @@ def build_nonflat_condition_section(
     fam_label = ctx.family_label
     section = Section(condition, icon="📊")
     artifacts = {
-        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        str(row["fit_id"]): load_fit_artifact(
+            ctx.output_root / row["artifact_path"],
+            n_components=int(row["n_components"]),
+        )
         for _, row in condition_runs.iterrows()
     }
     unit_label = ctx.unit_label(ctx.analysis_mode.replace("_", " "))
@@ -1795,7 +1801,10 @@ def build_pooled_section(
     fam_label = ctx.family_label
     section = Section("Pooled Multi-condition", icon="🌐")
     artifacts = {
-        str(row["fit_id"]): load_fit_artifact(ctx.output_root / row["artifact_path"])
+        str(row["fit_id"]): load_fit_artifact(
+            ctx.output_root / row["artifact_path"],
+            n_components=int(row["n_components"]),
+        )
         for _, row in pooled_runs.iterrows()
     }
     callout_text = (

@@ -313,11 +313,17 @@ def test_run_fit_group_slices_resumes_and_overwrites(tmp_path, dummy_container):
         ]
 
     first = run_fit_group(requests(overwrite=True))
-    paths = [request["out_path"] for request in requests(overwrite=False)]
-    assert [record["status"] for record in first] == ["success", "success"]
-    assert all(path.is_file() for path in paths)
-    assert load_fit_artifact(paths[0])["embedding"].shape == (100, 2)
-    assert len(run_fit_group(requests(overwrite=False))) == 2
+    # One file for the sweep, at the largest fit's path; every record points at it.
+    path = requests(overwrite=False)[-1]["out_path"]
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+    assert {record["artifact_path"] for record in first} == {
+        str(path.relative_to(tmp_path))
+    }
+    two = load_fit_artifact(path, n_components=2)
+    assert two["embedding"].shape == (100, 2)
+    assert two["fit"]["fit_id"] == first[0]["fit_id"]
+    # A resume reads the file instead of fitting again.
+    assert run_fit_group(requests(overwrite=False)) == first
     again = run_fit_group(requests(overwrite=True))
     assert [record["status"] for record in again] == ["success", "success"]
 

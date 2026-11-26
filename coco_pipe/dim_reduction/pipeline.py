@@ -290,8 +290,12 @@ def run_fit_group(
     (or singleton groups) fall back to an independent :func:`run_fit` per request,
     so behaviour is unchanged for UMAP/t-SNE/ICA/etc.
 
-    Returns one inventory record per request, in the input order's resolution
-    (resumed first, then synthesised).
+    A nested sweep is saved as one file, at the path of its largest request,
+    holding the largest embedding and each dimension's payload and metrics (see
+    :func:`~coco_pipe.dim_reduction.artifacts.slice_fit_artifact`); every record
+    points at it. It is resumed when that file holds every requested dimension.
+
+    Returns one inventory record per request, by increasing ``n_components``.
     """
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
@@ -306,27 +310,26 @@ def run_fit_group(
         return [run_fit(**request, errors=errors) for request in requests]
 
     output_root = requests[0]["output_root"]
-    records: list[dict[str, Any]] = []
-    pending: list[dict[str, Any]] = []
-    for request in requests:
-        out_path = request["out_path"]
-        if out_path.exists() and not request["overwrite"]:
-            artifact = load_fit_artifact(out_path)
-            records.append(
+    requests = sorted(requests, key=lambda r: int(r["fit_payload"]["n_components"]))
+    # One file holds the sweep, at the path of its largest fit.
+    out_path = requests[-1]["out_path"]
+    overwrite = any(request["overwrite"] for request in requests)
+    if out_path.exists() and not overwrite:
+        sweep = load_fit_artifact(out_path)["sweep"] or {}
+        if all(str(r["fit_payload"]["n_components"]) in sweep for r in requests):
+            return [
                 build_record(
-                    artifact["fit"],
+                    sweep[n]["fit"],
                     out_path,
                     output_root,
                     FIT_METRIC_COLUMNS,
-                    artifact["metrics"],
+                    sweep[n]["metrics"],
                 )
-            )
-        else:
-            pending.append(request)
-    if not pending:
-        return records
+                for n in (str(r["fit_payload"]["n_components"]) for r in requests)
+            ]
+    out_path.unlink(missing_ok=True)
 
-    # Fit once at the largest pending target dimension, then slice downward.
+    # Fit once at the largest dimension, then slice downward.
     try:
         container = requests[0]["container"]
         X = np.asarray(container.X)
@@ -335,7 +338,7 @@ def run_fit_group(
         if container.ids is None:
             raise ValueError("Dim-reduction fits expect container.ids to be present.")
         ids = _normalize_ids(container.ids)
-        max_n = max(int(r["fit_payload"]["n_components"]) for r in pending)
+        max_n = int(requests[-1]["fit_payload"]["n_components"])
         reducer = DimReduction(
             method=method,
             n_components=max_n,
@@ -357,50 +360,34 @@ def run_fit_group(
             requests[0]["fit_payload"].get("unit_name"),
             method,
         )
-        for request in pending:
-            records.append(
-                build_record(
-                    {**request["fit_payload"], "status": "failed"},
-                    request["out_path"],
-                    output_root,
-                    FIT_METRIC_COLUMNS,
-                    error=str(err),
-                )
+        return [
+            build_record(
+                {**request["fit_payload"], "status": "failed"},
+                out_path,
+                output_root,
+                FIT_METRIC_COLUMNS,
+                error=str(err),
             )
-        return records
+            for request in requests
+        ]
 
-    for request in pending:
+    records: list[dict[str, Any]] = []
+    sweep: dict[int, dict[str, Any]] = {}
+    for request in requests:
         fit_payload = request["fit_payload"]
-        out_path = request["out_path"]
         n_components = int(fit_payload["n_components"])
         try:
-            if request["overwrite"]:
-                out_path.unlink(missing_ok=True)
             embedding = full_embedding[:, :n_components]
-            components = (
-                None if full_components is None else full_components[:n_components]
-            )
             evr = None if full_evr is None else full_evr[:n_components]
             score_payload = reducer.score(embedding, X=X, metrics=FIT_METRIC_COLUMNS)
             metrics_payload = _metrics_payload_from_scores(
                 dict(score_payload["metrics"])
             )
-
-            diagnostics: dict[str, Any] = {}
-            if components is not None:
-                diagnostics["components"] = components
-            if evr is not None:
-                diagnostics["explained_variance_ratio"] = evr
             synthesized_payload = {**fit_payload, **_evr_scalars(evr)}
-
-            save_fit_artifact(
-                out_path,
-                embedding,
-                ids,
-                synthesized_payload,
-                metrics_payload,
-                diagnostics,
-            )
+            sweep[n_components] = {
+                "fit": synthesized_payload,
+                "metrics": metrics_payload,
+            }
             records.append(
                 build_record(
                     synthesized_payload,
@@ -429,6 +416,22 @@ def run_fit_group(
                     error=str(err),
                 )
             )
+    if sweep:
+        diagnostics: dict[str, Any] = {}
+        if full_components is not None:
+            diagnostics["components"] = full_components
+        if full_evr is not None:
+            diagnostics["explained_variance_ratio"] = full_evr
+        largest = sweep[max(sweep)]
+        save_fit_artifact(
+            out_path,
+            full_embedding,
+            ids,
+            largest["fit"],
+            largest["metrics"],
+            diagnostics,
+            sweep=sweep,
+        )
     return records
 
 
@@ -931,7 +934,10 @@ def build_eval_request(
     relative to *output_root*.
     """
     if fit_artifact is None:
-        fit_artifact = load_fit_artifact(output_root / fit_record["artifact_path"])
+        fit_artifact = load_fit_artifact(
+            output_root / fit_record["artifact_path"],
+            n_components=fit_record.get("n_components"),
+        )
     return {
         "fit_artifact": fit_artifact,
         "container": container,

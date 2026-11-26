@@ -15,6 +15,8 @@ save_fit_artifact
     ``.npz`` file.
 load_fit_artifact
     Read a fit artifact back into a dict.
+slice_fit_artifact
+    One dimension of a fit artifact that holds a nested reducer's sweep.
 load_fit_runs
     Read a JSON runs inventory file back into a list of dicts.
 update_runs
@@ -73,6 +75,7 @@ __all__ = [
     "load_fit_runs",
     # Persistence
     "save_fit_artifact",
+    "slice_fit_artifact",
     "update_runs",
     # Run-level helpers
     "write_run_status",
@@ -86,6 +89,7 @@ def save_fit_artifact(
     fit_payload: dict[str, Any],
     metrics_payload: dict[str, Any],
     diagnostics: dict[str, Any],
+    sweep: dict[int, dict[str, Any]] | None = None,
 ) -> None:
     """Write a fit artifact: one ``.npz`` file at *path*.
 
@@ -109,9 +113,16 @@ def save_fit_artifact(
         Serialisable dict of geometry quality metrics (trustworthiness, …).
     diagnostics:
         Reducer-internal diagnostics.  May be empty.
+    sweep:
+        For a nested reducer fitted once at its largest dimension, each swept
+        ``n_components`` -> ``{"fit": payload, "metrics": metrics}``; the file
+        then holds the whole sweep, read one dimension at a time with
+        :func:`slice_fit_artifact`.
     """
     stem = str(fit_payload.get("artifact_stem") or "dim_reduction_fit")
     meta = {"artifact_stem": stem, "fit": fit_payload, "metrics": metrics_payload}
+    if sweep:
+        meta["sweep"] = {str(n): entry for n, entry in sweep.items()}
     save_npz(
         path,
         embedding=np.asarray(embedding),
@@ -149,13 +160,16 @@ def _embedding_container(
     )
 
 
-def load_fit_artifact(path: Path) -> dict[str, Any]:
+def load_fit_artifact(path: Path, n_components: int | None = None) -> dict[str, Any]:
     """Load a fit artifact written by :func:`save_fit_artifact`.
 
     Parameters
     ----------
     path:
         The artifact's ``.npz`` file.
+    n_components:
+        For a file holding a sweep, the dimension to return (see
+        :func:`slice_fit_artifact`); ``None`` returns the whole file.
 
     Returns
     -------
@@ -172,7 +186,7 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
         diagnostics = dict(npz["diagnostics"][0])
         meta = json.loads(str(npz["meta"]))
     fit = meta["fit"]
-    return {
+    artifact = {
         "embedding": embedding,
         "ids": ids,
         "fit": fit,
@@ -181,6 +195,44 @@ def load_fit_artifact(path: Path) -> dict[str, Any]:
         "manifest": {"artifact_stem": meta["artifact_stem"]},
         "path": path,
         "embedding_container": _embedding_container(embedding, ids, fit),
+        "sweep": meta.get("sweep"),
+    }
+    return (
+        artifact if n_components is None else slice_fit_artifact(artifact, n_components)
+    )
+
+
+def slice_fit_artifact(artifact: dict[str, Any], n_components: int) -> dict[str, Any]:
+    """One dimension of a loaded fit artifact that holds a sweep.
+
+    The embedding, components and explained-variance ratios are cut to their
+    first *n_components*, and the fit payload and metrics are that dimension's.
+    An artifact without a sweep is returned unchanged.
+    """
+    sweep = artifact.get("sweep")
+    if not sweep:
+        return artifact
+    if str(n_components) not in sweep:
+        raise ValueError(
+            f"{artifact['path']} holds n_components {sorted(map(int, sweep))}, "
+            f"not {n_components}."
+        )
+    entry = sweep[str(n_components)]
+    embedding = np.asarray(artifact["embedding"])[:, :n_components]
+    diagnostics = dict(artifact["diagnostics"])
+    for key in ("components", "explained_variance_ratio"):
+        if diagnostics.get(key) is not None:
+            diagnostics[key] = np.asarray(diagnostics[key])[:n_components]
+    return {
+        **artifact,
+        "embedding": embedding,
+        "fit": entry["fit"],
+        "metrics": entry["metrics"],
+        "diagnostics": diagnostics,
+        "embedding_container": _embedding_container(
+            embedding, artifact["ids"], entry["fit"]
+        ),
+        "sweep": None,
     }
 
 
