@@ -12,8 +12,8 @@ run_fit
     Fit one reducer variant on one analysis unit, writing a checkpointed
     artifact directory.
 run_eval
-    Run one post-hoc evaluation of a saved embedding, writing a checkpointed
-    eval artifact directory.
+    Run one post-hoc evaluation of a saved embedding and return its inventory
+    record; nothing is written (the caller's runs inventory is the record).
 build_auto_pooled_eval_spec
     Build the automatic ``condition_separation`` eval spec used when pooling
     is active.
@@ -44,7 +44,6 @@ import pandas as pd
 from coco_pipe.dim_reduction._constants import (
     ARTIFACTS_DIRNAME,
     EVAL_METRIC_COLUMNS,
-    EVALS_SUBDIR,
     FIT_METRIC_COLUMNS,
     FIT_PROVENANCE_FIELDS,
     FITS_SUBDIR,
@@ -54,9 +53,7 @@ from coco_pipe.dim_reduction._constants import (
 )
 from coco_pipe.dim_reduction.artifacts import (
     build_record,
-    load_eval_artifact,
     load_fit_artifact,
-    save_eval_artifact,
     save_fit_artifact,
 )
 from coco_pipe.dim_reduction.config import DEFAULT_EVAL_GROUP_COL, MISSING_EVAL_VALUES
@@ -212,7 +209,7 @@ def run_fit(
         )
         embedding_container = reducer.fit_transform(container)
         embedding = np.asarray(embedding_container.X)
-        score_payload = reducer.score(embedding_container, X=container)
+        reducer.score(embedding_container, X=container)
         score_metrics = dict(reducer.get_metrics())
         metrics_payload = {
             metric_name: (
@@ -223,10 +220,7 @@ def run_fit(
             for metric_name in FIT_METRIC_COLUMNS
         }
 
-        summary = reducer.get_summary()
-        diagnostics = dict(summary.get("diagnostics") or {})
-        diagnostics["score_payload"] = score_payload
-        diagnostics["summary"] = summary
+        diagnostics = dict(reducer.get_summary().get("diagnostics") or {})
         try:
             components = reducer.get_components()
         except Exception:
@@ -392,7 +386,7 @@ def run_fit_group(
                 dict(score_payload["metrics"])
             )
 
-            diagnostics: dict[str, Any] = {"score_payload": score_payload}
+            diagnostics: dict[str, Any] = {}
             if components is not None:
                 diagnostics["components"] = components
             if evr is not None:
@@ -452,32 +446,11 @@ def _eval_id(fit_id: str, eval_spec: dict[str, Any]) -> str:
     )
 
 
-def _eval_artifact_stem(
-    fit_payload: dict[str, Any],
-    eval_spec: dict[str, Any],
-    eval_id: str,
-) -> str:
-    return "_".join(
-        [
-            "eval",
-            slug(fit_payload["scope"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["condition"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["unit_key"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["reducer"], max_len=STEM_SLUG_MAX_LEN),
-            f"n{int(fit_payload['n_components'])}",
-            slug(eval_spec["name"], max_len=STEM_SLUG_MAX_LEN),
-            str(fit_payload["fit_id"]),
-            eval_id,
-        ]
-    )
-
-
 def _base_eval_payload(
     fit_payload: dict[str, Any],
     eval_spec: dict[str, Any],
     eval_id: str,
     *,
-    artifact_stem: str,
     n_samples: int = 0,
     n_groups: int = 0,
     n_labels: int = 0,
@@ -498,7 +471,6 @@ def _base_eval_payload(
             "n_samples": int(n_samples),
             "n_groups": int(n_groups),
             "n_labels": int(n_labels),
-            "artifact_stem": artifact_stem,
         }
     )
     return payload
@@ -508,18 +480,15 @@ def run_eval(
     fit_artifact: dict[str, Any],
     container: DataContainer,
     eval_spec: dict[str, Any],
-    out_path: Path,
     output_root: Path,
-    overwrite: bool,
     *,
     errors: ErrorMode = "raise",
 ) -> dict[str, Any]:
-    """Run one post-hoc evaluation and return an eval-runs inventory record.
+    """Run one post-hoc evaluation and return its eval-runs inventory record.
 
-    The fit provenance is read from ``fit_artifact["fit"]``.  If the artifact
-    *out_path* already exists and *overwrite* is ``False`` the existing eval
-    artifact is loaded and its inventory record is returned immediately
-    (checkpoint resume).
+    Nothing is written: the record, kept in the caller's runs inventory, is the
+    evaluation's only copy, and its ``artifact_path`` is the evaluated fit's.
+    The fit provenance is read from ``fit_artifact["fit"]``.
 
     Parameters
     ----------
@@ -531,13 +500,8 @@ def run_eval(
     eval_spec:
         Eval specification dict with keys ``name``, ``target_col``,
         ``group_col``, ``filters``, ``label_map``.
-    out_path:
-        Artifact file to write (or resume from).
     output_root:
         Root of the entire run output.
-    overwrite:
-        When ``True``, an existing *out_path* artifact is deleted before
-        evaluating.
     errors:
         ``"raise"`` (default) propagates exceptions; ``"record"`` catches them,
         logs, and returns a failed inventory record.
@@ -551,20 +515,8 @@ def run_eval(
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
     fit_payload = dict(fit_artifact["fit"])
+    fit_path = Path(fit_artifact["path"])
     try:
-        if out_path.exists() and not overwrite:
-            eval_payload = load_eval_artifact(out_path)
-            return build_record(
-                eval_payload,
-                out_path,
-                output_root,
-                EVAL_METRIC_COLUMNS,
-                eval_payload.get("metrics"),
-            )
-
-        if overwrite:
-            out_path.unlink(missing_ok=True)
-
         selected_index, selected_ids, labels, groups = prepare_eval_inputs(
             container=container,
             fit_ids=_normalize_ids(fit_artifact["ids"]),
@@ -579,33 +531,25 @@ def run_eval(
         if embedding.ndim != 2:
             raise ValueError("run_eval expects a 2D embedding artifact.")
 
-        score_payload = evaluate_embedding(
-            embedding,
-            method_name=fit_payload["reducer"],
-            metrics=EVAL_METRIC_COLUMNS,
-            labels=labels,
-            groups=groups,
+        metrics_payload = dict(
+            evaluate_embedding(
+                embedding,
+                method_name=fit_payload["reducer"],
+                metrics=EVAL_METRIC_COLUMNS,
+                labels=labels,
+                groups=groups,
+            )["metrics"]
         )
-        metrics_payload = dict(score_payload["metrics"])
-        artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-        eval_payload = {
-            **_base_eval_payload(
-                fit_payload,
-                eval_spec,
-                eval_id,
-                artifact_stem=artifact_stem,
-                n_samples=len(selected_ids),
-                n_groups=int(pd.Index(groups).nunique()),
-                n_labels=int(pd.Index(labels).nunique()),
-            ),
-            "metrics": metrics_payload,
-            "records": score_payload.get("records", []),
-            "metadata": score_payload.get("metadata", {}),
-            "artifacts": score_payload.get("artifacts", {}),
-        }
-        save_eval_artifact(out_path, eval_payload)
+        eval_payload = _base_eval_payload(
+            fit_payload,
+            eval_spec,
+            eval_id,
+            n_samples=len(selected_ids),
+            n_groups=int(pd.Index(groups).nunique()),
+            n_labels=int(pd.Index(labels).nunique()),
+        )
         return build_record(
-            eval_payload, out_path, output_root, EVAL_METRIC_COLUMNS, metrics_payload
+            eval_payload, fit_path, output_root, EVAL_METRIC_COLUMNS, metrics_payload
         )
     except Exception as err:
         if errors == "raise":
@@ -620,13 +564,7 @@ def run_eval(
         )
         try:
             eval_id = _eval_id(str(fit_payload["fit_id"]), eval_spec)
-            artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-            eval_payload = _base_eval_payload(
-                fit_payload,
-                eval_spec,
-                eval_id,
-                artifact_stem=artifact_stem,
-            )
+            eval_payload = _base_eval_payload(fit_payload, eval_spec, eval_id)
         except Exception:
             eval_payload = {
                 "fit_id": fit_payload.get("fit_id"),
@@ -635,7 +573,7 @@ def run_eval(
             }
         return build_record(
             {**eval_payload, "status": "failed"},
-            out_path,
+            fit_path,
             output_root,
             EVAL_METRIC_COLUMNS,
             error=str(err),
@@ -985,35 +923,18 @@ def build_eval_request(
     eval_spec: dict[str, Any],
     container: DataContainer,
     output_root: Path,
-    overwrite: bool = False,
     fit_artifact: dict[str, Any] | None = None,
-    artifact_path: Path | None = None,
-    artifact_path_factory: Callable[[dict[str, Any], dict[str, Any], Path], Path]
-    | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_eval`.
 
     By default, the fit artifact is loaded from ``fit_record['artifact_path']``
-    relative to *output_root* and the eval artifact is placed under the flat
-    ``artifacts/evals`` directory.
+    relative to *output_root*.
     """
     if fit_artifact is None:
         fit_artifact = load_fit_artifact(output_root / fit_record["artifact_path"])
-    fit_payload = dict(fit_artifact["fit"])
-    eval_id = _eval_id(str(fit_payload["fit_id"]), eval_spec)
-    artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-    if artifact_path is None:
-        if artifact_path_factory is not None:
-            artifact_path = artifact_path_factory(fit_payload, eval_spec, output_root)
-        else:
-            artifact_path = (
-                output_root / ARTIFACTS_DIRNAME / EVALS_SUBDIR / f"{artifact_stem}.json"
-            )
     return {
         "fit_artifact": fit_artifact,
         "container": container,
         "eval_spec": eval_spec,
-        "out_path": Path(artifact_path),
         "output_root": output_root,
-        "overwrite": bool(overwrite),
     }

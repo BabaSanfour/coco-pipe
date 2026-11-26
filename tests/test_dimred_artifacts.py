@@ -11,10 +11,8 @@ from coco_pipe.dim_reduction.artifacts import (
     _embedding_container,
     build_availability_record,
     build_record,
-    load_eval_artifact,
     load_fit_artifact,
     load_fit_runs,
-    save_eval_artifact,
     save_fit_artifact,
     update_runs,
     write_run_status,
@@ -61,15 +59,6 @@ def test_embedding_container_returns_none_for_non_2d():
     # Native trajectory tensors do not map onto a component axis.
     traj = np.zeros((4, 10, 2))
     assert _embedding_container(traj, np.arange(4), {"reducer": "PCA"}) is None
-
-
-def test_save_and_load_eval_artifact(tmp_path):
-    eval_payload = {"score": 0.95, "artifact_stem": "my_eval"}
-    path = tmp_path / "my_eval.json"
-    save_eval_artifact(path, eval_payload)
-
-    assert [p.name for p in tmp_path.iterdir()] == ["my_eval.json"]
-    assert load_eval_artifact(path) == eval_payload
 
 
 def test_update_and_load_runs(tmp_path):

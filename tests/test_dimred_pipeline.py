@@ -120,34 +120,13 @@ def test_run_eval(tmp_path, dummy_container):
         "filters": [],
         "label_map": {},
     }
-    eval_out = tmp_path / "eval_out.json"
-
-    # Run eval
-    record = run_eval(
-        fit_artifact,
-        dummy_container,
-        eval_spec,
-        eval_out,
-        tmp_path,
-        overwrite=True,
-    )
+    # The record is the eval's only output; it points at the evaluated fit.
+    record = run_eval(fit_artifact, dummy_container, eval_spec, tmp_path)
     assert record["status"] == "success"
-    assert eval_out.is_file()
+    assert record["artifact_path"] == "fit_out.npz"
+    assert [p.name for p in tmp_path.iterdir()] == ["fit_out.npz"]
     assert 0.0 <= record[SEPARATION_RF_METRIC_KEY] <= 1.0
     assert 0.0 <= record[SEPARATION_METRIC_KEY] <= 1.0
-
-    # Run eval without overwrite
-    record2 = run_eval(
-        fit_artifact,
-        dummy_container,
-        eval_spec,
-        eval_out,
-        tmp_path,
-        overwrite=False,
-    )
-    assert record2["status"] == "success"
-    assert record2[SEPARATION_RF_METRIC_KEY] == record[SEPARATION_RF_METRIC_KEY]
-    assert record2[SEPARATION_METRIC_KEY] == record[SEPARATION_METRIC_KEY]
 
     # run_eval is tolerant of a DataContainer embedding in the fit artifact.
     assert isinstance(fit_artifact["embedding_container"], DataContainer)
@@ -155,23 +134,14 @@ def test_run_eval(tmp_path, dummy_container):
         **fit_artifact,
         "embedding": fit_artifact["embedding_container"],
     }
-    record3 = run_eval(
-        container_artifact,
-        dummy_container,
-        eval_spec,
-        tmp_path / "eval_out_container",
-        tmp_path,
-        overwrite=True,
-    )
+    record3 = run_eval(container_artifact, dummy_container, eval_spec, tmp_path)
     assert record3["status"] == "success"
 
     bad_record = run_eval(
         fit_artifact,
         dummy_container,
         {**eval_spec, "target_col": "missing_col"},
-        tmp_path / "eval_out_failed",
         tmp_path,
-        overwrite=True,
         errors="record",
     )
     assert bad_record["status"] == "failed"
@@ -511,14 +481,11 @@ def test_build_eval_request(tmp_path, dummy_container):
         eval_spec=eval_spec,
         container=dummy_container,
         output_root=tmp_path,
-        overwrite=True,
     )
-    assert request["out_path"].parent == tmp_path / "artifacts" / "evals"
     res = run_eval(**request)
     assert res["status"] == "success"
 
     request["eval_spec"] = {**eval_spec, "target_col": "missing_col"}
-    request["out_path"] = tmp_path / "eval_out_failed"
     res2 = run_eval(**request, errors="record")
     assert res2["status"] == "failed"
 

@@ -96,8 +96,6 @@ ARTIFACTS_DIRNAME = "artifacts"
 """Top-level directory under ``output_root`` that holds all artifacts."""
 FITS_SUBDIR = "fits"
 """Subdirectory of ``artifacts`` for the fit artifacts (one ``.npz`` each)."""
-EVALS_SUBDIR = "evals"
-"""Subdirectory of ``artifacts`` for the eval artifacts (one ``.json`` each)."""
 
 STEM_SLUG_MAX_LEN = 32
 """Maximum slug length for each component of an artifact stem."""

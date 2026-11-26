@@ -2,7 +2,8 @@
 Artifact persistence helpers for dimensionality-reduction runs.
 
 This module owns the save/load/update layer that the dim-reduction pipeline
-uses to checkpoint fit results and post-hoc eval results to disk.  Keeping
+uses to checkpoint fit results to disk; eval results live only in the runs
+inventory.  Keeping
 these functions in coco-pipe (rather than in a consumer project) means any
 project that runs the dim-reduction pipeline can share the same artifact
 format without duplicating the serialization logic.
@@ -12,10 +13,6 @@ Public API
 save_fit_artifact
     Write embedding, ids, fit payload, metrics, and diagnostics to one
     ``.npz`` file.
-save_eval_artifact
-    Write an eval payload to one JSON file.
-load_eval_artifact
-    Read an eval artifact back into a dict.
 load_fit_artifact
     Read a fit artifact back into a dict.
 load_fit_runs
@@ -33,7 +30,7 @@ SEPARATION_RF_METRIC_KEY
 FIT_METRIC_COLUMNS
     Ordered list of geometry quality metric names written by fit artifacts.
 EVAL_METRIC_COLUMNS
-    Ordered list of eval metric names written by eval artifacts.
+    Ordered list of eval metric names in eval inventory records.
 FIT_RUN_KEY_FIELDS
     Fields that uniquely identify a fit run in the runs inventory.
 EVAL_RUN_KEY_FIELDS
@@ -72,10 +69,8 @@ __all__ = [
     "build_availability_record",
     # Record builder
     "build_record",
-    "load_eval_artifact",
     "load_fit_artifact",
     "load_fit_runs",
-    "save_eval_artifact",
     # Persistence
     "save_fit_artifact",
     "update_runs",
@@ -124,19 +119,6 @@ def save_fit_artifact(
         diagnostics=np.asarray([diagnostics], dtype=object),
         meta=np.asarray(json.dumps(meta)),
     )
-
-
-def save_eval_artifact(path: Path, eval_payload: dict[str, Any]) -> None:
-    """Write an eval artifact: *eval_payload* as one JSON file at *path*.
-
-    It is written atomically, so a file at *path* is a complete artifact.
-    """
-    write_json(path, eval_payload, indent=2)
-
-
-def load_eval_artifact(path: Path) -> dict[str, Any]:
-    """Load an eval artifact written by :func:`save_eval_artifact`."""
-    return read_json(path)
 
 
 def _embedding_container(
