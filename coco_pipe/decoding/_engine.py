@@ -239,6 +239,7 @@ def fit_and_score_fold(
     sample_weight: np.ndarray | None = None,
     score_by: str | None = None,
     erasure_condition_column: str | None = None,
+    keep_test_embeddings: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -288,6 +289,9 @@ def fit_and_score_fold(
     erasure_condition_column : str, optional
         Sample-metadata column whose training-fold slice is given to the
         erasure step's fit as ``condition``.
+    keep_test_embeddings : bool, default False
+        Also keep the test rows' embeddings (the fitted estimator's
+        ``transform``) with this fold's predictions, under ``"embedding"``.
 
     Returns
     -------
@@ -426,6 +430,10 @@ def fit_and_score_fold(
         captured_warnings.extend(
             warning_records_to_dict("decision_function", warning_records)
         )
+
+    if keep_test_embeddings:
+        # from the model fitted on this fold's training rows only
+        fold_data["embedding"] = np.asarray(prediction_estimator.transform(X_test))
 
     # 4. Extract Feature Importances (Zero Guesswork)
     imp = (

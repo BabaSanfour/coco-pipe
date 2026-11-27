@@ -664,6 +664,20 @@ class TrainerConfig(BaseModel):
     validation_fraction: float = Field(0.2, ge=0.0, lt=1.0)
     lr: float = Field(1e-3, gt=0, description="AdamW learning rate.")
     weight_decay: float = Field(0.01, ge=0, description="AdamW weight decay.")
+    head_weight_decay: float | None = Field(
+        None,
+        ge=0,
+        description="AdamW weight decay of the head. None uses weight_decay.",
+    )
+    backbone_dropout: float | None = Field(
+        None,
+        ge=0,
+        lt=1,
+        description=(
+            "Probability of every dropout outside the head, attention dropout "
+            "included. None keeps the model's. REVE has no dropout and refuses it."
+        ),
+    )
     lr_warmup_epochs: int = Field(
         0,
         ge=0,
@@ -1330,6 +1344,15 @@ class ExperimentConfig(BaseModel):
     )
     n_jobs: int = -1
     verbose: bool = True
+    keep_test_embeddings: bool = Field(
+        False,
+        description=(
+            "Keep, with each outer fold's predictions, the test rows' embeddings: "
+            "the fitted estimator's transform, so each sample's comes from the "
+            "one fold that did not train on it. Read them with "
+            "ExperimentResult.get_embeddings. The estimator must have transform."
+        ),
+    )
     low_memory: bool = Field(
         False,
         description=(

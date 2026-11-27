@@ -526,6 +526,58 @@ class ExperimentResult:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
 
+    def get_embeddings(self, model: str) -> tuple[pd.DataFrame, np.ndarray]:
+        """
+        Get the test rows' embeddings of one model, kept by its outer folds.
+
+        Needs ``ExperimentConfig(keep_test_embeddings=True)``. Each sample's
+        embedding comes from the one outer fold that held it out, so none comes
+        from a model trained on it. Folds fit separate models, so embeddings of
+        different folds lie in different spaces.
+
+        Parameters
+        ----------
+        model : str
+            The name of the model.
+
+        Returns
+        -------
+        rows : pd.DataFrame
+            Fold, SampleIndex, SampleID and Group of each row.
+        embeddings : np.ndarray of shape (n_rows, n_features)
+            The embeddings, in the order of ``rows``.
+
+        Raises
+        ------
+        ValueError
+            If the model kept no embeddings.
+        """
+        from ._diagnostics import optional_values
+
+        predictions = self.raw.get(model, {}).get("predictions", [])
+        if not predictions or any("embedding" not in fold for fold in predictions):
+            raise ValueError(
+                f"{model!r} kept no embeddings: run with "
+                "ExperimentConfig(keep_test_embeddings=True)."
+            )
+        rows = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "Fold": fold_idx,
+                        "SampleIndex": fold["sample_index"],
+                        "SampleID": fold["sample_id"],
+                        "Group": optional_values(
+                            fold.get("group"), len(fold["sample_index"])
+                        ),
+                    }
+                )
+                for fold_idx, fold in enumerate(predictions)
+            ],
+            ignore_index=True,
+        )
+        return rows, np.concatenate([fold["embedding"] for fold in predictions])
+
     def get_splits(self, model: str | None = None) -> pd.DataFrame:
         """
         Get outer-CV train/test membership in long format for all models.

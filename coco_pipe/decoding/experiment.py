@@ -886,6 +886,7 @@ class Experiment:
                     if self.config.erasure.enabled
                     else None
                 ),
+                keep_test_embeddings=self.config.keep_test_embeddings,
             )
             for train_idx, test_idx in splits
         )

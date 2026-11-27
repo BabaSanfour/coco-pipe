@@ -133,6 +133,42 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 return candidate
         raise NotImplementedError(f"{type(self).__name__} does not expose its head.")
 
+    def set_backbone_dropout(self, p: float) -> None:
+        """Give every dropout outside the head the probability ``p``.
+
+        That is every dropout module (braindecode's attention dropouts among
+        them) and the attention dropout that :class:`torch.nn.MultiheadAttention`
+        keeps as a number. Stochastic depth (``DropPath``) is not dropout and is
+        left as it is.
+
+        Raises
+        ------
+        ValueError
+            If the backbone has no dropout (REVE).
+        """
+        import torch
+
+        from . import _training
+
+        in_head = {id(module) for module in self.head_module().modules()}
+        changed = 0
+        for component in self.checkpoint_components().values():
+            for module in component.modules():
+                if id(module) in in_head:
+                    continue
+                if isinstance(module, _training.DROPOUT_MODULES):
+                    module.p = p
+                elif isinstance(module, torch.nn.MultiheadAttention):
+                    module.dropout = p
+                else:
+                    continue
+                changed += 1
+        if not changed:
+            raise ValueError(
+                f"{self.get_embedding_info().display_name} has no dropout in its "
+                "backbone: leave backbone_dropout unset."
+            )
+
     @abstractmethod
     def reset_head(self, n_outputs: int) -> BackendBase:
         """Replace the classification head without changing backbone weights.
@@ -232,6 +268,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             max_epochs : int, default 10
             lr : float, default 1e-3
             weight_decay : float, default 0.01
+            head_weight_decay : float or None, default None (weight_decay)
+            backbone_dropout : float or None, default None (the model's)
             batch_size : int, default 32
             lr_warmup_epochs : int, default 0
             accumulate_grad_batches : int, default 1
@@ -390,6 +428,17 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         )
         if self._n_outputs != out_dim:
             self.reset_head(out_dim)
+        if fit_params.get("backbone_dropout") is not None:
+            self.set_backbone_dropout(fit_params["backbone_dropout"])
+        param_groups = []
+        if fit_params.get("head_weight_decay") is not None:
+            # one skorch parameter group: the head, by its name in the training module
+            head = self.head_module()
+            module = self._get_skorch_module()(self, out_dim)
+            name = next(name for name, child in module.named_modules() if child is head)
+            param_groups = [
+                (f"{name}.*", {"weight_decay": fit_params["head_weight_decay"]})
+            ]
         net_cls = (
             NeuralNetClassifier
             if self._task == "classification"
@@ -512,6 +561,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                 max_epochs=max_epochs,
                 optimizer=torch.optim.AdamW,
                 optimizer__weight_decay=fit_params.get("weight_decay", 0.01),
+                optimizer__param_groups=param_groups,
                 lr=lr,
                 batch_size=fit_params.get("batch_size", 32),
                 # skorch does not shuffle by default, and trials arrive ordered

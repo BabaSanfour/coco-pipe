@@ -174,6 +174,76 @@ def test_fit_predict_and_reset_head(offline):
     assert backend.predict_proba(X).shape == (4, 3)
 
 
+@pytest.mark.parametrize("model_key", ["cbramod", "ctnet"])
+def test_dropout_and_head_weight_decay_reach_the_model(offline, model_key):
+    # CBraMod has torch's attention, CTNet braindecode's
+    weights = {"pretrained": False, "seed": 0} if model_key == "ctnet" else {}
+    backend, X = _load(model_key, "full", **weights)
+    backend.fit(
+        X,
+        np.array([0, 1, 0, 1]),
+        max_epochs=1,
+        validation_fraction=0,
+        backbone_dropout=0.1,
+        head_weight_decay=0.5,
+    )
+
+    head = backend.head_module()
+    in_head = {id(module) for module in head.modules()}
+    backbone = [
+        getattr(module, name)
+        for module in backend._model.modules()
+        if id(module) not in in_head
+        for name in ("p", "dropout")
+        if isinstance(getattr(module, name, None), float)
+    ]
+    assert len(backbone) > 2 and set(backbone) == {0.1}
+    decay = {
+        group["weight_decay"]: {id(p) for p in group["params"]}
+        for group in backend._net_.optimizer_.param_groups
+    }
+    assert decay.keys() == {0.01, 0.5}
+    assert decay[0.5] == {id(p) for p in head.parameters()}
+
+
+def test_experiment_keeps_each_folds_test_embeddings():
+    from coco_pipe.decoding import (
+        CVConfig,
+        Experiment,
+        ExperimentConfig,
+        NeuralFineTuneConfig,
+    )
+
+    X = np.random.default_rng(0).normal(scale=20, size=(16, 19, 256))
+    y = np.repeat([0, 1], 8)
+    groups = np.repeat([f"s{index}" for index in range(8)], 2)
+    ids = [f"w{index:02d}" for index in range(16)]
+    model = NeuralFineTuneConfig(
+        model_key="eegnet",
+        sfreq=128,
+        ch_names=DEFAULT_CHANNELS,
+        device={"device": "cpu"},
+        backend_kwargs={"pretrained": False, "seed": 0},
+        trainer={"max_epochs": 1, "batch_size": 4},
+    )
+    config = ExperimentConfig(
+        models={"eegnet": model},
+        cv=CVConfig(strategy="stratified_group_kfold", n_splits=2, group_key="Subject"),
+        metrics=["accuracy"],
+        keep_test_embeddings=True,
+        n_jobs=1,
+    )
+    result = Experiment(config).run(X, y, groups=groups, sample_ids=ids)
+
+    rows, embeddings = result.get_embeddings("eegnet")
+    # every window once, from the fold that held it out
+    assert sorted(rows["SampleID"]) == ids
+    splits = result.get_splits("eegnet")
+    test = splits[splits["Set"] == "test"].set_index("SampleID")["Fold"]
+    assert rows.set_index("SampleID")["Fold"].sort_index().equals(test.sort_index())
+    assert embeddings.shape == (16, 128)  # EEGNet's final-layer input, 2 s
+
+
 def _zscore(X):
     return (X - X.mean(-1, keepdims=True)) / X.std(-1, ddof=1, keepdims=True)
 

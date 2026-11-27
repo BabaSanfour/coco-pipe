@@ -226,6 +226,38 @@ QLoRA refuses it.
    * - ``dropout``
      - Dropout on LoRA layers. Default 0.0.
 
+2.3 Regularisation and Fine-Tuned Embeddings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``TrainerConfig`` sets the dropout of the backbone, and the weight decay of the
+head apart from that of the backbone. ``None`` keeps the model's own. Like
+``lr``, each can be tuned with a grid such as
+``grids={"model": {"trainer__backbone_dropout": [0.1, 0.3]}}``.
+
+.. code-block:: python
+
+   NeuralFineTuneConfig(
+       ...,
+       trainer=TrainerConfig(
+           backbone_dropout=0.2,    # every dropout outside the head
+           weight_decay=0.01,
+           head_weight_decay=0.1,   # AdamW weight decay of the head alone
+       ),
+   )
+
+``backbone_dropout`` reaches every dropout module of the backbone, attention
+dropouts included, and the attention dropout that torch's
+``MultiheadAttention`` (CBraMod, LUNA) keeps as a number. Stochastic depth is
+left as it is. REVE has no dropout and refuses it.
+
+With ``ExperimentConfig(keep_test_embeddings=True)``, each outer fold keeps the
+embeddings of its test windows, from its fine-tuned weights
+(``FoundationClassifier.transform``), with its predictions;
+``result.get_embeddings(model)`` returns them with their fold, sample id and
+group. Each window's embedding comes from the one fold that held it out, so
+none comes from a model trained on it; folds fit separate models, so
+embeddings of different folds lie in different spaces.
+
 ---
 
 3. Diagnostic Artifacts

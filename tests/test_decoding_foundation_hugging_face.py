@@ -387,6 +387,11 @@ def test_frozen_fit_trains_the_head_alone(hub):
     assert changed == {"backbone": True, "head": True}
 
 
+def test_reve_refuses_backbone_dropout(hub):
+    with pytest.raises(ValueError, match="no dropout in its backbone"):
+        _load("full").set_backbone_dropout(0.1)
+
+
 def test_configure_peft_adds_adapters_to_a_loaded_backbone(hub):
     backend = _load("frozen")
     backend.configure_peft({"r": 2, "target_modules": "all-linear"})

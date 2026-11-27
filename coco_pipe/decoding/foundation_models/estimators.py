@@ -251,6 +251,8 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             validation_fraction=trainer.get("validation_fraction", 0.2),
             lr=trainer.get("lr", 1e-3),
             weight_decay=trainer.get("weight_decay", 0.01),
+            head_weight_decay=trainer.get("head_weight_decay"),
+            backbone_dropout=trainer.get("backbone_dropout"),
             early_stopping_patience=trainer.get("early_stopping_patience"),
             lr_warmup_epochs=trainer.get("lr_warmup_epochs", 0),
             accumulate_grad_batches=trainer.get("accumulate_grad_batches", 1),
@@ -332,6 +334,19 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         check_is_fitted(self)
         return np.asarray(self.backend_.predict_proba(self.prepared_.adapt(X)))
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Return the window embeddings of the fitted backbone.
+
+        The vector :class:`FrozenBackboneTransformer` gives, here from the
+        weights this fit left; for CTNet, Deep4Net, EEGNet and
+        ShallowFBCSPNet, the flattened input of their final layer. With
+        ``ExperimentConfig(keep_test_embeddings=True)``, each outer fold keeps
+        those of its test rows.
+        """
+        check_is_fitted(self)
+        values = np.asarray(self.backend_.transform(self.prepared_.adapt(X)))
+        return values.reshape(len(values), -1)
 
     def release_memory(self) -> None:
         """Release the fitted backend's torch modules (see BackendBase)."""

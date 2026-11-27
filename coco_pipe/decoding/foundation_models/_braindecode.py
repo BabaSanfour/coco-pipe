@@ -407,6 +407,10 @@ class BrainDecodeBackend(BackendBase):
 
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
+        if model_key in {"ctnet", "deep4net", "eegnet", "shallowfbcspnet"}:
+            # what their final layer reads, flattened: its last axis is time
+            out = model(tensor, return_features=True)
+            return out["features"].flatten(start_dim=1)
         if model_key == "bendr":
             # BENDR's own features are the output at the start token, which
             # pretraining never trained (Kostas et al. 2021), so they barely

@@ -44,6 +44,17 @@ class FocalLoss(torch.nn.Module):
         return (weight * loss).sum() / weight.sum()
 
 
+# torch's dropout modules, whose probability is ``p``
+DROPOUT_MODULES = (
+    torch.nn.Dropout,
+    torch.nn.Dropout1d,
+    torch.nn.Dropout2d,
+    torch.nn.Dropout3d,
+    torch.nn.AlphaDropout,
+    torch.nn.FeatureAlphaDropout,
+)
+
+
 def warmup_cosine(
     epoch: int, *, warmup_epochs: int, max_epochs: int, floor: float = 0.01
 ) -> float:
