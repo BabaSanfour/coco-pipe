@@ -24,7 +24,11 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
-from sklearn.feature_selection import f_classif, f_regression
+from sklearn.feature_selection import (
+    SequentialFeatureSelector,
+    f_classif,
+    f_regression,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.multiclass import type_of_target
@@ -33,7 +37,6 @@ from coco_pipe.utils import get_environment_info
 
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
 from ._engine import (
-    GroupedSequentialFeatureSelector,
     _SafeSelectKBest,
     fit_and_score_fold,
 )
@@ -485,7 +488,7 @@ class Experiment:
             n_to_select = fs_conf.n_features
             if n_to_select is None and fs_conf.tol is not None:
                 n_to_select = "auto"
-            sfs = GroupedSequentialFeatureSelector(
+            sfs = SequentialFeatureSelector(
                 estimator=clone(estimator),
                 n_features_to_select=n_to_select,
                 tol=fs_conf.tol,

@@ -12,7 +12,6 @@ from sklearn.preprocessing import StandardScaler
 
 from coco_pipe.decoding import Experiment, ExperimentConfig
 from coco_pipe.decoding._engine import (
-    GroupedSequentialFeatureSelector,
     _release_foundation_memory,
     _SafeSelectKBest,
     compact_search_results,
@@ -223,10 +222,6 @@ def test_fit_estimator_complex():
         X,
         y,
         groups,
-        MockConfig(),
-        MockConfig(
-            enabled=True, cv=SimpleNamespace(strategy="group_kfold", n_splits=2)
-        ),
     )
 
 
@@ -263,14 +258,18 @@ def test_fit_estimator_calibration_group_cv():
     )
     groups = np.repeat([0, 1], 5)
 
-    cal_cfg = SimpleNamespace(cv=SimpleNamespace(strategy="group_kfold", n_splits=2))
-    cal = CalibratedClassifierCV(LogisticRegression(), cv=GroupKFold(n_splits=2))
+    class RecordingGroupKFold(GroupKFold):
+        def split(self, X, y=None, groups=None):
+            self.groups_ = groups
+            return super().split(X, y, groups)
 
-    fit_estimator(cal, X, y, groups, MockConfig(), cal_cfg)
+    cal = CalibratedClassifierCV(
+        Pipeline([("clf", LogisticRegression())]), cv=RecordingGroupKFold(n_splits=2)
+    )
 
-    from coco_pipe.decoding._engine import _CVWithGroups
+    fit_estimator(cal, X, y, groups)
 
-    assert isinstance(cal.cv, _CVWithGroups)
+    np.testing.assert_array_equal(cal.cv.groups_, groups)
 
 
 def test_importance_extraction_calibration_averaging():
@@ -376,8 +375,6 @@ def test_fit_estimator_routes_sample_weight():
         np.zeros((3, 2)),
         np.array([0, 1, 0]),
         None,
-        MockConfig(),
-        MockConfig(),
         sample_weight=sw,
     )
 
@@ -394,8 +391,6 @@ def test_fit_estimator_no_sample_weight_when_none():
         np.zeros((3, 2)),
         np.array([0, 1, 0]),
         None,
-        MockConfig(),
-        MockConfig(),
         sample_weight=None,
     )
 
@@ -423,8 +418,6 @@ def test_fit_estimator_refuses_a_clf_without_sample_weight():
             np.zeros((3, 2)),
             np.array([0, 1, 0]),
             None,
-            MockConfig(),
-            MockConfig(),
             sample_weight=sw,
         )
 
@@ -550,17 +543,45 @@ def test_experiment_run_rejects_length_mismatch():
         Experiment(config).run(X, y, sample_weight=np.ones(10))
 
 
-def test_grouped_sfs():
-    from sklearn.model_selection import KFold
+def test_grouped_feature_selection_gets_the_groups(monkeypatch):
+    from sklearn.model_selection import StratifiedGroupKFold
 
-    sfs = GroupedSequentialFeatureSelector(
-        LogisticRegression(), n_features_to_select=1, cv=KFold(2)
+    from coco_pipe.decoding.configs import (
+        CVConfig,
+        FeatureSelectionConfig,
+        LogisticRegressionConfig,
     )
-    X = np.random.randn(10, 3)
-    y = np.array([0, 1] * 5)
-    groups = np.array([0] * 5 + [1] * 5)
-    sfs.fit_transform(X, y, groups=groups)
-    assert sfs.n_features_to_select_ == 1
+
+    seen = []
+    split = StratifiedGroupKFold.split
+
+    def recording_split(self, X, y=None, groups=None):
+        seen.append(groups is not None)
+        return split(self, X, y, groups)
+
+    monkeypatch.setattr(StratifiedGroupKFold, "split", recording_split)
+    subject = np.repeat(np.arange(12), 4)
+    y = subject % 2
+    X = np.random.default_rng(0).normal(size=(48, 3)) + y[:, None]
+    config = ExperimentConfig(
+        task="classification",
+        models={"lr": LogisticRegressionConfig()},
+        metrics=["accuracy"],
+        cv=CVConfig(strategy="stratified_group_kfold", n_splits=3, group_key="Subject"),
+        feature_selection=FeatureSelectionConfig(
+            enabled=True,
+            method="sfs",
+            n_features=1,
+            cv=CVConfig(strategy="stratified_group_kfold", n_splits=2),
+        ),
+        n_jobs=1,
+        verbose=False,
+    )
+    result = Experiment(config).run(X, y, groups=subject)
+
+    assert "error" not in result.raw["lr"]
+    # the outer and every inner split, the selector's through metadata routing
+    assert len(seen) > 3 and all(seen)
 
 
 def test_safe_select_k_best():
@@ -611,7 +632,6 @@ def test_fit_estimator_pipeline_groups():
             ("clf", LogisticRegression()),
         ]
     )
-    fs_cfg = FeatureSelectionConfig(enabled=True, method="k_best")
     X = np.random.randn(10, 3)
     y = np.array([0, 1] * 5)
     groups = np.array([0] * 5 + [1] * 5)
@@ -621,8 +641,6 @@ def test_fit_estimator_pipeline_groups():
         X,
         y,
         groups,
-        feature_selection_config=fs_cfg,
-        calibration_config=None,
         sample_weight=sample_weight,
     )
     assert hasattr(pipe.named_steps["clf"], "coef_")
@@ -644,9 +662,6 @@ def test_extract_feature_importances_pipeline():
 
 def test_fit_and_score_fold_needs_group_routing():
     from coco_pipe.decoding._engine import fit_and_score_fold
-    from coco_pipe.decoding.configs import (
-        FeatureSelectionConfig,
-    )
     from coco_pipe.decoding.scalers import SubjectStandardScaler
 
     pipe = Pipeline(
@@ -719,7 +734,6 @@ def test_extract_metadata_fs():
     from sklearn.pipeline import Pipeline
 
     from coco_pipe.decoding._engine import extract_metadata
-    from coco_pipe.decoding.configs import FeatureSelectionConfig
 
     pipe = Pipeline([("fs", _SafeSelectKBest(k=2)), ("clf", LogisticRegression())])
     X = np.random.randn(10, 3)

@@ -17,7 +17,6 @@ from typing import Any
 
 import joblib
 import numpy as np
-import pandas as pd
 from sklearn import config_context
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import (
@@ -27,12 +26,11 @@ from sklearn.feature_selection import (
 )
 from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
+from sklearn.utils.metadata_routing import get_routing_for_object
 from sklearn.utils.multiclass import type_of_target
 
 from ..utils import balanced_sample_weights
-from ._constants import GROUP_CV_STRATEGIES
 from ._metrics import get_metric_spec
-from ._splitters import _CVWithGroups, cv_uses_groups, get_cv_splitter
 from .interfaces import NeuralTrainable
 from .scalers import SubjectStandardScaler
 
@@ -94,52 +92,6 @@ def _release_foundation_memory(estimator: Any) -> None:
         return
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-
-class GroupedSequentialFeatureSelector(SequentialFeatureSelector):
-    """
-    SequentialFeatureSelector that accepts groups via Pipeline fit parameters.
-
-    In sklearn 1.8, SFS can route metadata to its internal CV splitter when
-    called directly, but Pipeline calls intermediate transformers through
-    ``fit_transform`` and does not forward top-level ``groups`` to SFS. This
-    adapter keeps the public SFS behavior but accepts a sliced ``groups`` fit
-    parameter, binds it to the SFS CV for this fit call, and then restores the
-    original ``cv`` object.
-    """
-
-    def fit(self, X: Any, y: Any = None, groups: Any = None, **params: Any):
-        """Fit SFS, using ``groups`` for its internal grouped CV if supplied."""
-        if groups is None:
-            return super().fit(X, y, **params)
-
-        groups_arr = (
-            groups
-            if isinstance(groups, (np.ndarray, pd.Series))
-            else np.asarray(groups)
-        )
-        if len(groups_arr) != len(X):
-            raise ValueError(
-                "SequentialFeatureSelector groups length does not match X: "
-                f"{len(groups_arr)} != {len(X)}."
-            )
-
-        original_cv = self.cv
-        self.cv = _CVWithGroups(original_cv, groups_arr)
-        try:
-            return super().fit(X, y, **params)
-        finally:
-            self.cv = original_cv
-
-    def fit_transform(
-        self,
-        X: Any,
-        y: Any = None,
-        groups: Any = None,
-        **params: Any,
-    ):
-        """Fit to data, then transform it."""
-        return self.fit(X, y, groups=groups, **params).transform(X)
 
 
 class _SafeSelectKBest(BaseEstimator):
@@ -386,9 +338,6 @@ def fit_and_score_fold(
                 X_train,
                 y_train,
                 groups_train,
-                feature_selection_config=feature_selection_config,
-                calibration_config=calibration_config,
-                tuning_config=tuning_config,
                 sample_weight=sw_train,
                 condition_train=(
                     sample_metadata[erasure_condition_column][train_idx]
@@ -558,9 +507,6 @@ def fit_estimator(
     X_train: np.ndarray,
     y_train: np.ndarray,
     groups_train: np.ndarray | None,
-    feature_selection_config: Any,
-    calibration_config: Any,
-    tuning_config: Any = None,
     sample_weight: np.ndarray | None = None,
     condition_train: np.ndarray | None = None,
 ) -> None:
@@ -569,9 +515,8 @@ def fit_estimator(
 
     Each pipeline step asks for the ``sample_weight``, ``groups`` and
     ``condition`` its ``fit`` takes; a search and a sequential feature selector
-    pass them on to their inner fits, splitters and scorers. A calibration CV
-    gets the groups bound to it, and so does a sequential feature selector's
-    (``GroupedSequentialFeatureSelector``).
+    pass them on to their inner fits, splitters and scorers, and a
+    calibration to its inner fits, splitter and calibrator.
 
     Parameters
     ----------
@@ -583,12 +528,6 @@ def fit_estimator(
         Training target vector.
     groups_train : np.ndarray, optional
         Training group labels.
-    feature_selection_config : Any
-        Feature selection settings.
-    calibration_config : Any
-        Probability calibration settings.
-    tuning_config : Any
-        Hyperparameter tuning settings.
     sample_weight : np.ndarray, optional
         Per-sample weights for the training fold, given to every pipeline
         step whose ``fit`` takes ``sample_weight`` and, through a search, a
@@ -606,25 +545,6 @@ def fit_estimator(
     search_cv = isinstance(fitted_estimator, (GridSearchCV, RandomizedSearchCV))
 
     pipeline = fitted_estimator.estimator if search_cv else fitted_estimator
-    sfs = None
-    if isinstance(pipeline, Pipeline) and "fs" in pipeline.named_steps:
-        sfs = pipeline.named_steps["fs"]
-        if (
-            getattr(feature_selection_config, "enabled", False)
-            and getattr(feature_selection_config, "method", None) == "sfs"
-            and _config_uses_group_cv(getattr(feature_selection_config, "cv", None))
-            and hasattr(sfs, "cv")
-            and not cv_uses_groups(sfs.cv)
-        ):
-            sfs.cv = get_cv_splitter(feature_selection_config.cv, require_groups=False)
-
-    if (
-        groups_train is not None
-        and calibrated
-        and _config_uses_group_cv(getattr(calibration_config, "cv", None))
-    ):
-        cal_cv = get_cv_splitter(calibration_config.cv, require_groups=False)
-        estimator.cv = _CVWithGroups(cal_cv, groups_train)
     steps = dict(pipeline.steps) if isinstance(pipeline, Pipeline) else {}
     if sample_weight is not None and (
         "clf" not in steps
@@ -645,18 +565,7 @@ def fit_estimator(
     # takes, and the search, the calibration and the pipeline deliver it, also
     # to the inner fits, the tuning scorer and the calibrator
     with config_context(enable_metadata_routing=True):
-        requested = set()
-        if search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)):
-            requested.add("groups")
-        for name, step in steps.items():
-            if not hasattr(step, "set_fit_request"):
-                continue
-            accepted = inspect.signature(step.fit).parameters
-            requests = {key: True for key in metadata if key in accepted}
-            if name == "fs" and "groups" in requests:
-                requests["groups"] = _config_uses_group_cv(
-                    getattr(feature_selection_config, "cv", None)
-                )
+        for step in steps.values():
             if (
                 isinstance(step, SequentialFeatureSelector)
                 and sample_weight is not None
@@ -664,17 +573,35 @@ def fit_estimator(
                 # its inner fits and scores take the weights too
                 step.estimator.set_fit_request(sample_weight=True)
                 step.scoring = _weighted_scorer(step.scoring, step.estimator)
+            if not hasattr(step, "set_fit_request"):
+                continue
+            accepted = inspect.signature(step.fit).parameters
+            requests = {key: True for key in metadata if key in accepted}
             if requests:
                 step.set_fit_request(**requests)
-            requested |= {key for key, wanted in requests.items() if wanted}
         if sample_weight is not None and search_cv:
             fitted_estimator.scoring = _weighted_scorer(
                 fitted_estimator.scoring, fitted_estimator.estimator
             )
+        # only what some step, splitter or scorer consumes, as routing refuses the
+        # rest; each step is asked itself, since a pipeline's answer misses what its
+        # steps' own splitters ask for (a feature selector's groups)
+        try:
+            consumed = set()
+            for part in (estimator, fitted_estimator, *steps.values()):
+                consumed |= get_routing_for_object(part).consumes("fit", list(metadata))
+        except NotImplementedError:
+            # AdaBoost cannot route metadata (scikit-learn PR #29472): none is given
+            if sample_weight is not None:
+                raise ValueError(
+                    f"{type(steps.get('clf', pipeline)).__name__} cannot take "
+                    "sample_weight: it does not route metadata."
+                ) from None
+            consumed = set()
         estimator.fit(
             X_train,
             y_train,
-            **{key: value for key, value in metadata.items() if key in requested},
+            **{key: value for key, value in metadata.items() if key in consumed},
         )
 
 
@@ -689,12 +616,6 @@ def _weighted_scorer(scoring: Any, estimator: BaseEstimator) -> Any:
     if isinstance(scoring, str):
         scoring = get_scorer(scoring)
     return scoring.set_score_request(sample_weight=True)
-
-
-def _config_uses_group_cv(cv_config: Any) -> bool:
-    """Return True when a decoding CV config needs subject groups."""
-    strategy = getattr(cv_config, "strategy", None)
-    return isinstance(strategy, str) and strategy.lower() in GROUP_CV_STRATEGIES
 
 
 def extract_feature_importances(
