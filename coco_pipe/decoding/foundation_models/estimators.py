@@ -153,7 +153,6 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
     backend_ = None
     prepared_ = None
     checkpoint_path_ = None
-    features_path_ = None
 
     def __init__(
         self,
@@ -254,7 +253,6 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             weight_decay=trainer.get("weight_decay", 0.01),
             head_weight_decay=trainer.get("head_weight_decay"),
             backbone_dropout=trainer.get("backbone_dropout"),
-            head_dropout=trainer.get("head_dropout"),
             early_stopping_patience=trainer.get("early_stopping_patience"),
             lr_warmup_epochs=trainer.get("lr_warmup_epochs", 0),
             accumulate_grad_batches=trainer.get("accumulate_grad_batches", 1),
@@ -263,7 +261,6 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             probe_lr=trainer.get("probe_lr"),
         )
         self.checkpoint_path_ = None
-        self.features_path_ = None
         checkpoint = dict(self.checkpoints or {})
         if checkpoint.get("output_dir"):
             import torch
@@ -342,71 +339,14 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         """Return the window embeddings of the fitted backbone.
 
         The vector :class:`FrozenBackboneTransformer` gives, here from the
-        weights this fit left. CTNet, Deep4Net, EEGNet and ShallowFBCSPNet,
-        which have no such vector, give the flattened input of their final
-        layer.
+        weights this fit left; for CTNet, Deep4Net, EEGNet and
+        ShallowFBCSPNet, the flattened input of their final layer. With
+        ``ExperimentConfig(keep_test_embeddings=True)``, each outer fold keeps
+        those of its test rows.
         """
         check_is_fitted(self)
         values = np.asarray(self.backend_.transform(self.prepared_.adapt(X)))
         return values.reshape(len(values), -1)
-
-    def save_features(
-        self,
-        fold: int,
-        X_train: np.ndarray,
-        X_test: np.ndarray,
-        *,
-        train_ids: np.ndarray,
-        test_ids: np.ndarray,
-        y_train: np.ndarray,
-        y_test: np.ndarray,
-        train_groups: np.ndarray | None = None,
-        test_groups: np.ndarray | None = None,
-    ) -> Path | None:
-        """Write the fitted backbone's embeddings of a fold's rows to one file.
-
-        Does nothing unless ``checkpoints["save_features"]`` is set. The file
-        is ``<checkpoint>_features.npz`` next to this fit's checkpoint, and
-        holds one row per window, the training rows first:
-
-        - ``features``: float32, ``(n_windows, n_features)``, from
-          :meth:`transform`.
-        - ``sample_id``, ``y``: the windows' ids and labels.
-        - ``group``: their groups (e.g. subjects), when given.
-        - ``split``: ``"train"``, ``"valid"`` for the training rows of the
-          groups held out for early stopping, which the fit never trained on,
-          or ``"test"``.
-        - ``fold``: the index of the outer fold.
-
-        Returns the path written, or ``None``.
-        """
-        check_is_fitted(self)
-        if not (self.checkpoints or {}).get("save_features"):
-            return None
-        split = np.array(["train"] * len(X_train) + ["test"] * len(X_test))
-        valid = getattr(self.backend_, "_validation_groups_", None)
-        if valid is not None and train_groups is not None:
-            split[: len(X_train)][np.isin(train_groups, valid)] = "valid"
-        columns = {
-            "features": np.concatenate(
-                [self.transform(X_train), self.transform(X_test)]
-            ).astype(np.float32),
-            "sample_id": np.concatenate([train_ids, test_ids]),
-            "y": np.concatenate([y_train, y_test]),
-            "split": split,
-            "fold": np.int64(fold),
-        }
-        if train_groups is not None and test_groups is not None:
-            columns["group"] = np.concatenate([train_groups, test_groups])
-        # plain arrays, which load without pickle
-        columns = {
-            key: value.astype(str) if value.dtype == object else value
-            for key, value in columns.items()
-        }
-        stem = self.checkpoint_path_.stem
-        self.features_path_ = self.checkpoint_path_.with_name(f"{stem}_features.npz")
-        np.savez(self.features_path_, **columns)
-        return self.features_path_
 
     def release_memory(self) -> None:
         """Release the fitted backend's torch modules (see BackendBase)."""
@@ -417,11 +357,11 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
 
     def get_checkpoint_manifest(self) -> dict[str, Any]:
         return {
-            key: str(path) if path is not None else None
-            for key, path in {
-                "checkpoint_path": self.checkpoint_path_,
-                "features_path": self.features_path_,
-            }.items()
+            "checkpoint_path": (
+                str(self.checkpoint_path_)
+                if self.checkpoint_path_ is not None
+                else None
+            )
         }
 
     def get_model_card_info(self) -> dict[str, Any]:

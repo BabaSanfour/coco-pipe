@@ -447,7 +447,12 @@ class BrainDecodeBackend(BackendBase):
 
     def _set_backbone_eval(self) -> None:
         self._model.eval()
-        self.head_module().train()
+        for module in self._model.modules():
+            if any(
+                parameter.requires_grad
+                for parameter in module.parameters(recurse=False)
+            ):
+                module.train()
 
     def transform(
         self, X: np.ndarray, *, return_tokens: bool = False

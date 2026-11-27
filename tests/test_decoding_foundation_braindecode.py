@@ -5,7 +5,6 @@ being fetched from the Hugging Face Hub.
 """
 
 import importlib.util
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -180,15 +179,16 @@ def test_dropout_and_head_weight_decay_reach_the_model(offline, model_key):
     # CBraMod has torch's attention, CTNet braindecode's
     weights = {"pretrained": False, "seed": 0} if model_key == "ctnet" else {}
     backend, X = _load(model_key, "full", **weights)
-    rates = {"backbone_dropout": 0.1, "head_dropout": 0.3, "head_weight_decay": 0.5}
-    for _ in range(2):  # a second fit puts no second dropout before the head
-        backend.fit(
-            X, np.array([0, 1, 0, 1]), max_epochs=1, validation_fraction=0, **rates
-        )
+    backend.fit(
+        X,
+        np.array([0, 1, 0, 1]),
+        max_epochs=1,
+        validation_fraction=0,
+        backbone_dropout=0.1,
+        head_weight_decay=0.5,
+    )
 
     head = backend.head_module()
-    assert isinstance(head[0], torch.nn.Dropout) and head[0].p == 0.3
-    assert sum(isinstance(module, torch.nn.Dropout) for module in head.modules()) == 1
     in_head = {id(module) for module in head.modules()}
     backbone = [
         getattr(module, name)
@@ -198,24 +198,22 @@ def test_dropout_and_head_weight_decay_reach_the_model(offline, model_key):
         if isinstance(getattr(module, name, None), float)
     ]
     assert len(backbone) > 2 and set(backbone) == {0.1}
-    groups = backend._net_.optimizer_.param_groups
-    assert [group["weight_decay"] for group in groups] == [0.01, 0.5]
-    assert {id(p) for p in groups[1]["params"]} == {id(p) for p in head.parameters()}
+    decay = {
+        group["weight_decay"]: {id(p) for p in group["params"]}
+        for group in backend._net_.optimizer_.param_groups
+    }
+    assert decay.keys() == {0.01, 0.5}
+    assert decay[0.5] == {id(p) for p in head.parameters()}
 
 
-def test_experiment_saves_the_fine_tuned_features_of_each_fold(tmp_path):
-    from pydantic import ValidationError
-
+def test_experiment_keeps_each_folds_test_embeddings():
     from coco_pipe.decoding import (
         CVConfig,
         Experiment,
         ExperimentConfig,
         NeuralFineTuneConfig,
     )
-    from coco_pipe.decoding.configs import CheckpointConfig
 
-    with pytest.raises(ValidationError, match="output_dir"):
-        CheckpointConfig(save_features=True)
     X = np.random.default_rng(0).normal(scale=20, size=(16, 19, 256))
     y = np.repeat([0, 1], 8)
     groups = np.repeat([f"s{index}" for index in range(8)], 2)
@@ -227,35 +225,23 @@ def test_experiment_saves_the_fine_tuned_features_of_each_fold(tmp_path):
         device={"device": "cpu"},
         backend_kwargs={"pretrained": False, "seed": 0},
         trainer={"max_epochs": 1, "batch_size": 4},
-        checkpoints={"output_dir": tmp_path, "save_features": True},
     )
     config = ExperimentConfig(
         models={"eegnet": model},
         cv=CVConfig(strategy="stratified_group_kfold", n_splits=2, group_key="Subject"),
         metrics=["accuracy"],
+        keep_test_embeddings=True,
         n_jobs=1,
     )
     result = Experiment(config).run(X, y, groups=groups, sample_ids=ids)
 
-    artifacts = result.get_model_artifacts()
-    paths = artifacts[artifacts["Key"] == "features_path"]["Value"]
-    assert sorted(path.name for path in tmp_path.glob("*_features.npz")) == sorted(
-        Path(path).name for path in paths
-    )
-    for fold, path in enumerate(paths):
-        saved = np.load(path)
-        assert int(saved["fold"]) == fold
-        assert saved["features"].dtype == np.float32
-        assert saved["features"].shape[0] == 16
-        assert sorted(saved["sample_id"]) == ids
-        group_of = dict(zip(ids, groups, strict=True))
-        assert saved["group"].tolist() == [group_of[i] for i in saved["sample_id"]]
-        assert saved["y"].tolist() == [y[ids.index(i)] for i in saved["sample_id"]]
-        # training rows first; the groups held out for early stopping are marked
-        test = saved["split"] == "test"
-        assert test.tolist() == sorted(test.tolist())
-        assert set(saved["split"][~test]) == {"train", "valid"}
-        assert not set(saved["group"][test]) & set(saved["group"][~test])
+    rows, embeddings = result.get_embeddings("eegnet")
+    # every window once, from the fold that held it out
+    assert sorted(rows["SampleID"]) == ids
+    splits = result.get_splits("eegnet")
+    test = splits[splits["Set"] == "test"].set_index("SampleID")["Fold"]
+    assert rows.set_index("SampleID")["Fold"].sort_index().equals(test.sort_index())
+    assert embeddings.shape == (16, 128)  # EEGNet's final-layer input, 2 s
 
 
 def _zscore(X):

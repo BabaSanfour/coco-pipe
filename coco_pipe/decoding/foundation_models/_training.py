@@ -1,5 +1,4 @@
-"""Pieces of the fine-tuning loop: loss, learning-rate schedule, accumulation,
-dropout and optimizer."""
+"""Pieces of the fine-tuning loop: loss, learning-rate schedule, accumulation."""
 
 from __future__ import annotations
 
@@ -57,59 +56,6 @@ def warmup_cosine(
         return (epoch + 1) / warmup_epochs
     progress = (epoch - warmup_epochs) / max(1, max_epochs - warmup_epochs)
     return floor + (1 - floor) * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
-
-
-_DROPOUT_MODULES = (
-    torch.nn.Dropout,
-    torch.nn.Dropout1d,
-    torch.nn.Dropout2d,
-    torch.nn.Dropout3d,
-    torch.nn.AlphaDropout,
-    torch.nn.FeatureAlphaDropout,
-)
-
-
-def set_dropout(modules, p: float) -> int:
-    """Give each dropout among ``modules`` the probability ``p``.
-
-    Dropout modules take ``p`` (braindecode's attention dropouts among them),
-    and so does ``dropout`` of :class:`torch.nn.MultiheadAttention`, which
-    keeps the dropout of its attention weights as a number. Stochastic depth
-    (``DropPath``) is not dropout and is left as it is.
-
-    Returns the number of modules changed.
-    """
-    changed = 0
-    for module in modules:
-        if isinstance(module, _DROPOUT_MODULES):
-            module.p = p
-        elif isinstance(module, torch.nn.MultiheadAttention):
-            module.dropout = p
-        else:
-            continue
-        changed += 1
-    return changed
-
-
-def adamw_with_head_decay(param_groups, *, head, head_weight_decay, **kwargs):
-    """AdamW in which the parameters of the module ``head`` take their own decay.
-
-    ``param_groups`` are those skorch passes to its optimizer; every other
-    parameter keeps the ``weight_decay`` of ``kwargs``.
-    """
-    in_head = {id(parameter) for parameter in head.parameters()}
-    groups = []
-    for group in param_groups:
-        params = list(group["params"])
-        groups.append({**group, "params": [p for p in params if id(p) not in in_head]})
-        groups.append(
-            {
-                **group,
-                "params": [p for p in params if id(p) in in_head],
-                "weight_decay": head_weight_decay,
-            }
-        )
-    return torch.optim.AdamW([g for g in groups if g["params"]], **kwargs)
 
 
 class _AccumulateGradients:

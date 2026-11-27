@@ -387,20 +387,9 @@ def test_frozen_fit_trains_the_head_alone(hub):
     assert changed == {"backbone": True, "head": True}
 
 
-def test_reve_takes_dropout_on_its_head_only(hub):
-    backend = _load("full")
+def test_reve_refuses_backbone_dropout(hub):
     with pytest.raises(ValueError, match="no dropout in its backbone"):
-        backend.set_dropout(backbone=0.1)
-    backend.fit(
-        _windows(4),
-        np.array([0, 1, 0, 1]),
-        max_epochs=1,
-        validation_fraction=0.0,
-        head_dropout=0.3,
-    )
-    head = backend.checkpoint_components()["head"]
-    assert isinstance(head[0], torch.nn.Dropout) and head[0].p == 0.3
-    assert backend.predict_proba(_windows(4)).shape == (4, 2)
+        _load("full").set_backbone_dropout(0.1)
 
 
 def test_configure_peft_adds_adapters_to_a_loaded_backbone(hub):
