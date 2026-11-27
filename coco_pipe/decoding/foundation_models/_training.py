@@ -74,8 +74,9 @@ def set_dropout(modules, p: float) -> int:
 
     Dropout modules take ``p``, and so do the attention modules that keep the
     dropout of their attention weights as a number: ``dropout`` of
-    :class:`torch.nn.MultiheadAttention`, ``att_drop`` of braindecode's
-    ``MultiHeadAttention`` and ``attn_drop`` of LUNA's rotary attention.
+    :class:`torch.nn.MultiheadAttention`, and, up to braindecode 2.1,
+    ``att_drop`` of braindecode's ``MultiHeadAttention`` and ``attn_drop`` of
+    LUNA's rotary attention (later releases make them dropout modules).
     Stochastic depth (``DropPath``) is not dropout and is left as it is.
 
     Returns the number of modules changed.

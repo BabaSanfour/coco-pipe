@@ -408,16 +408,9 @@ class BrainDecodeBackend(BackendBase):
     @staticmethod
     def _forward_features(model, tensor, model_key: str):
         if model_key in {"ctnet", "deep4net", "eegnet", "shallowfbcspnet"}:
-            # These networks return no features: take what their head reads.
-            inputs = []
-            hook = model.final_layer.register_forward_pre_hook(
-                lambda _, args: inputs.append(args[0])
-            )
-            try:
-                model(tensor)
-            finally:
-                hook.remove()
-            return inputs[0].flatten(start_dim=1)
+            # what their final layer reads, flattened: its last axis is time
+            out = model(tensor, return_features=True)
+            return out["features"].flatten(start_dim=1)
         if model_key == "bendr":
             # BENDR's own features are the output at the start token, which
             # pretraining never trained (Kostas et al. 2021), so they barely
