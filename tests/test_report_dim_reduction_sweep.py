@@ -820,7 +820,7 @@ def test_build_pooled_section_family_uses_container_children(tmp_path, monkeypat
     }
     monkeypatch.setattr(
         "coco_pipe.report.dim_reduction_sweep.load_fit_artifact",
-        lambda _path: artifact,
+        lambda _path, n_components=None: artifact,
     )
     monkeypatch.setattr(
         "coco_pipe.report.dim_reduction_sweep.build_unit_summary",
@@ -883,7 +883,7 @@ def test_build_pooled_sensor_within_family_splits_topomaps_by_family(
 
     monkeypatch.setattr(
         "coco_pipe.report.dim_reduction_sweep.load_fit_artifact",
-        lambda _path: artifact,
+        lambda _path, n_components=None: artifact,
     )
     monkeypatch.setattr(
         "coco_pipe.report.dim_reduction_sweep.build_best_fit_plots",

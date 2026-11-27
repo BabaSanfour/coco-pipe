@@ -17,6 +17,7 @@ from coco_pipe.dim_reduction.pipeline import (
     prepare_eval_inputs,
     run_eval,
     run_fit,
+    run_fit_group,
     valid_component_sweep,
     valid_n_components_for_container,
 )
@@ -46,12 +47,12 @@ def test_run_fit(tmp_path, dummy_container):
         "condition": "test",
         "unit_key": "test_unit",
     }
-    out_path = tmp_path / "fit_out"
+    out_path = tmp_path / "fit_out.npz"
 
     # Run fit
     record = run_fit(fit_payload, dummy_container, out_path, tmp_path, overwrite=True)
     assert record["status"] == "success"
-    assert (out_path / "_SUCCESS").exists()
+    assert out_path.is_file()
 
     # Run fit again without overwrite (loads artifact)
     record2 = run_fit(fit_payload, dummy_container, out_path, tmp_path, overwrite=False)
@@ -63,7 +64,7 @@ def test_run_fit(tmp_path, dummy_container):
 
 
 def test_run_fit_errors(tmp_path):
-    out_path = tmp_path / "fit_out"
+    out_path = tmp_path / "fit_out.npz"
     with pytest.raises(ValueError, match="2D matrix"):
         run_fit(
             {"reducer": "PCA", "n_components": 2},
@@ -107,7 +108,7 @@ def test_run_eval(tmp_path, dummy_container):
         "input_mode": "raw",
         "representation": "power",
     }
-    fit_out = tmp_path / "fit_out"
+    fit_out = tmp_path / "fit_out.npz"
     run_fit(fit_payload, dummy_container, fit_out, tmp_path, True)
 
     fit_artifact = load_fit_artifact(fit_out)
@@ -119,34 +120,13 @@ def test_run_eval(tmp_path, dummy_container):
         "filters": [],
         "label_map": {},
     }
-    eval_out = tmp_path / "eval_out"
-
-    # Run eval
-    record = run_eval(
-        fit_artifact,
-        dummy_container,
-        eval_spec,
-        eval_out,
-        tmp_path,
-        overwrite=True,
-    )
+    # The record is the eval's only output; it points at the evaluated fit.
+    record = run_eval(fit_artifact, dummy_container, eval_spec, tmp_path)
     assert record["status"] == "success"
-    assert (eval_out / "_SUCCESS").exists()
+    assert record["artifact_path"] == "fit_out.npz"
+    assert [p.name for p in tmp_path.iterdir()] == ["fit_out.npz"]
     assert 0.0 <= record[SEPARATION_RF_METRIC_KEY] <= 1.0
     assert 0.0 <= record[SEPARATION_METRIC_KEY] <= 1.0
-
-    # Run eval without overwrite
-    record2 = run_eval(
-        fit_artifact,
-        dummy_container,
-        eval_spec,
-        eval_out,
-        tmp_path,
-        overwrite=False,
-    )
-    assert record2["status"] == "success"
-    assert record2[SEPARATION_RF_METRIC_KEY] == record[SEPARATION_RF_METRIC_KEY]
-    assert record2[SEPARATION_METRIC_KEY] == record[SEPARATION_METRIC_KEY]
 
     # run_eval is tolerant of a DataContainer embedding in the fit artifact.
     assert isinstance(fit_artifact["embedding_container"], DataContainer)
@@ -154,23 +134,14 @@ def test_run_eval(tmp_path, dummy_container):
         **fit_artifact,
         "embedding": fit_artifact["embedding_container"],
     }
-    record3 = run_eval(
-        container_artifact,
-        dummy_container,
-        eval_spec,
-        tmp_path / "eval_out_container",
-        tmp_path,
-        overwrite=True,
-    )
+    record3 = run_eval(container_artifact, dummy_container, eval_spec, tmp_path)
     assert record3["status"] == "success"
 
     bad_record = run_eval(
         fit_artifact,
         dummy_container,
         {**eval_spec, "target_col": "missing_col"},
-        tmp_path / "eval_out_failed",
         tmp_path,
-        overwrite=True,
         errors="record",
     )
     assert bad_record["status"] == "failed"
@@ -318,6 +289,43 @@ def test_build_fit_request(tmp_path, dummy_container):
     request["fit_payload"]["n_components"] = -1
     res2 = run_fit(**request, errors="record")
     assert res2["status"] == "failed"
+
+
+def test_run_fit_group_slices_resumes_and_overwrites(tmp_path, dummy_container):
+    unit_spec = {"unit_type": "all", "unit_name": "all", "unit_key": "all"}
+    unit_spec["container"] = dummy_container
+
+    def requests(overwrite):
+        return [
+            build_fit_request(
+                container=dummy_container,
+                scope="test",
+                condition="test",
+                unit_spec=unit_spec,
+                reducer="PCA",
+                n_components=n,
+                input_signature={"input_mode": "raw"},
+                output_root=tmp_path,
+                overwrite=overwrite,
+                subject_col="subject",
+            )
+            for n in (2, 3)
+        ]
+
+    first = run_fit_group(requests(overwrite=True))
+    # One file for the sweep, at the largest fit's path; every record points at it.
+    path = requests(overwrite=False)[-1]["out_path"]
+    assert [p.name for p in path.parent.iterdir()] == [path.name]
+    assert {record["artifact_path"] for record in first} == {
+        str(path.relative_to(tmp_path))
+    }
+    two = load_fit_artifact(path, n_components=2)
+    assert two["embedding"].shape == (100, 2)
+    assert two["fit"]["fit_id"] == first[0]["fit_id"]
+    # A resume reads the file instead of fitting again.
+    assert run_fit_group(requests(overwrite=False)) == first
+    again = run_fit_group(requests(overwrite=True))
+    assert [record["status"] for record in again] == ["success", "success"]
 
 
 def test_build_fit_request_identity_tracks_container_and_unit(
@@ -479,14 +487,11 @@ def test_build_eval_request(tmp_path, dummy_container):
         eval_spec=eval_spec,
         container=dummy_container,
         output_root=tmp_path,
-        overwrite=True,
     )
-    assert request["out_path"].parent == tmp_path / "artifacts" / "evals"
     res = run_eval(**request)
     assert res["status"] == "success"
 
     request["eval_spec"] = {**eval_spec, "target_col": "missing_col"}
-    request["out_path"] = tmp_path / "eval_out_failed"
     res2 = run_eval(**request, errors="record")
     assert res2["status"] == "failed"
 

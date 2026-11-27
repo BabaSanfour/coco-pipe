@@ -92,19 +92,10 @@ FIT_PROVENANCE_FIELDS: tuple[str, ...] = (
 
 # --- Artifact layout --------------------------------------------------------
 
-FIT_ARRAYS_NAME = "fit.npz"
-"""Compact fit artifact: arrays bundle (embedding + ids + diagnostics)."""
-FIT_META_NAME = "fit.json"
-"""Compact fit artifact: metadata bundle (fit payload + metrics)."""
-EVAL_NAME = "eval.json"
-"""Compact eval artifact: the single eval payload file."""
-
 ARTIFACTS_DIRNAME = "artifacts"
 """Top-level directory under ``output_root`` that holds all artifacts."""
 FITS_SUBDIR = "fits"
-"""Subdirectory of ``artifacts`` for fit artifact directories."""
-EVALS_SUBDIR = "evals"
-"""Subdirectory of ``artifacts`` for eval artifact directories."""
+"""Subdirectory of ``artifacts`` for the fit artifacts (one ``.npz`` each)."""
 
 STEM_SLUG_MAX_LEN = 32
 """Maximum slug length for each component of an artifact stem."""

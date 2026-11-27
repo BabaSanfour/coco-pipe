@@ -12,8 +12,8 @@ run_fit
     Fit one reducer variant on one analysis unit, writing a checkpointed
     artifact directory.
 run_eval
-    Run one post-hoc evaluation of a saved embedding, writing a checkpointed
-    eval artifact directory.
+    Run one post-hoc evaluation of a saved embedding and return its inventory
+    record; nothing is written (the caller's runs inventory is the record).
 build_auto_pooled_eval_spec
     Build the automatic ``condition_separation`` eval spec used when pooling
     is active.
@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import shutil
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from functools import cache
@@ -45,7 +44,6 @@ import pandas as pd
 from coco_pipe.dim_reduction._constants import (
     ARTIFACTS_DIRNAME,
     EVAL_METRIC_COLUMNS,
-    EVALS_SUBDIR,
     FIT_METRIC_COLUMNS,
     FIT_PROVENANCE_FIELDS,
     FITS_SUBDIR,
@@ -54,10 +52,8 @@ from coco_pipe.dim_reduction._constants import (
     ErrorMode,
 )
 from coco_pipe.dim_reduction.artifacts import (
-    _load_eval_payload,
     build_record,
     load_fit_artifact,
-    save_eval_artifact,
     save_fit_artifact,
 )
 from coco_pipe.dim_reduction.config import DEFAULT_EVAL_GROUP_COL, MISSING_EVAL_VALUES
@@ -155,7 +151,7 @@ def run_fit(
 ) -> dict[str, Any]:
     """Fit one reducer variant and return a fit-runs inventory record.
 
-    If ``_SUCCESS`` already exists in *out_path* and *overwrite* is ``False``
+    If the artifact *out_path* already exists and *overwrite* is ``False``
     the existing artifact is loaded and its inventory record is returned
     immediately (checkpoint resume).
 
@@ -167,12 +163,12 @@ def run_fit(
     container:
         Data container for this analysis unit.  Must have ``ids``.
     out_path:
-        Artifact directory to write (or resume from).
+        Artifact file to write (or resume from).
     output_root:
         Root of the entire run output.  Used for relative-path computation in
         the returned inventory record.
     overwrite:
-        When ``True``, an existing *out_path* directory is deleted before
+        When ``True``, an existing *out_path* artifact is deleted before
         fitting.
     errors:
         ``"raise"`` (default) propagates exceptions; ``"record"`` catches them,
@@ -186,8 +182,7 @@ def run_fit(
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
     try:
-        success_marker = out_path / "_SUCCESS"
-        if success_marker.exists() and not overwrite:
+        if out_path.exists() and not overwrite:
             artifact = load_fit_artifact(out_path)
             return build_record(
                 artifact["fit"],
@@ -197,8 +192,8 @@ def run_fit(
                 artifact["metrics"],
             )
 
-        if overwrite and out_path.exists():
-            shutil.rmtree(out_path)
+        if overwrite:
+            out_path.unlink(missing_ok=True)
 
         X = np.asarray(container.X)
         if X.ndim != 2:
@@ -214,7 +209,7 @@ def run_fit(
         )
         embedding_container = reducer.fit_transform(container)
         embedding = np.asarray(embedding_container.X)
-        score_payload = reducer.score(embedding_container, X=container)
+        reducer.score(embedding_container, X=container)
         score_metrics = dict(reducer.get_metrics())
         metrics_payload = {
             metric_name: (
@@ -225,10 +220,7 @@ def run_fit(
             for metric_name in FIT_METRIC_COLUMNS
         }
 
-        summary = reducer.get_summary()
-        diagnostics = dict(summary.get("diagnostics") or {})
-        diagnostics["score_payload"] = score_payload
-        diagnostics["summary"] = summary
+        diagnostics = dict(reducer.get_summary().get("diagnostics") or {})
         try:
             components = reducer.get_components()
         except Exception:
@@ -298,8 +290,12 @@ def run_fit_group(
     (or singleton groups) fall back to an independent :func:`run_fit` per request,
     so behaviour is unchanged for UMAP/t-SNE/ICA/etc.
 
-    Returns one inventory record per request, in the input order's resolution
-    (resumed first, then synthesised).
+    A nested sweep is saved as one file, at the path of its largest request,
+    holding the largest embedding and each dimension's payload and metrics (see
+    :func:`~coco_pipe.dim_reduction.artifacts.slice_fit_artifact`); every record
+    points at it. It is resumed when that file holds every requested dimension.
+
+    Returns one inventory record per request, by increasing ``n_components``.
     """
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
@@ -314,27 +310,26 @@ def run_fit_group(
         return [run_fit(**request, errors=errors) for request in requests]
 
     output_root = requests[0]["output_root"]
-    records: list[dict[str, Any]] = []
-    pending: list[dict[str, Any]] = []
-    for request in requests:
-        out_path = request["out_path"]
-        if (out_path / "_SUCCESS").exists() and not request["overwrite"]:
-            artifact = load_fit_artifact(out_path)
-            records.append(
+    requests = sorted(requests, key=lambda r: int(r["fit_payload"]["n_components"]))
+    # One file holds the sweep, at the path of its largest fit.
+    out_path = requests[-1]["out_path"]
+    overwrite = any(request["overwrite"] for request in requests)
+    if out_path.exists() and not overwrite:
+        sweep = load_fit_artifact(out_path)["sweep"] or {}
+        if all(str(r["fit_payload"]["n_components"]) in sweep for r in requests):
+            return [
                 build_record(
-                    artifact["fit"],
+                    sweep[n]["fit"],
                     out_path,
                     output_root,
                     FIT_METRIC_COLUMNS,
-                    artifact["metrics"],
+                    sweep[n]["metrics"],
                 )
-            )
-        else:
-            pending.append(request)
-    if not pending:
-        return records
+                for n in (str(r["fit_payload"]["n_components"]) for r in requests)
+            ]
+    out_path.unlink(missing_ok=True)
 
-    # Fit once at the largest pending target dimension, then slice downward.
+    # Fit once at the largest dimension, then slice downward.
     try:
         container = requests[0]["container"]
         X = np.asarray(container.X)
@@ -343,7 +338,7 @@ def run_fit_group(
         if container.ids is None:
             raise ValueError("Dim-reduction fits expect container.ids to be present.")
         ids = _normalize_ids(container.ids)
-        max_n = max(int(r["fit_payload"]["n_components"]) for r in pending)
+        max_n = int(requests[-1]["fit_payload"]["n_components"])
         reducer = DimReduction(
             method=method,
             n_components=max_n,
@@ -365,50 +360,34 @@ def run_fit_group(
             requests[0]["fit_payload"].get("unit_name"),
             method,
         )
-        for request in pending:
-            records.append(
-                build_record(
-                    {**request["fit_payload"], "status": "failed"},
-                    request["out_path"],
-                    output_root,
-                    FIT_METRIC_COLUMNS,
-                    error=str(err),
-                )
+        return [
+            build_record(
+                {**request["fit_payload"], "status": "failed"},
+                out_path,
+                output_root,
+                FIT_METRIC_COLUMNS,
+                error=str(err),
             )
-        return records
+            for request in requests
+        ]
 
-    for request in pending:
+    records: list[dict[str, Any]] = []
+    sweep: dict[int, dict[str, Any]] = {}
+    for request in requests:
         fit_payload = request["fit_payload"]
-        out_path = request["out_path"]
         n_components = int(fit_payload["n_components"])
         try:
-            if request["overwrite"] and out_path.exists():
-                shutil.rmtree(out_path)
             embedding = full_embedding[:, :n_components]
-            components = (
-                None if full_components is None else full_components[:n_components]
-            )
             evr = None if full_evr is None else full_evr[:n_components]
             score_payload = reducer.score(embedding, X=X, metrics=FIT_METRIC_COLUMNS)
             metrics_payload = _metrics_payload_from_scores(
                 dict(score_payload["metrics"])
             )
-
-            diagnostics: dict[str, Any] = {"score_payload": score_payload}
-            if components is not None:
-                diagnostics["components"] = components
-            if evr is not None:
-                diagnostics["explained_variance_ratio"] = evr
             synthesized_payload = {**fit_payload, **_evr_scalars(evr)}
-
-            save_fit_artifact(
-                out_path,
-                embedding,
-                ids,
-                synthesized_payload,
-                metrics_payload,
-                diagnostics,
-            )
+            sweep[n_components] = {
+                "fit": synthesized_payload,
+                "metrics": metrics_payload,
+            }
             records.append(
                 build_record(
                     synthesized_payload,
@@ -437,6 +416,30 @@ def run_fit_group(
                     error=str(err),
                 )
             )
+    if max_n not in sweep:
+        # The file is named after the largest fit: without it nothing is saved.
+        return [
+            record
+            if record["status"] == "failed"
+            else {**record, "status": "failed", "error": "largest dimension failed"}
+            for record in records
+        ]
+    if sweep:
+        diagnostics: dict[str, Any] = {}
+        if full_components is not None:
+            diagnostics["components"] = full_components
+        if full_evr is not None:
+            diagnostics["explained_variance_ratio"] = full_evr
+        largest = sweep[max(sweep)]
+        save_fit_artifact(
+            out_path,
+            full_embedding,
+            ids,
+            largest["fit"],
+            largest["metrics"],
+            diagnostics,
+            sweep=sweep,
+        )
     return records
 
 
@@ -454,32 +457,11 @@ def _eval_id(fit_id: str, eval_spec: dict[str, Any]) -> str:
     )
 
 
-def _eval_artifact_stem(
-    fit_payload: dict[str, Any],
-    eval_spec: dict[str, Any],
-    eval_id: str,
-) -> str:
-    return "_".join(
-        [
-            "eval",
-            slug(fit_payload["scope"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["condition"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["unit_key"], max_len=STEM_SLUG_MAX_LEN),
-            slug(fit_payload["reducer"], max_len=STEM_SLUG_MAX_LEN),
-            f"n{int(fit_payload['n_components'])}",
-            slug(eval_spec["name"], max_len=STEM_SLUG_MAX_LEN),
-            str(fit_payload["fit_id"]),
-            eval_id,
-        ]
-    )
-
-
 def _base_eval_payload(
     fit_payload: dict[str, Any],
     eval_spec: dict[str, Any],
     eval_id: str,
     *,
-    artifact_stem: str,
     n_samples: int = 0,
     n_groups: int = 0,
     n_labels: int = 0,
@@ -500,7 +482,6 @@ def _base_eval_payload(
             "n_samples": int(n_samples),
             "n_groups": int(n_groups),
             "n_labels": int(n_labels),
-            "artifact_stem": artifact_stem,
         }
     )
     return payload
@@ -510,18 +491,15 @@ def run_eval(
     fit_artifact: dict[str, Any],
     container: DataContainer,
     eval_spec: dict[str, Any],
-    out_path: Path,
     output_root: Path,
-    overwrite: bool,
     *,
     errors: ErrorMode = "raise",
 ) -> dict[str, Any]:
-    """Run one post-hoc evaluation and return an eval-runs inventory record.
+    """Run one post-hoc evaluation and return its eval-runs inventory record.
 
-    The fit provenance is read from ``fit_artifact["fit"]``.  If ``_SUCCESS``
-    already exists in *out_path* and *overwrite* is ``False`` the existing eval
-    artifact is loaded and its inventory record is returned immediately
-    (checkpoint resume).
+    Nothing is written: the record, kept in the caller's runs inventory, is the
+    evaluation's only copy, and its ``artifact_path`` is the evaluated fit's.
+    The fit provenance is read from ``fit_artifact["fit"]``.
 
     Parameters
     ----------
@@ -533,13 +511,8 @@ def run_eval(
     eval_spec:
         Eval specification dict with keys ``name``, ``target_col``,
         ``group_col``, ``filters``, ``label_map``.
-    out_path:
-        Artifact directory to write (or resume from).
     output_root:
         Root of the entire run output.
-    overwrite:
-        When ``True``, an existing *out_path* directory is deleted before
-        evaluating.
     errors:
         ``"raise"`` (default) propagates exceptions; ``"record"`` catches them,
         logs, and returns a failed inventory record.
@@ -553,21 +526,8 @@ def run_eval(
     if errors not in {"raise", "record"}:
         raise ValueError("errors must be 'raise' or 'record'.")
     fit_payload = dict(fit_artifact["fit"])
+    fit_path = Path(fit_artifact["path"])
     try:
-        success_marker = out_path / "_SUCCESS"
-        if success_marker.exists() and not overwrite:
-            eval_payload = _load_eval_payload(out_path)
-            return build_record(
-                eval_payload,
-                out_path,
-                output_root,
-                EVAL_METRIC_COLUMNS,
-                eval_payload.get("metrics"),
-            )
-
-        if overwrite and out_path.exists():
-            shutil.rmtree(out_path)
-
         selected_index, selected_ids, labels, groups = prepare_eval_inputs(
             container=container,
             fit_ids=_normalize_ids(fit_artifact["ids"]),
@@ -582,33 +542,25 @@ def run_eval(
         if embedding.ndim != 2:
             raise ValueError("run_eval expects a 2D embedding artifact.")
 
-        score_payload = evaluate_embedding(
-            embedding,
-            method_name=fit_payload["reducer"],
-            metrics=EVAL_METRIC_COLUMNS,
-            labels=labels,
-            groups=groups,
+        metrics_payload = dict(
+            evaluate_embedding(
+                embedding,
+                method_name=fit_payload["reducer"],
+                metrics=EVAL_METRIC_COLUMNS,
+                labels=labels,
+                groups=groups,
+            )["metrics"]
         )
-        metrics_payload = dict(score_payload["metrics"])
-        artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-        eval_payload = {
-            **_base_eval_payload(
-                fit_payload,
-                eval_spec,
-                eval_id,
-                artifact_stem=artifact_stem,
-                n_samples=len(selected_ids),
-                n_groups=int(pd.Index(groups).nunique()),
-                n_labels=int(pd.Index(labels).nunique()),
-            ),
-            "metrics": metrics_payload,
-            "records": score_payload.get("records", []),
-            "metadata": score_payload.get("metadata", {}),
-            "artifacts": score_payload.get("artifacts", {}),
-        }
-        save_eval_artifact(out_path, eval_payload)
+        eval_payload = _base_eval_payload(
+            fit_payload,
+            eval_spec,
+            eval_id,
+            n_samples=len(selected_ids),
+            n_groups=int(pd.Index(groups).nunique()),
+            n_labels=int(pd.Index(labels).nunique()),
+        )
         return build_record(
-            eval_payload, out_path, output_root, EVAL_METRIC_COLUMNS, metrics_payload
+            eval_payload, fit_path, output_root, EVAL_METRIC_COLUMNS, metrics_payload
         )
     except Exception as err:
         if errors == "raise":
@@ -623,13 +575,7 @@ def run_eval(
         )
         try:
             eval_id = _eval_id(str(fit_payload["fit_id"]), eval_spec)
-            artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-            eval_payload = _base_eval_payload(
-                fit_payload,
-                eval_spec,
-                eval_id,
-                artifact_stem=artifact_stem,
-            )
+            eval_payload = _base_eval_payload(fit_payload, eval_spec, eval_id)
         except Exception:
             eval_payload = {
                 "fit_id": fit_payload.get("fit_id"),
@@ -638,7 +584,7 @@ def run_eval(
             }
         return build_record(
             {**eval_payload, "status": "failed"},
-            out_path,
+            fit_path,
             output_root,
             EVAL_METRIC_COLUMNS,
             error=str(err),
@@ -969,7 +915,9 @@ def build_fit_request(
             artifact_path = artifact_path_factory(fit_payload, output_root)
         else:
             stem = fit_payload["artifact_stem"]
-            artifact_path = output_root / ARTIFACTS_DIRNAME / FITS_SUBDIR / stem
+            artifact_path = (
+                output_root / ARTIFACTS_DIRNAME / FITS_SUBDIR / f"{stem}.npz"
+            )
 
     return {
         "fit_payload": fit_payload,
@@ -986,35 +934,21 @@ def build_eval_request(
     eval_spec: dict[str, Any],
     container: DataContainer,
     output_root: Path,
-    overwrite: bool = False,
     fit_artifact: dict[str, Any] | None = None,
-    artifact_path: Path | None = None,
-    artifact_path_factory: Callable[[dict[str, Any], dict[str, Any], Path], Path]
-    | None = None,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_eval`.
 
     By default, the fit artifact is loaded from ``fit_record['artifact_path']``
-    relative to *output_root* and the eval artifact is placed under the flat
-    ``artifacts/evals`` directory.
+    relative to *output_root*.
     """
     if fit_artifact is None:
-        fit_artifact = load_fit_artifact(output_root / fit_record["artifact_path"])
-    fit_payload = dict(fit_artifact["fit"])
-    eval_id = _eval_id(str(fit_payload["fit_id"]), eval_spec)
-    artifact_stem = _eval_artifact_stem(fit_payload, eval_spec, eval_id)
-    if artifact_path is None:
-        if artifact_path_factory is not None:
-            artifact_path = artifact_path_factory(fit_payload, eval_spec, output_root)
-        else:
-            artifact_path = (
-                output_root / ARTIFACTS_DIRNAME / EVALS_SUBDIR / artifact_stem
-            )
+        fit_artifact = load_fit_artifact(
+            output_root / fit_record["artifact_path"],
+            n_components=fit_record.get("n_components"),
+        )
     return {
         "fit_artifact": fit_artifact,
         "container": container,
         "eval_spec": eval_spec,
-        "out_path": Path(artifact_path),
         "output_root": output_root,
-        "overwrite": bool(overwrite),
     }

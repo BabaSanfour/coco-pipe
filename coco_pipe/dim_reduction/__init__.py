@@ -12,8 +12,8 @@ from .artifacts import (
     build_record,
     load_fit_artifact,
     load_fit_runs,
-    save_eval_artifact,
     save_fit_artifact,
+    slice_fit_artifact,
     update_runs,
     write_run_status,
 )
@@ -150,10 +150,10 @@ __all__ = [
     "run_eval",
     "run_fit",
     "run_fit_group",
-    "save_eval_artifact",
     # Artifact persistence
     "save_fit_artifact",
     "shepard_diagram_data",
+    "slice_fit_artifact",
     "supports_nested_components",
     "trajectory_acceleration",
     "trajectory_auc_speed",

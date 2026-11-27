@@ -579,6 +579,8 @@ def _run_binomial_assessment(
     if p0 == "auto":
         n_classes = len(pd.unique(aggregated["y_true"]))
         p0 = 1.0 / n_classes
+    elif p0 == "majority":
+        p0 = float(aggregated["y_true"].value_counts(normalize=True).max())
 
     temporal_cols = [
         col
@@ -978,6 +980,8 @@ _SIGN_FLIP_CHANCE = {
 
 def _sign_flip_chance(metric: str, p0: Any, y_true: pd.Series) -> float:
     """The chance level per-fold scores are compared with."""
+    if p0 == "majority":
+        raise ValueError("chance.p0='majority' applies to the binomial test only.")
     if p0 is not None and p0 != "auto":
         return float(p0)
     if metric in {"accuracy", "balanced_accuracy"}:

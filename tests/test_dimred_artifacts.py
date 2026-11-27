@@ -9,12 +9,10 @@ from coco_pipe.dim_reduction.artifacts import (
     SEPARATION_METRIC_KEY,
     SEPARATION_RF_METRIC_KEY,
     _embedding_container,
-    _load_eval_payload,
     build_availability_record,
     build_record,
     load_fit_artifact,
     load_fit_runs,
-    save_eval_artifact,
     save_fit_artifact,
     update_runs,
     write_run_status,
@@ -29,19 +27,13 @@ def test_save_and_load_fit_artifact(tmp_path):
     metrics = {"trustworthiness": 0.9}
     diagnostics = {"explained_variance": [0.5, 0.4]}
 
-    save_fit_artifact(tmp_path, embedding, ids, fit_payload, metrics, diagnostics)
+    path = tmp_path / "test_fit.npz"
+    save_fit_artifact(path, embedding, ids, fit_payload, metrics, diagnostics)
 
-    # Compact three-file layout.
-    assert (tmp_path / "fit.npz").exists()
-    assert (tmp_path / "fit.json").exists()
-    assert (tmp_path / "_SUCCESS").exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "_SUCCESS",
-        "fit.json",
-        "fit.npz",
-    ]
+    # One file per fit.
+    assert [p.name for p in tmp_path.iterdir()] == ["test_fit.npz"]
 
-    loaded = load_fit_artifact(tmp_path)
+    loaded = load_fit_artifact(path)
     np.testing.assert_allclose(loaded["embedding"], embedding)
     np.testing.assert_array_equal(loaded["ids"], ids)
     assert loaded["fit"] == fit_payload
@@ -50,7 +42,7 @@ def test_save_and_load_fit_artifact(tmp_path):
         loaded["diagnostics"]["explained_variance"] == diagnostics["explained_variance"]
     )
     assert loaded["manifest"]["artifact_stem"] == "test_fit"
-    assert loaded["path"] == tmp_path
+    assert loaded["path"] == path
 
     # The embedding is also exposed as a DataContainer view (carry structure),
     # while the raw embedding/ids arrays remain for direct access.
@@ -63,62 +55,10 @@ def test_save_and_load_fit_artifact(tmp_path):
     assert container.meta["fit"] == fit_payload
 
 
-def test_load_fit_artifact_legacy_layout(tmp_path):
-    # Artifacts written by the previous seven-file layout must still load.
-    embedding = np.random.rand(10, 2)
-    ids = np.arange(10)
-    np.save(tmp_path / "old_embedding.npy", embedding)
-    np.save(tmp_path / "old_ids.npy", np.asarray(ids, dtype=object))
-    (tmp_path / "old_fit.json").write_text(json.dumps({"reducer": "PCA"}))
-    (tmp_path / "old_metrics.json").write_text(json.dumps({"trustworthiness": 0.8}))
-    np.savez_compressed(
-        tmp_path / "old_diagnostics.npz",
-        payload=np.asarray([{"loss": 0.1}], dtype=object),
-    )
-
-    loaded = load_fit_artifact(tmp_path)
-    np.testing.assert_allclose(loaded["embedding"], embedding)
-    assert loaded["fit"] == {"reducer": "PCA"}
-    assert loaded["metrics"] == {"trustworthiness": 0.8}
-    assert loaded["diagnostics"]["loss"] == 0.1
-    assert isinstance(loaded["embedding_container"], DataContainer)
-    np.testing.assert_allclose(loaded["embedding_container"].X, embedding)
-
-
 def test_embedding_container_returns_none_for_non_2d():
     # Native trajectory tensors do not map onto a component axis.
     traj = np.zeros((4, 10, 2))
     assert _embedding_container(traj, np.arange(4), {"reducer": "PCA"}) is None
-
-
-def test_save_and_load_eval_artifact(tmp_path):
-    eval_payload = {"score": 0.95, "artifact_stem": "my_eval"}
-    save_eval_artifact(tmp_path, eval_payload)
-
-    assert (tmp_path / "eval.json").exists()
-    assert (tmp_path / "_SUCCESS").exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["_SUCCESS", "eval.json"]
-
-    loaded = _load_eval_payload(tmp_path)
-    assert loaded == eval_payload
-
-
-def test_load_eval_payload_fallbacks(tmp_path):
-    # Test loading eval directly from eval.json without manifest
-    eval_payload = {"score": 0.9}
-    (tmp_path / "eval.json").write_text(json.dumps(eval_payload))
-    loaded = _load_eval_payload(tmp_path)
-    assert loaded == eval_payload
-
-    (tmp_path / "eval.json").unlink()
-    # Test loading from glob
-    (tmp_path / "something_eval.json").write_text(json.dumps(eval_payload))
-    loaded = _load_eval_payload(tmp_path)
-    assert loaded == eval_payload
-
-    (tmp_path / "something_eval.json").unlink()
-    with pytest.raises(FileNotFoundError):
-        _load_eval_payload(tmp_path)
 
 
 def test_update_and_load_runs(tmp_path):

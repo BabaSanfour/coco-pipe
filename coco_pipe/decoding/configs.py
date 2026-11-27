@@ -1112,10 +1112,13 @@ class ChanceAssessmentConfig(BaseModel):
         ),
     )
     n_permutations: int = Field(1000, ge=1)
-    p0: float | Literal["auto"] | None = Field(
+    p0: float | Literal["auto", "majority"] | None = Field(
         "auto",
         description=(
-            "Chance level for the binomial and sign-flip tests (e.g., 0.5 for binary)."
+            "Chance level for the binomial and sign-flip tests (e.g., 0.5 for binary). "
+            "'auto' is one over the number of classes; 'majority' (binomial test "
+            "only) is the share of the largest class among the tested units, the "
+            "accuracy of always predicting that class, for unbalanced classes."
         ),
     )
     temporal_correction: Literal["max_stat", "fdr_bh", "none"] = Field(
@@ -1231,6 +1234,7 @@ def grouped_chance_assessment(
     n_permutations: int = 100,
     store_null: bool = False,
     unit_column: str = "group_id",
+    p0: float | str | None = "auto",
 ) -> StatisticalAssessmentConfig:
     """Chance assessment whose independent unit is a group, not a sample.
 
@@ -1238,8 +1242,9 @@ def grouped_chance_assessment(
     builds an empirical null by swapping labels *between groups* (via
     *unit_column*), so significance reflects the number of independent units
     (e.g. subjects) rather than the theoretical chance level; ``method="binomial"``
-    falls back to the analytical chance level. Permutation refits the full pipeline
-    per shuffle, so cost scales with *n_permutations*.
+    falls back to the analytical chance level *p0* (see
+    :class:`ChanceAssessmentConfig`). Permutation refits the full pipeline per
+    shuffle, so cost scales with *n_permutations*.
     """
     return StatisticalAssessmentConfig(
         enabled=True,
@@ -1247,6 +1252,7 @@ def grouped_chance_assessment(
         chance=ChanceAssessmentConfig(
             method=method,
             n_permutations=n_permutations,
+            p0=p0,
             temporal_correction="none",
             store_null_distribution=store_null,
         ),
