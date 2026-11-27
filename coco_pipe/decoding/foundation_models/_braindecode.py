@@ -266,10 +266,6 @@ class BrainDecodeBackend(BackendBase):
             # One pretrained time embedding per 1 s patch, 16 in the checkpoint.
             kw.setdefault("n_times", n_times)
             kw.setdefault("on_non_divisible", "error")
-            if train_mode == "frozen":
-                # The pretrained final norm, not the readout norm that only
-                # fine-tuning trains (braindecode>=2 defaults to the latter).
-                kw.setdefault("use_mean_pooling", False)
         elif model_key == "signaljepa":
             # Load the full 62-row pretrained channel-embedding matrix and index
             # the rows matching the input ``chs_info`` by name (braindecode#991),
