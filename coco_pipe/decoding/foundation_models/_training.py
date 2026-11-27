@@ -72,12 +72,10 @@ _DROPOUT_MODULES = (
 def set_dropout(modules, p: float) -> int:
     """Give each dropout among ``modules`` the probability ``p``.
 
-    Dropout modules take ``p``, and so do the attention modules that keep the
-    dropout of their attention weights as a number: ``dropout`` of
-    :class:`torch.nn.MultiheadAttention`, and, up to braindecode 2.1,
-    ``att_drop`` of braindecode's ``MultiHeadAttention`` and ``attn_drop`` of
-    LUNA's rotary attention (later releases make them dropout modules).
-    Stochastic depth (``DropPath``) is not dropout and is left as it is.
+    Dropout modules take ``p`` (braindecode's attention dropouts among them),
+    and so does ``dropout`` of :class:`torch.nn.MultiheadAttention`, which
+    keeps the dropout of its attention weights as a number. Stochastic depth
+    (``DropPath``) is not dropout and is left as it is.
 
     Returns the number of modules changed.
     """
@@ -88,15 +86,7 @@ def set_dropout(modules, p: float) -> int:
         elif isinstance(module, torch.nn.MultiheadAttention):
             module.dropout = p
         else:
-            names = [
-                name
-                for name in ("att_drop", "attn_drop")
-                if isinstance(getattr(module, name, None), float)
-            ]
-            if not names:
-                continue
-            for name in names:
-                setattr(module, name, p)
+            continue
         changed += 1
     return changed
 

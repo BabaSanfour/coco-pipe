@@ -247,10 +247,10 @@ model's own. Like ``lr``, each can be tuned with a grid such as
        checkpoints=CheckpointConfig(output_dir="checkpoints", save_features=True),
    )
 
-``backbone_dropout`` reaches the dropout modules of the backbone and the
-attention dropouts that torch's ``MultiheadAttention`` (CBraMod, LUNA),
-braindecode's ``MultiHeadAttention`` (ST-EEGFormer, CTNet) and LUNA's rotary
-attention keep as a number. Stochastic depth is left as it is. REVE has no
+``backbone_dropout`` reaches every dropout module of the backbone, attention
+dropouts included, and the attention dropout that torch's
+``MultiheadAttention`` (CBraMod, LUNA) keeps as a number. Stochastic depth is
+left as it is. REVE has no
 dropout and refuses it. ``head_dropout`` puts a dropout on the input of the
 head, unless the head starts with one, and also sets the dropouts inside the
 head (LUNA's).

@@ -194,7 +194,7 @@ def test_dropout_and_head_weight_decay_reach_the_model(offline, model_key):
         getattr(module, name)
         for module in backend._model.modules()
         if id(module) not in in_head
-        for name in ("p", "dropout", "att_drop")
+        for name in ("p", "dropout")
         if isinstance(getattr(module, name, None), float)
     ]
     assert len(backbone) > 2 and set(backbone) == {0.1}
