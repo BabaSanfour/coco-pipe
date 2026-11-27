@@ -4,8 +4,8 @@ BrainDecode Backend
 
 Backend that loads pretrained EEG/MEG models from the braindecode library
 via ``Model.from_pretrained()``. Supports CBraMod, BIOT, LaBraM, EEGPT,
-SignalJEPA, BENDR, LUNA and ST-EEGFormer, and builds CTNet, Deep4Net, EEGNet
-and ShallowFBCSPNet, which have no checkpoint, from random weights.
+SignalJEPA, BENDR, LUNA and ST-EEGFormer (large, largeV2), and builds CTNet,
+Deep4Net, EEGNet and ShallowFBCSPNet, which have no checkpoint, from random weights.
 
 To add a new braindecode model: add one entry to ``_BD_MODEL_MAP`` and one
 ``FoundationModelSpec`` entry in ``coco_pipe/decoding/_specs.py``.
@@ -37,6 +37,7 @@ _BD_MODEL_MAP: dict[str, tuple[str, str]] = {
     "signaljepa": ("SignalJEPA_Contextual", "braindecode.models"),
     "bendr": ("BENDR", "braindecode.models"),
     "luna": ("LUNA", "braindecode.models"),
+    "steegformer_large": ("STEEGFormer", "braindecode.models"),
     "steegformer_largev2": ("STEEGFormer", "braindecode.models"),
     "ctnet": ("CTNet", "braindecode.models"),
     "deep4net": ("Deep4Net", "braindecode.models"),
@@ -227,11 +228,16 @@ class BrainDecodeBackend(BackendBase):
                 )
         model_cls = getattr(models_module, class_name)
 
-        # Montage-dependent models need ``chs_info``. LaBraM and SignalJEPA
-        # (with its pretrained channel embeddings) find channels by name; LUNA,
-        # and SignalJEPA with channel_embedding="scratch", embed their positions,
-        # where braindecode gives made-up positions to channels that have none.
-        if electrode_names and model_key in {"cbramod", "labram", "luna", "signaljepa"}:
+        # Montage-dependent models need ``chs_info``. LaBraM, SignalJEPA (with its
+        # pretrained channel embeddings) and ST-EEGFormer find channels by name
+        # (ST-EEGFormer places a name outside its vocabulary at the nearest 10-05
+        # site); LUNA, and SignalJEPA with channel_embedding="scratch", embed their
+        # positions, where braindecode gives made-up positions to channels that
+        # have none.
+        if electrode_names and (
+            model_key in {"cbramod", "labram", "luna", "signaljepa"}
+            or model_key.startswith("steegformer")
+        ):
             import mne
 
             kw.setdefault("n_chans", len(electrode_names))
@@ -297,26 +303,8 @@ class BrainDecodeBackend(BackendBase):
             # reorders into BENDR_CHANNEL_ORDER).
             kw["n_chans"] = channel_plan.model_n_chans
             kw.pop("chs_info", None)
-        elif model_key == "steegformer_largev2":
-            from braindecode.models.steegformer import STEEGFORMER_CHANNEL_ORDER
-
-            # largeV2 adds its HBN slots after the published vocabulary, whose
-            # names keep their slots (HBN's Cz is Cz's), but braindecode finds
-            # slots by name only for the 145-slot variants: they are given here.
-            slots = {
-                name.upper(): i for i, name in enumerate(STEEGFORMER_CHANNEL_ORDER)
-            }
-            unknown = [name for name in electrode_names if name.upper() not in slots]
-            if unknown:
-                raise ValueError(
-                    f"{unknown} are not in the channel vocabulary of "
-                    f"{metadata.display_name}. Drop them."
-                )
-            kw.update(
-                n_chans=len(electrode_names),
-                n_times=n_times,
-                chan_pos_idx=[slots[name.upper()] for name in electrode_names],
-            )
+        elif model_key.startswith("steegformer"):
+            kw.setdefault("n_times", n_times)
             kw.setdefault("on_non_divisible", "error")
         elif metadata.hub_repo is None:
             kw.update(n_chans=len(electrode_names), n_times=n_times, sfreq=sfreq)
@@ -342,6 +330,8 @@ class BrainDecodeBackend(BackendBase):
                 warnings.filterwarnings("ignore", "Labram chs_info does not match")
                 # LaBraM beyond 16 s: the extra time embeddings would be untrained
                 warnings.filterwarnings("error", "The checkpoint holds")
+                # ST-EEGFormer without its channel slots (input channel i -> slot i)
+                warnings.filterwarnings("error", "STEEGFormer: .*identity")
                 model = model_cls.from_pretrained(metadata.hub_repo, **load_kwargs)
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if pretrained else seeded(seed):

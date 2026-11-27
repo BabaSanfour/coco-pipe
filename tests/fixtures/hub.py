@@ -4,29 +4,20 @@ Only the download is replaced: each model is built from its class instead of
 being fetched from the Hugging Face Hub.
 """
 
-from pathlib import Path
-
 import pytest
 
 # The commit a repository resolves to when no revision is given.
 LATEST = "0123456789abcdef0123456789abcdef01234567"
-# STEEGFormer's channel vocabulary, as braindecode fetches it from the Hub
-# (braindecode/STEEGFormer-small at 633c9c0d), so the tests stay offline.
-STEEGFORMER_CHANNELS = Path(__file__).with_name("steegformer_channels.json")
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
     "Labram": {"n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
     "BENDR": {"n_outputs": 1},
-    # largeV2 but two blocks deep, not 24, to keep the tests light
-    "STEEGFormer": {
-        "n_outputs": 4,
-        "embed_dim": 1024,
-        "num_heads": 16,
-        "depth": 2,
-        "n_chans_pos": 256,
-    },
+    # large but two blocks deep, not 24, to keep the tests light
+    "STEEGFormer": {"n_outputs": 4, "embed_dim": 1024, "num_heads": 16, "depth": 2},
 }
+# Settings a checkpoint's config would otherwise provide, by repository.
+REPO_DEFAULTS = {"braindecode/STEEGFormer-largeV2": {"n_chans_pos": 256}}
 
 
 @pytest.fixture
@@ -44,7 +35,11 @@ def offline(monkeypatch, tmp_path):
             for key, value in kwargs.items()
             if key not in {"revision", "filename", "token"}
         }
-        for key, value in CHECKPOINT_DEFAULTS.get(cls.__name__, {}).items():
+        defaults = {
+            **CHECKPOINT_DEFAULTS.get(cls.__name__, {}),
+            **REPO_DEFAULTS.get(repo_id, {}),
+        }
+        for key, value in defaults.items():
             params.setdefault(key, value)
         return cls(**params)
 
@@ -61,8 +56,6 @@ def offline(monkeypatch, tmp_path):
         monkeypatch.setattr(getattr(bm, name), "from_pretrained", classmethod(build))
 
     def download(repo_id, filename, revision=None, **kwargs):
-        if filename == STEEGFORMER_CHANNELS.name:
-            return str(STEEGFORMER_CHANNELS)
         # a cached snapshot folder is named by its commit
         return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
 

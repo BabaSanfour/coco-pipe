@@ -800,6 +800,26 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
             "when the 19 standard EEG channels are present."
         ),
     ),
+    "steegformer_large": _fm_spec(
+        "steegformer_large",
+        display_name="ST-EEGFormer-large",
+        hub_repo="braindecode/STEEGFormer-large",
+        checkpoint_revision="632acb10c6ce7ead5ecb254bfa7d482d9bb3b71e",
+        embedding_dim=1024,
+        pretrained_sfreq=128.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        input_normalization="zscore",
+        paper_url="https://openreview.net/forum?id=5Xwm8e6vbh",
+        model_notes=(
+            "ViT-MAE (embed_dim=1024, depth=24) pretrained on 11 public EEG "
+            "datasets and in-house data (142 named channels). Input at 128 Hz "
+            "with each channel of a window z-scored, as in the authors' code; "
+            "windows of a multiple of 16 samples (6 s in pretraining). braindecode "
+            "gives each channel the slot of its name, or of the nearest 10-05 "
+            "site."
+        ),
+    ),
     "steegformer_largev2": _fm_spec(
         "steegformer_largev2",
         display_name="ST-EEGFormer-largeV2",
@@ -812,12 +832,11 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         input_normalization="zscore",
         paper_url="https://openreview.net/forum?id=5Xwm8e6vbh",
         model_notes=(
-            "ViT-MAE (embed_dim=1024, depth=24) pretrained on 11 public EEG "
-            "datasets, then further on HBN children. Input at 128 Hz with each "
-            "channel of a window z-scored, as in the authors' code; windows of a "
-            "multiple of 16 samples (6 s in pretraining). Each channel takes the "
-            "slot of its name in the published 142-name vocabulary, whose names "
-            "keep their slots in largeV2's 256; other names are refused."
+            "ST-EEGFormer-large further pretrained on HBN children's EEG for the "
+            "2025 EEG Foundation Challenge (release ST-EEGFormer-largeV2 of the "
+            "authors' repository); its channel table has 256 slots, the first 142 "
+            "those of large. Input as for large. Needs a braindecode that finds "
+            "largeV2's channel slots by name; without it, loading is refused."
         ),
     ),
     # Networks without a checkpoint, trained from random weights on the task.

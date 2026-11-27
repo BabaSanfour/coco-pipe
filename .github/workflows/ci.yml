@@ -85,11 +85,10 @@ jobs:
           slug: BabaSanfour/coco-pipe
 
   upstream-main:
-    # Two fixes are not released yet: mne-bids PR #1679 (BIDSDataset reads saved
-    # FIF epochs with mne_bids.read_epochs_bids) and braindecode 2.1 (LUNA's
-    # features, BIOT's tokens). The matrix above, on the released packages,
-    # skips the tests that need them.
-    name: Unreleased mne-bids and braindecode
+    # mne-bids PR #1679 (BIDSDataset reads saved FIF epochs with
+    # mne_bids.read_epochs_bids) is not released yet. The matrix above, on the
+    # released package, skips the tests that need it.
+    name: Unreleased mne-bids
     needs: quality
     runs-on: ubuntu-latest
 
@@ -101,16 +100,16 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install package with mne-bids and braindecode main
+      - name: Install package with mne-bids main
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[full,test]"
-          python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main" "braindecode @ git+https://github.com/braindecode/braindecode.git@master"
+          python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
 
       - name: Run the tests that need them, none skipped
         run: |
-          pytest tests/test_io_dataset.py tests/test_io_load.py tests/test_report_api.py tests/test_decoding_foundation_braindecode.py -rs | tee pytest.log
-          ! grep -qE "needs mne-bids PR #1679|needs braindecode main" pytest.log
+          pytest tests/test_io_dataset.py tests/test_io_load.py tests/test_report_api.py -rs | tee pytest.log
+          ! grep -q "needs mne-bids PR #1679" pytest.log
 
   pytest:
     name: pytest
