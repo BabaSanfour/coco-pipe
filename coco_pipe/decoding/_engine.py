@@ -25,6 +25,7 @@ from sklearn.feature_selection import (
     SequentialFeatureSelector,
     f_classif,
 )
+from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
 from sklearn.utils.multiclass import type_of_target
 
@@ -564,13 +565,13 @@ def fit_estimator(
     condition_train: np.ndarray | None = None,
 ) -> None:
     """
-    Fit an estimator with intelligent metadata and group routing.
+    Fit an estimator, passing its metadata through scikit-learn's routing.
 
-    Handles specialized logic for group-aware internal CV using standard
-    scikit-learn fit-parameter slicing. SearchCV receives ``groups`` for its
-    splitter, Pipeline receives ``fs__groups`` for SFS, and calibration CV gets
-    a fold-local group binding because CalibratedClassifierCV does not pass
-    ``groups`` to its splitter unless global metadata routing is enabled.
+    Each pipeline step asks for the ``sample_weight``, ``groups`` and
+    ``condition`` its ``fit`` takes; a search and a sequential feature selector
+    pass them on to their inner fits, splitters and scorers. A calibration CV
+    gets the groups bound to it, and so does a sequential feature selector's
+    (``GroupedSequentialFeatureSelector``).
 
     Parameters
     ----------
@@ -590,7 +591,9 @@ def fit_estimator(
         Hyperparameter tuning settings.
     sample_weight : np.ndarray, optional
         Per-sample weights for the training fold, given to every pipeline
-        step whose ``fit`` takes ``sample_weight``. The ``clf`` step must.
+        step whose ``fit`` takes ``sample_weight`` and, through a search, a
+        sequential feature selector or a calibration, to their inner fits,
+        their scorers and the calibrator. The ``clf`` step must take them.
     condition_train : np.ndarray, optional
         Training condition of each sample, forwarded as ``erasure__condition``
         to an erasure step whose ``fit`` takes ``condition``.
@@ -615,114 +618,77 @@ def fit_estimator(
         ):
             sfs.cv = get_cv_splitter(feature_selection_config.cv, require_groups=False)
 
-    fit_params: dict[str, Any] = {}
-    if groups_train is not None:
-        if calibrated and _config_uses_group_cv(
-            getattr(calibration_config, "cv", None)
-        ):
-            cal_cv = get_cv_splitter(calibration_config.cv, require_groups=False)
-            estimator.cv = _CVWithGroups(cal_cv, groups_train)
-        if search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)):
-            fit_params["groups"] = groups_train
+    if (
+        groups_train is not None
+        and calibrated
+        and _config_uses_group_cv(getattr(calibration_config, "cv", None))
+    ):
+        cal_cv = get_cv_splitter(calibration_config.cv, require_groups=False)
+        estimator.cv = _CVWithGroups(cal_cv, groups_train)
+    steps = dict(pipeline.steps) if isinstance(pipeline, Pipeline) else {}
+    if sample_weight is not None and (
+        "clf" not in steps
+        or "sample_weight" not in inspect.signature(steps["clf"].fit).parameters
+    ):
+        clf = steps.get("clf", pipeline)
+        raise ValueError(
+            f"{type(clf).__name__} does not take sample_weight in its fit."
+        )
+    metadata = {
+        "sample_weight": sample_weight,
+        "groups": groups_train,
+        "condition": condition_train,
+    }
+    metadata = {name: value for name, value in metadata.items() if value is not None}
 
-        if sfs is not None and _config_uses_group_cv(
-            getattr(feature_selection_config, "cv", None)
-        ):
-            fit_params["fs__groups"] = groups_train
-
-        if isinstance(pipeline, Pipeline) and "scaler" in pipeline.named_steps:
-            scaler_step = pipeline.named_steps["scaler"]
-            if "groups" in inspect.signature(scaler_step.fit).parameters:
-                fit_params["scaler__groups"] = groups_train
-        if isinstance(pipeline, Pipeline) and "erasure" in pipeline.named_steps:
-            erasure_step = pipeline.named_steps["erasure"]
-            if "groups" in inspect.signature(erasure_step.fit).parameters:
-                fit_params["erasure__groups"] = groups_train
-            if condition_train is not None:
-                fit_params["erasure__condition"] = condition_train
-        if isinstance(pipeline, Pipeline) and "clf" in pipeline.named_steps:
-            classifier_step = pipeline.named_steps["clf"]
-            if "groups" in inspect.signature(classifier_step.fit).parameters:
-                fit_params["clf__groups"] = groups_train
-
-    if sample_weight is not None:
-        steps = pipeline.steps if isinstance(pipeline, Pipeline) else []
-        for name, step in steps:
-            if hasattr(step, "fit") and (
-                "sample_weight" in inspect.signature(step.fit).parameters
-            ):
-                fit_params[f"{name}__sample_weight"] = sample_weight
-        if "clf__sample_weight" not in fit_params:
-            clf = dict(steps).get("clf", pipeline)
-            raise ValueError(
-                f"{type(clf).__name__} does not take sample_weight in its fit."
-            )
-        if search_cv or calibrated:
-            _fit_with_routed_weights(
-                estimator,
-                pipeline,
-                X_train,
-                y_train,
-                groups_train,
-                search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)),
-                sample_weight,
-                condition_train,
-            )
-            return
-
-    estimator.fit(X_train, y_train, **fit_params)
-
-
-def _fit_with_routed_weights(
-    estimator: BaseEstimator,
-    pipeline: Pipeline,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    groups_train: np.ndarray | None,
-    search_uses_groups: bool,
-    sample_weight: np.ndarray,
-    condition_train: np.ndarray | None,
-) -> None:
-    """Fit a tuned or calibrated pipeline with sample weights everywhere.
-
-    scikit-learn's metadata routing gives the weights to the pipeline steps
-    that take them in every inner fit, to the tuning scorer and to the
-    calibrator, which ``step__sample_weight`` fit parameters cannot reach. A
-    feature-selection step stays unweighted.
-    """
-    from sklearn.feature_selection import SequentialFeatureSelector
-    from sklearn.metrics import get_scorer
-    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-
+    # scikit-learn's metadata routing: each step asks for the metadata its fit
+    # takes, and the search, the calibration and the pipeline deliver it, also
+    # to the inner fits, the tuning scorer and the calibrator
     with config_context(enable_metadata_routing=True):
-        steps_take_groups = False
-        for _, step in pipeline.steps:
+        requested = set()
+        if search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)):
+            requested.add("groups")
+        for name, step in steps.items():
             if not hasattr(step, "set_fit_request"):
                 continue
             accepted = inspect.signature(step.fit).parameters
-            requests = {
-                name: True
-                for name in ("sample_weight", "groups", "condition")
-                if name in accepted
-            }
-            if isinstance(step, SequentialFeatureSelector):
-                step.estimator.set_fit_request(sample_weight=False)
+            requests = {key: True for key in metadata if key in accepted}
+            if name == "fs" and "groups" in requests:
+                requests["groups"] = _config_uses_group_cv(
+                    getattr(feature_selection_config, "cv", None)
+                )
+            if (
+                isinstance(step, SequentialFeatureSelector)
+                and sample_weight is not None
+            ):
+                # its inner fits and scores take the weights too
+                step.estimator.set_fit_request(sample_weight=True)
+                step.scoring = _weighted_scorer(step.scoring, step.estimator)
             if requests:
                 step.set_fit_request(**requests)
-            steps_take_groups |= "groups" in requests
-        for search in (estimator, getattr(estimator, "estimator", None)):
-            if isinstance(search, (GridSearchCV, RandomizedSearchCV)) and isinstance(
-                search.scoring, str
-            ):
-                search.scoring = get_scorer(search.scoring).set_score_request(
-                    sample_weight=True
-                )
-        params: dict[str, Any] = {"sample_weight": sample_weight}
-        if groups_train is not None and (search_uses_groups or steps_take_groups):
-            params["groups"] = groups_train
-        if condition_train is not None:
-            params["condition"] = condition_train
-        estimator.fit(X_train, y_train, **params)
+            requested |= {key for key, wanted in requests.items() if wanted}
+        if sample_weight is not None and search_cv:
+            fitted_estimator.scoring = _weighted_scorer(
+                fitted_estimator.scoring, fitted_estimator.estimator
+            )
+        estimator.fit(
+            X_train,
+            y_train,
+            **{key: value for key, value in metadata.items() if key in requested},
+        )
+
+
+def _weighted_scorer(scoring: Any, estimator: BaseEstimator) -> Any:
+    """The scorer of a search or a feature selector, asking for sample weights.
+
+    ``None`` scores with the estimator's ``score``, which is asked instead.
+    """
+    if scoring is None:
+        estimator.set_score_request(sample_weight=True)
+        return None
+    if isinstance(scoring, str):
+        scoring = get_scorer(scoring)
+    return scoring.set_score_request(sample_weight=True)
 
 
 def _config_uses_group_cv(cv_config: Any) -> bool:

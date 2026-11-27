@@ -1351,10 +1351,10 @@ class ExperimentConfig(BaseModel):
             "subject) counts once within each class, however many samples it "
             "has: coco_pipe.utils.balanced_sample_weights of the fold's labels "
             "and groups, given to every pipeline step whose fit takes "
-            "sample_weight, to the tuning scorer and to the calibrator. The "
-            "classifier must take it and have no class_weight; the PCA reducer, "
-            "erasure and feature selection stay unweighted. Not with "
-            "Experiment.run(sample_weight=...)."
+            "sample_weight, to the tuning and feature-selection scorers and to "
+            "the calibrator. The classifier must take it and have no "
+            "class_weight; the PCA reducer, erasure and k_best feature selection "
+            "stay unweighted. Not with Experiment.run(sample_weight=...)."
         ),
     )
     keep_test_embeddings: bool = Field(
