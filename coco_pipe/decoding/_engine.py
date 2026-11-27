@@ -595,8 +595,8 @@ def fit_estimator(
         sequential feature selector or a calibration, to their inner fits,
         their scorers and the calibrator. The ``clf`` step must take them.
     condition_train : np.ndarray, optional
-        Training condition of each sample, forwarded as ``erasure__condition``
-        to an erasure step whose ``fit`` takes ``condition``.
+        Training condition of each sample, given to the steps whose ``fit``
+        takes ``condition`` (an erasure step).
     """
     from sklearn.calibration import CalibratedClassifierCV
     from sklearn.model_selection import GridSearchCV, RandomizedSearchCV

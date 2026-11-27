@@ -490,6 +490,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             y_arr = np.asarray(y)
             random_state = fit_params.get("random_state", 42)
             n_splits = max(2, round(1.0 / validation_fraction))
+            # the splitters read only the number of rows of X, a dict with weights
+            rows = np.zeros((len(y_arr), 1))
             # Cap folds at the smallest number of distinct groups in any class.
             min_groups_per_class = min(
                 np.unique(groups_arr[y_arr == cls]).size for cls in np.unique(y_arr)
@@ -501,14 +503,14 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                     shuffle=True,
                     random_state=random_state,
                 )
-                train_idx, valid_idx = next(splitter.split(y_arr, y_arr, groups_arr))
+                train_idx, valid_idx = next(splitter.split(rows, y_arr, groups_arr))
             else:
                 splitter = GroupShuffleSplit(
                     n_splits=1,
                     test_size=validation_fraction,
                     random_state=random_state,
                 )
-                train_idx, valid_idx = next(splitter.split(y_arr, y_arr, groups_arr))
+                train_idx, valid_idx = next(splitter.split(rows, y_arr, groups_arr))
             self._training_groups_ = np.unique(groups_arr[train_idx])
             self._validation_groups_ = np.unique(groups_arr[valid_idx])
             full_ds = Dataset(X, y_arr)
