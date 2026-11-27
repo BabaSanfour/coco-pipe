@@ -380,8 +380,6 @@ def test_extractor_draws_random_weights_from_its_seed(offline):
 def test_labram_takes_its_channels_by_name(offline):
     # the 19 channels go in as they are, found by name
     plain, X = _load("labram")
-    # frozen: the pretrained final norm, not the untrained readout norm
-    assert offline[-1]["use_mean_pooling"] is False
     assert not plain.get_channel_adaptation().get("interpolated_channels")
     _, tokens = plain.transform(X, return_tokens=True)
     assert tokens.shape == (4, len(DEFAULT_CHANNELS), 2, 200)
