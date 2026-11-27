@@ -148,16 +148,15 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """
         import torch
 
-        nn = torch.nn
-        dropouts = (nn.Dropout, nn.Dropout1d, nn.Dropout2d, nn.Dropout3d)
-        dropouts += (nn.AlphaDropout, nn.FeatureAlphaDropout)
+        from ._training import DROPOUT_MODULES
+
         in_head = {id(module) for module in self.head_module().modules()}
         changed = 0
         for component in self.checkpoint_components().values():
             for module in component.modules():
                 if id(module) in in_head:
                     continue
-                if isinstance(module, dropouts):
+                if isinstance(module, DROPOUT_MODULES):
                     module.p = p
                 elif isinstance(module, torch.nn.MultiheadAttention):
                     module.dropout = p
