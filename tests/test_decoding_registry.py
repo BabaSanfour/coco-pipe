@@ -255,14 +255,13 @@ def test_get_estimator_cls_not_found_with_matches():
         get_estimator_cls("LogisticRegres")
 
 
-def test_registry_all_keys_have_positive_embedding_dim():
+def test_registry_models_with_a_checkpoint_have_an_embedding():
     for m in list_foundation_models():
-        assert m["embedding_dim"] > 0, f"{m['name']} has non-positive embedding_dim"
-
-
-def test_registry_all_keys_have_hub_repo():
-    for m in list_foundation_models():
-        assert m["hub_repo"], f"{m['name']} has empty hub_repo"
+        if m["hub_repo"] is None:
+            # networks without a checkpoint train from random weights only
+            assert m["supported_train_modes"] == ("full",), m["name"]
+        else:
+            assert m["embedding_dim"] > 0, m["name"]
 
 
 def test_list_foundation_models_contains_expected_keys():

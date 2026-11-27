@@ -256,8 +256,11 @@ class FoundationModelSpec(EstimatorSpec):
     dimensions, pretrained signal properties, backend routing).
     """
 
-    hub_repo: str
-    embedding_dim: int
+    # None for a network without a checkpoint, trained from random weights only.
+    hub_repo: str | None
+    # None for a network without an embedding of its own.
+    embedding_dim: int | None
+    # The rate the model takes: the input is resampled to it.
     pretrained_sfreq: float
     preferred_backend: str
     display_name: str = ""
@@ -796,6 +799,97 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
             "broken InterpolatedBENDR. Assumes input is in microvolts. Supported "
             "when the 19 standard EEG channels are present."
         ),
+    ),
+    "steegformer_large": _fm_spec(
+        "steegformer_large",
+        display_name="ST-EEGFormer-large",
+        hub_repo="braindecode/STEEGFormer-large",
+        checkpoint_revision="632acb10c6ce7ead5ecb254bfa7d482d9bb3b71e",
+        embedding_dim=1024,
+        pretrained_sfreq=128.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        input_normalization="zscore",
+        paper_url="https://openreview.net/forum?id=5Xwm8e6vbh",
+        model_notes=(
+            "ViT-MAE (embed_dim=1024, depth=24) pretrained on 11 public EEG "
+            "datasets and in-house data (142 named channels). Input at 128 Hz "
+            "with each channel of a window z-scored, as in the authors' code; "
+            "windows of a multiple of 16 samples (6 s in pretraining). braindecode "
+            "gives each channel the slot of its name, or of the nearest 10-05 "
+            "site."
+        ),
+    ),
+    "steegformer_largev2": _fm_spec(
+        "steegformer_largev2",
+        display_name="ST-EEGFormer-largeV2",
+        hub_repo="braindecode/STEEGFormer-largeV2",
+        checkpoint_revision="ebab2da8f07b0de6898d766a8a3ec772042321f6",
+        embedding_dim=1024,
+        pretrained_sfreq=128.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        input_normalization="zscore",
+        paper_url="https://openreview.net/forum?id=5Xwm8e6vbh",
+        model_notes=(
+            "ST-EEGFormer-large further pretrained on HBN children's EEG for the "
+            "2025 EEG Foundation Challenge (release ST-EEGFormer-largeV2 of the "
+            "authors' repository); its channel table has 256 slots, the first 142 "
+            "those of large. Input as for large. Needs a braindecode that finds "
+            "largeV2's channel slots by name; without it, loading is refused."
+        ),
+    ),
+    # Networks without a checkpoint, trained from random weights on the task.
+    "ctnet": _fm_spec(
+        "ctnet",
+        display_name="CTNet",
+        hub_repo=None,
+        embedding_dim=None,
+        pretrained_sfreq=250.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        supported_train_modes=("full",),
+        paper_url="https://doi.org/10.1038/s41598-024-71118-7",
+        model_notes="Convolution and transformer, designed at 250 Hz.",
+    ),
+    "deep4net": _fm_spec(
+        "deep4net",
+        display_name="Deep4Net",
+        hub_repo=None,
+        embedding_dim=None,
+        pretrained_sfreq=250.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        supported_train_modes=("full",),
+        paper_url="https://doi.org/10.1002/hbm.23730",
+        model_notes="Deep ConvNet of Schirrmeister et al. (2017), at 250 Hz.",
+    ),
+    "eegnet": _fm_spec(
+        "eegnet",
+        display_name="EEGNet",
+        hub_repo=None,
+        embedding_dim=None,
+        pretrained_sfreq=128.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        supported_train_modes=("full",),
+        paper_url="https://doi.org/10.1088/1741-2552/aace8c",
+        model_notes=(
+            "EEGNet-8,2 of Lawhern et al. (2018), at 128 Hz, the rate its "
+            "64-sample temporal kernel (0.5 s) was designed for."
+        ),
+    ),
+    "shallowfbcspnet": _fm_spec(
+        "shallowfbcspnet",
+        display_name="ShallowFBCSPNet",
+        hub_repo=None,
+        embedding_dim=None,
+        pretrained_sfreq=250.0,
+        preferred_backend="braindecode",
+        dependency_extra="braindecode",
+        supported_train_modes=("full",),
+        paper_url="https://doi.org/10.1002/hbm.23730",
+        model_notes="Shallow ConvNet of Schirrmeister et al. (2017), at 250 Hz.",
     ),
 }
 

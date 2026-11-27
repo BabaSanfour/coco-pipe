@@ -128,7 +128,7 @@ torch = [
 ]
 
 braindecode = [
-  "braindecode>=2.0",
+  "braindecode>=2.1",
 ]
 
 hf = [
@@ -144,7 +144,7 @@ peft = [
 foundation = [
   "torch",
   "skorch",
-  "braindecode>=2.0",
+  "braindecode>=2.1",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -224,7 +224,7 @@ full = [
   "specparam",
   "antropy",
   "neurokit2",
-  "braindecode>=2.0",
+  "braindecode>=2.1",
   "transformers",
   "huggingface-hub",
   "peft",
@@ -275,6 +275,8 @@ filterwarnings = [
   # (1) third-party noise --------------------------------------------------
   "ignore:.*groups parameter is ignored.*:UserWarning",
   "ignore:.*enable_nested_tensor.*:UserWarning",
+  # torch, on CTNet's even temporal kernel with padding="same"
+  "ignore:Using padding='same' with even kernel lengths:UserWarning",
   # peft >= 0.21.3 reads transformers' deprecated is_gradient_checkpointing (>= 5.23)
   "ignore:.*is_gradient_checkpointing.*is deprecated.*:FutureWarning",
   "ignore:.*torch.jit.script_method.*is deprecated.*:DeprecationWarning",

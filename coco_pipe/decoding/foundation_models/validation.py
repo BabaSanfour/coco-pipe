@@ -48,6 +48,8 @@ REAL_MODEL_KEYS = (
     "eegpt",
     "signaljepa",
     "bendr",
+    "steegformer_large",
+    "steegformer_largev2",
 )
 
 

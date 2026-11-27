@@ -5,13 +5,16 @@ being fetched from the Hugging Face Hub.
 """
 
 import importlib.util
-import inspect
 
 import numpy as np
 import pytest
 
 from coco_pipe.decoding._specs import SignalMetadata
-from coco_pipe.decoding.foundation_models import FoundationEmbeddingExtractor
+from coco_pipe.decoding.foundation_models import (
+    FoundationClassifier,
+    FoundationEmbeddingExtractor,
+    check_capability,
+)
 from coco_pipe.decoding.foundation_models._braindecode import BrainDecodeBackend
 from coco_pipe.decoding.foundation_models.validation import DEFAULT_CHANNELS
 from coco_pipe.decoding.registry import get_estimator_spec
@@ -21,20 +24,11 @@ pytest.importorskip("braindecode")
 torch = pytest.importorskip("torch")
 
 BACKBONES = ["bendr", "biot", "cbramod", "eegpt", "labram", "luna", "signaljepa"]
-# LUNA's features and BIOT's tokens are in braindecode main, not in 2.0
-LUNA = importlib.import_module("braindecode.models").LUNA
-BRAINDECODE_MAIN = "return_features" in inspect.signature(LUNA.forward).parameters
-
-
-def _skip_before_main(model_key):
-    if model_key in {"biot", "luna"} and not BRAINDECODE_MAIN:
-        pytest.skip(f"{model_key} needs braindecode main")
 
 
 def _load(
     model_key, train_mode="frozen", n_outputs=2, channels=DEFAULT_CHANNELS, **kwargs
 ):
-    _skip_before_main(model_key)
     spec = get_estimator_spec(model_key)
     if model_key == "luna":
         # LUNA cuts its input into patches of 40 samples: 2.5 s at 256 Hz
@@ -191,6 +185,7 @@ AUTHORS_INPUT = {
     "biot": lambda X: X / np.quantile(np.abs(X), 0.95, axis=-1, keepdims=True),
     "luna": _zscore,
     "eegpt": lambda X: (X - X.mean(1, keepdims=True)) / 1000,
+    "steegformer_large": _zscore,
 }
 
 
@@ -342,6 +337,68 @@ def test_luna_finds_positions_whatever_the_case_of_the_names(offline):
     np.testing.assert_array_equal(embed(upper), embed(DEFAULT_CHANNELS))
 
 
+@pytest.mark.parametrize("model_key", ["steegformer_large", "steegformer_largev2"])
+def test_steegformer_channels_take_the_slots_of_their_names(offline, model_key):
+    from braindecode.models.steegformer import STEEGFORMER_CHANNEL_ORDER
+
+    try:
+        backend, _ = _load(model_key, pretrained=False, seed=0)
+    except UserWarning as warning:
+        # a braindecode that cannot find largeV2's slots by name: refused
+        assert model_key == "steegformer_largev2" and "identity" in str(warning)
+        pytest.skip("this braindecode finds no largeV2 slots by name")
+    else:
+        slots = [STEEGFORMER_CHANNEL_ORDER.index(name) for name in DEFAULT_CHANNELS]
+        assert backend._model.channel_indices.tolist() == slots
+        # a name with neither a slot nor a position is refused, not given slot i
+        with pytest.raises(UserWarning, match="identity"):
+            _load(model_key, channels=[*DEFAULT_CHANNELS[:-1], "X1"])
+
+
+@pytest.mark.parametrize(
+    "model_key", ["ctnet", "deep4net", "eegnet", "shallowfbcspnet"]
+)
+def test_networks_without_checkpoint_train_from_their_seed(model_key):
+    sfreq = get_estimator_spec(model_key).pretrained_sfreq
+    X = np.random.default_rng(0).normal(scale=20, size=(8, 19, round(sfreq * 10)))
+    y = np.repeat([0, 1], 4)
+
+    def fit(seed):
+        return FoundationClassifier(
+            model_key,
+            device="cpu",
+            sfreq=sfreq,
+            ch_names=DEFAULT_CHANNELS,
+            trainer={"max_epochs": 1, "batch_size": 4},
+            backend_kwargs={"pretrained": False, "seed": seed},
+        ).fit(X, y, groups=np.repeat(np.arange(4), 2))
+
+    first, again, other = fit(0), fit(0), fit(1)
+    assert first.backend_.checkpoint_revisions == {}
+    np.testing.assert_allclose(first.predict_proba(X), again.predict_proba(X))
+    assert not np.allclose(first.predict_proba(X), other.predict_proba(X))
+
+
+@pytest.mark.parametrize(
+    "train_mode, weights, message",
+    [
+        ("full", {}, "no pretrained weights"),
+        ("linear_probe", {"pretrained": False, "seed": 0}, "supports train_mode"),
+    ],
+)
+def test_networks_without_checkpoint_train_only_in_full(train_mode, weights, message):
+    signal = {"sfreq": 128.0, "ch_names": DEFAULT_CHANNELS}
+    capability = check_capability(
+        "eegnet", train_mode, backend_kwargs=weights, **signal
+    )
+    assert capability.status == "unsupported"
+    classifier = FoundationClassifier(
+        "eegnet", train_mode=train_mode, device="cpu", backend_kwargs=weights, **signal
+    )
+    with pytest.raises(ValueError, match=message):
+        classifier.fit(np.ones((4, 19, 1280)), np.array([0, 1, 0, 1]))
+
+
 @pytest.mark.parametrize(("model_key", "n_times"), [("luna", 512), ("labram", 2100)])
 def test_models_refuse_windows_they_cannot_patch(offline, model_key, n_times):
     with pytest.raises(ValueError, match="not divisible by patch_size"):
@@ -419,7 +476,6 @@ def test_transform_checks_its_input(offline):
 
 
 def test_extractor_loads_again_for_another_montage(offline):
-    _skip_before_main("biot")
     X = np.random.default_rng(0).normal(scale=20, size=(3, 19, 2000))
     extractor = FoundationEmbeddingExtractor(
         "biot", device="cpu", normalize_embeddings=False
@@ -443,8 +499,6 @@ def test_extractor_loads_again_for_another_montage(offline):
 
 def test_weight_sets_extract_a_recording_as_each_extractor_alone(offline, monkeypatch):
     import mne
-
-    _skip_before_main("luna")
 
     from coco_pipe.decoding.foundation_models import extract_weight_sets
     from coco_pipe.io import DataContainer

@@ -1,0 +1,1 @@
+coco-pipe needs braindecode 2.1, which has LUNA's features and BIOT's tokens; CI no longer installs braindecode's `master`.

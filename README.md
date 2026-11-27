@@ -97,27 +97,17 @@ uv pip install -e ".[full,test]"
 
 ### Unreleased mne-bids and braindecode fixes
 
-Two features need a package's `main` until its next release:
-
-- `BIDSDataset` reads saved epochs (`*_epo.fif`) with `mne_bids.read_epochs_bids`,
-  which reads FIF epochs from mne-bids PR
-  [#1679](https://github.com/mne-tools/mne-bids/pull/1679) on.
-- LUNA needs braindecode 2.1: its features
-  ([#1565](https://github.com/braindecode/braindecode/pull/1565)), the
-  device-independent phase of its frequency embedding
-  ([#1566](https://github.com/braindecode/braindecode/pull/1566)) and its
-  `reset_head` ([#1568](https://github.com/braindecode/braindecode/pull/1568)),
-  and its refusal of channels with no position
-  ([#1569](https://github.com/braindecode/braindecode/pull/1569)). BIOT needs it
-  for its tokens ([#1570](https://github.com/braindecode/braindecode/pull/1570)).
+`BIDSDataset` reads saved epochs (`*_epo.fif`) with `mne_bids.read_epochs_bids`,
+which reads FIF epochs from mne-bids PR
+[#1679](https://github.com/mne-tools/mne-bids/pull/1679) on, on its `main` until
+its next release:
 
 ```bash
 pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
-pip install "braindecode @ git+https://github.com/braindecode/braindecode.git@master"
 ```
 
-With the released packages, loading saved epochs and LUNA fail, and the tests
-that need them are skipped. CI runs them in a separate job on both `main`s.
+With the released mne-bids, loading saved epochs fails and the tests that need it
+are skipped. CI runs them in a separate job on mne-bids `main`.
 
 ---
 

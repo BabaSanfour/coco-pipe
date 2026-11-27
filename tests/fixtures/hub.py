@@ -13,7 +13,11 @@ CHECKPOINT_DEFAULTS = {
     "Labram": {"n_outputs": 1},
     "BIOT": {"n_times": 2000, "sfreq": 200.0, "n_outputs": 1},
     "BENDR": {"n_outputs": 1},
+    # large but two blocks deep, not 24, to keep the tests light
+    "STEEGFormer": {"n_outputs": 4, "embed_dim": 1024, "num_heads": 16, "depth": 2},
 }
+# Settings a checkpoint's config would otherwise provide, by repository.
+REPO_DEFAULTS = {"braindecode/STEEGFormer-largeV2": {"n_chans_pos": 256}}
 
 
 @pytest.fixture
@@ -31,7 +35,11 @@ def offline(monkeypatch, tmp_path):
             for key, value in kwargs.items()
             if key not in {"revision", "filename", "token"}
         }
-        for key, value in CHECKPOINT_DEFAULTS.get(cls.__name__, {}).items():
+        defaults = {
+            **CHECKPOINT_DEFAULTS.get(cls.__name__, {}),
+            **REPO_DEFAULTS.get(repo_id, {}),
+        }
+        for key, value in defaults.items():
             params.setdefault(key, value)
         return cls(**params)
 
@@ -43,6 +51,7 @@ def offline(monkeypatch, tmp_path):
         "Labram",
         "LUNA",
         "SignalJEPA_Contextual",
+        "STEEGFormer",
     ):
         monkeypatch.setattr(getattr(bm, name), "from_pretrained", classmethod(build))
 
