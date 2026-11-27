@@ -148,7 +148,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         """
         import torch
 
-        from ._training import DROPOUT_MODULES
+        from . import _training
 
         in_head = {id(module) for module in self.head_module().modules()}
         changed = 0
@@ -156,7 +156,7 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             for module in component.modules():
                 if id(module) in in_head:
                     continue
-                if isinstance(module, DROPOUT_MODULES):
+                if isinstance(module, _training.DROPOUT_MODULES):
                     module.p = p
                 elif isinstance(module, torch.nn.MultiheadAttention):
                     module.dropout = p
