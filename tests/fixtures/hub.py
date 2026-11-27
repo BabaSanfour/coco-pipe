@@ -4,10 +4,15 @@ Only the download is replaced: each model is built from its class instead of
 being fetched from the Hugging Face Hub.
 """
 
+from pathlib import Path
+
 import pytest
 
 # The commit a repository resolves to when no revision is given.
 LATEST = "0123456789abcdef0123456789abcdef01234567"
+# STEEGFormer's channel vocabulary, as braindecode fetches it from the Hub
+# (braindecode/STEEGFormer-small at 633c9c0d), so the tests stay offline.
+STEEGFORMER_CHANNELS = Path(__file__).with_name("steegformer_channels.json")
 # Settings a checkpoint's config would otherwise provide.
 CHECKPOINT_DEFAULTS = {
     "Labram": {"n_outputs": 1},
@@ -55,12 +60,9 @@ def offline(monkeypatch, tmp_path):
     ):
         monkeypatch.setattr(getattr(bm, name), "from_pretrained", classmethod(build))
 
-    hub_download = huggingface_hub.hf_hub_download
-
     def download(repo_id, filename, revision=None, **kwargs):
-        if filename == "steegformer_channels.json":
-            # STEEGFormer's channel vocabulary, a pinned file of 2 kB
-            return hub_download(repo_id, filename, revision=revision, **kwargs)
+        if filename == STEEGFORMER_CHANNELS.name:
+            return str(STEEGFORMER_CHANNELS)
         # a cached snapshot folder is named by its commit
         return str(tmp_path / "snapshots" / (revision or LATEST) / filename)
 
