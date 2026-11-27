@@ -752,6 +752,9 @@ class DimReductionReportContext:
     container_builder: Callable[[str], Any | None]
     output_root: Path
     eval_specs: Sequence[Mapping[str, Any]] = ()
+    # The eval the runs are ranked on (best-run cards, condition and pooled
+    # sections); empty ranks on every eval at once.
+    selection_eval_name: str = ""
     interactive: bool = False
     input_mode: str = ""
     representation: str = ""
@@ -2338,10 +2341,14 @@ def build_dataset_report(
 
     fit_success = split_by_status(fit_runs_df)[0]
     eval_merge_cols = ["fit_id", "eval_name", "target_col", *available_eval_metrics]
+    # Rankings use the selection eval only; the eval results section shows them all.
+    ranking_frame = eval_frame
+    if ctx.selection_eval_name and not eval_frame.empty:
+        ranking_frame = eval_frame[eval_frame["eval_name"] == ctx.selection_eval_name]
 
-    if not eval_frame.empty:
-        eval_subset = eval_frame.loc[
-            :, [c for c in eval_merge_cols if c in eval_frame.columns]
+    if not ranking_frame.empty:
+        eval_subset = ranking_frame.loc[
+            :, [c for c in eval_merge_cols if c in ranking_frame.columns]
         ]
         fit_eval_ranking = fit_success.merge(eval_subset, on="fit_id", how="left")
     else:
@@ -2442,8 +2449,8 @@ def build_dataset_report(
             section_builder(
                 condition,
                 condition_fit_runs,
-                eval_frame[eval_frame["condition"] == condition].copy()
-                if not eval_frame.empty
+                ranking_frame[ranking_frame["condition"] == condition].copy()
+                if not ranking_frame.empty
                 else pd.DataFrame(),
                 ctx,
             )
@@ -2456,11 +2463,11 @@ def build_dataset_report(
             & (fit_runs_df["status"] == "success")
         ].copy()
         pooled_eval = (
-            eval_frame[
-                (eval_frame["scope"] == "pooled")
-                & (eval_frame["condition"] == ctx.pooled_condition)
+            ranking_frame[
+                (ranking_frame["scope"] == "pooled")
+                & (ranking_frame["condition"] == ctx.pooled_condition)
             ].copy()
-            if not eval_frame.empty
+            if not ranking_frame.empty
             else pd.DataFrame()
         )
         pooled_container = None

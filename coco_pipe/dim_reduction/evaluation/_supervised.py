@@ -50,6 +50,26 @@ def _make_splitter(
     raise ValueError(f"Unsupported supervised scoring CV strategy: {strategy}.")
 
 
+def _group_weights(groups: np.ndarray | None, n_samples: int) -> np.ndarray:
+    """One over each sample's group size: each group (e.g. a subject) counts once,
+    however many samples (e.g. windows) it has."""
+    if groups is None:
+        return np.ones(n_samples)
+    _, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
+    return 1.0 / counts[inverse]
+
+
+def _balanced_weights(y: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    """*weights* rescaled so that each class weighs the same, averaging 1 (so an
+    estimator's regularisation keeps its scale)."""
+    classes, class_index = np.unique(y, return_inverse=True)
+    balanced = (
+        weights
+        / (len(classes) * np.bincount(class_index, weights=weights))[class_index]
+    )
+    return balanced * len(y) / balanced.sum()
+
+
 def _cross_validate_score(
     estimator: BaseEstimator,
     X: np.ndarray,
@@ -66,9 +86,11 @@ def _cross_validate_score(
     """
     Compute a mean supervised CV score for dim-reduction separation metrics.
 
-    This private helper is deliberately narrow. It currently exists for
-    ``separation_logreg_balanced_accuracy`` and supports only the CV strategies
-    used by dim-reduction evaluation.
+    This private helper is deliberately narrow. It currently exists for the
+    separation metrics and supports only the CV strategies used by
+    dim-reduction evaluation. Fits and scores are weighted so that each group
+    counts once (:func:`_group_weights`); the fit also balances the classes
+    (:func:`_balanced_weights`), so pass an estimator without ``class_weight``.
     """
     if metric != "balanced_accuracy":
         raise ValueError(
@@ -80,8 +102,8 @@ def _cross_validate_score(
     y_values = np.asarray(y).reshape(-1)
     if len(X_values) != len(y_values):
         raise ValueError("X and y must have matching sample counts.")
-    # integer classes: a random forest with class_weight="balanced" fails on
-    # text labels in scikit-learn 1.9
+    # integer classes: an estimator given class_weight="balanced" fails on text
+    # labels in scikit-learn 1.9
     y_values = LabelEncoder().fit_transform(y_values)
 
     group_values = None
@@ -105,9 +127,24 @@ def _cross_validate_score(
 
     scores = []
     for train_idx, test_idx in splitter.split(X_values, y_values, group_values):
+        y_train, y_test = y_values[train_idx], y_values[test_idx]
+        train_weights = _group_weights(
+            None if group_values is None else group_values[train_idx], len(train_idx)
+        )
+        fit_weights = {"sample_weight": _balanced_weights(y_train, train_weights)}
+        if use_scaler:
+            fit_weights = {
+                "scaler__sample_weight": train_weights,
+                "clf__sample_weight": fit_weights["sample_weight"],
+            }
         model = clone(base_estimator)
-        model.fit(X_values[train_idx], y_values[train_idx])
-        y_pred = model.predict(X_values[test_idx])
-        scores.append(float(balanced_accuracy_score(y_values[test_idx], y_pred)))
+        model.fit(X_values[train_idx], y_train, **fit_weights)
+        test_weights = _group_weights(
+            None if group_values is None else group_values[test_idx], len(test_idx)
+        )
+        score = balanced_accuracy_score(
+            y_test, model.predict(X_values[test_idx]), sample_weight=test_weights
+        )
+        scores.append(float(score))
 
     return float(np.nanmean(scores)) if scores else float("nan")

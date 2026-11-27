@@ -677,8 +677,7 @@ def evaluate_embedding(
         if SEPARATION_RF_BALANCED_ACCURACY in supervised_selection:
             separation_score = _cross_validate_score(
                 RandomForestClassifier(
-                    n_estimators=300,
-                    class_weight="balanced",
+                    n_estimators=200,
                     n_jobs=1,
                     random_state=42,
                 ),
@@ -704,7 +703,7 @@ def evaluate_embedding(
             )
         if SEPARATION_LOGREG_BALANCED_ACCURACY in supervised_selection:
             separation_score = _cross_validate_score(
-                LogisticRegression(max_iter=1000, class_weight="balanced"),
+                LogisticRegression(max_iter=1000),
                 X_emb,
                 labels,
                 groups=groups,

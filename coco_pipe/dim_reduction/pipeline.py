@@ -711,7 +711,8 @@ def prepare_eval_inputs(
 
     labels = aligned_frame[eval_spec["target_col"]]
     if eval_spec["label_map"]:
-        labels = labels.map(lambda value: eval_spec["label_map"].get(str(value), value))
+        # a value the map does not name is missing, not a class of its own
+        labels = labels.map(lambda value: eval_spec["label_map"].get(str(value)))
     labels = labels.astype("string").str.strip()
     labels = labels.mask(labels.str.lower().isin(MISSING_EVAL_VALUES))
     groups = aligned_frame[eval_spec["group_col"]].astype("string").str.strip()

@@ -186,6 +186,31 @@ def test_evaluate_embedding_supervised_rf_and_logreg_metric_records():
     ]
 
 
+def test_supervised_separation_counts_each_group_once():
+    # 20 groups per class, separable, except one class-0 group with 400 samples
+    # in the class-1 region: weighted by group it is 1 of 20 class-0 groups, not
+    # most of the class-0 samples.
+    rng = np.random.default_rng(0)
+    group_labels = np.repeat([0, 1], 20)
+    sizes = np.full(40, 3)
+    sizes[0] = 400
+    groups = np.repeat(np.arange(40), sizes)
+    y = group_labels[groups]
+    centers = np.where(group_labels == 1, 2.0, -2.0)
+    centers[0] = 2.0
+    X_emb = centers[groups][:, None] + rng.normal(scale=0.5, size=(len(y), 2))
+
+    payload = evaluate_embedding(
+        X_emb,
+        metrics=[SEPARATION_LOGREG_BALANCED_ACCURACY],
+        labels=y,
+        groups=groups,
+    )
+
+    # 0.76 when each sample counts once
+    assert payload["metrics"][SEPARATION_LOGREG_BALANCED_ACCURACY] > 0.85
+
+
 def test_evaluate_embedding_supervised_metric_requires_labels_and_groups():
     X_emb = np.random.rand(12, 2)
     y = np.array([0, 1] * 6)
