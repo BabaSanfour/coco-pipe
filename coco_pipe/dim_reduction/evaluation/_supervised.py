@@ -50,24 +50,18 @@ def _make_splitter(
     raise ValueError(f"Unsupported supervised scoring CV strategy: {strategy}.")
 
 
-def _group_weights(groups: np.ndarray | None, n_samples: int) -> np.ndarray:
-    """One over each sample's group size: each group (e.g. a subject) counts once,
-    however many samples (e.g. windows) it has."""
-    if groups is None:
-        return np.ones(n_samples)
-    _, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
-    return 1.0 / counts[inverse]
-
-
-def _balanced_weights(y: np.ndarray, weights: np.ndarray) -> np.ndarray:
-    """*weights* rescaled so that each class weighs the same, averaging 1 (so an
-    estimator's regularisation keeps its scale)."""
-    classes, class_index = np.unique(y, return_inverse=True)
-    balanced = (
-        weights
-        / (len(classes) * np.bincount(class_index, weights=weights))[class_index]
-    )
-    return balanced * len(y) / balanced.sum()
+def _sample_weights(y: np.ndarray, groups: np.ndarray | None) -> np.ndarray:
+    """Each class weighs the same and, within a class, each group (e.g. a
+    subject) the same, however many samples (e.g. windows) it has there. The
+    weights average 1, so an estimator's regularisation keeps its scale."""
+    _, class_index = np.unique(y, return_inverse=True)
+    cells = class_index
+    if groups is not None:
+        pairs = np.column_stack([groups.astype(str), class_index.astype(str)])
+        cells = np.unique(pairs, axis=0, return_inverse=True)[1].reshape(-1)
+    weights = 1.0 / np.bincount(cells)[cells]
+    weights /= np.bincount(class_index, weights=weights)[class_index]
+    return weights * len(weights) / weights.sum()
 
 
 def _cross_validate_score(
@@ -89,8 +83,8 @@ def _cross_validate_score(
     This private helper is deliberately narrow. It currently exists for the
     separation metrics and supports only the CV strategies used by
     dim-reduction evaluation. Fits and scores are weighted so that each group
-    counts once (:func:`_group_weights`); the fit also balances the classes
-    (:func:`_balanced_weights`), so pass an estimator without ``class_weight``.
+    counts once within each class and each class the same
+    (:func:`_sample_weights`), so pass an estimator without ``class_weight``.
     """
     if metric != "balanced_accuracy":
         raise ValueError(
@@ -128,22 +122,23 @@ def _cross_validate_score(
     scores = []
     for train_idx, test_idx in splitter.split(X_values, y_values, group_values):
         y_train, y_test = y_values[train_idx], y_values[test_idx]
-        train_weights = _group_weights(
-            None if group_values is None else group_values[train_idx], len(train_idx)
+        train_groups, test_groups = (
+            (None, None)
+            if group_values is None
+            else (group_values[train_idx], group_values[test_idx])
         )
-        fit_weights = {"sample_weight": _balanced_weights(y_train, train_weights)}
-        if use_scaler:
-            fit_weights = {
-                "scaler__sample_weight": train_weights,
-                "clf__sample_weight": fit_weights["sample_weight"],
-            }
+        weights = _sample_weights(y_train, train_groups)
+        fit_params = (
+            {"scaler__sample_weight": weights, "clf__sample_weight": weights}
+            if use_scaler
+            else {"sample_weight": weights}
+        )
         model = clone(base_estimator)
-        model.fit(X_values[train_idx], y_train, **fit_weights)
-        test_weights = _group_weights(
-            None if group_values is None else group_values[test_idx], len(test_idx)
-        )
+        model.fit(X_values[train_idx], y_train, **fit_params)
         score = balanced_accuracy_score(
-            y_test, model.predict(X_values[test_idx]), sample_weight=test_weights
+            y_test,
+            model.predict(X_values[test_idx]),
+            sample_weight=_sample_weights(y_test, test_groups),
         )
         scores.append(float(score))
 
