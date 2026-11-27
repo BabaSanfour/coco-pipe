@@ -205,6 +205,7 @@ def test_supervised_separation_counts_each_group_once():
         metrics=[SEPARATION_LOGREG_BALANCED_ACCURACY],
         labels=y,
         groups=groups,
+        sample_weight="group",
     )
 
     # 0.76 when each sample counts once

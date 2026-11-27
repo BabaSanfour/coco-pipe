@@ -402,8 +402,8 @@ def test_fit_estimator_no_sample_weight_when_none():
     assert clf.recorded_weight_ is None
 
 
-def test_fit_estimator_skips_unsupported_clf():
-    """fit_estimator does NOT crash when clf.fit lacks sample_weight param."""
+def test_fit_estimator_refuses_a_clf_without_sample_weight():
+    """sample_weight is not dropped silently when clf.fit cannot take it."""
 
     class NoWeightClf(BaseEstimator, ClassifierMixin):
         _estimator_type = "classifier"
@@ -417,16 +417,16 @@ def test_fit_estimator_skips_unsupported_clf():
 
     pipe = Pipeline([("clf", NoWeightClf())])
     sw = np.array([1.0, 2.0, 3.0])
-    # should not raise
-    fit_estimator(
-        pipe,
-        np.zeros((3, 2)),
-        np.array([0, 1, 0]),
-        None,
-        MockConfig(),
-        MockConfig(),
-        sample_weight=sw,
-    )
+    with pytest.raises(ValueError, match="NoWeightClf does not take sample_weight"):
+        fit_estimator(
+            pipe,
+            np.zeros((3, 2)),
+            np.array([0, 1, 0]),
+            None,
+            MockConfig(),
+            MockConfig(),
+            sample_weight=sw,
+        )
 
 
 def test_fit_and_score_fold_sample_weight_train_only():
@@ -473,6 +473,55 @@ def test_fit_and_score_fold_sample_weight_train_only():
     )
 
 
+def test_group_sample_weight_reaches_every_step_of_the_training_fold():
+    from coco_pipe.decoding import _engine as engine
+    from coco_pipe.decoding._metrics import MetricSpec
+    from coco_pipe.utils import balanced_sample_weights
+
+    class WeightCapturingScaler(StandardScaler):
+        def fit(self, X, y=None, sample_weight=None):
+            self.recorded_weight_ = sample_weight
+            return super().fit(X, y, sample_weight=sample_weight)
+
+    pipe = Pipeline(
+        [("scaler", WeightCapturingScaler()), ("clf", _WeightCapturingClassifier())]
+    )
+    y = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+    groups = np.array(["a", "a", "a", "b", "c", "c", "d", "d"])
+    train_idx, test_idx = np.arange(8), np.arange(8)
+    old_get = engine.get_metric_spec
+    try:
+        engine.get_metric_spec = lambda m: MetricSpec(
+            m, "classification", lambda yt, yp: float(yp.mean()), "predict"
+        )
+        fold = {
+            "X": np.random.default_rng(0).normal(size=(8, 2)),
+            "y": y,
+            "groups": groups,
+            "sample_ids": np.arange(8).astype(str),
+            "sample_metadata": None,
+            "train_idx": train_idx,
+            "test_idx": test_idx,
+            "metrics": ["acc"],
+            "feature_selection_config": MockConfig(),
+            "calibration_config": MockConfig(),
+            "spec": _make_spec(),
+            "sample_weight": "group",
+        }
+        fit_and_score_fold(pipe, **fold)
+        with pytest.raises(ValueError, match="clf__class_weight"):
+            balanced = Pipeline([("clf", LogisticRegression(class_weight="balanced"))])
+            fit_and_score_fold(balanced, **fold)
+    finally:
+        engine.get_metric_spec = old_get
+
+    # each child once within each class: a's three windows weigh one b window
+    expected = balanced_sample_weights(y, groups)
+    np.testing.assert_allclose(expected, [2 / 3] * 3 + [2] + [1] * 4)
+    for step in pipe.named_steps.values():
+        np.testing.assert_allclose(step.recorded_weight_, expected)
+
+
 def test_experiment_run_rejects_length_mismatch():
     """Experiment.run raises ValueError when sample_weight length != len(X)."""
     import pytest
@@ -493,6 +542,9 @@ def test_experiment_run_rejects_length_mismatch():
 
     with pytest.raises(ValueError, match="sample_weight length"):
         Experiment(config).run(X, y, sample_weight=np.ones(5))
+    config.sample_weight = "group"
+    with pytest.raises(ValueError, match="not both"):
+        Experiment(config).run(X, y, sample_weight=np.ones(10))
 
 
 def test_grouped_sfs():

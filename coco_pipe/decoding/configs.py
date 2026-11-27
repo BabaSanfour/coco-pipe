@@ -1344,6 +1344,17 @@ class ExperimentConfig(BaseModel):
     )
     n_jobs: int = -1
     verbose: bool = True
+    sample_weight: Literal["group"] | None = Field(
+        None,
+        description=(
+            "'group' weights each training fold so that each group (e.g. a "
+            "subject) counts once within each class, however many samples it "
+            "has: coco_pipe.utils.balanced_sample_weights of the fold's labels "
+            "and groups, given to every pipeline step whose fit takes "
+            "sample_weight. The classifier must take it and have no "
+            "class_weight. Not with Experiment.run(sample_weight=...)."
+        ),
+    )
     keep_test_embeddings: bool = Field(
         False,
         description=(

@@ -16,6 +16,8 @@ from sklearn.model_selection import GroupKFold, StratifiedGroupKFold, Stratified
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
+from ...utils import balanced_sample_weights
+
 
 def _cv_random_state(shuffle: bool, random_state: int | None) -> int | None:
     return random_state if shuffle else None
@@ -50,20 +52,6 @@ def _make_splitter(
     raise ValueError(f"Unsupported supervised scoring CV strategy: {strategy}.")
 
 
-def _sample_weights(y: np.ndarray, groups: np.ndarray | None) -> np.ndarray:
-    """Each class weighs the same and, within a class, each group (e.g. a
-    subject) the same, however many samples (e.g. windows) it has there. The
-    weights average 1, so an estimator's regularisation keeps its scale."""
-    _, class_index = np.unique(y, return_inverse=True)
-    cells = class_index
-    if groups is not None:
-        pairs = np.column_stack([groups.astype(str), class_index.astype(str)])
-        cells = np.unique(pairs, axis=0, return_inverse=True)[1].reshape(-1)
-    weights = 1.0 / np.bincount(cells)[cells]
-    weights /= np.bincount(class_index, weights=weights)[class_index]
-    return weights * len(weights) / weights.sum()
-
-
 def _cross_validate_score(
     estimator: BaseEstimator,
     X: np.ndarray,
@@ -76,16 +64,24 @@ def _cross_validate_score(
     random_state: int | None = 42,
     metric: str = "balanced_accuracy",
     use_scaler: bool = False,
+    sample_weight: str | None = None,
 ) -> float:
     """
     Compute a mean supervised CV score for dim-reduction separation metrics.
 
     This private helper is deliberately narrow. It currently exists for the
     separation metrics and supports only the CV strategies used by
-    dim-reduction evaluation. Fits and scores are weighted so that each group
-    counts once within each class and each class the same
-    (:func:`_sample_weights`), so pass an estimator without ``class_weight``.
+    dim-reduction evaluation. With ``sample_weight="group"``, the scaling, the
+    fit and the score weight each group once within each class
+    (:func:`~coco_pipe.utils.balanced_sample_weights`); the estimator must then
+    have no ``class_weight``.
     """
+    if sample_weight not in (None, "group"):
+        raise ValueError(
+            f"sample_weight must be None or 'group', got {sample_weight!r}."
+        )
+    if sample_weight == "group" and groups is None:
+        raise ValueError("sample_weight='group' needs groups.")
     if metric != "balanced_accuracy":
         raise ValueError(
             "Dim-reduction supervised scoring currently supports only "
@@ -96,8 +92,8 @@ def _cross_validate_score(
     y_values = np.asarray(y).reshape(-1)
     if len(X_values) != len(y_values):
         raise ValueError("X and y must have matching sample counts.")
-    # integer classes: an estimator given class_weight="balanced" fails on text
-    # labels in scikit-learn 1.9
+    # integer classes: a random forest with class_weight="balanced" fails on
+    # text labels in scikit-learn 1.9
     y_values = LabelEncoder().fit_transform(y_values)
 
     group_values = None
@@ -122,23 +118,19 @@ def _cross_validate_score(
     scores = []
     for train_idx, test_idx in splitter.split(X_values, y_values, group_values):
         y_train, y_test = y_values[train_idx], y_values[test_idx]
-        train_groups, test_groups = (
-            (None, None)
-            if group_values is None
-            else (group_values[train_idx], group_values[test_idx])
-        )
-        weights = _sample_weights(y_train, train_groups)
-        fit_params = (
-            {"scaler__sample_weight": weights, "clf__sample_weight": weights}
-            if use_scaler
-            else {"sample_weight": weights}
-        )
+        fit_params, test_weights = {}, None
+        if sample_weight == "group":
+            weights = balanced_sample_weights(y_train, group_values[train_idx])
+            fit_params = (
+                {"scaler__sample_weight": weights, "clf__sample_weight": weights}
+                if use_scaler
+                else {"sample_weight": weights}
+            )
+            test_weights = balanced_sample_weights(y_test, group_values[test_idx])
         model = clone(base_estimator)
         model.fit(X_values[train_idx], y_train, **fit_params)
         score = balanced_accuracy_score(
-            y_test,
-            model.predict(X_values[test_idx]),
-            sample_weight=_sample_weights(y_test, test_groups),
+            y_test, model.predict(X_values[test_idx]), sample_weight=test_weights
         )
         scores.append(float(score))
 

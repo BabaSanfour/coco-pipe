@@ -189,9 +189,15 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         X: np.ndarray,
         y: np.ndarray,
         groups: np.ndarray | None = None,
+        sample_weight: np.ndarray | None = None,
     ):
+        """Fine-tune on (X, y); ``groups`` keep each group on one side of the
+        validation split, and ``sample_weight`` weights each window's loss
+        (with ``class_weight=None``)."""
         import torch
 
+        if sample_weight is not None and self.class_weight is not None:
+            raise ValueError("sample_weight needs class_weight=None.")
         # Seed torch so random_state controls head init, dropout, and batch
         # shuffling — not just the group split.
         torch.manual_seed(self.random_state)
@@ -245,6 +251,7 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
             np.searchsorted(self.classes_, y),
             groups=groups,
             class_weight=class_weights,
+            sample_weight=sample_weight,
             random_state=self.random_state,
             max_epochs=trainer.get("max_epochs", 10),
             batch_size=trainer.get("batch_size", 32),

@@ -452,6 +452,12 @@ def _eval_id(fit_id: str, eval_spec: dict[str, Any]) -> str:
             "group_col": eval_spec["group_col"],
             "filters": eval_spec["filters"],
             "label_map": eval_spec["label_map"],
+            # only when set, so that the ids of existing evals do not change
+            **(
+                {"sample_weight": eval_spec["sample_weight"]}
+                if eval_spec.get("sample_weight")
+                else {}
+            ),
         },
         length=16,
     )
@@ -477,6 +483,7 @@ def _base_eval_payload(
             "group_col": eval_spec["group_col"],
             "filters": list(eval_spec["filters"]),
             "label_map": dict(eval_spec["label_map"]),
+            "sample_weight": eval_spec.get("sample_weight"),
             "status": "success",
             "timestamp": datetime.now(UTC).isoformat(),
             "n_samples": int(n_samples),
@@ -549,6 +556,7 @@ def run_eval(
                 metrics=EVAL_METRIC_COLUMNS,
                 labels=labels,
                 groups=groups,
+                sample_weight=eval_spec.get("sample_weight"),
             )["metrics"]
         )
         eval_payload = _base_eval_payload(

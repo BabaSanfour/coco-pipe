@@ -28,6 +28,7 @@ from sklearn.feature_selection import (
 from sklearn.pipeline import Pipeline
 from sklearn.utils.multiclass import type_of_target
 
+from ..utils import balanced_sample_weights
 from ._constants import GROUP_CV_STRATEGIES
 from ._metrics import get_metric_spec
 from ._splitters import _CVWithGroups, cv_uses_groups, get_cv_splitter
@@ -236,7 +237,7 @@ def fit_and_score_fold(
     feature_names: list[str] | None = None,
     search_enabled: bool = False,
     force_serial: bool = False,
-    sample_weight: np.ndarray | None = None,
+    sample_weight: np.ndarray | str | None = None,
     score_by: str | None = None,
     erasure_condition_column: str | None = None,
     keep_test_embeddings: bool = False,
@@ -283,9 +284,11 @@ def fit_and_score_fold(
         Original names of the features, used for importance labeling.
     force_serial : bool, default=False
         If True, forces the internal estimator fit to be serial.
-    sample_weight : np.ndarray, optional
-        Per-sample weights for the full dataset. Only the training-fold
-        slice is forwarded to the classifier; test samples are never weighted.
+    sample_weight : np.ndarray or "group", optional
+        Per-sample weights for the full dataset, of which the training fold's
+        are used, or ``"group"``: :func:`~coco_pipe.utils.balanced_sample_weights`
+        of the training fold's labels and groups. Test samples are never
+        weighted.
     erasure_condition_column : str, optional
         Sample-metadata column whose training-fold slice is given to the
         erasure step's fit as ``condition``.
@@ -302,7 +305,22 @@ def fit_and_score_fold(
     X_train, X_test = X[train_idx], X[test_idx]
     y_train, y_test = y[train_idx], y[test_idx]
 
-    sw_train = sample_weight[train_idx] if sample_weight is not None else None
+    if isinstance(sample_weight, str):
+        if groups is None:
+            raise ValueError("sample_weight='group' needs groups.")
+        balanced = {
+            name: value
+            for name, value in estimator.get_params().items()
+            if name.endswith("class_weight") and value is not None
+        }
+        if balanced:
+            raise ValueError(
+                f"sample_weight='group' balances the classes itself: set "
+                f"{sorted(balanced)} to None."
+            )
+        sw_train = balanced_sample_weights(y[train_idx], groups[train_idx])
+    else:
+        sw_train = sample_weight[train_idx] if sample_weight is not None else None
     groups_train = groups[train_idx] if groups is not None else None
     test_groups = groups[test_idx] if groups is not None else None
     alignment_time = 0.0
@@ -571,9 +589,8 @@ def fit_estimator(
     tuning_config : Any
         Hyperparameter tuning settings.
     sample_weight : np.ndarray, optional
-        Per-sample weights for the training fold. Forwarded as
-        ``clf__sample_weight`` when the pipeline's ``clf`` step exposes
-        a ``sample_weight`` parameter in its ``fit`` signature.
+        Per-sample weights for the training fold, given to every pipeline
+        step whose ``fit`` takes ``sample_weight``. The ``clf`` step must.
     condition_train : np.ndarray, optional
         Training condition of each sample, forwarded as ``erasure__condition``
         to an erasure step whose ``fit`` takes ``condition``.
@@ -628,14 +645,18 @@ def fit_estimator(
             if "groups" in inspect.signature(classifier_step.fit).parameters:
                 fit_params["clf__groups"] = groups_train
 
-    if (
-        sample_weight is not None
-        and isinstance(pipeline, Pipeline)
-        and "clf" in pipeline.named_steps
-    ):
-        clf_step = pipeline.named_steps["clf"]
-        if "sample_weight" in inspect.signature(clf_step.fit).parameters:
-            fit_params["clf__sample_weight"] = sample_weight
+    if sample_weight is not None:
+        steps = pipeline.steps if isinstance(pipeline, Pipeline) else []
+        for name, step in steps:
+            if hasattr(step, "fit") and (
+                "sample_weight" in inspect.signature(step.fit).parameters
+            ):
+                fit_params[f"{name}__sample_weight"] = sample_weight
+        if "clf__sample_weight" not in fit_params:
+            clf = dict(steps).get("clf", pipeline)
+            raise ValueError(
+                f"{type(clf).__name__} does not take sample_weight in its fit."
+            )
 
     estimator.fit(X_train, y_train, **fit_params)
 

@@ -352,7 +352,8 @@ class HuggingFaceBackend(BackendBase):
                 self.position_bank = backend._pos_bank
                 self.head = backend._head
 
-            def forward(self, X):
+            def forward(self, X, sample_weight=None):
+                # sample_weight goes to the loss (_training._SampleWeightedLoss)
                 return self._backend._reve_forward(X, return_embeddings=False)
 
             def train(self, mode: bool = True):

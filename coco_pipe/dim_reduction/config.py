@@ -682,7 +682,8 @@ def parse_eval_specs(
     Each spec dict must have at least ``"name"`` and ``"target_col"`` keys.
     Optional keys: ``"group_col"`` (defaults to :data:`DEFAULT_EVAL_GROUP_COL`),
     ``"filters"`` (list of ``{column, values}`` dicts), ``"label_map"``
-    (string→string mapping).
+    (string→string mapping), ``"sample_weight"`` (``"group"`` to count each
+    group once within each class in the separation metrics).
 
     Parameters
     ----------
@@ -729,6 +730,11 @@ def parse_eval_specs(
                     str(key): str(value)
                     for key, value in (raw_spec.get("label_map") or {}).items()
                 },
+                "sample_weight": raw_spec.get("sample_weight"),
             }
         )
+        if specs[-1]["sample_weight"] not in (None, "group"):
+            raise ValueError(
+                f"Eval spec #{idx}: sample_weight must be 'group' or unset."
+            )
     return specs

@@ -624,11 +624,19 @@ class Experiment:
         if len(y) != len(X):
             raise ValueError("Length mismatch between X and y.")
         if sample_weight is not None:
+            if self.config.sample_weight is not None:
+                raise ValueError(
+                    "Pass sample_weight to run() or set "
+                    "ExperimentConfig.sample_weight, not both."
+                )
             sample_weight = np.asarray(sample_weight, dtype=float)
             if len(sample_weight) != len(X):
                 raise ValueError(
                     f"sample_weight length {len(sample_weight)} != X length {len(X)}."
                 )
+        else:
+            # computed in each fold
+            sample_weight = self.config.sample_weight
 
         # 1. Scientific Guard: Double-Normalization Warning
         if self.config.use_scaler and X.ndim == 2:

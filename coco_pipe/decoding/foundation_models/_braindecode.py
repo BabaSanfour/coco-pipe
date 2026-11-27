@@ -429,7 +429,8 @@ class BrainDecodeBackend(BackendBase):
                 self._output_dim = output_dim
                 self.model = backend._model
 
-            def forward(self, X):
+            def forward(self, X, sample_weight=None):
+                # sample_weight goes to the loss (_training._SampleWeightedLoss)
                 backend = self._backend
                 return backend._forward_logits(self.model, X, backend._metadata.name)
 

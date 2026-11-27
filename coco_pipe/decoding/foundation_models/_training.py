@@ -29,15 +29,23 @@ class FocalLoss(torch.nn.Module):
        Focal loss for dense object detection. ICCV.
     """
 
-    def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None):
+    def __init__(
+        self,
+        gamma: float = 2.0,
+        weight: torch.Tensor | None = None,
+        reduction: str = "mean",
+    ):
         super().__init__()
         self.gamma = gamma
+        self.reduction = reduction
         self.register_buffer("weight", weight)
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         log_p = F.log_softmax(input, dim=-1)
         log_p_true = log_p.gather(-1, target.unsqueeze(-1)).squeeze(-1)
         loss = -((1 - log_p_true.exp()) ** self.gamma) * log_p_true
+        if self.reduction == "none":
+            return loss if self.weight is None else self.weight[target] * loss
         if self.weight is None:
             return loss.mean()
         weight = self.weight[target]
@@ -102,9 +110,31 @@ class _AccumulateGradients:
         return step
 
 
-class AccumulatingClassifier(_AccumulateGradients, NeuralNetClassifier):
+class _SampleWeightedLoss:
+    """Weight each sample's loss when the input is ``{"X": ..., "sample_weight":
+    ...}``, with a criterion that does not reduce (``reduction="none"``): the
+    batch loss is the weighted mean, as ``class_weight`` gives in torch."""
+
+    def get_loss(self, y_pred, y_true, X=None, training=False):
+        loss = super().get_loss(y_pred, y_true, X=X, training=training)
+        if not (isinstance(X, dict) and "sample_weight" in X):
+            return loss
+        weight = torch.as_tensor(X["sample_weight"], device=loss.device)
+        loss = loss.reshape(len(weight), -1).mean(dim=1)
+        return (weight * loss).sum() / weight.sum()
+
+
+class Classifier(_SampleWeightedLoss, NeuralNetClassifier):
+    """A skorch classifier that takes sample weights."""
+
+
+class Regressor(_SampleWeightedLoss, NeuralNetRegressor):
+    """A skorch regressor that takes sample weights."""
+
+
+class AccumulatingClassifier(_AccumulateGradients, Classifier):
     """A skorch classifier with gradient accumulation."""
 
 
-class AccumulatingRegressor(_AccumulateGradients, NeuralNetRegressor):
+class AccumulatingRegressor(_AccumulateGradients, Regressor):
     """A skorch regressor with gradient accumulation."""
