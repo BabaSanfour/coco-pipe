@@ -7,7 +7,7 @@ name = "coco-pipe"
 version = "0.0.3"
 description = "A modular framework for scalable biosignal analysis with Machine Learning and Deep Learning"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
   { name = "Hamza Abdelhedi", email = "hamza.abdelhedii@gmail.com" },
@@ -24,7 +24,6 @@ classifiers = [
   "Intended Audience :: Science/Research",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
@@ -298,7 +297,7 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 extend-exclude = [
   "coco_pipe/decoding/fm_hub/cbramod_src",
   "analysis/analysis_paper_eegbci_109.py",

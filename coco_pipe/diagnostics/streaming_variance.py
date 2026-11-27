@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -16,10 +16,8 @@ from .variance import (
     omega_squared_from_ss,
 )
 
-FeatureBatch: TypeAlias = tuple[np.ndarray, np.ndarray]
-FeatureBatchSource: TypeAlias = (
-    Iterable[FeatureBatch] | Callable[[], Iterable[FeatureBatch]]
-)
+type FeatureBatch = tuple[np.ndarray, np.ndarray]
+type FeatureBatchSource = Iterable[FeatureBatch] | Callable[[], Iterable[FeatureBatch]]
 
 DEFAULT_PARTICIPATION_RATIO_MAX_GRAM_BYTES = 4 * 1024**3
 
