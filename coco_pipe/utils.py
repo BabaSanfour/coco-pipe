@@ -60,6 +60,7 @@ PACKAGE_VERSIONS: Mapping[str, str] = {
 
 __all__ = [
     "PACKAGE_VERSIONS",
+    "balanced_sample_weights",
     "get_environment_info",
     "get_git_revision_hash",
     "get_package_version",

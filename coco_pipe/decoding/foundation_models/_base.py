@@ -277,8 +277,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             probe_epochs : int, default 0
             probe_lr : float or None, default None
             sample_weight : array of shape (n_samples,) or None
-                Weights of each sample's loss (the batch loss is their
-                weighted mean); not with ``class_weight``.
+                Weights of each sample's loss, rescaled to average 1; not
+                with ``class_weight``.
 
         Returns
         -------
@@ -449,7 +449,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         net_kwargs = {}
         if sample_weight is not None:
             # the loss of each sample, weighted by _training.Classifier/Regressor
-            X = {"X": X, "sample_weight": np.asarray(sample_weight, dtype=np.float32)}
+            sample_weight = np.asarray(sample_weight, dtype=np.float32)
+            # averaging 1, so that the loss keeps its scale (_SampleWeightedLoss)
+            X = {"X": X, "sample_weight": sample_weight / sample_weight.mean()}
             net_kwargs["criterion__reduction"] = "none"
         if classification:
             import torch.nn as nn

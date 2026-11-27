@@ -112,8 +112,14 @@ class _AccumulateGradients:
 
 class _SampleWeightedLoss:
     """Weight each sample's loss when the input is ``{"X": ..., "sample_weight":
-    ...}``, with a criterion that does not reduce (``reduction="none"``): the
-    batch loss is the weighted mean, as ``class_weight`` gives in torch."""
+    ...}``, with a criterion that does not reduce (``reduction="none"``).
+
+    The batch loss is the mean of the weighted losses (skorch's FAQ), with
+    weights that average 1 over the training set: its expectation over batches
+    is the weighted mean over the training set. Dividing by each batch's weight
+    sum instead would shift weight from batches of light samples to batches of
+    heavy ones.
+    """
 
     def get_loss(self, y_pred, y_true, X=None, training=False):
         loss = super().get_loss(y_pred, y_true, X=X, training=training)
@@ -121,7 +127,7 @@ class _SampleWeightedLoss:
             return loss
         weight = torch.as_tensor(X["sample_weight"], device=loss.device)
         loss = loss.reshape(len(weight), -1).mean(dim=1)
-        return (weight * loss).sum() / weight.sum()
+        return (weight * loss).mean()
 
 
 class Classifier(_SampleWeightedLoss, NeuralNetClassifier):

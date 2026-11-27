@@ -191,9 +191,31 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         groups: np.ndarray | None = None,
         sample_weight: np.ndarray | None = None,
     ):
-        """Fine-tune on (X, y); ``groups`` keep each group on one side of the
-        validation split, and ``sample_weight`` weights each window's loss
-        (with ``class_weight=None``)."""
+        """Fine-tune the model on labelled windows.
+
+        Parameters
+        ----------
+        X : np.ndarray of shape (n_windows, n_channels, n_times)
+            Windows in microvolts.
+        y : np.ndarray of shape (n_windows,)
+            Class labels.
+        groups : np.ndarray of shape (n_windows,), optional
+            The group (e.g. subject) of each window: the validation split keeps
+            each group on one side.
+        sample_weight : np.ndarray of shape (n_windows,), optional
+            Weights of each window's loss, rescaled to average 1, e.g.
+            :func:`coco_pipe.utils.balanced_sample_weights`. Needs
+            ``class_weight=None``.
+
+        Returns
+        -------
+        self : FoundationClassifier
+
+        Raises
+        ------
+        ValueError
+            If ``sample_weight`` is given with a ``class_weight``.
+        """
         import torch
 
         if sample_weight is not None and self.class_weight is not None:
