@@ -20,6 +20,7 @@ import numpy as np
 
 from .._specs import SignalMetadata
 from ._base import BackendBase, check_weights, resolve_revision, seeded
+from ._pretraining import load_continued_weights
 
 if TYPE_CHECKING:
     from .._specs import FoundationModelSpec
@@ -138,7 +139,9 @@ class HuggingFaceBackend(BackendBase):
         seed : int or None
             The seed of random weights; only with ``pretrained=False``.
         **kw
-            Extra keyword arguments forwarded to ``AutoModel.from_pretrained``.
+            Extra keyword arguments forwarded to ``AutoModel.from_pretrained``,
+            and ``checkpoint_dir``: a folder written by ``continue_pretraining``,
+            whose weights replace the backbone's.
 
         Returns
         -------
@@ -154,6 +157,13 @@ class HuggingFaceBackend(BackendBase):
         if model_key != "reve":
             raise ValueError(f"HuggingFaceBackend does not support '{model_key}'.")
         check_weights(pretrained, seed)
+        if kw.get("checkpoint_dir") is not None and (
+            not pretrained or train_mode == "qlora"
+        ):
+            raise ValueError(
+                "checkpoint_dir holds full-precision pretrained weights: not with "
+                "seed or train_mode='qlora'."
+            )
         if not pretrained and train_mode == "qlora":
             raise ValueError(
                 "QLoRA quantizes pretrained weights; random weights take "
@@ -196,6 +206,7 @@ class HuggingFaceBackend(BackendBase):
         lora_target_modules: str | list[str],
         lora_dropout: float,
         seed: int | None = None,
+        checkpoint_dir=None,
         **kw,
     ) -> HuggingFaceBackend:
         """Load REVE from HuggingFace, with random backbone weights from ``seed``."""
@@ -267,6 +278,12 @@ class HuggingFaceBackend(BackendBase):
 
         backbone = AutoModel.from_pretrained(metadata.hub_repo, **hf_kw)
         pos_bank = AutoModel.from_pretrained(_POSITION_BANK_REPO, **pos_kw)
+        if checkpoint_dir is not None:
+            revisions.update(
+                load_continued_weights(
+                    backbone, checkpoint_dir, "reve", revisions[metadata.hub_repo]
+                )
+            )
         # backbone, LoRA and head all drawn from the seed, on the CPU
         with contextlib.nullcontext() if seed is None else seeded(seed):
             if seed is not None:
