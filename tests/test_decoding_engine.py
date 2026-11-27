@@ -473,53 +473,56 @@ def test_fit_and_score_fold_sample_weight_train_only():
     )
 
 
-def test_group_sample_weight_reaches_every_step_of_the_training_fold():
-    from coco_pipe.decoding import _engine as engine
-    from coco_pipe.decoding._metrics import MetricSpec
-    from coco_pipe.utils import balanced_sample_weights
-
-    class WeightCapturingScaler(StandardScaler):
-        def fit(self, X, y=None, sample_weight=None):
-            self.recorded_weight_ = sample_weight
-            return super().fit(X, y, sample_weight=sample_weight)
-
-    pipe = Pipeline(
-        [("scaler", WeightCapturingScaler()), ("clf", _WeightCapturingClassifier())]
+@pytest.mark.parametrize("wrapper", ["none", "tuning"])
+def test_group_sample_weight_counts_each_subject_once(wrapper):
+    from coco_pipe.decoding.configs import (
+        CVConfig,
+        LogisticRegressionConfig,
+        TuningConfig,
     )
-    y = np.array([0, 0, 0, 0, 1, 1, 1, 1])
-    groups = np.array(["a", "a", "a", "b", "c", "c", "d", "d"])
-    train_idx, test_idx = np.arange(8), np.arange(8)
-    old_get = engine.get_metric_spec
-    try:
-        engine.get_metric_spec = lambda m: MetricSpec(
-            m, "classification", lambda yt, yp: float(yp.mean()), "predict"
-        )
-        fold = {
-            "X": np.random.default_rng(0).normal(size=(8, 2)),
-            "y": y,
-            "groups": groups,
-            "sample_ids": np.arange(8).astype(str),
-            "sample_metadata": None,
-            "train_idx": train_idx,
-            "test_idx": test_idx,
-            "metrics": ["acc"],
-            "feature_selection_config": MockConfig(),
-            "calibration_config": MockConfig(),
-            "spec": _make_spec(),
-            "sample_weight": "group",
-        }
-        fit_and_score_fold(pipe, **fold)
-        with pytest.raises(ValueError, match="clf__class_weight"):
-            balanced = Pipeline([("clf", LogisticRegression(class_weight="balanced"))])
-            fit_and_score_fold(balanced, **fold)
-    finally:
-        engine.get_metric_spec = old_get
 
-    # each child once within each class: a's three windows weigh one b window
-    expected = balanced_sample_weights(y, groups)
-    np.testing.assert_allclose(expected, [2 / 3] * 3 + [2] + [1] * 4)
-    for step in pipe.named_steps.values():
-        np.testing.assert_allclose(step.recorded_weight_, expected)
+    # 20 subjects per class, separable, except one class-0 subject with 400
+    # windows in the class-1 region: it outweighs class 1 unless each subject
+    # counts once
+    rng = np.random.default_rng(0)
+    labels = np.repeat([0, 1], 20)
+    sizes = np.full(40, 3)
+    sizes[0] = 400
+    subject = np.repeat(np.arange(40), sizes)
+    centers = np.where(labels == 1, 2.0, -2.0)
+    centers[0] = 2.0
+    X = centers[subject][:, None] + rng.normal(scale=0.5, size=(len(subject), 2))
+    wrappers = {
+        "none": {},
+        "tuning": {
+            "tuning": TuningConfig(
+                enabled=True, cv=CVConfig(strategy="group_kfold", n_splits=2)
+            ),
+            "grids": {"lr": {"C": [0.1, 1.0]}},
+        },
+    }
+
+    def score(sample_weight):
+        config = ExperimentConfig(
+            task="classification",
+            models={"lr": LogisticRegressionConfig()},
+            metrics=["balanced_accuracy"],
+            cv=CVConfig(
+                strategy="stratified_group_kfold",
+                n_splits=5,
+                group_key="Subject",
+                score_by="Subject",
+            ),
+            sample_weight=sample_weight,
+            n_jobs=1,
+            verbose=False,
+            **wrappers[wrapper],
+        )
+        result = Experiment(config).run(X, labels[subject], groups=subject)
+        return result.summary()["balanced_accuracy_by_Subject_mean"].item()
+
+    assert score(None) < 0.6  # every window called class 0
+    assert score("group") > 0.85
 
 
 def test_experiment_run_rejects_length_mismatch():

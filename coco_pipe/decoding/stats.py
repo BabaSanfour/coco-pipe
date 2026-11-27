@@ -355,6 +355,7 @@ def run_statistical_assessment(
     time_axis: np.ndarray | None,
     observation_level: str,
     inferential_unit: str,
+    sample_weight: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """
     Orchestrate the statistical assessment of experiment results.
@@ -394,6 +395,9 @@ def run_statistical_assessment(
         Level of input rows ('sample' or 'epoch').
     inferential_unit : str
         Definition of statistical independence ('sample' or 'subject').
+    sample_weight : np.ndarray of shape (n_samples,), optional
+        The weights given to ``Experiment.run``: each permutation refits with
+        them, so the null is fitted as the observed result was.
 
     Returns
     -------
@@ -521,6 +525,7 @@ def run_statistical_assessment(
                 inferential_unit,
                 stats_config,
                 unit,
+                sample_weight=sample_weight,
             )
             rows.extend(perm_rows)
             if stats_config.chance.store_null_distribution and perm_null is not None:
@@ -680,6 +685,7 @@ def _run_permutation_assessment(
     inferential_unit: str,
     config: StatisticalAssessmentConfig,
     unit: str,
+    sample_weight: np.ndarray | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """
     Internal driver for full-pipeline permutation testing.
@@ -725,6 +731,7 @@ def _run_permutation_assessment(
         inferential_unit=inferential_unit,
         config=config,
         unit=unit,
+        sample_weight=sample_weight,
     )
 
     # Bootstrap Observed Scores for Confidence Intervals
@@ -782,6 +789,7 @@ def _run_permutation_loop(
     inferential_unit: str,
     config: StatisticalAssessmentConfig,
     unit: str,
+    sample_weight: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Execute the core permutation loop using parallel processing.
@@ -852,6 +860,7 @@ def _run_permutation_loop(
             observation_level=observation_level,
             inferential_unit=inferential_unit,
             time_axis=time_axis,
+            sample_weight=sample_weight,
         )
         # A failed draw cannot be dropped: the null would no longer be the
         # permutation distribution.

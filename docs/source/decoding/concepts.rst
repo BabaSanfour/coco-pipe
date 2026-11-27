@@ -105,8 +105,11 @@ one with few. ``ExperimentConfig(sample_weight="group")`` weights each training
 fold so that each subject counts once within each class
 (:func:`coco_pipe.utils.balanced_sample_weights`). The weights reach every
 pipeline step whose ``fit`` takes ``sample_weight`` (the scaler, the
-classifier, a foundation model's loss); the classifier must take them and have
-``class_weight=None``, since the weights balance the classes themselves.
+classifier, a foundation model's loss), and with tuning or calibration, the
+inner fits, the tuning scorer and the calibrator. The classifier must take
+them and have ``class_weight=None``, since the weights balance the classes
+themselves. The PCA reducer, erasure and feature selection take no weights and
+stay unweighted.
 
 2.3 Subject-Level Aggregation for Statistical Tests
 ------------------------------------------------------

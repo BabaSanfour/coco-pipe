@@ -657,8 +657,72 @@ def fit_estimator(
             raise ValueError(
                 f"{type(clf).__name__} does not take sample_weight in its fit."
             )
+        if search_cv or calibrated:
+            _fit_with_routed_weights(
+                estimator,
+                pipeline,
+                X_train,
+                y_train,
+                groups_train,
+                search_cv and _config_uses_group_cv(getattr(tuning_config, "cv", None)),
+                sample_weight,
+                condition_train,
+            )
+            return
 
     estimator.fit(X_train, y_train, **fit_params)
+
+
+def _fit_with_routed_weights(
+    estimator: BaseEstimator,
+    pipeline: Pipeline,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    groups_train: np.ndarray | None,
+    search_uses_groups: bool,
+    sample_weight: np.ndarray,
+    condition_train: np.ndarray | None,
+) -> None:
+    """Fit a tuned or calibrated pipeline with sample weights everywhere.
+
+    scikit-learn's metadata routing gives the weights to the pipeline steps
+    that take them in every inner fit, to the tuning scorer and to the
+    calibrator, which ``step__sample_weight`` fit parameters cannot reach. A
+    feature-selection step stays unweighted.
+    """
+    from sklearn.feature_selection import SequentialFeatureSelector
+    from sklearn.metrics import get_scorer
+    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+
+    with config_context(enable_metadata_routing=True):
+        steps_take_groups = False
+        for _, step in pipeline.steps:
+            if not hasattr(step, "set_fit_request"):
+                continue
+            accepted = inspect.signature(step.fit).parameters
+            requests = {
+                name: True
+                for name in ("sample_weight", "groups", "condition")
+                if name in accepted
+            }
+            if isinstance(step, SequentialFeatureSelector):
+                step.estimator.set_fit_request(sample_weight=False)
+            if requests:
+                step.set_fit_request(**requests)
+            steps_take_groups |= "groups" in requests
+        for search in (estimator, getattr(estimator, "estimator", None)):
+            if isinstance(search, (GridSearchCV, RandomizedSearchCV)) and isinstance(
+                search.scoring, str
+            ):
+                search.scoring = get_scorer(search.scoring).set_score_request(
+                    sample_weight=True
+                )
+        params: dict[str, Any] = {"sample_weight": sample_weight}
+        if groups_train is not None and (search_uses_groups or steps_take_groups):
+            params["groups"] = groups_train
+        if condition_train is not None:
+            params["condition"] = condition_train
+        estimator.fit(X_train, y_train, **params)
 
 
 def _config_uses_group_cv(cv_config: Any) -> bool:

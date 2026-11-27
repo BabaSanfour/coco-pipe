@@ -820,6 +820,9 @@ class Experiment:
                 self._time_axis,
                 self._observation_level,
                 self._inferential_unit,
+                # the caller's weights; ExperimentConfig.sample_weight goes with
+                # the config each permutation copies
+                sample_weight=None if isinstance(sample_weight, str) else sample_weight,
             )
             res_obj.meta["statistical_assessment"] = assessment["meta"]
             for m_name, m_res in res_obj.raw.items():
