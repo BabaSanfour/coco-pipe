@@ -118,6 +118,8 @@ Inputs:
                                   applicable for the shape".
 ``labels`` / ``groups``           Used by supervised separation metrics and
                                   ``trajectory_separation``.
+``sample_weight``                 ``"group"``: each group counts once within
+                                  each class in the separation metrics.
 ``times``                         Optional time coords for trajectory AUC.
 ``random_state``                  Seed for sampled Shepard distances.
 ================================  ==========================================

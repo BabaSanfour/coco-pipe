@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
@@ -83,6 +83,9 @@ jobs:
           python -m venv "$wheel_test"
           wheel="$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.whl' -print -quit)"
           test -n "$wheel"
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          "$wheel_test/bin/python" -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           "$wheel_test/bin/python" -m pip install "$wheel"
           cd "$RUNNER_TEMP"
           "$wheel_test/bin/python" -c "import coco_pipe; print(coco_pipe.__file__)"

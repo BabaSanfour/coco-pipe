@@ -60,6 +60,7 @@ PACKAGE_VERSIONS: Mapping[str, str] = {
 
 __all__ = [
     "PACKAGE_VERSIONS",
+    "balanced_sample_weights",
     "get_environment_info",
     "get_git_revision_hash",
     "get_package_version",
@@ -70,6 +71,41 @@ __all__ = [
     "slug",
     "stable_hash",
 ]
+
+
+def balanced_sample_weights(
+    y: Sequence[Any], groups: Sequence[Any] | None = None
+) -> np.ndarray:
+    """Return sample weights that give each class, and each group in it, one share.
+
+    Each sample weighs one over the number of samples of its class or, with
+    ``groups``, of its group within its class; each class is then scaled to
+    the same total. A group (e.g. a subject) thus counts once within each
+    class, however many samples (e.g. windows) it has there. Without
+    ``groups``, the weights equal scikit-learn's ``class_weight="balanced"``.
+
+    Parameters
+    ----------
+    y : sequence of shape (n_samples,)
+        Class labels.
+    groups : sequence of shape (n_samples,), optional
+        The group of each sample.
+
+    Returns
+    -------
+    numpy.ndarray of shape (n_samples,)
+        The weights, averaging 1, so that an estimator's regularisation keeps
+        its scale.
+    """
+    _, class_index = np.unique(np.asarray(y), return_inverse=True)
+    class_index = class_index.reshape(-1)
+    cells = class_index
+    if groups is not None:
+        pairs = np.column_stack([np.asarray(groups).astype(str), class_index])
+        cells = np.unique(pairs, axis=0, return_inverse=True)[1].reshape(-1)
+    weights = 1.0 / np.bincount(cells)[cells]
+    weights /= np.bincount(class_index, weights=weights)[class_index]
+    return weights * len(weights) / weights.sum()
 
 
 def stable_hash(value: Any, *, length: int = 64) -> str:

@@ -86,7 +86,7 @@ def _temporal_data(n_samples=12, n_channels=3, n_times=4):
 
 CLASSIFIER_SMOKE_CONFIGS = {
     "DummyClassifier": DummyClassifierConfig(strategy="prior"),
-    "LogisticRegression": LogisticRegressionConfig(solver="liblinear", max_iter=200),
+    "LogisticRegression": LogisticRegressionConfig(max_iter=200),
     "LinearSVC": LinearSVCConfig(max_iter=500),
     "LinearDiscriminantAnalysis": LDAConfig(),
     "RandomForestClassifier": RandomForestClassifierConfig(
@@ -222,7 +222,7 @@ def test_pipeline_steps_combine(steps):
     config = ExperimentConfig(
         task="classification",
         models={"lr": LogisticRegressionConfig()},
-        grids={"lr": {"clf__C": [0.1, 1.0]}},
+        grids={"lr": {"clf__alpha": [10.0, 1.0]}},
         cv=_TWO_FOLDS,
         n_jobs=1,
         verbose=False,
@@ -245,7 +245,7 @@ def test_feature_selection_and_tuning_follow_the_groups():
             enabled=True, method="sfs", n_features=2, cv=grouped
         ),
         tuning=TuningConfig(enabled=True, n_iter=2, cv=grouped),
-        grids={"lr": {"clf__C": [0.1, 1.0]}},
+        grids={"lr": {"clf__alpha": [10.0, 1.0]}},
         n_jobs=1,
         verbose=False,
     )

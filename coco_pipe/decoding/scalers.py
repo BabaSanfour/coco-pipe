@@ -1,5 +1,4 @@
 import pandas as pd
-from sklearn import config_context
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import StandardScaler
 
@@ -13,8 +12,13 @@ class SubjectStandardScaler(BaseEstimator, TransformerMixin):
 
     def __init__(self):
         self.global_scaler = StandardScaler()
-        with config_context(enable_metadata_routing=True):
-            self.set_transform_request(groups=True)
+
+    def get_metadata_routing(self):
+        """Ask for each row's subject in ``fit`` and ``transform``."""
+        requests = super().get_metadata_routing()
+        requests.fit.add_auto_request("groups")
+        requests.transform.add_auto_request("groups")
+        return requests
 
     def fit(self, X, y=None, groups=None):
         self.global_scaler.fit(X)

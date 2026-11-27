@@ -99,6 +99,21 @@ is achieved with ``CVConfig(strategy="group_kfold", group_key="Subject")``.
 - ``groups=subject_ids`` (compatibility alias — binds groups directly to the
   splitter).
 
+Group-based CV keeps test subjects out of training, but the fit still weighs
+every epoch the same, so a subject with many epochs pulls the model more than
+one with few. ``ExperimentConfig(sample_weight="group")`` weights each training
+fold so that each subject counts once within each class
+(:func:`coco_pipe.utils.balanced_sample_weights`). The weights reach every
+pipeline step whose ``fit`` takes ``sample_weight`` (the scaler, the
+classifier, a foundation model's loss), and with tuning, sequential feature
+selection or calibration, their inner fits, their scorers and the calibrator,
+through scikit-learn's metadata routing. The classifier must ask for them
+(scikit-learn's do; another one through
+``sklearn.utils.metadata_routing.AutoRequestMixin``) and have
+``class_weight=None``, since the weights balance the classes themselves.
+The PCA reducer, erasure and ``k_best`` feature selection take no weights and
+stay unweighted.
+
 2.3 Subject-Level Aggregation for Statistical Tests
 ------------------------------------------------------
 

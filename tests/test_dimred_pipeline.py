@@ -183,8 +183,9 @@ def testprepare_eval_inputs(dummy_container):
     _idx, sel_ids, labels, _groups = prepare_eval_inputs(
         dummy_container, fit_ids, eval_spec
     )
-    assert len(sel_ids) == 2
-    assert "Class_A" in labels
+    # sub1's "B" row is not in the label map: missing, not a class of its own
+    assert len(sel_ids) == 1
+    assert list(labels) == ["Class_A"]
 
     # Test errors
     with pytest.raises(ValueError, match="missing_col"):

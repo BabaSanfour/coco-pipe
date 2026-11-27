@@ -452,6 +452,12 @@ def _eval_id(fit_id: str, eval_spec: dict[str, Any]) -> str:
             "group_col": eval_spec["group_col"],
             "filters": eval_spec["filters"],
             "label_map": eval_spec["label_map"],
+            # only when set, so that the ids of existing evals do not change
+            **(
+                {"sample_weight": eval_spec["sample_weight"]}
+                if eval_spec.get("sample_weight")
+                else {}
+            ),
         },
         length=16,
     )
@@ -477,6 +483,7 @@ def _base_eval_payload(
             "group_col": eval_spec["group_col"],
             "filters": list(eval_spec["filters"]),
             "label_map": dict(eval_spec["label_map"]),
+            "sample_weight": eval_spec.get("sample_weight"),
             "status": "success",
             "timestamp": datetime.now(UTC).isoformat(),
             "n_samples": int(n_samples),
@@ -549,6 +556,7 @@ def run_eval(
                 metrics=EVAL_METRIC_COLUMNS,
                 labels=labels,
                 groups=groups,
+                sample_weight=eval_spec.get("sample_weight"),
             )["metrics"]
         )
         eval_payload = _base_eval_payload(
@@ -711,7 +719,8 @@ def prepare_eval_inputs(
 
     labels = aligned_frame[eval_spec["target_col"]]
     if eval_spec["label_map"]:
-        labels = labels.map(lambda value: eval_spec["label_map"].get(str(value), value))
+        # a value the map does not name is missing, not a class of its own
+        labels = labels.map(lambda value: eval_spec["label_map"].get(str(value)))
     labels = labels.astype("string").str.strip()
     labels = labels.mask(labels.str.lower().isin(MISSING_EVAL_VALUES))
     groups = aligned_frame[eval_spec["group_col"]].astype("string").str.strip()

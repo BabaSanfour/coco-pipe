@@ -244,6 +244,30 @@ def test_experiment_keeps_each_folds_test_embeddings():
     assert embeddings.shape == (16, 128)  # EEGNet's final-layer input, 2 s
 
 
+def test_sample_weight_weights_each_windows_loss():
+    from coco_pipe.decoding.foundation_models import FoundationClassifier
+
+    X = np.random.default_rng(0).normal(scale=20, size=(16, 19, 256))
+    y = np.repeat([0, 1], 8)
+
+    def fit(sample_weight=None):
+        clf = FoundationClassifier(
+            model_key="eegnet",
+            sfreq=128,
+            ch_names=DEFAULT_CHANNELS,
+            device="cpu",
+            backend_kwargs={"pretrained": False, "seed": 0},
+            trainer={"max_epochs": 2, "batch_size": 4, "validation_fraction": 0},
+            class_weight=None,
+        )
+        return clf.fit(X, y, sample_weight=sample_weight).predict_proba(X)
+
+    unweighted = fit()
+    # the loss is the weighted mean: only the relative weights count
+    np.testing.assert_allclose(fit(np.full(16, 3.0)), unweighted, atol=1e-5)
+    assert not np.allclose(fit(np.linspace(0.1, 2.0, 16)), unweighted, atol=1e-5)
+
+
 def _zscore(X):
     return (X - X.mean(-1, keepdims=True)) / X.std(-1, ddof=1, keepdims=True)
 

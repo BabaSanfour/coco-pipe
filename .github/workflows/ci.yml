@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v7
@@ -71,6 +71,9 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
 
       - name: Run tests
@@ -78,7 +81,7 @@ jobs:
           pytest tests/ --cov=coco_pipe --cov-report=xml --verbose
 
       - name: Upload coverage to Codecov
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -103,6 +106,9 @@ jobs:
       - name: Install package with mne-bids main
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
           python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
 
@@ -139,12 +145,15 @@ jobs:
 
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
 
       - name: Install package
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
 
       - name: Run real checkpoint tests

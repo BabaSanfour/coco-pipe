@@ -24,7 +24,11 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
-from sklearn.feature_selection import f_classif, f_regression
+from sklearn.feature_selection import (
+    SequentialFeatureSelector,
+    f_classif,
+    f_regression,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.multiclass import type_of_target
@@ -33,7 +37,6 @@ from coco_pipe.utils import get_environment_info
 
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
 from ._engine import (
-    GroupedSequentialFeatureSelector,
     _SafeSelectKBest,
     fit_and_score_fold,
 )
@@ -485,7 +488,7 @@ class Experiment:
             n_to_select = fs_conf.n_features
             if n_to_select is None and fs_conf.tol is not None:
                 n_to_select = "auto"
-            sfs = GroupedSequentialFeatureSelector(
+            sfs = SequentialFeatureSelector(
                 estimator=clone(estimator),
                 n_features_to_select=n_to_select,
                 tol=fs_conf.tol,
@@ -624,11 +627,19 @@ class Experiment:
         if len(y) != len(X):
             raise ValueError("Length mismatch between X and y.")
         if sample_weight is not None:
+            if self.config.sample_weight is not None:
+                raise ValueError(
+                    "Pass sample_weight to run() or set "
+                    "ExperimentConfig.sample_weight, not both."
+                )
             sample_weight = np.asarray(sample_weight, dtype=float)
             if len(sample_weight) != len(X):
                 raise ValueError(
                     f"sample_weight length {len(sample_weight)} != X length {len(X)}."
                 )
+        else:
+            # computed in each fold
+            sample_weight = self.config.sample_weight
 
         # 1. Scientific Guard: Double-Normalization Warning
         if self.config.use_scaler and X.ndim == 2:
@@ -812,6 +823,9 @@ class Experiment:
                 self._time_axis,
                 self._observation_level,
                 self._inferential_unit,
+                # the caller's weights; ExperimentConfig.sample_weight goes with
+                # the config each permutation copies
+                sample_weight=None if isinstance(sample_weight, str) else sample_weight,
             )
             res_obj.meta["statistical_assessment"] = assessment["meta"]
             for m_name, m_res in res_obj.raw.items():

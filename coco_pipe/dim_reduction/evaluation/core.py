@@ -478,6 +478,7 @@ def evaluate_embedding(
     separation_method: str | None = None,
     max_eval_samples: int | None = DEFAULT_MAX_CORANKING_SAMPLES,
     config: EvaluationConfig | None = None,
+    sample_weight: str | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate an already computed embedding.
@@ -535,6 +536,11 @@ def evaluate_embedding(
         Typed evaluation configuration. Supplies ``metrics``, ``k_values`` (from
         ``config.k_range``), and ``separation_method`` for any of those left
         unset by an explicit argument. Explicit arguments always win.
+    sample_weight : {None, "group"}, default None
+        ``"group"`` weights the separation metrics so that each group counts
+        once within each class (:func:`~coco_pipe.utils.balanced_sample_weights`),
+        in the scaling, the fit and the balanced accuracy. By default each
+        sample counts once and the classes are balanced.
 
     Returns
     -------
@@ -674,11 +680,13 @@ def evaluate_embedding(
         if supervised_selection and (labels is None or groups is None):
             requested = ", ".join(sorted(supervised_selection))
             raise ValueError(f"`labels` and `groups` are required for {requested}.")
+        # group weights balance the classes themselves
+        class_weight = None if sample_weight == "group" else "balanced"
         if SEPARATION_RF_BALANCED_ACCURACY in supervised_selection:
             separation_score = _cross_validate_score(
                 RandomForestClassifier(
-                    n_estimators=300,
-                    class_weight="balanced",
+                    n_estimators=200,
+                    class_weight=class_weight,
                     n_jobs=1,
                     random_state=42,
                 ),
@@ -691,6 +699,7 @@ def evaluate_embedding(
                 random_state=42,
                 metric="balanced_accuracy",
                 use_scaler=False,
+                sample_weight=sample_weight,
             )
             metrics_payload[SEPARATION_RF_BALANCED_ACCURACY] = separation_score
             records.append(
@@ -704,7 +713,7 @@ def evaluate_embedding(
             )
         if SEPARATION_LOGREG_BALANCED_ACCURACY in supervised_selection:
             separation_score = _cross_validate_score(
-                LogisticRegression(max_iter=1000, class_weight="balanced"),
+                LogisticRegression(max_iter=1000, class_weight=class_weight),
                 X_emb,
                 labels,
                 groups=groups,
@@ -714,6 +723,7 @@ def evaluate_embedding(
                 random_state=42,
                 metric="balanced_accuracy",
                 use_scaler=True,
+                sample_weight=sample_weight,
             )
             metrics_payload[SEPARATION_LOGREG_BALANCED_ACCURACY] = separation_score
             records.append(

@@ -9,7 +9,7 @@ full interface, see the :doc:`api_reference`.
 Installation
 ============
 
-``coco-pipe`` targets Python 3.11+. Install the core package from PyPI:
+``coco-pipe`` targets Python 3.12+. Install the core package from PyPI:
 
 .. code-block:: bash
 
@@ -48,6 +48,14 @@ its next release.
 .. code-block:: bash
 
    pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
+
+coco-pipe needs scikit-learn 1.10 (its metadata auto-requests, and
+``LogisticRegression(alpha, l1_ratio)``), on its nightly builds until its release,
+due on 2026-11-30. Install it before coco-pipe:
+
+.. code-block:: bash
+
+   pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
 
 The ``DataContainer``
 =====================

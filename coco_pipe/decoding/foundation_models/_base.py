@@ -276,6 +276,9 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             focal_gamma : float or None, default None
             probe_epochs : int, default 0
             probe_lr : float or None, default None
+            sample_weight : array of shape (n_samples,) or None
+                Weights of each sample's loss, rescaled to average 1; not
+                with ``class_weight``.
 
         Returns
         -------
@@ -409,12 +412,14 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
         from functools import partial
 
         import torch
-        from skorch import NeuralNetClassifier, NeuralNetRegressor
 
         from . import _training
 
         groups = fit_params.pop("groups", None)
         class_weight = fit_params.pop("class_weight", None)
+        sample_weight = fit_params.pop("sample_weight", None)
+        if sample_weight is not None and class_weight is not None:
+            raise ValueError("Pass sample_weight or class_weight, not both.")
         if self.signal_metadata_ is None:
             raise RuntimeError(
                 "fit() requires signal_metadata declared at load() time via "
@@ -439,13 +444,16 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             param_groups = [
                 (f"{name}.*", {"weight_decay": fit_params["head_weight_decay"]})
             ]
-        net_cls = (
-            NeuralNetClassifier
-            if self._task == "classification"
-            else NeuralNetRegressor
-        )
+        classification = self._task == "classification"
+        net_cls = _training.Classifier if classification else _training.Regressor
         net_kwargs = {}
-        if net_cls is NeuralNetClassifier:
+        if sample_weight is not None:
+            # the loss of each sample, weighted by _training.Classifier/Regressor
+            sample_weight = np.asarray(sample_weight, dtype=np.float32)
+            # averaging 1, so that the loss keeps its scale (_SampleWeightedLoss)
+            X = {"X": X, "sample_weight": sample_weight / sample_weight.mean()}
+            net_kwargs["criterion__reduction"] = "none"
+        if classification:
             import torch.nn as nn
 
             net_kwargs["criterion"] = nn.CrossEntropyLoss
@@ -482,6 +490,8 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
             y_arr = np.asarray(y)
             random_state = fit_params.get("random_state", 42)
             n_splits = max(2, round(1.0 / validation_fraction))
+            # the splitters read only the number of rows of X, a dict with weights
+            rows = np.zeros((len(y_arr), 1))
             # Cap folds at the smallest number of distinct groups in any class.
             min_groups_per_class = min(
                 np.unique(groups_arr[y_arr == cls]).size for cls in np.unique(y_arr)
@@ -493,14 +503,14 @@ class BackendBase(BaseEstimator, TransformerMixin, ABC):
                     shuffle=True,
                     random_state=random_state,
                 )
-                train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
+                train_idx, valid_idx = next(splitter.split(rows, y_arr, groups_arr))
             else:
                 splitter = GroupShuffleSplit(
                     n_splits=1,
                     test_size=validation_fraction,
                     random_state=random_state,
                 )
-                train_idx, valid_idx = next(splitter.split(X, y, groups_arr))
+                train_idx, valid_idx = next(splitter.split(rows, y_arr, groups_arr))
             self._training_groups_ = np.unique(groups_arr[train_idx])
             self._validation_groups_ = np.unique(groups_arr[valid_idx])
             full_ds = Dataset(X, y_arr)

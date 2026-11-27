@@ -461,7 +461,7 @@ def subject_probe(
     if kind == "linear":
         estimator_config = LogisticRegressionConfig(
             max_iter=1000,
-            C=1.0,
+            alpha=1.0,
             class_weight="balanced",
             random_state=seed,
         )
