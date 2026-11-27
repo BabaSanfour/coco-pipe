@@ -347,11 +347,12 @@ def test_steegformer_channels_take_the_slots_of_their_names(offline, model_key):
         # a braindecode that cannot find largeV2's slots by name: refused
         assert model_key == "steegformer_largev2" and "identity" in str(warning)
         pytest.skip("this braindecode finds no largeV2 slots by name")
-    slots = [STEEGFORMER_CHANNEL_ORDER.index(name) for name in DEFAULT_CHANNELS]
-    assert backend._model.channel_indices.tolist() == slots
-    # a name with neither a slot nor a position is refused, not given slot i
-    with pytest.raises(UserWarning, match="identity"):
-        _load(model_key, channels=[*DEFAULT_CHANNELS[:-1], "X1"])
+    else:
+        slots = [STEEGFORMER_CHANNEL_ORDER.index(name) for name in DEFAULT_CHANNELS]
+        assert backend._model.channel_indices.tolist() == slots
+        # a name with neither a slot nor a position is refused, not given slot i
+        with pytest.raises(UserWarning, match="identity"):
+            _load(model_key, channels=[*DEFAULT_CHANNELS[:-1], "X1"])
 
 
 @pytest.mark.parametrize(
