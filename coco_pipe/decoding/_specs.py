@@ -326,7 +326,7 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         importance=_COEF,
         supports_random_state=True,
         is_sparse_capable=True,
-        default_search_space={"C": [0.1, 1.0, 10.0]},
+        default_search_space={"alpha": [10.0, 1.0, 0.1]},
     ),
     "RandomForestClassifier": _spec(
         "RandomForestClassifier",

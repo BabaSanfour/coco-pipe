@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
+from sklearn.utils.metadata_routing import AutoRequestMixin
 from sklearn.utils.validation import check_is_fitted
 
 from ._channels import normalize_channel_names
@@ -147,7 +148,7 @@ class FrozenBackboneTransformer(BaseEstimator, TransformerMixin):
         _release_fitted_backend(self)
 
 
-class FoundationClassifier(BaseEstimator, ClassifierMixin):
+class FoundationClassifier(AutoRequestMixin, ClassifierMixin, BaseEstimator):
     """Lazy trainable foundation-model classifier with grouped validation."""
 
     backend_ = None
@@ -183,6 +184,13 @@ class FoundationClassifier(BaseEstimator, ClassifierMixin):
         self.checkpoints = checkpoints
         self.class_weight = class_weight
         self.random_state = random_state
+
+    def get_metadata_routing(self):
+        """Ask for each window's group in ``fit`` (its sample weight is asked for
+        through ``AutoRequestMixin``)."""
+        requests = super().get_metadata_routing()
+        requests.fit.add_auto_request("groups")
+        return requests
 
     def fit(
         self,

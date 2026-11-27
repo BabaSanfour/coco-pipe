@@ -7,7 +7,6 @@ This module provides the core execution logic for cross-validation folds.
 It is designed for high-performance, parallel execution.
 """
 
-import inspect
 import logging
 import time
 import warnings
@@ -21,10 +20,8 @@ from sklearn import config_context
 from sklearn.base import BaseEstimator
 from sklearn.feature_selection import (
     SelectKBest,
-    SequentialFeatureSelector,
     f_classif,
 )
-from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
 from sklearn.utils.metadata_routing import get_routing_for_object
 from sklearn.utils.multiclass import type_of_target
@@ -546,14 +543,6 @@ def fit_estimator(
 
     pipeline = fitted_estimator.estimator if search_cv else fitted_estimator
     steps = dict(pipeline.steps) if isinstance(pipeline, Pipeline) else {}
-    if sample_weight is not None and (
-        "clf" not in steps
-        or "sample_weight" not in inspect.signature(steps["clf"].fit).parameters
-    ):
-        clf = steps.get("clf", pipeline)
-        raise ValueError(
-            f"{type(clf).__name__} does not take sample_weight in its fit."
-        )
     metadata = {
         "sample_weight": sample_weight,
         "groups": groups_train,
@@ -561,28 +550,11 @@ def fit_estimator(
     }
     metadata = {name: value for name, value in metadata.items() if value is not None}
 
-    # scikit-learn's metadata routing: each step asks for the metadata its fit
-    # takes, and the search, the calibration and the pipeline deliver it, also
-    # to the inner fits, the tuning scorer and the calibrator
+    # scikit-learn's metadata routing: each estimator, scorer and splitter asks
+    # for the metadata it takes (scikit-learn's own automatically since 1.10,
+    # coco-pipe's through get_metadata_routing), and the search, the feature
+    # selector, the calibration and the pipeline deliver it
     with config_context(enable_metadata_routing=True):
-        for step in steps.values():
-            if (
-                isinstance(step, SequentialFeatureSelector)
-                and sample_weight is not None
-            ):
-                # its inner fits and scores take the weights too
-                step.estimator.set_fit_request(sample_weight=True)
-                step.scoring = _weighted_scorer(step.scoring, step.estimator)
-            if not hasattr(step, "set_fit_request"):
-                continue
-            accepted = inspect.signature(step.fit).parameters
-            requests = {key: True for key in metadata if key in accepted}
-            if requests:
-                step.set_fit_request(**requests)
-        if sample_weight is not None and search_cv:
-            fitted_estimator.scoring = _weighted_scorer(
-                fitted_estimator.scoring, fitted_estimator.estimator
-            )
         # only what some step, splitter or scorer consumes, as routing refuses the
         # rest; each step is asked itself, since a pipeline's answer misses what its
         # steps' own splitters ask for (a feature selector's groups)
@@ -590,32 +562,23 @@ def fit_estimator(
             consumed = set()
             for part in (estimator, fitted_estimator, *steps.values()):
                 consumed |= get_routing_for_object(part).consumes("fit", list(metadata))
+            clf_takes_weights = "clf" in steps and bool(
+                get_routing_for_object(steps["clf"]).consumes("fit", ["sample_weight"])
+            )
         except NotImplementedError:
             # AdaBoost cannot route metadata (scikit-learn PR #29472): none is given
-            if sample_weight is not None:
-                raise ValueError(
-                    f"{type(steps.get('clf', pipeline)).__name__} cannot take "
-                    "sample_weight: it does not route metadata."
-                ) from None
-            consumed = set()
+            consumed, clf_takes_weights = set(), False
+        if sample_weight is not None and not clf_takes_weights:
+            raise ValueError(
+                f"{type(steps.get('clf', pipeline)).__name__} does not ask for "
+                "sample_weight in its fit; a classifier from outside scikit-learn "
+                "asks with sklearn.utils.metadata_routing.AutoRequestMixin."
+            )
         estimator.fit(
             X_train,
             y_train,
             **{key: value for key, value in metadata.items() if key in consumed},
         )
-
-
-def _weighted_scorer(scoring: Any, estimator: BaseEstimator) -> Any:
-    """The scorer of a search or a feature selector, asking for sample weights.
-
-    ``None`` scores with the estimator's ``score``, which is asked instead.
-    """
-    if scoring is None:
-        estimator.set_score_request(sample_weight=True)
-        return None
-    if isinstance(scoring, str):
-        scoring = get_scorer(scoring)
-    return scoring.set_score_request(sample_weight=True)
 
 
 def extract_feature_importances(

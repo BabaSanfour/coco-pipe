@@ -165,20 +165,46 @@ class LogisticRegressionConfig(ClassicalEstimatorConfig):
     """Configuration for sklearn.linear_model.LogisticRegression."""
 
     method: Literal["LogisticRegression"] = "LogisticRegression"
-    penalty: Literal["l1", "l2", "elasticnet", None] = "l2"
-    dual: bool = False
+    alpha: float = Field(
+        1.0,
+        ge=0.0,
+        description="Strength of the penalty, 0 for none; the former C is 1/alpha.",
+    )
+    l1_ratio: float = Field(
+        0.0,
+        ge=0.0,
+        le=1.0,
+        description="0 for L2, 1 for L1, between for an elastic net.",
+    )
     tol: float = 1e-4
-    C: float = Field(1.0, gt=0.0)
     fit_intercept: bool = True
-    intercept_scaling: float = 1.0
     class_weight: dict | str | None = None
-    solver: Literal["newton-cg", "lbfgs", "liblinear", "sag", "saga"] = "lbfgs"
+    solver: Literal[
+        "auto",
+        "lbfgs",
+        "newton-cg",
+        "newton-cholesky",
+        "newton-cd",
+        "newton-cd-gram",
+        "sag",
+        "saga",
+    ] = "auto"
     max_iter: int = 100
     verbose: int = 0
     warm_start: bool = False
-    n_jobs: int | None = None
-    l1_ratio: float | None = None
     random_state: int | None = Field(42, description="Random seed for reproducibility.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_former_parameters(cls, values: Any) -> Any:
+        """Name the scikit-learn 1.10 parameters that replace C and penalty."""
+        if isinstance(values, dict) and {"C", "penalty"} & set(values):
+            raise ValueError(
+                "LogisticRegression takes alpha and l1_ratio since scikit-learn "
+                "1.10: alpha=1/C, and l1_ratio=0 for L2, 1 for L1, between for an "
+                "elastic net."
+            )
+        return values
 
 
 class RandomForestClassifierConfig(ClassicalEstimatorConfig, TreeMixin):
@@ -1352,7 +1378,7 @@ class ExperimentConfig(BaseModel):
             "has: coco_pipe.utils.balanced_sample_weights of the fold's labels "
             "and groups, given to every pipeline step whose fit takes "
             "sample_weight, to the tuning and feature-selection scorers and to "
-            "the calibrator. The classifier must take it and have no "
+            "the calibrator. The classifier must ask for it and have no "
             "class_weight; the PCA reducer, erasure and k_best feature selection "
             "stay unweighted. Not with Experiment.run(sample_weight=...)."
         ),

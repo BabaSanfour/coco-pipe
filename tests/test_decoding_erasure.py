@@ -84,7 +84,7 @@ def test_ea_erasure_refuses_tuning_and_calibration_and_leace_takes_both():
     common = {
         "task": "classification",
         "models": {"lr": LogisticRegressionConfig(max_iter=1000)},
-        "grids": {"lr": {"clf__C": [0.5, 1.0]}},
+        "grids": {"lr": {"clf__alpha": [2.0, 1.0]}},
         "metrics": ["balanced_accuracy"],
         "cv": CVConfig(strategy="group_kfold", n_splits=4),
         "n_jobs": 1,

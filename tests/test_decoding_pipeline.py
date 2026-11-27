@@ -150,7 +150,7 @@ def test_run_decoding_unit_reports_a_model_that_fails(tmp_path):
     config = _experiment_config()
     broken = ClassicalModelConfig(
         estimator="LogisticRegression",
-        params={"solver": "liblinear", "penalty": "elasticnet"},
+        params={"solver": "lbfgs", "l1_ratio": 0.5},
     )
     config = config.model_copy(update={"models": {**config.models, "broken": broken}})
     records = {
@@ -159,7 +159,7 @@ def test_run_decoding_unit_reports_a_model_that_fails(tmp_path):
     }
     assert records["logreg"]["status"] == "success"
     assert records["broken"]["status"] == "failed"
-    assert "elasticnet" in records["broken"]["reason"]
+    assert "l1_ratio" in records["broken"]["reason"]
 
 
 def test_run_decoding_unit_raises_on_config_hash_mismatch(tmp_path):

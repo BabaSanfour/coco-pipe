@@ -34,7 +34,9 @@ classifiers = [
 dependencies = [
   "numpy>=2.0.0",
   "pandas",
-  "scikit-learn>=1.6",
+  # 1.10: metadata auto-requests and LogisticRegression(alpha, l1_ratio). Until
+  # its release (due 2026-11-30) install the nightly first (README); then >=1.10.
+  "scikit-learn>=1.10.dev0",
   # Upper-capped until seaborn ships PR #3820: matplotlib 3.13 removes the
   # deprecated `vert=` that seaborn<=0.13.2 still passes to bxp, which would
   # break seaborn boxplots. Lift this once a fixed seaborn release exists.

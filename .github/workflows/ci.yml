@@ -71,6 +71,9 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
 
       - name: Run tests
@@ -103,6 +106,9 @@ jobs:
       - name: Install package with mne-bids main
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
           python -m pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
 
@@ -145,6 +151,9 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
+          # scikit-learn 1.10 until its release (pyproject.toml), its own
+          # dependencies from PyPI
+          python -m pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
           python -m pip install -e ".[full,test]"
 
       - name: Run real checkpoint tests

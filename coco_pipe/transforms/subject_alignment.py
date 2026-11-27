@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
-from sklearn import config_context
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.covariance import ledoit_wolf
 
@@ -33,6 +33,16 @@ class SubjectAlignment(BaseEstimator, TransformerMixin):
     name = "identity"
     label = "Identity"
     fold_local: bool = False
+
+    def get_metadata_routing(self):
+        """Ask for each row's subject in ``fit`` and ``transform``, and for its
+        condition in ``fit`` when ``fit`` takes one."""
+        requests = super().get_metadata_routing()
+        requests.fit.add_auto_request("groups")
+        requests.transform.add_auto_request("groups")
+        if "condition" in inspect.signature(self.fit).parameters:
+            requests.fit.add_auto_request("condition")
+        return requests
 
     def fingerprint(self) -> str:
         from coco_pipe.utils import stable_hash
@@ -136,9 +146,6 @@ class LeaceEraser(SubjectAlignment):
     ):
         self.eta2 = eta2
         self.max_rank = max_rank
-        with config_context(enable_metadata_routing=True):
-            self.set_fit_request(groups=True, condition=True)
-            self.set_transform_request(groups=True)
 
     def fit(self, X, y=None, groups=None, condition=None):
         """Find the directions to erase.
@@ -258,9 +265,6 @@ class EuclideanAlign(SubjectAlignment):
         self.name = f"ea_{mode}"
         self.shrinkage = shrinkage
         self.channel_axis = channel_axis
-        with config_context(enable_metadata_routing=True):
-            self.set_fit_request(groups=True)
-            self.set_transform_request(groups=True)
 
     @property
     def label(self) -> str:
@@ -376,9 +380,6 @@ class RiemannAlign(SubjectAlignment):
 
     def __init__(self, *, shrinkage: float = 0.1):
         self.shrinkage = shrinkage
-        with config_context(enable_metadata_routing=True):
-            self.set_fit_request(groups=True)
-            self.set_transform_request(groups=True)
 
     def _covs(self, tokens: np.ndarray) -> np.ndarray:
         return tokens_to_covariances(tokens, shrinkage=self.shrinkage)

@@ -267,7 +267,7 @@ Short-form aliases are also available for common estimators:
 
    from coco_pipe.decoding.configs import LogisticRegressionConfig
 
-   model = LogisticRegressionConfig(C=1.0, max_iter=200)
+   model = LogisticRegressionConfig(alpha=1.0, max_iter=200)
 
 ---
 

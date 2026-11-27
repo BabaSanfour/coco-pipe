@@ -107,8 +107,10 @@ fold so that each subject counts once within each class
 pipeline step whose ``fit`` takes ``sample_weight`` (the scaler, the
 classifier, a foundation model's loss), and with tuning, sequential feature
 selection or calibration, their inner fits, their scorers and the calibrator,
-through scikit-learn's metadata routing. The classifier must take them and
-have ``class_weight=None``, since the weights balance the classes themselves.
+through scikit-learn's metadata routing. The classifier must ask for them
+(scikit-learn's do; another one through
+``sklearn.utils.metadata_routing.AutoRequestMixin``) and have
+``class_weight=None``, since the weights balance the classes themselves.
 The PCA reducer, erasure and ``k_best`` feature selection take no weights and
 stay unweighted.
 

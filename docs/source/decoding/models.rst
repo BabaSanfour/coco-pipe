@@ -99,11 +99,11 @@ Each ``EstimatorSpec`` includes a ``default_search_space`` dict for
 
    spec = get_estimator_spec("LogisticRegression")
    print(spec.default_search_space)
-   # {"C": [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]}
+   # {"alpha": [10.0, 1.0, 0.1]}
 
 When a ``TuningConfig.grids`` key is provided, it overrides the default. The raw
 grid keys are automatically prefixed with ``clf__`` to match the pipeline step
-name (e.g., ``{"C": [...]}`` becomes ``{"clf__C": [...]}``) unless the key
+name (e.g., ``{"alpha": [...]}`` becomes ``{"clf__alpha": [...]}``) unless the key
 already contains ``__``.
 
 .. _decoding-temporal:

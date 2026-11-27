@@ -109,6 +109,14 @@ pip install "mne-bids @ git+https://github.com/mne-tools/mne-bids.git@main"
 With the released mne-bids, loading saved epochs fails and the tests that need it
 are skipped. CI runs them in a separate job on mne-bids `main`.
 
+coco-pipe needs scikit-learn 1.10 (its metadata auto-requests, and
+`LogisticRegression(alpha, l1_ratio)`), on its nightly builds until its release, due
+on 2026-11-30. Install it before coco-pipe:
+
+```bash
+pip install --pre --no-deps --extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple "scikit-learn>=1.10.dev0"
+```
+
 ---
 
 ## Modules

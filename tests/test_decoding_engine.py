@@ -9,6 +9,7 @@ from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.metadata_routing import AutoRequestMixin
 
 from coco_pipe.decoding import Experiment, ExperimentConfig
 from coco_pipe.decoding._engine import (
@@ -331,7 +332,7 @@ def test_compact_search_results_missing_keys():
 # --- sample_weight tests ---
 
 
-class _WeightCapturingClassifier(BaseEstimator, ClassifierMixin):
+class _WeightCapturingClassifier(AutoRequestMixin, ClassifierMixin, BaseEstimator):
     """Records the sample_weight passed to fit(); predict always returns zeros."""
 
     _estimator_type = "classifier"
@@ -412,7 +413,7 @@ def test_fit_estimator_refuses_a_clf_without_sample_weight():
 
     pipe = Pipeline([("clf", NoWeightClf())])
     sw = np.array([1.0, 2.0, 3.0])
-    with pytest.raises(ValueError, match="NoWeightClf does not take sample_weight"):
+    with pytest.raises(ValueError, match="NoWeightClf does not ask for sample_weight"):
         fit_estimator(
             pipe,
             np.zeros((3, 2)),
@@ -491,7 +492,7 @@ def test_group_sample_weight_counts_each_subject_once(wrapper):
             "tuning": TuningConfig(
                 enabled=True, cv=CVConfig(strategy="group_kfold", n_splits=2)
             ),
-            "grids": {"lr": {"C": [0.1, 1.0]}},
+            "grids": {"lr": {"alpha": [10.0, 1.0]}},
         },
     }
 
@@ -755,7 +756,7 @@ def test_extract_feature_importances_edge_cases():
     # search_enabled=True
     X = np.random.randn(10, 3)
     y = np.array([0, 1] * 5)
-    search = GridSearchCV(LogisticRegression(), {"C": [1.0]})
+    search = GridSearchCV(LogisticRegression(), {"alpha": [1.0]})
     search.fit(X, y)
 
     from coco_pipe.decoding.registry import get_estimator_spec
