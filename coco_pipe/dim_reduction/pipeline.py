@@ -416,6 +416,14 @@ def run_fit_group(
                     error=str(err),
                 )
             )
+    if max_n not in sweep:
+        # The file is named after the largest fit: without it nothing is saved.
+        return [
+            record
+            if record["status"] == "failed"
+            else {**record, "status": "failed", "error": "largest dimension failed"}
+            for record in records
+        ]
     if sweep:
         diagnostics: dict[str, Any] = {}
         if full_components is not None:
