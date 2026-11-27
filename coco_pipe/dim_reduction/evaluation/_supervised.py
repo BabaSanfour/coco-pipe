@@ -80,8 +80,6 @@ def _cross_validate_score(
         raise ValueError(
             f"sample_weight must be None or 'group', got {sample_weight!r}."
         )
-    if sample_weight == "group" and groups is None:
-        raise ValueError("sample_weight='group' needs groups.")
     if metric != "balanced_accuracy":
         raise ValueError(
             "Dim-reduction supervised scoring currently supports only "
