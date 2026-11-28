@@ -32,6 +32,7 @@ from .configs import (
     TuningConfig,
     grouped_chance_assessment,
 )
+from .ensemble import ensemble_predictions, stack_oof_predictions
 from .experiment import Experiment
 from .persistence import (
     completed_for_config,
@@ -58,6 +59,7 @@ from .pipeline import (
 )
 from .registry import (
     EstimatorCapabilities,
+    EstimatorSpec,
     get_capabilities,
     get_estimator_cls,
     get_foundation_model_spec,
@@ -72,11 +74,9 @@ from .stats import (
     benjamini_hochberg,
     binomial_accuracy_test,
     correct_sweep_pvalues,
-    ensemble_predictions,
     evaluate_binary_scores,
     paired_prediction_test,
     run_statistical_assessment,
-    stack_oof_predictions,
 )
 from .targets import prepare_target, safe_group_n_splits
 
@@ -89,6 +89,7 @@ __all__ = [
     "DeviceConfig",
     "ErasureConfig",
     "EstimatorCapabilities",
+    "EstimatorSpec",
     # Execution
     "Experiment",
     # Configs

@@ -51,6 +51,7 @@ from .registry import (
     get_selector_capabilities,
     resolve_estimator_spec,
 )
+from .scalers import SubjectStandardScaler
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +86,6 @@ def _build_prep_steps(
     steps: list[tuple[str, BaseEstimator]] = []
     if use_scaler:
         if use_scaler == "subject":
-            from .scalers import SubjectStandardScaler
-
             steps.append(("scaler", SubjectStandardScaler()))
         else:
             steps.append(("scaler", StandardScaler()))

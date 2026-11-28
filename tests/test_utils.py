@@ -113,6 +113,23 @@ def test_get_environment_info(mock_get_version, mock_get_git):
     assert versions["pkg2"] == "dist2_v1"
 
 
+def test_get_environment_info_caches_default_and_isolates_mutations():
+    get_environment_info.cache_clear()
+    try:
+        with patch(
+            "coco_pipe.utils.get_git_revision_hash", return_value="abc123"
+        ) as mock_git:
+            first = get_environment_info()
+            first["tag"] = "mutated"
+            first["versions"]["numpy"] = "mutated"
+            second = get_environment_info()
+            assert mock_git.call_count == 1
+            assert "tag" not in second
+            assert second["versions"]["numpy"] != "mutated"
+    finally:
+        get_environment_info.cache_clear()
+
+
 def test_slug():
     # Regular slugification
     assert slug("hello world") == "hello-world"

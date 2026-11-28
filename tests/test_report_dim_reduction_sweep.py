@@ -3,9 +3,14 @@ import json
 import numpy as np
 import pandas as pd
 
-from coco_pipe.dim_reduction import SEPARATION_METRIC_KEY, SEPARATION_RF_METRIC_KEY
+from coco_pipe.dim_reduction import (
+    SEPARATION_METRIC_KEY,
+    SEPARATION_RF_METRIC_KEY,
+    build_fit_request,
+    run_fit_group,
+)
 from coco_pipe.dim_reduction.artifacts import save_fit_artifact
-from coco_pipe.io import DataContainer
+from coco_pipe.io import DataContainer, write_json
 from coco_pipe.report.core import Report, Section
 from coco_pipe.report.dim_reduction_sweep import (
     DimReductionReportContext,
@@ -909,3 +914,73 @@ def test_build_pooled_sensor_within_family_splits_topomaps_by_family(
     assert "band" in section.render() and "complexity" in section.render()
     assert len(seen_channel_names) >= 2
     assert all(len(names) == len(set(names)) for names in seen_channel_names)
+
+
+def test_build_dataset_report_omits_rankings_without_evals_or_fit_metrics(tmp_path):
+    rng = np.random.default_rng(0)
+    n, d = 24, 6
+    container = DataContainer(
+        X=rng.normal(size=(n, d)),
+        dims=("obs", "feature"),
+        coords={
+            "feature": np.array([f"f{j}" for j in range(d)], dtype=object),
+            "subject": np.array([f"s{i % 6:02d}" for i in range(n)], dtype=object),
+            "condition": np.array(["EO"] * n, dtype=object),
+        },
+        ids=np.array([f"obs-{i:03d}" for i in range(n)], dtype=object),
+        meta={},
+    )
+    unit_spec = {"unit_type": "flat", "unit_name": "global", "unit_key": "global"}
+    input_sig = {
+        "analysis_mode": "flat",
+        "input_mode": "raw",
+        "representation": "recording",
+    }
+    records = run_fit_group(
+        [
+            build_fit_request(
+                container=container,
+                scope="condition",
+                condition="EO",
+                unit_spec=unit_spec,
+                reducer="PCA",
+                n_components=n_comp,
+                input_signature=input_sig,
+                output_root=tmp_path,
+                compute_fit_metrics=False,
+            )
+            for n_comp in (2, 3)
+        ],
+        errors="raise",
+    )
+    fit_runs_path = tmp_path / "runs" / "fit_runs.json"
+    fit_runs_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(fit_runs_path, records, indent=2)
+
+    ctx = DimReductionReportContext(
+        analysis_mode="flat",
+        selection_metric="",
+        selection_eval_name="",
+        reducers=["PCA"],
+        conditions=["EO"],
+        container_builder=lambda _: container,
+        output_root=tmp_path,
+        eval_specs=[],
+        interactive=False,
+        input_mode="raw",
+        representation="recording",
+        dataset_name="demo",
+        report_title="Demo",
+    )
+    report = build_dataset_report(
+        ctx,
+        fit_runs_path=fit_runs_path,
+        eval_runs_path=tmp_path / "runs" / "eval_runs.json",
+        containers_by_scope={("condition", "EO"): container},
+    )
+    html = report.render()
+    assert "Overview" in html
+    assert "Condition Ranking" not in html
+    assert "Evaluation Results" not in html
+    assert "Peak Performance" not in html
+    assert "Fit ranking" not in html

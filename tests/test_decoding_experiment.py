@@ -4,8 +4,17 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.metrics import roc_auc_score
 
-from coco_pipe.decoding import Experiment, ExperimentConfig
+from coco_pipe.decoding import (
+    EstimatorSpec,
+    Experiment,
+    ExperimentConfig,
+    ReducerConfig,
+    register_estimator,
+    register_estimator_spec,
+)
 from coco_pipe.decoding.configs import (
     AdaBoostClassifierConfig,
     AdaBoostRegressorConfig,
@@ -49,6 +58,7 @@ from coco_pipe.decoding.configs import (
 from coco_pipe.decoding.registry import (
     get_estimator_spec,
 )
+from coco_pipe.io import DataContainer
 
 # =============================================================================
 # FIXTURES & DATA GENERATORS
@@ -435,3 +445,136 @@ def test_low_memory_gives_the_same_results(tmp_path, monkeypatch):
     assert offloaded.raw["broken"]["status"] == "failed"
     assert "Failed to instantiate" in offloaded.raw["unbuildable"]["error"]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_predefined_folds_and_per_block_pca_pipeline():
+    rng = np.random.default_rng(0)
+    n = 50
+    y = np.array([0, 1] * (n // 2))
+    # Block A: 12 noisy features reduced to 4 PCs; Block B: 3 informative features kept
+    X_a = rng.normal(scale=10.0, size=(n, 12))
+    X_b = rng.normal(size=(n, 3))
+    X_b[:, 0] += 2.0 * y
+    ids = np.array([f"c{i:02d}" for i in range(n)])
+    folds = np.arange(n) % 5
+    container = DataContainer(
+        X=np.hstack([X_a, X_b]),
+        dims=("obs", "feature"),
+        coords={
+            "feature": np.array([f"f{j}" for j in range(15)], dtype=object),
+            "feature_block": np.array(["A"] * 12 + ["B"] * 3, dtype=object),
+        },
+        ids=ids,
+    )
+
+    cfg = ExperimentConfig(
+        models={
+            "lr": ClassicalModelConfig(
+                estimator="LogisticRegression",
+                params={
+                    "solver": "lbfgs",
+                    "class_weight": "balanced",
+                    "max_iter": 5000,
+                },
+            )
+        },
+        grids={"lr": {"alpha": [10.0, 1.0, 0.1]}},
+        cv=CVConfig(strategy="predefined", fold_col="fold"),
+        tuning=TuningConfig(
+            enabled=True,
+            scoring="roc_auc",
+            n_jobs=1,
+            cv=CVConfig(
+                strategy="stratified", n_splits=3, shuffle=True, random_state=0
+            ),
+        ),
+        reducer=ReducerConfig(enabled=True, n_components={"A": 4, "B": None}),
+        metrics=["roc_auc", "accuracy"],
+        n_jobs=1,
+        verbose=False,
+    )
+    res = Experiment(cfg).run(
+        container,
+        y,
+        groups=ids,
+        sample_ids=ids,
+        sample_metadata=pd.DataFrame({"Subject": ids, "Session": "01", "fold": folds}),
+    )
+    preds = res.get_predictions()
+    assert len(preds) == n
+    assert "y_proba_1" in preds.columns
+    assert roc_auc_score(preds["y_true"], preds["y_proba_1"]) > 0.8
+
+
+def test_custom_neural_estimator_routes_groups_and_collects_artifacts():
+    class _ToyBagMIL(ClassifierMixin, BaseEstimator):
+        def __init__(self, scale: float = 1.0):
+            self.scale = scale
+
+        def get_metadata_routing(self):
+            requests = super().get_metadata_routing()
+            requests.fit.add_auto_request("groups")
+            requests.predict.add_auto_request("groups")
+            requests.predict_proba.add_auto_request("groups")
+            return requests
+
+        def fit(self, X, y, groups=None):
+            self.classes_ = np.unique(y)
+            self.mean_pos_ = np.asarray(X)[y == 1].mean(axis=0)
+            self.mean_neg_ = np.asarray(X)[y == 0].mean(axis=0)
+            self._last_weights = None
+            return self
+
+        def predict_proba(self, X, groups=None):
+            X = np.asarray(X)
+            logits = X @ (self.scale * (self.mean_pos_ - self.mean_neg_))
+            if groups is not None:
+                pooled = (
+                    pd.Series(logits)
+                    .groupby(np.asarray(groups))
+                    .transform("mean")
+                    .to_numpy()
+                )
+                self._last_weights = {"n_rows": len(X)}
+            else:
+                pooled = logits
+            p1 = 1.0 / (1.0 + np.exp(-np.clip(pooled, -20, 20)))
+            return np.column_stack([1.0 - p1, p1])
+
+        def predict(self, X, groups=None):
+            return (self.predict_proba(X, groups=groups)[:, 1] >= 0.5).astype(int)
+
+        def get_artifact_metadata(self):
+            return self._last_weights
+
+    name = "_TestToyBagMIL"
+    register_estimator(name)(_ToyBagMIL)
+    register_estimator_spec(
+        EstimatorSpec(
+            name=name,
+            import_path="tests.test_decoding_experiment:_ToyBagMIL",
+            family="neural",
+            task=("classification",),
+            supports_groups=True,
+            supports_proba=True,
+            fit_smoke_required=False,
+        )
+    )
+    rng = np.random.default_rng(0)
+    groups = np.repeat([f"g{i}" for i in range(12)], 3)
+    y = np.repeat([0, 1] * 6, 3)
+    X = rng.normal(size=(36, 4))
+    X[:, 0] += 2.0 * y
+
+    cfg = ExperimentConfig(
+        models={"mil": ClassicalModelConfig(estimator=name, params={"scale": 1.0})},
+        cv=CVConfig(strategy="stratified_group_kfold", n_splits=3),
+        use_scaler=False,
+        metrics=["accuracy", "roc_auc"],
+        n_jobs=1,
+        verbose=False,
+    )
+    res = Experiment(cfg).run(X, y, groups=groups)
+    preds = res.get_predictions()
+    assert roc_auc_score(preds["y_true"], preds["y_proba_1"]) > 0.85
+    assert res.raw["mil"]["metadata"][0]["artifacts"]["n_rows"] > 0

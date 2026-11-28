@@ -827,6 +827,61 @@ def test_balance_errors():
         mixed.balance(target="y", groups="subject")
 
 
+def test_balance_ratio_matches_covariate_strata():
+    rng = np.random.default_rng(0)
+    role = np.array(["ref"] * 12 + ["pool"] * 40)
+    sex = np.array(["F"] * 6 + ["M"] * 6 + ["F"] * 20 + ["M"] * 20)
+    container = DataContainer(
+        X=rng.normal(size=(52, 2)),
+        dims=("obs", "feature"),
+        coords={"feature": ["f0", "f1"], "role": role, "sex": sex},
+        ids=np.array([f"c{i}" for i in range(52)]),
+    )
+    balanced = container.balance(
+        target="role",
+        covariates=["sex"],
+        ratio={"ref": 1, "pool": 2},
+        random_state=0,
+    )
+    counts = pd.Series(balanced.coords["role"]).value_counts().to_dict()
+    assert counts == {"ref": 12, "pool": 24}
+    by_sex = (
+        pd.DataFrame({"role": balanced.coords["role"], "sex": balanced.coords["sex"]})
+        .groupby(["sex", "role"])
+        .size()
+        .unstack("role")
+    )
+    assert (by_sex["pool"] == 2 * by_sex["ref"]).all()
+
+
+def test_subsample_caps_per_cell_deterministically():
+    container = DataContainer(
+        X=np.arange(30, dtype=float).reshape(15, 2),
+        dims=("obs", "feature"),
+        coords={
+            "feature": np.array(["f0", "f1"]),
+            "subject": np.array(["a"] * 10 + ["b"] * 5),
+            "condition": np.array(["EO"] * 8 + ["EC"] * 2 + ["EO"] * 5),
+        },
+        ids=np.array([f"r{i}" for i in range(15)]),
+    )
+    capped = container.subsample({"EO": 3}, by=("subject", "condition"))
+    a_eo = (capped.coords["subject"] == "a") & (capped.coords["condition"] == "EO")
+    a_ec = (capped.coords["subject"] == "a") & (capped.coords["condition"] == "EC")
+    assert a_eo.sum() == 3 and a_ec.sum() == 2
+
+    # Per-cell seed is independent of other groups
+    alone = container.isel(obs=np.arange(10)).subsample(
+        {"EO": 3}, by=("subject", "condition")
+    )
+    assert list(alone.ids) == list(capped.ids[:5])
+
+    # Scalar integer cap across a single coordinate
+    uniform = container.subsample(4, by="subject")
+    assert (uniform.coords["subject"] == "a").sum() == 4
+    assert (uniform.coords["subject"] == "b").sum() == 4
+
+
 def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():
     # the first group has as many features as there are subjects: its
     # coordinates must not end up on the observation axis

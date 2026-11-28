@@ -1114,3 +1114,35 @@ def test_result_roc_auc_missing_proba():
     )
     df = res.get_roc_auc_summary()
     assert df.empty
+
+
+def test_predict_aggregates_retained_estimators_and_omits_from_payload():
+    X, y = _classification_data()
+    X_ext = np.array([[-1.2, -0.5], [0.0, 0.0], [1.2, 0.5]])
+
+    cfg_without = _config()
+    res_without = Experiment(cfg_without).run(X, y)
+    with pytest.raises(ValueError, match="return_estimator=True"):
+        res_without.predict(X_ext)
+
+    cfg_with = cfg_without.model_copy(update={"return_estimator": True})
+    res = Experiment(cfg_with).run(X, y)
+    assert "y_score" in res.get_predictions().columns
+
+    scores = res.predict(X_ext, method="decision_function")
+    fold_scores = res.predict(X_ext, method="decision_function", aggregate=None)
+    assert scores.shape == (len(X_ext),)
+    assert fold_scores.shape == (2, len(X_ext))
+    np.testing.assert_allclose(fold_scores.mean(axis=0), scores)
+
+    proba = res.predict(X_ext, method="predict_proba")
+    assert proba.shape == (len(X_ext), 2)
+    assert np.all((proba >= 0.0) & (proba <= 1.0))
+
+    payload = res.to_payload(serializable=True)
+    assert "estimators" not in payload["results"]["lr"]
+
+    with pytest.raises(ValueError, match="method must be"):
+        res.predict(X_ext, method="invalid")
+    with pytest.raises(ValueError, match="aggregate must be"):
+        res.predict(X_ext, aggregate="median")
