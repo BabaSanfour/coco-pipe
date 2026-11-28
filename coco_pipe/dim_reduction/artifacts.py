@@ -348,7 +348,7 @@ def build_record(
 def write_run_status(
     output_root: Path,
     fit_runs_path: Path,
-    eval_runs_path: Path,
+    eval_runs_path: Path | None = None,
     *,
     run_summary_path: Path | None = None,
     fatal_error: str | None = None,
@@ -374,7 +374,8 @@ def write_run_status(
     fit_runs_path:
         Path to the fit runs JSON inventory (may not exist yet).
     eval_runs_path:
-        Path to the eval runs JSON inventory (may not exist yet).
+        Path to the eval runs JSON inventory (may not exist yet; ``None`` for a
+        run without evals).
     run_summary_path:
         Optional explicit path for the summary JSON. Defaults to
         ``output_root / "run_summary.json"``.
@@ -391,7 +392,11 @@ def write_run_status(
         The summary payload written to disk.
     """
     fit_runs = read_json(fit_runs_path) if fit_runs_path.exists() else []
-    eval_runs = read_json(eval_runs_path) if eval_runs_path.exists() else []
+    eval_runs = (
+        read_json(eval_runs_path)
+        if eval_runs_path is not None and eval_runs_path.exists()
+        else []
+    )
 
     fit_success = sum(record.get("status") == "success" for record in fit_runs)
     fit_failed = sum(record.get("status") == "failed" for record in fit_runs)

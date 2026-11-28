@@ -241,10 +241,6 @@ def get_environment_info(
     }
 
 
-get_environment_info.cache_clear = _cached_default_environment_info.cache_clear  # type: ignore[attr-defined]
-get_environment_info.cache_info = _cached_default_environment_info.cache_info  # type: ignore[attr-defined]
-
-
 def slug(value: object, *, max_len: int = 80) -> str:
     """Return a filesystem-safe slug from an arbitrary value.
 

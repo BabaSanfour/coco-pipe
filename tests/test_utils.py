@@ -5,6 +5,7 @@ import joblib
 import pytest
 
 from coco_pipe.utils import (
+    _cached_default_environment_info,
     get_environment_info,
     get_git_revision_hash,
     get_package_version,
@@ -114,7 +115,7 @@ def test_get_environment_info(mock_get_version, mock_get_git):
 
 
 def test_get_environment_info_caches_default_and_isolates_mutations():
-    get_environment_info.cache_clear()
+    _cached_default_environment_info.cache_clear()
     try:
         with patch(
             "coco_pipe.utils.get_git_revision_hash", return_value="abc123"
@@ -127,7 +128,7 @@ def test_get_environment_info_caches_default_and_isolates_mutations():
             assert "tag" not in second
             assert second["versions"]["numpy"] != "mutated"
     finally:
-        get_environment_info.cache_clear()
+        _cached_default_environment_info.cache_clear()
 
 
 def test_slug():

@@ -17,8 +17,7 @@ from typing import Any
 import joblib
 import numpy as np
 from sklearn import config_context
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.decomposition import PCA
+from sklearn.base import BaseEstimator
 from sklearn.feature_selection import (
     SelectKBest,
     f_classif,
@@ -90,48 +89,6 @@ def _release_foundation_memory(estimator: Any) -> None:
         return
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-
-class _SafePCA(BaseEstimator, TransformerMixin):
-    """Fold-local PCA that passes through when input width is already <= k."""
-
-    def __init__(
-        self,
-        n_components: int | float | None = None,
-        whiten: bool = False,
-        svd_solver: str = "auto",
-        random_state: int | None = None,
-    ):
-        self.n_components = n_components
-        self.whiten = whiten
-        self.svd_solver = svd_solver
-        self.random_state = random_state
-
-    def fit(self, X, y=None):
-        X_arr = np.asarray(X)
-        n_samples, n_features = X_arr.shape
-        if isinstance(self.n_components, int) and n_features <= self.n_components:
-            self.pca_ = None
-            self.n_features_in_ = n_features
-            return self
-        k = (
-            min(self.n_components, n_samples, n_features)
-            if isinstance(self.n_components, int)
-            else self.n_components
-        )
-        self.pca_ = PCA(
-            n_components=k,
-            whiten=self.whiten,
-            svd_solver=self.svd_solver,
-            random_state=self.random_state,
-        ).fit(X_arr)
-        self.n_features_in_ = n_features
-        return self
-
-    def transform(self, X):
-        if self.pca_ is None:
-            return np.asarray(X)
-        return self.pca_.transform(X)
 
 
 class _SafeSelectKBest(BaseEstimator):

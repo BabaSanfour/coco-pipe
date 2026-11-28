@@ -187,6 +187,19 @@ def test_stack_oof_predictions_with_containers_and_missing_blocks():
     assert stacked.notna().all()
     assert roc_auc_score(y, stacked) > 0.8
 
+    # An input too small for its own nested tuning fails loudly, naming the input
+    X3 = pd.DataFrame(
+        rng.normal(size=(10, 3)), index=idx[[1, 3, 5, 0, 2, 4, 6, 8, 10, 12]]
+    )
+    with pytest.raises(RuntimeError, match="Input 's3' failed to fit"):
+        stack_oof_predictions(
+            {"s1": (dc1, cfg_blocks), "s3": (X3, cfg_plain)},
+            y,
+            folds,
+            inner_cv=inner_cv,
+            random_state=0,
+        )
+
     # Custom combiner via coco-pipe ClassicalModelConfig and raw sklearn estimator
     cfg_combiner = ClassicalModelConfig(
         estimator="HistGradientBoostingClassifier",

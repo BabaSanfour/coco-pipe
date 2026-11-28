@@ -338,6 +338,9 @@ def stack_oof_predictions(
             groups=ids.to_numpy(),
             sample_ids=ids.to_numpy(),
         )
+        errors = [r["error"] for r in res.raw.values() if "error" in r]
+        if errors:
+            raise RuntimeError(f"Input '{name}' failed to fit: {errors[0]}")
         preds = res.get_predictions()
         pcols = proba_columns(preds.columns)
         s_col = pcols[-1] if pcols else "y_score"

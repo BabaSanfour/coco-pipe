@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import PCA
 from sklearn.feature_selection import (
     SequentialFeatureSelector,
     f_classif,
@@ -38,7 +39,6 @@ from coco_pipe.utils import get_environment_info
 
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
 from ._engine import (
-    _SafePCA,
     _SafeSelectKBest,
     fit_and_score_fold,
 )
@@ -93,7 +93,7 @@ def _build_prep_steps(
         steps.append(
             (
                 "reducer",
-                _SafePCA(
+                PCA(
                     n_components=n_components,
                     whiten=reducer_cfg.whiten,
                     svd_solver=reducer_cfg.svd_solver,
@@ -297,6 +297,9 @@ class Experiment:
                     else:
                         k = n_comp_cfg
                         block_reducer = reducer_cfg if reducer_cfg.enabled else None
+                    if isinstance(k, int) and len(cols) <= k:
+                        # a block no wider than its size enters unreduced
+                        block_reducer = None
                     block_steps = _build_prep_steps(
                         self.config.use_scaler, block_reducer, k
                     )
@@ -1261,13 +1264,17 @@ class Experiment:
     def _resolve_feature_blocks(
         X: np.ndarray,
         feature_blocks: Sequence[Any] | Mapping[str, Sequence[int] | slice] | None,
-    ) -> dict[str, list[int] | slice] | None:
+    ) -> dict[str, list[int]] | None:
         if feature_blocks is None:
             return None
         if X.ndim != 2:
             raise ValueError("feature_blocks requires a 2D feature matrix X.")
         if isinstance(feature_blocks, Mapping):
-            return {str(k): v for k, v in feature_blocks.items()}
+            columns = np.arange(X.shape[1])
+            return {
+                str(k): columns[v].tolist() if isinstance(v, slice) else list(v)
+                for k, v in feature_blocks.items()
+            }
         labels = np.asarray(feature_blocks)
         if len(labels) != X.shape[1]:
             raise ValueError(

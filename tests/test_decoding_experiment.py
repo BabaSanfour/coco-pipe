@@ -501,7 +501,7 @@ def test_predefined_folds_and_per_block_pca_pipeline():
     assert "y_proba_1" in preds.columns
     assert roc_auc_score(preds["y_true"], preds["y_proba_1"]) > 0.8
 
-    # Scalar n_components with Mapping feature_blocks and _SafePCA pass-through
+    # Scalar n_components with Mapping feature_blocks: block B (3 columns) unreduced
     cfg_scalar = cfg.model_copy(
         update={
             "tuning": TuningConfig(enabled=False),

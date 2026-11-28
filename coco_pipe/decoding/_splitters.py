@@ -275,8 +275,9 @@ def resolve_effective_n_splits(
 ) -> int:
     """Number of folds :func:`get_cv_splitter` uses for these labels and groups.
 
-    Grouped strategies lower ``n_splits`` when a class has fewer groups than
-    requested (``auto_reduce_n_splits``); every other strategy keeps it.
+    With ``auto_reduce_n_splits``, grouped strategies lower ``n_splits`` when a class
+    has fewer groups than requested, and ``stratified`` lowers it to the smallest
+    class's count; ``predefined`` counts its test folds; every other strategy keeps it.
     """
     strat = config.strategy.lower()
     if strat == "predefined" and test_fold is not None:

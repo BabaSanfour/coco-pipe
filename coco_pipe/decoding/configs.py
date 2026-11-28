@@ -935,7 +935,8 @@ class CVConfig(BaseModel):
         True,
         description=(
             "Reduce grouped fold counts to the largest leakage-safe value supported "
-            "by the observed groups and classes."
+            "by the observed groups and classes, and stratified fold counts to the "
+            "smallest class's count."
         ),
     )
 
@@ -1436,7 +1437,9 @@ class ExperimentConfig(BaseModel):
         False,
         description=(
             "Retain each outer fold's fitted estimator (sklearn-style) in the "
-            "result so unseen observations can be scored via ExperimentResult.predict."
+            "result so unseen observations can be scored via ExperimentResult.predict. "
+            "The predictions then also keep decision_function scores (y_score), so "
+            "out-of-fold and predict(method='decision_function') scores share a scale."
         ),
     )
     low_memory: bool = Field(

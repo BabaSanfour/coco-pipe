@@ -604,9 +604,8 @@ class DataContainer:
         target: str = "y",
         strategy: str = "undersample",
         covariates: list[str] | None = None,
-        random_state: int | np.random.Generator = 42,
+        random_state: int = 42,
         groups: str | list[str] | None = None,
-        ratio: int | Mapping[Any, int] = 1,
         **kwargs,
     ) -> "DataContainer":
         """
@@ -645,12 +644,6 @@ class DataContainer:
             ``["subject", "condition"]``: units are sampled whole, with every row,
             instead of rows one by one. The target and covariates must be constant
             within a unit.
-        ratio : int or Mapping[Any, int], default=1
-            Relative per-class sample multiplicity within each stratum (or globally
-            without covariates). ``1`` equalizes class counts; an integer ``r > 1``
-            anchors the smallest class at ``1`` and samples ``r`` units of every
-            other class per reference unit; a mapping ``{class_label: weight}``
-            specifies the exact integer multiplicity of each class.
         **kwargs : dict
             Additional arguments passed to internal logic:
 
@@ -721,29 +714,7 @@ class DataContainer:
             raise ValueError(f"Target '{target}' missing")
         strategy = strategy.lower()
         counts = df_meta[target].value_counts()
-        min_c = int(counts.min())
-
-        if isinstance(ratio, Mapping):
-            missing_classes = [c for c in counts.index if c not in ratio]
-            if missing_classes:
-                raise ValueError(
-                    f"ratio mapping is missing target classes: {missing_classes}."
-                )
-            ratios = {c: int(ratio[c]) for c in counts.index}
-            if any(v < 1 for v in ratios.values()):
-                raise ValueError("All ratio values must be positive integers.")
-            custom_ratio = True
-        else:
-            r_int = int(ratio)
-            if r_int < 1:
-                raise ValueError("ratio must be a positive integer.")
-            if r_int == 1:
-                ratios = dict.fromkeys(counts.index, 1)
-                custom_ratio = False
-            else:
-                ref_cls = counts.idxmin()
-                ratios = {c: (1 if c == ref_cls else r_int) for c in counts.index}
-                custom_ratio = True
+        min_c, max_c = int(counts.min()), int(counts.max())
 
         if strategy == "auto":
             strategy = (
@@ -752,20 +723,6 @@ class DataContainer:
                 else "oversample"
             )
 
-        def _target_sizes(class_counts: pd.Series) -> dict[Any, int]:
-            if strategy == "undersample":
-                if custom_ratio and len(class_counts) < len(ratios):
-                    return dict.fromkeys(class_counts.index, 0)
-                base = min(
-                    int(class_counts[c]) // ratios[c] for c in class_counts.index
-                )
-                return {c: base * ratios[c] for c in class_counts.index}
-            base = max(
-                (int(class_counts[c]) + ratios[c] - 1) // ratios[c]
-                for c in class_counts.index
-            )
-            return {c: base * ratios[c] for c in class_counts.index}
-
         exclude = [target] + (covariates or [])
         rng = np.random.default_rng(random_state)
 
@@ -773,11 +730,9 @@ class DataContainer:
 
         # 1. Simple Case (No Covariates)
         if not covariates:
-            size = _target_sizes(counts)
-            if strategy == "undersample" and any(v == 0 for v in size.values()):
-                raise ValueError(
-                    "Not enough observations to satisfy the requested class ratio."
-                )
+            size = dict.fromkeys(
+                counts.index, min_c if strategy == "undersample" else max_c
+            )
             indices_val = sample_indices(
                 df_meta,
                 target,
@@ -802,9 +757,9 @@ class DataContainer:
 
             for _, g in tmp.groupby("__strata__", observed=False):
                 sc = g[target].value_counts()
-                if len(sc) <= 1 or (custom_ratio and len(sc) < len(ratios)):
-                    # Cannot balance within a single-class or incomplete stratum
-                    if strategy != "undersample" and not custom_ratio:
+                if len(sc) <= 1:
+                    # Cannot balance within a single-class stratum
+                    if strategy != "undersample":
                         M = int(counts.max())
                         size_map = dict.fromkeys(sc.index, M)
                         indices_parts.append(
@@ -821,9 +776,10 @@ class DataContainer:
                     continue
 
                 # Balance locally within stratum
-                sz = _target_sizes(sc)
-                if strategy == "undersample" and any(v == 0 for v in sz.values()):
-                    continue
+                sz = {
+                    c: int(sc.min()) if strategy == "undersample" else int(sc.max())
+                    for c in sc.index
+                }
                 indices_parts.append(
                     sample_indices(
                         g,

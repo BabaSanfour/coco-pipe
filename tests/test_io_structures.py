@@ -827,50 +827,6 @@ def test_balance_errors():
         mixed.balance(target="y", groups="subject")
 
 
-def test_balance_ratio_matches_covariate_strata():
-    rng = np.random.default_rng(0)
-    role = np.array(["ref"] * 12 + ["pool"] * 40)
-    sex = np.array(["F"] * 6 + ["M"] * 6 + ["F"] * 20 + ["M"] * 20)
-    container = DataContainer(
-        X=rng.normal(size=(52, 2)),
-        dims=("obs", "feature"),
-        coords={"feature": ["f0", "f1"], "role": role, "sex": sex},
-        ids=np.array([f"c{i}" for i in range(52)]),
-    )
-    balanced = container.balance(
-        target="role",
-        covariates=["sex"],
-        ratio={"ref": 1, "pool": 2},
-        random_state=0,
-    )
-    counts = pd.Series(balanced.coords["role"]).value_counts().to_dict()
-    assert counts == {"ref": 12, "pool": 24}
-    by_sex = (
-        pd.DataFrame({"role": balanced.coords["role"], "sex": balanced.coords["sex"]})
-        .groupby(["sex", "role"])
-        .size()
-        .unstack("role")
-    )
-    assert (by_sex["pool"] == 2 * by_sex["ref"]).all()
-
-    # Scalar integer ratio anchors the smallest class at 1
-    scalar = container.balance(target="role", ratio=2, random_state=0)
-    assert pd.Series(scalar.coords["role"]).value_counts().to_dict() == {
-        "ref": 12,
-        "pool": 24,
-    }
-
-    # Validation errors on ratio
-    with pytest.raises(ValueError, match="missing target classes"):
-        container.balance(target="role", ratio={"ref": 1})
-    with pytest.raises(ValueError, match="positive integers"):
-        container.balance(target="role", ratio={"ref": 0, "pool": 2})
-    with pytest.raises(ValueError, match="positive integer"):
-        container.balance(target="role", ratio=0)
-    with pytest.raises(ValueError, match="Not enough observations"):
-        container.balance(target="role", ratio={"ref": 1, "pool": 100})
-
-
 def test_subsample_caps_per_cell_deterministically():
     container = DataContainer(
         X=np.arange(30, dtype=float).reshape(15, 2),

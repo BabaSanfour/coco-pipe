@@ -779,11 +779,12 @@ class DimReductionReportContext:
     """
 
     analysis_mode: str
-    selection_metric: str
     reducers: Sequence[str]
     conditions: Sequence[str]
     container_builder: Callable[[str], Any | None]
     output_root: Path
+    # The metric the runs are ranked on; empty for runs without evals or fit metrics.
+    selection_metric: str = ""
     eval_specs: Sequence[Mapping[str, Any]] = ()
     # The eval the runs are ranked on (best-run cards, condition and pooled
     # sections); empty ranks on every eval at once.
@@ -2320,7 +2321,7 @@ def build_dataset_report(
     ctx: DimReductionReportContext,
     *,
     fit_runs_path: Path,
-    eval_runs_path: Path,
+    eval_runs_path: Path | None = None,
     containers_by_scope: dict[tuple[str, str], Any] | None = None,
     dataset_stats: list[dict[str, Any]] | None = None,
     overview_extras: Callable[[Section], None] | None = None,
@@ -2334,7 +2335,7 @@ def build_dataset_report(
     """
     fit_runs_df = pd.DataFrame(load_fit_runs(fit_runs_path))
 
-    if eval_runs_path.exists():
+    if eval_runs_path is not None and eval_runs_path.exists():
         eval_runs_df = pd.DataFrame(
             json.loads(eval_runs_path.read_text(encoding="utf-8"))
         )
