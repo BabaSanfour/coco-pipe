@@ -1146,3 +1146,25 @@ def test_predict_aggregates_retained_estimators_and_omits_from_payload():
         res.predict(X_ext, method="invalid")
     with pytest.raises(ValueError, match="aggregate must be"):
         res.predict(X_ext, aggregate="median")
+
+    cfg_two = ExperimentConfig(
+        task="classification",
+        tag="result_schema_test",
+        models={
+            "lr": {"kind": "classical", "method": "LogisticRegression"},
+            "rf": {
+                "kind": "classical",
+                "method": "RandomForestClassifier",
+                "n_estimators": 5,
+            },
+        },
+        cv=cfg_with.cv,
+        metrics=cfg_with.metrics,
+        return_estimator=True,
+        n_jobs=1,
+        verbose=False,
+    )
+    res_two = Experiment(cfg_two).run(X, y)
+    with pytest.raises(ValueError, match="Specify model="):
+        res_two.predict(X_ext)
+    assert res_two.predict(X_ext, model="lr").shape == (len(X_ext), 2)

@@ -282,18 +282,22 @@ def resolve_effective_n_splits(
     if strat == "predefined" and test_fold is not None:
         arr = np.asarray(test_fold)
         return len({v for v in arr if v != -1 and str(v) != "-1"})
-    if (
-        getattr(config, "auto_reduce_n_splits", True)
-        and groups is not None
-        and strat in GROUP_CV_STRATEGIES
-        and strat not in {"leave_one_group_out", "leave_p_out"}
-    ):
-        return safe_group_n_splits(
-            y if y is not None else np.zeros(len(groups), dtype=int),
-            groups,
-            requested=config.n_splits,
-            stratified=strat == "stratified_group_kfold",
-        )
+    if getattr(config, "auto_reduce_n_splits", True):
+        if (
+            groups is not None
+            and strat in GROUP_CV_STRATEGIES
+            and strat not in {"leave_one_group_out", "leave_p_out"}
+        ):
+            return safe_group_n_splits(
+                y if y is not None else np.zeros(len(groups), dtype=int),
+                groups,
+                requested=config.n_splits,
+                stratified=strat == "stratified_group_kfold",
+            )
+        if strat == "stratified" and y is not None:
+            counts = pd.Series(y).value_counts()
+            if not counts.empty and int(counts.min()) >= 2:
+                return min(config.n_splits, int(counts.min()))
     return config.n_splits
 
 

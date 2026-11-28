@@ -289,6 +289,7 @@ class HistGradientBoostingClassifierConfig(ClassicalEstimatorConfig):
     n_iter_no_change: int = 10
     tol: float = 1e-7
     verbose: int = 0
+    class_weight: dict | str | None = None
     random_state: int | None = None
 
 
@@ -895,8 +896,8 @@ class CVConfig(BaseModel):
     fold_col: str | None = Field(
         None,
         description=(
-            "sample_metadata column holding outer fold ids for strategy='predefined' "
-            "(defaults to 'fold'; -1 marks train-only rows)."
+            "DataContainer coordinate or sample_metadata column holding outer fold ids "
+            "for strategy='predefined' (defaults to 'fold'; -1 marks train-only rows)."
         ),
     )
     score_by: str | None = Field(

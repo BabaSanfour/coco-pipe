@@ -928,3 +928,8 @@ def test_evaluate_binary_scores_matches_roc_auc_and_computes_inference():
         y, scores, n_permutations=0, n_bootstrap=20, random_state=0
     )
     assert np.isnan(no_perm["auc_p"])
+
+    with pytest.raises(ValueError, match="Length mismatch"):
+        evaluate_binary_scores(y[:-1], scores, n_permutations=0, n_bootstrap=5)
+    with pytest.raises(ValueError, match="binary labels"):
+        evaluate_binary_scores(np.zeros(4, dtype=int), [0.1, 0.2, 0.3, 0.4])

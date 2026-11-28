@@ -631,9 +631,12 @@ class Experiment:
 
         Parameters
         ----------
-        X : np.ndarray
+        X : np.ndarray or DataContainer
             The input data. Can be 2D (samples x features) or 3D temporal
-            (samples x sensors x time).
+            (samples x sensors x time). When a :class:`~coco_pipe.io.DataContainer`
+            is provided, ``coords["feature_block"]`` supplies default
+            *feature_blocks* and ``coords[cv.fold_col]`` supplies predefined
+            outer folds without needing ``sample_metadata``.
         y : Union[pd.Series, np.ndarray]
             The target labels or values.
         groups : Union[pd.Series, np.ndarray], optional
@@ -650,6 +653,11 @@ class Experiment:
             The level of statistical independence ('sample' or 'subject').
         time_axis : Sequence[Any], optional
             Scientific time points for 3D temporal data.
+        sample_weight : np.ndarray, optional
+            Per-sample weights aligned to ``X``.
+        feature_blocks : Sequence or Mapping, optional
+            Per-feature block labels (length ``X.shape[1]``) or a mapping from
+            block name to column indices/slices for per-block preprocessing.
 
         Returns
         -------
@@ -676,9 +684,11 @@ class Experiment:
         """
         start_time = time.time()
         logger.info(f"Starting Experiment: Task={self.config.task}")
+        container_coords: Mapping[str, Any] | None = None
         if hasattr(X, "X") and hasattr(X, "coords"):
-            if feature_blocks is None and "feature_block" in X.coords:
-                feature_blocks = X.coords["feature_block"]
+            container_coords = X.coords
+            if feature_blocks is None and "feature_block" in container_coords:
+                feature_blocks = container_coords["feature_block"]
             X = X.X
         X, y = np.asarray(X), np.asarray(y)
         if len(X) == 0:
@@ -719,7 +729,7 @@ class Experiment:
             raise ValueError("observation_level must be 'sample' or 'epoch'.")
         self._observation_level = observation_level
         self._sample_metadata, groups = self._resolve_metadata_and_groups(
-            len(X), sample_metadata, groups
+            len(X), sample_metadata, groups, container_coords=container_coords
         )
 
         # 3. Resolve Inferential Unit (Level of statistical independence)
@@ -1057,6 +1067,7 @@ class Experiment:
         n: int,
         meta_in: pd.DataFrame | dict[str, Sequence[Any]] | None,
         groups_in: np.ndarray | None,
+        container_coords: Mapping[str, Any] | None = None,
     ) -> tuple[pd.DataFrame, np.ndarray | None]:
         """Validate metadata and extract cross-validation groups if required."""
         # 1. Standardize Metadata to DataFrame
@@ -1131,12 +1142,21 @@ class Experiment:
         if self.config.cv.strategy == "predefined":
             fold_col = self.config.cv.fold_col or "fold"
             if fold_col not in meta.columns:
-                if fold_col.capitalize() not in meta.columns:
+                if fold_col.capitalize() in meta.columns:
+                    meta[fold_col] = meta[fold_col.capitalize()]
+                elif container_coords is not None and fold_col in container_coords:
+                    fold_vals = np.asarray(container_coords[fold_col])
+                    if len(fold_vals) != n:
+                        raise ValueError(
+                            f"Coordinate '{fold_col}' length mismatch: "
+                            f"{len(fold_vals)} vs {n}."
+                        )
+                    meta[fold_col] = fold_vals
+                else:
                     raise ValueError(
-                        f"fold_col '{fold_col}' not found in sample_metadata for "
-                        "strategy='predefined'."
+                        f"fold_col '{fold_col}' not found in sample_metadata or "
+                        "DataContainer.coords for strategy='predefined'."
                     )
-                meta[fold_col] = meta[fold_col.capitalize()]
 
         score_by = self.config.cv.score_by
         if score_by is not None and score_by not in meta.columns:

@@ -463,6 +463,7 @@ def test_predefined_folds_and_per_block_pca_pipeline():
         coords={
             "feature": np.array([f"f{j}" for j in range(15)], dtype=object),
             "feature_block": np.array(["A"] * 12 + ["B"] * 3, dtype=object),
+            "fold": folds,
         },
         ids=ids,
     )
@@ -493,17 +494,56 @@ def test_predefined_folds_and_per_block_pca_pipeline():
         n_jobs=1,
         verbose=False,
     )
-    res = Experiment(cfg).run(
-        container,
-        y,
-        groups=ids,
-        sample_ids=ids,
-        sample_metadata=pd.DataFrame({"Subject": ids, "Session": "01", "fold": folds}),
-    )
+    # Predefined folds come straight from DataContainer.coords without dummy metadata
+    res = Experiment(cfg).run(container, y, groups=ids, sample_ids=ids)
     preds = res.get_predictions()
     assert len(preds) == n
     assert "y_proba_1" in preds.columns
     assert roc_auc_score(preds["y_true"], preds["y_proba_1"]) > 0.8
+
+    # Scalar n_components with Mapping feature_blocks and _SafePCA pass-through
+    cfg_scalar = cfg.model_copy(
+        update={
+            "tuning": TuningConfig(enabled=False),
+            "grids": None,
+            "reducer": ReducerConfig(enabled=True, n_components=5),
+        }
+    )
+    res_map = Experiment(cfg_scalar).run(
+        container.X,
+        y,
+        sample_metadata=pd.DataFrame({"Subject": ids, "Session": "01", "fold": folds}),
+        feature_blocks={"A": slice(0, 12), "B": [12, 13, 14]},
+    )
+    assert len(res_map.get_predictions()) == n
+
+    # Validation guards for feature_blocks and predefined fold_col
+    res_no_blocks = Experiment(cfg).run(
+        container.X,
+        y,
+        sample_metadata=pd.DataFrame({"Subject": ids, "Session": "01", "fold": folds}),
+    )
+    assert "requires feature_blocks" in res_no_blocks.raw["lr"]["error"]
+    with pytest.raises(ValueError, match="feature_blocks length mismatch"):
+        Experiment(cfg_scalar).run(
+            container.X,
+            y,
+            sample_metadata=pd.DataFrame(
+                {"Subject": ids, "Session": "01", "fold": folds}
+            ),
+            feature_blocks=["A", "B"],
+        )
+    with pytest.raises(ValueError, match="requires a 2D feature matrix"):
+        Experiment(cfg_scalar).run(
+            np.zeros((n, 3, 2)),
+            y,
+            sample_metadata=pd.DataFrame(
+                {"Subject": ids, "Session": "01", "fold": folds}
+            ),
+            feature_blocks=["A", "B", "C"],
+        )
+    with pytest.raises(ValueError, match="fold_col 'fold' not found"):
+        Experiment(cfg_scalar).run(container.X, y)
 
 
 def test_custom_neural_estimator_routes_groups_and_collects_artifacts():

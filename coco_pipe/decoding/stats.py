@@ -208,11 +208,10 @@ def aggregate_predictions_for_inference(
     if task != "classification" and aggregation == "majority":
         raise ValueError("majority aggregation is only valid for classification.")
 
+    from ._diagnostics import proba_columns
+
     group_cols = [unit_col, *temporal_cols]
-    proba_cols = sorted(
-        [col for col in frame.columns if col.startswith("y_proba_")],
-        key=lambda value: int(value.rsplit("_", 1)[-1]),
-    )
+    proba_cols = proba_columns(frame.columns)
 
     agg_dict = {"y_true": "first"}
     if task == "classification":
@@ -2167,13 +2166,6 @@ def apply_multiple_comparison_correction(
     return df
 
 
-def _fast_binary_auc_from_ranks(ranks: np.ndarray, y: np.ndarray) -> float:
-    """Exact ROC-AUC from precomputed average ranks (handles ties like sklearn)."""
-    n1 = int(y.sum())
-    n0 = len(y) - n1
-    return float((ranks[y == 1].sum() - n1 * (n1 + 1) / 2.0) / (n1 * n0))
-
-
 def evaluate_binary_scores(
     y: Sequence[Any],
     scores: Sequence[float],
@@ -2204,16 +2196,29 @@ def evaluate_binary_scores(
         Dictionary containing ``n_units``, ``positive_share``, ``auc``,
         ``auc_ci_low``, ``auc_ci_high``, ``auc_p``, and
         ``balanced_accuracy_median_split``.
+
+    Raises
+    ------
+    ValueError
+        If *y* and *scores* differ in length or *y* does not contain both
+        binary classes ``0`` and ``1``.
     """
     y_arr = np.asarray(y, dtype=int)
     s_arr = np.asarray(scores, dtype=float)
+    if len(y_arr) != len(s_arr):
+        raise ValueError(
+            f"Length mismatch between y ({len(y_arr)}) and scores ({len(s_arr)})."
+        )
+    if set(np.unique(y_arr)) != {0, 1}:
+        raise ValueError("evaluate_binary_scores requires binary labels {0, 1}.")
+
     rng = np.random.default_rng(random_state)
     ranks = rankdata(s_arr)
-    auc = _fast_binary_auc_from_ranks(ranks, y_arr)
     n1 = int(y_arr.sum())
     n0 = len(y_arr) - n1
     denom = float(n1 * n0)
     offset = n1 * (n1 + 1) / 2.0
+    auc = float((ranks[y_arr == 1].sum() - offset) / denom)
     if n_permutations > 0:
         null = np.fromiter(
             (
@@ -2234,7 +2239,7 @@ def evaluate_binary_scores(
     return {
         "n_units": len(y_arr),
         "positive_share": float(y_arr.mean()),
-        "auc": float(auc),
+        "auc": auc,
         "auc_ci_low": float(np.percentile(boots, 2.5)) if boots else float("nan"),
         "auc_ci_high": float(np.percentile(boots, 97.5)) if boots else float("nan"),
         "auc_p": auc_p,

@@ -13,6 +13,26 @@ import pandas as pd
 from ._metrics import get_metric_spec
 
 
+def proba_columns(columns: Sequence[Any]) -> list[str]:
+    """Return ``y_proba_*`` columns ordered by their trailing integer class index."""
+    return sorted(
+        [col for col in columns if str(col).startswith("y_proba_")],
+        key=lambda col: int(str(col).rsplit("_", 1)[-1]),
+    )
+
+
+def resolve_column(frame: pd.DataFrame, name: str) -> str:
+    """Resolve *name* in *frame* by exact match, else unique case-insensitive match."""
+    if name in frame.columns:
+        return name
+    matches = [col for col in frame.columns if str(col).casefold() == name.casefold()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Column '{name}' is ambiguous (matches: {matches}).")
+    raise ValueError(f"Column '{name}' not found. Available: {list(frame.columns)}")
+
+
 def time_value(index: int, time_axis: Sequence[Any] | None) -> Any:
     """
     Map a raw integer index to a meaningful scientific time value.
@@ -491,10 +511,7 @@ def score_frame(frame: pd.DataFrame, metric: str) -> float:
         return float(metric_spec.scorer(y_true, frame["y_pred"].to_numpy()))
 
     # 2. Probability-based metrics
-    proba_cols = sorted(
-        [col for col in frame.columns if col.startswith("y_proba_")],
-        key=lambda value: int(value.rsplit("_", 1)[-1]),
-    )
+    proba_cols = proba_columns(frame.columns)
     if metric_spec.response_method in {"proba", "proba_or_score"} and proba_cols:
         proba = frame[proba_cols].to_numpy(dtype=float)
         labels = sorted(pd.unique(y_true).tolist())

@@ -276,3 +276,8 @@ def test_predefined_splitter_respects_folds_and_train_only_rows():
     assert len(str_splits) == 2
     assert str_splits[0][1].tolist() == [1, 3]
     assert str_splits[1][1].tolist() == [2]
+
+    # Stratified splitter clamps n_splits when minority class is smaller
+    y_small = np.array([0, 0, 0, 1, 1, 1, 1, 1])
+    clamped = get_cv_splitter(CVConfig(strategy="stratified", n_splits=5), y=y_small)
+    assert clamped.n_splits == 3

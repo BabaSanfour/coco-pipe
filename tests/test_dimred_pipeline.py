@@ -546,6 +546,11 @@ def test_run_fit_group_skips_fit_metrics(tmp_path, dummy_container):
         for col in FIT_METRIC_COLUMNS:
             assert np.isnan(rec[col])
 
+    # Single-request path via run_fit_group also respects compute_fit_metrics=False
+    single = run_fit_group([requests[0]], compute_fit_metrics=False, errors="raise")
+    assert single[0]["status"] == "success"
+    assert all(np.isnan(single[0][col]) for col in FIT_METRIC_COLUMNS)
+
 
 def test_prepare_eval_inputs_no_ids():
     with pytest.raises(ValueError, match="ids to be present"):

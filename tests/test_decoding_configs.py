@@ -346,3 +346,19 @@ def test_experiment_validation_hardening():
                 enabled=True, scoring="neg_mean_squared_error"
             ),
         )
+
+
+def test_hgb_class_weight_and_reducer_dict_validation():
+    from coco_pipe.decoding.configs import (
+        HistGradientBoostingClassifierConfig,
+        ReducerConfig,
+    )
+
+    hgb = HistGradientBoostingClassifierConfig(class_weight="balanced", max_depth=2)
+    assert hgb.class_weight == "balanced"
+
+    assert ReducerConfig(enabled=True, n_components={"a": 3, "b": None}).enabled
+    with pytest.raises(ValidationError, match="at least 1"):
+        ReducerConfig(enabled=True, n_components={"a": 0})
+    with pytest.raises(ValidationError, match="open interval"):
+        ReducerConfig(enabled=True, n_components={"a": 1.5})
