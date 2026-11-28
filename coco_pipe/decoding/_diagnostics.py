@@ -21,16 +21,31 @@ def proba_columns(columns: Sequence[Any]) -> list[str]:
     )
 
 
-def resolve_column(frame: pd.DataFrame, name: str) -> str:
-    """Resolve *name* in *frame* by exact match, else unique case-insensitive match."""
-    if name in frame.columns:
-        return name
-    matches = [col for col in frame.columns if str(col).casefold() == name.casefold()]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise ValueError(f"Column '{name}' is ambiguous (matches: {matches}).")
-    raise ValueError(f"Column '{name}' not found. Available: {list(frame.columns)}")
+def resolve_column(
+    frame: pd.DataFrame,
+    names: str | Sequence[str],
+    *,
+    required: bool = True,
+) -> str | None:
+    """Resolve column *names* in *frame* (exact match first, then unique casefold)."""
+    candidates = (names,) if isinstance(names, str) else tuple(names)
+    for name in candidates:
+        if name in frame.columns:
+            return name
+    for name in candidates:
+        matches = [
+            col for col in frame.columns if str(col).casefold() == name.casefold()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(f"Column '{name}' is ambiguous (matches: {matches}).")
+    if required:
+        label = candidates[0] if len(candidates) == 1 else candidates
+        raise ValueError(
+            f"Column {label!r} not found. Available: {list(frame.columns)}"
+        )
+    return None
 
 
 def time_value(index: int, time_axis: Sequence[Any] | None) -> Any:

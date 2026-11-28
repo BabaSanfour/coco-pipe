@@ -8,7 +8,7 @@ supporting partial unit overlap and missing input blocks without imputation.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -35,60 +35,6 @@ __all__ = [
 ]
 
 _DEFAULT_UNIT_COLS = ("Group", "Subject", "SampleID")
-
-
-def _find_optional_column(frame: pd.DataFrame, candidates: Sequence[str]) -> str | None:
-    """Return the first matching column from *candidates* (exact, then casefold)."""
-    for candidate in candidates:
-        if candidate in frame.columns:
-            return candidate
-    for candidate in candidates:
-        matches = [
-            col for col in frame.columns if str(col).casefold() == candidate.casefold()
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            raise ValueError(f"Column '{candidate}' is ambiguous (matches: {matches}).")
-    return None
-
-
-def _resolve_unit_column(
-    frame: pd.DataFrame,
-    unit_col: str | None,
-    fit_name: str,
-) -> str:
-    """Resolve the unit identifier column for *frame*."""
-    if unit_col is not None:
-        return resolve_column(frame, unit_col)
-    for col in _DEFAULT_UNIT_COLS:
-        if col in frame.columns and frame[col].notna().any():
-            return col
-    raise ValueError(
-        f"No default unit column ({', '.join(_DEFAULT_UNIT_COLS)}) with values "
-        f"found in fit '{fit_name}'. Pass unit_col=... explicitly. "
-        f"Available: {list(frame.columns)}"
-    )
-
-
-def _resolve_score_column(
-    frame: pd.DataFrame,
-    score_col: str | None,
-    fit_name: str,
-) -> str:
-    """Resolve the continuous score column for *frame*."""
-    if score_col is not None:
-        return resolve_column(frame, score_col)
-    pcols = proba_columns(frame.columns)
-    if pcols:
-        return pcols[-1]
-    resolved = _find_optional_column(frame, ("y_score", "score"))
-    if resolved is None:
-        raise ValueError(
-            f"Fit '{fit_name}' holds no class probabilities (y_proba_*), "
-            "y_score, or score column."
-        )
-    return resolved
 
 
 def ensemble_predictions(
@@ -156,10 +102,40 @@ def ensemble_predictions(
         if frame.empty:
             continue
 
-        u_col = _resolve_unit_column(frame, unit_col, name)
-        s_col = _resolve_score_column(frame, score_col, name)
-        y_col = _find_optional_column(frame, ("y_true", "y"))
+        if unit_col is not None:
+            u_col = resolve_column(frame, unit_col)
+        else:
+            u_col = next(
+                (
+                    col
+                    for col in _DEFAULT_UNIT_COLS
+                    if col in frame.columns and frame[col].notna().any()
+                ),
+                None,
+            )
+            if u_col is None:
+                raise ValueError(
+                    f"No default unit column ({', '.join(_DEFAULT_UNIT_COLS)}) with "
+                    f"values found in fit '{name}'. Pass unit_col=... explicitly. "
+                    f"Available: {list(frame.columns)}"
+                )
 
+        if score_col is not None:
+            s_col = resolve_column(frame, score_col)
+        else:
+            pcols = proba_columns(frame.columns)
+            s_col = (
+                pcols[-1]
+                if pcols
+                else resolve_column(frame, ("y_score", "score"), required=False)
+            )
+            if s_col is None:
+                raise ValueError(
+                    f"Fit '{name}' holds no class probabilities (y_proba_*), "
+                    "y_score, or score column."
+                )
+
+        y_col = resolve_column(frame, ("y_true", "y"), required=False)
         grouped = frame.groupby(u_col, sort=False)
         if y_col is not None:
             n_lbl = grouped[y_col].nunique(dropna=True)
@@ -214,60 +190,6 @@ def ensemble_predictions(
     return out
 
 
-def _build_combiner(
-    combiner: BaseEstimatorConfig | BaseEstimator | None,
-    random_state: int,
-) -> BaseEstimator:
-    """Instantiate the stacking meta-estimator via coco-pipe's registry."""
-    if isinstance(combiner, BaseEstimator):
-        return clone(combiner)
-    cfg = (
-        combiner
-        if combiner is not None
-        else HistGradientBoostingClassifierConfig(
-            max_depth=2,
-            learning_rate=0.05,
-            max_iter=200,
-            l2_regularization=1.0,
-            class_weight="balanced",
-            random_state=random_state,
-        )
-    )
-    spec = resolve_estimator_spec(cfg)
-    est_cls = get_estimator_cls(spec.name)
-    params = (
-        dict(cfg.params)
-        if hasattr(cfg, "params")
-        else cfg.model_dump(exclude={"method", "kind"})
-    )
-    return est_cls(**params)
-
-
-def _input_ids(x_in: DataContainer | pd.DataFrame, name: str) -> pd.Index:
-    if isinstance(x_in, DataContainer):
-        if x_in.ids is None:
-            raise ValueError(f"DataContainer input '{name}' must define ids.")
-        return pd.Index(x_in.ids)
-    return x_in.index
-
-
-def _slice_with_folds(
-    x_in: DataContainer | pd.DataFrame,
-    ids: pd.Index,
-    fold_vals: np.ndarray,
-) -> DataContainer:
-    if isinstance(x_in, DataContainer):
-        pos = pd.Index(x_in.ids).get_indexer(ids)
-        sub = x_in.isel(obs=pos)
-        return sub.replace(coords={**sub.coords, "fold": fold_vals})
-    return DataContainer(
-        X=x_in.loc[ids].to_numpy(dtype=float),
-        dims=("obs", "feature"),
-        coords={"fold": fold_vals},
-        ids=ids.to_numpy(),
-    )
-
-
 def stack_oof_predictions(
     inputs: Mapping[str, tuple[DataContainer | pd.DataFrame, ExperimentConfig]],
     y: pd.Series,
@@ -320,7 +242,30 @@ def stack_oof_predictions(
     if not inputs:
         raise ValueError("inputs must not be empty.")
 
-    base_combiner = _build_combiner(combiner, random_state)
+    if isinstance(combiner, BaseEstimator):
+        base_combiner = clone(combiner)
+    else:
+        combiner_cfg = (
+            combiner
+            if combiner is not None
+            else HistGradientBoostingClassifierConfig(
+                max_depth=2,
+                learning_rate=0.05,
+                max_iter=200,
+                l2_regularization=1.0,
+                class_weight="balanced",
+                random_state=random_state,
+            )
+        )
+        spec = resolve_estimator_spec(combiner_cfg)
+        est_cls = get_estimator_cls(spec.name)
+        params = (
+            dict(combiner_cfg.params)
+            if hasattr(combiner_cfg, "params")
+            else combiner_cfg.model_dump(exclude={"method", "kind"})
+        )
+        base_combiner = est_cls(**params)
+
     cv_cfg = (
         inner_cv
         if inner_cv is not None
@@ -331,7 +276,15 @@ def stack_oof_predictions(
             random_state=random_state + 1,
         )
     )
-    input_indices = {name: _input_ids(x_in, name) for name, (x_in, _) in inputs.items()}
+
+    input_indices: dict[str, pd.Index] = {}
+    for name, (x_in, _) in inputs.items():
+        if isinstance(x_in, DataContainer):
+            if x_in.ids is None:
+                raise ValueError(f"DataContainer input '{name}' must define ids.")
+            input_indices[name] = pd.Index(x_in.ids)
+        else:
+            input_indices[name] = x_in.index
 
     def _fit_and_predict(
         name: str,
@@ -359,7 +312,18 @@ def stack_oof_predictions(
             )
             keep_ids = te
 
-        sub = _slice_with_folds(x_in, ids, fold_vals)
+        if isinstance(x_in, DataContainer):
+            pos = pd.Index(x_in.ids).get_indexer(ids)
+            sub = x_in.isel(obs=pos)
+            sub = sub.replace(coords={**sub.coords, "fold": fold_vals})
+        else:
+            sub = DataContainer(
+                X=x_in.loc[ids].to_numpy(dtype=float),
+                dims=("obs", "feature"),
+                coords={"fold": fold_vals},
+                ids=ids.to_numpy(),
+            )
+
         run_cfg = cfg.model_copy(
             update={
                 "cv": CVConfig(strategy="predefined", fold_col="fold"),

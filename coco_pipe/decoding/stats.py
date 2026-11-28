@@ -25,6 +25,7 @@ from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 from coco_pipe.utils import _label_permuter
 
+from ._diagnostics import proba_columns, resolve_column
 from ._metrics import get_metric_spec
 from .configs import StatisticalAssessmentConfig
 
@@ -189,15 +190,13 @@ def aggregate_predictions_for_inference(
         unit_col = (
             custom_unit_column if unit_of_inference == "custom" else unit_of_inference
         )
-        if unit_col not in frame.columns:
-            normalized = {str(column).casefold(): column for column in frame.columns}
-            resolved = normalized.get(str(unit_col).casefold())
-            if resolved is None:
-                raise ValueError(
-                    f"Inference unit '{unit_col}' not found in result columns. "
-                    f"Available: {list(frame.columns)}"
-                )
-            unit_col = resolved
+        resolved = resolve_column(frame, str(unit_col), required=False)
+        if resolved is None:
+            raise ValueError(
+                f"Inference unit '{unit_col}' not found in result columns. "
+                f"Available: {list(frame.columns)}"
+            )
+        unit_col = resolved
         aggregation = custom_aggregation
 
     if unit_of_inference == "sample":
@@ -207,8 +206,6 @@ def aggregate_predictions_for_inference(
     # 2. Perform Aggregation
     if task != "classification" and aggregation == "majority":
         raise ValueError("majority aggregation is only valid for classification.")
-
-    from ._diagnostics import proba_columns
 
     group_cols = [unit_col, *temporal_cols]
     proba_cols = proba_columns(frame.columns)
