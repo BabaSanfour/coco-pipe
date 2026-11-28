@@ -424,6 +424,21 @@ ESTIMATOR_SPECS: dict[str, EstimatorSpec] = {
         supports_random_state=True,
         default_search_space={"alpha": [0.0001, 0.001]},
     ),
+    "ABMILClassifier": _spec(
+        "ABMILClassifier",
+        "coco_pipe.decoding.mil:ABMILClassifier",
+        "neural",
+        _CLASSIFICATION,
+        input_kinds=("tabular_2d", "embedding_2d"),
+        supports_groups=True,
+        supports_proba=True,
+        supports_calibration=False,
+        calibration="unsupported",
+        dependency_extra="mil",
+        fit_smoke_required=False,
+        feature_selection=("disabled",),
+        supports_random_state=True,
+    ),
     "GaussianNB": _spec(
         "GaussianNB",
         "sklearn.naive_bayes",
@@ -945,5 +960,7 @@ def canonical_estimator_name(name: str) -> str:
         "extra_trees_regressor": "ExtraTreesRegressor",
         "hist_gradient_boosting_classifier": "HistGradientBoostingClassifier",
         "hist_gradient_boosting_regressor": "HistGradientBoostingRegressor",
+        "abmil": "ABMILClassifier",
+        "abmil_classifier": "ABMILClassifier",
     }
     return aliases.get(name, name)

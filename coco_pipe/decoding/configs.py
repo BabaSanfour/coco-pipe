@@ -306,6 +306,27 @@ class MLPClassifierConfig(ClassicalEstimatorConfig, MLPMixin):
     method: Literal["MLPClassifier"] = "MLPClassifier"
 
 
+class ABMILClassifierConfig(ClassicalEstimatorConfig):
+    """Configuration for :class:`coco_pipe.decoding.mil.ABMILClassifier`."""
+
+    method: Literal["ABMILClassifier"] = "ABMILClassifier"
+    att_dim: int = Field(64, ge=1)
+    att_act: Literal["tanh", "relu", "gelu"] = "tanh"
+    gated: bool = True
+    hidden_dim: int | None = Field(64, ge=1)
+    dropout: float = Field(0.25, ge=0.0, lt=1.0)
+    max_instances: int | None = Field(128, ge=1)
+    max_epochs: int = Field(200, ge=1)
+    patience: int = Field(20, ge=1)
+    batch_size: int = Field(32, ge=1)
+    lr: float = Field(1e-3, gt=0.0)
+    weight_decay: float = Field(1e-2, ge=0.0)
+    val_fraction: float = Field(0.2, ge=0.0, lt=1.0)
+    n_restarts: int = Field(1, ge=1)
+    device: Literal["cpu", "cuda", "auto"] = "cpu"
+    random_state: int | None = Field(0, description="Random seed for reproducibility.")
+
+
 class GaussianNBConfig(ClassicalEstimatorConfig):
     """Configuration for sklearn.naive_bayes.GaussianNB."""
 
@@ -802,6 +823,7 @@ AtomicEstimator = (
     | HistGradientBoostingClassifierConfig
     | SGDClassifierConfig
     | MLPClassifierConfig
+    | ABMILClassifierConfig
     | GaussianNBConfig
     | LDAConfig
     | AdaBoostClassifierConfig

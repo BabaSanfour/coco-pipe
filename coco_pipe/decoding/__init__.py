@@ -12,6 +12,7 @@ from ._metrics import get_scorer
 from ._specs import SignalMetadata
 from ._splitters import get_cv_splitter
 from .configs import (
+    ABMILClassifierConfig,
     ChanceAssessmentConfig,
     CheckpointConfig,
     ClassicalModelConfig,
@@ -81,6 +82,7 @@ from .stats import (
 from .targets import prepare_target, safe_group_n_splits
 
 __all__ = [
+    "ABMILClassifierConfig",
     "CVConfig",
     "ChanceAssessmentConfig",
     "CheckpointConfig",

@@ -113,6 +113,7 @@ DependencyGroup = Literal[
     "core",
     "mne",
     "torch",
+    "mil",
     "braindecode",
     "transformers",
     "peft",

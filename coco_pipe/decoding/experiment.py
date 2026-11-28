@@ -244,8 +244,8 @@ class Experiment:
         spec = self._model_specs.get(model_name) or resolve_estimator_spec(model_config)
         steps = []
 
-        # Classical models on tabular/embedding data support standard preprocessing
-        allow_prep = spec.family in CLASSICAL_FAMILIES and any(
+        # Tabular/embedding models (classical + 2D neural/MIL) support preprocessing
+        allow_prep = spec.family in (CLASSICAL_FAMILIES | {"neural"}) and any(
             k in {"tabular_2d", "embedding_2d", "tabular", "embeddings"}
             for k in spec.input_kinds
         )
