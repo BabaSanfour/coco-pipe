@@ -827,6 +827,44 @@ def test_balance_errors():
         mixed.balance(target="y", groups="subject")
 
 
+def test_subsample_caps_per_cell_deterministically():
+    container = DataContainer(
+        X=np.arange(30, dtype=float).reshape(15, 2),
+        dims=("obs", "feature"),
+        coords={
+            "feature": np.array(["f0", "f1"]),
+            "subject": np.array(["a"] * 10 + ["b"] * 5),
+            "condition": np.array(["EO"] * 8 + ["EC"] * 2 + ["EO"] * 5),
+        },
+        ids=np.array([f"r{i}" for i in range(15)]),
+    )
+    capped = container.subsample({"EO": 3}, by=("subject", "condition"))
+    a_eo = (capped.coords["subject"] == "a") & (capped.coords["condition"] == "EO")
+    a_ec = (capped.coords["subject"] == "a") & (capped.coords["condition"] == "EC")
+    assert a_eo.sum() == 3 and a_ec.sum() == 2
+
+    # Per-cell seed is independent of other groups
+    alone = container.isel(obs=np.arange(10)).subsample(
+        {"EO": 3}, by=("subject", "condition")
+    )
+    assert list(alone.ids) == list(capped.ids[:5])
+
+    # Scalar integer cap across a single coordinate
+    uniform = container.subsample(4, by="subject")
+    assert (uniform.coords["subject"] == "a").sum() == 4
+    assert (uniform.coords["subject"] == "b").sum() == 4
+
+    # No-op and validation paths
+    assert container.subsample(None, by="subject") is container
+    assert container.subsample({}, by="subject") is container
+    with pytest.raises(ValueError, match="at least one coordinate"):
+        container.subsample(3, by=[])
+    with pytest.raises(ValueError, match="not found in coords"):
+        container.subsample(3, by="missing")
+    with pytest.raises(ValueError, match="positive integer"):
+        container.subsample(0, by="subject")
+
+
 def test_aggregate_groups_keeps_each_feature_coordinate_with_its_column():
     # the first group has as many features as there are subjects: its
     # coordinates must not end up on the observation axis

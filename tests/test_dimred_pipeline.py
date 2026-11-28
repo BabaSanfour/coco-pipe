@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from coco_pipe.dim_reduction import FIT_METRIC_COLUMNS
 from coco_pipe.dim_reduction.artifacts import (
     SEPARATION_METRIC_KEY,
     SEPARATION_RF_METRIC_KEY,
@@ -515,6 +516,40 @@ def test_build_eval_request(tmp_path, dummy_container):
         subject_col="subject",
     )
     assert descriptor_request["fit_payload"]["input_mode"] == "descriptors"
+
+
+def test_run_fit_group_skips_fit_metrics(tmp_path, dummy_container):
+    unit_spec = {"unit_type": "flat", "unit_name": "global", "unit_key": "global"}
+    input_sig = {
+        "analysis_mode": "flat",
+        "input_mode": "raw",
+        "representation": "recording",
+    }
+    requests = [
+        build_fit_request(
+            container=dummy_container,
+            scope="condition",
+            condition="EO",
+            unit_spec=unit_spec,
+            reducer="PCA",
+            n_components=n,
+            input_signature=input_sig,
+            output_root=tmp_path,
+            compute_fit_metrics=False,
+        )
+        for n in (2, 3)
+    ]
+    records = run_fit_group(requests, errors="raise")
+    assert len(records) == 2
+    for rec in records:
+        assert rec["status"] == "success"
+        for col in FIT_METRIC_COLUMNS:
+            assert np.isnan(rec[col])
+
+    # Single-request path via run_fit_group also respects compute_fit_metrics=False
+    single = run_fit_group([requests[0]], compute_fit_metrics=False, errors="raise")
+    assert single[0]["status"] == "success"
+    assert all(np.isnan(single[0][col]) for col in FIT_METRIC_COLUMNS)
 
 
 def test_prepare_eval_inputs_no_ids():

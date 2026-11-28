@@ -289,6 +289,7 @@ class HistGradientBoostingClassifierConfig(ClassicalEstimatorConfig):
     n_iter_no_change: int = 10
     tol: float = 1e-7
     verbose: int = 0
+    class_weight: dict | str | None = None
     random_state: int | None = None
 
 
@@ -303,6 +304,27 @@ class MLPClassifierConfig(ClassicalEstimatorConfig, MLPMixin):
     """Configuration for sklearn.neural_network.MLPClassifier."""
 
     method: Literal["MLPClassifier"] = "MLPClassifier"
+
+
+class ABMILClassifierConfig(ClassicalEstimatorConfig):
+    """Configuration for :class:`coco_pipe.decoding.mil.ABMILClassifier`."""
+
+    method: Literal["ABMILClassifier"] = "ABMILClassifier"
+    att_dim: int = Field(64, ge=1)
+    att_act: Literal["tanh", "relu", "gelu"] = "tanh"
+    gated: bool = True
+    hidden_dim: int | None = Field(64, ge=1)
+    dropout: float = Field(0.25, ge=0.0, lt=1.0)
+    max_instances: int | None = Field(128, ge=1)
+    max_epochs: int = Field(200, ge=1)
+    patience: int = Field(20, ge=1)
+    batch_size: int = Field(32, ge=1)
+    lr: float = Field(1e-3, gt=0.0)
+    weight_decay: float = Field(1e-2, ge=0.0)
+    val_fraction: float = Field(0.2, ge=0.0, lt=1.0)
+    n_restarts: int = Field(1, ge=1)
+    device: Literal["cpu", "cuda", "auto"] = "cpu"
+    random_state: int | None = Field(0, description="Random seed for reproducibility.")
 
 
 class GaussianNBConfig(ClassicalEstimatorConfig):
@@ -801,6 +823,7 @@ AtomicEstimator = (
     | HistGradientBoostingClassifierConfig
     | SGDClassifierConfig
     | MLPClassifierConfig
+    | ABMILClassifierConfig
     | GaussianNBConfig
     | LDAConfig
     | AdaBoostClassifierConfig
@@ -878,6 +901,7 @@ class CVConfig(BaseModel):
         "timeseries",
         "split",
         "group_shuffle_split",
+        "predefined",
     ] = "stratified"
     n_splits: int = Field(5, ge=1)
     shuffle: bool = True
@@ -890,6 +914,13 @@ class CVConfig(BaseModel):
     )
     group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
+    )
+    fold_col: str | None = Field(
+        None,
+        description=(
+            "DataContainer coordinate or sample_metadata column holding outer fold ids "
+            "for strategy='predefined' (defaults to 'fold'; -1 marks train-only rows)."
+        ),
     )
     score_by: str | None = Field(
         None,
@@ -904,7 +935,8 @@ class CVConfig(BaseModel):
         True,
         description=(
             "Reduce grouped fold counts to the largest leakage-safe value supported "
-            "by the observed groups and classes."
+            "by the observed groups and classes, and stratified fold counts to the "
+            "smallest class's count."
         ),
     )
 
@@ -976,11 +1008,12 @@ class ReducerConfig(BaseModel):
 
     enabled: bool = False
     method: Literal["pca"] = "pca"
-    n_components: int | float | None = Field(
+    n_components: int | float | dict[str, int | float | None] | None = Field(
         None,
         description=(
             "PCA components. Integers select a fixed count; floats in (0, 1) "
-            "select the explained-variance fraction."
+            "select the explained-variance fraction; a mapping sets components "
+            "per feature block (None keeps a block unreduced)."
         ),
     )
     whiten: bool = False
@@ -991,10 +1024,18 @@ class ReducerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_n_components(self) -> ReducerConfig:
-        if isinstance(self.n_components, int) and self.n_components < 1:
-            raise ValueError("Integer n_components must be at least 1.")
-        if isinstance(self.n_components, float) and not 0 < self.n_components < 1:
-            raise ValueError("Float n_components must be in the open interval (0, 1).")
+        values = (
+            self.n_components.values()
+            if isinstance(self.n_components, dict)
+            else (self.n_components,)
+        )
+        for val in values:
+            if isinstance(val, int) and not isinstance(val, bool) and val < 1:
+                raise ValueError("Integer n_components must be at least 1.")
+            if isinstance(val, float) and not 0 < val < 1:
+                raise ValueError(
+                    "Float n_components must be in the open interval (0, 1)."
+                )
         return self
 
 
@@ -1390,6 +1431,15 @@ class ExperimentConfig(BaseModel):
             "the fitted estimator's transform, so each sample's comes from the "
             "one fold that did not train on it. Read them with "
             "ExperimentResult.get_embeddings. The estimator must have transform."
+        ),
+    )
+    return_estimator: bool = Field(
+        False,
+        description=(
+            "Retain each outer fold's fitted estimator (sklearn-style) in the "
+            "result so unseen observations can be scored via ExperimentResult.predict. "
+            "The predictions then also keep decision_function scores (y_score), so "
+            "out-of-fold and predict(method='decision_function') scores share a scale."
         ),
     )
     low_memory: bool = Field(

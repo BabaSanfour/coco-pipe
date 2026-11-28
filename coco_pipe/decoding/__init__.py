@@ -12,6 +12,7 @@ from ._metrics import get_scorer
 from ._specs import SignalMetadata
 from ._splitters import get_cv_splitter
 from .configs import (
+    ABMILClassifierConfig,
     ChanceAssessmentConfig,
     CheckpointConfig,
     ClassicalModelConfig,
@@ -32,6 +33,7 @@ from .configs import (
     TuningConfig,
     grouped_chance_assessment,
 )
+from .ensemble import ensemble_predictions, stack_oof_predictions
 from .experiment import Experiment
 from .persistence import (
     completed_for_config,
@@ -58,6 +60,7 @@ from .pipeline import (
 )
 from .registry import (
     EstimatorCapabilities,
+    EstimatorSpec,
     get_capabilities,
     get_estimator_cls,
     get_foundation_model_spec,
@@ -72,12 +75,14 @@ from .stats import (
     benjamini_hochberg,
     binomial_accuracy_test,
     correct_sweep_pvalues,
+    evaluate_binary_scores,
     paired_prediction_test,
     run_statistical_assessment,
 )
 from .targets import prepare_target, safe_group_n_splits
 
 __all__ = [
+    "ABMILClassifierConfig",
     "CVConfig",
     "ChanceAssessmentConfig",
     "CheckpointConfig",
@@ -86,6 +91,7 @@ __all__ = [
     "DeviceConfig",
     "ErasureConfig",
     "EstimatorCapabilities",
+    "EstimatorSpec",
     # Execution
     "Experiment",
     # Configs
@@ -114,6 +120,8 @@ __all__ = [
     "completed_for_config",
     "config_hash",
     "correct_sweep_pvalues",
+    "ensemble_predictions",
+    "evaluate_binary_scores",
     "execute_decoding_sweep",
     "execute_decoding_sweep_streaming",
     "get_capabilities",
@@ -140,6 +148,7 @@ __all__ = [
     # Stats Utilities
     "run_statistical_assessment",
     "safe_group_n_splits",
+    "stack_oof_predictions",
     "stamp_primary_metric",
     "write_run_status",
     "write_run_summary",

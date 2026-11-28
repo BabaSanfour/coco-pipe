@@ -156,6 +156,11 @@ decoding = [
   "skorch",
 ]
 
+mil = [
+  "torch",
+  "torchmil",
+]
+
 quant = [
   "bitsandbytes",
 ]
@@ -230,10 +235,11 @@ full = [
   "huggingface-hub",
   "peft",
   "accelerate",
+  "torchmil",
 ]
 
 all = [
-  "coco-pipe[test,docs,foundation,dask,neighbor,parametric-umap,topology,moabb,torcheeg,spatiotemporal,eeg,descriptors,dim-red]",
+  "coco-pipe[test,docs,foundation,dask,neighbor,parametric-umap,topology,moabb,torcheeg,spatiotemporal,eeg,descriptors,dim-red,mil]",
 ]
 
 [project.urls]

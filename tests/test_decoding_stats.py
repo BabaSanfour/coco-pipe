@@ -7,6 +7,7 @@ import pytest
 from coco_pipe.decoding import (
     Experiment,
     ExperimentConfig,
+    evaluate_binary_scores,
     grouped_chance_assessment,
     paired_prediction_test,
     permute_labels_within_strata,
@@ -906,3 +907,29 @@ def test_sign_flip_interval_takes_the_configured_bootstrap_count():
     result = _sign_flip_run(X, y, SUBJECTS, n_permutations=10, n_bootstraps=1)
     (row,) = result.get_statistical_assessment().to_dict("records")
     assert row["CILower"] == row["CIUpper"]  # one resample, one interval point
+
+
+def test_evaluate_binary_scores_matches_roc_auc_and_computes_inference():
+    from sklearn.metrics import roc_auc_score
+
+    y = np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1])
+    # Include tied scores to verify tie-handling matches sklearn exactly
+    scores = np.array([0.1, 0.2, 0.3, 0.3, 0.4, 0.5, 0.5, 0.7, 0.8, 0.85, 0.9, 0.95])
+    metrics = evaluate_binary_scores(
+        y, scores, n_permutations=200, n_bootstrap=100, random_state=0
+    )
+    assert metrics["n_units"] == len(y)
+    assert metrics["positive_share"] == pytest.approx(0.5)
+    assert metrics["auc"] == pytest.approx(roc_auc_score(y, scores))
+    assert metrics["auc_ci_low"] <= metrics["auc"] <= metrics["auc_ci_high"]
+    assert metrics["auc_p"] < 0.05
+
+    no_perm = evaluate_binary_scores(
+        y, scores, n_permutations=0, n_bootstrap=20, random_state=0
+    )
+    assert np.isnan(no_perm["auc_p"])
+
+    with pytest.raises(ValueError, match="Length mismatch"):
+        evaluate_binary_scores(y[:-1], scores, n_permutations=0, n_bootstrap=5)
+    with pytest.raises(ValueError, match="binary labels"):
+        evaluate_binary_scores(np.zeros(4, dtype=int), [0.1, 0.2, 0.3, 0.4])

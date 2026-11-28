@@ -5,6 +5,7 @@ import joblib
 import pytest
 
 from coco_pipe.utils import (
+    _cached_default_environment_info,
     get_environment_info,
     get_git_revision_hash,
     get_package_version,
@@ -111,6 +112,23 @@ def test_get_environment_info(mock_get_version, mock_get_git):
     versions = info["versions"]
     assert versions["pkg1"] == "dist1_v1"
     assert versions["pkg2"] == "dist2_v1"
+
+
+def test_get_environment_info_caches_default_and_isolates_mutations():
+    _cached_default_environment_info.cache_clear()
+    try:
+        with patch(
+            "coco_pipe.utils.get_git_revision_hash", return_value="abc123"
+        ) as mock_git:
+            first = get_environment_info()
+            first["tag"] = "mutated"
+            first["versions"]["numpy"] = "mutated"
+            second = get_environment_info()
+            assert mock_git.call_count == 1
+            assert "tag" not in second
+            assert second["versions"]["numpy"] != "mutated"
+    finally:
+        _cached_default_environment_info.cache_clear()
 
 
 def test_slug():

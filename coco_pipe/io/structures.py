@@ -40,7 +40,8 @@ import fnmatch
 import logging
 import re
 import warnings
-from collections.abc import Sequence
+import zlib
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from types import MappingProxyType
 from typing import Any
@@ -811,6 +812,74 @@ class DataContainer:
                 )
             )
         return self.isel(obs=indices_val.values)
+
+    def subsample(
+        self,
+        max_obs: int | Mapping[Any, int] | None,
+        by: str | Sequence[str],
+        random_state: int = 0,
+    ) -> "DataContainer":
+        """Subsample observations per cell of ``by`` with deterministic seeding.
+
+        Each cell exceeding its cap is randomly subsampled without replacement
+        using a seed derived from ``random_state`` and the cell's key, so one
+        cell's draw does not depend on which other cells are in the container.
+        Kept observations remain in their original order.
+
+        Parameters
+        ----------
+        max_obs : int, Mapping[Any, int], or None
+            Maximum observations per cell. An integer applies uniformly; a
+            mapping keys caps on the last coordinate in ``by`` (for example,
+            ``by=("subject", "condition")`` with ``max_obs={"EO": 30}``),
+            leaving unmapped keys uncapped. ``None`` or an empty mapping returns
+            ``self``.
+        by : str or sequence of str
+            Observation coordinate(s) defining the cells (matches
+            :meth:`aggregate`).
+        random_state : int, default=0
+            Base seed combined with each cell's identity.
+
+        Returns
+        -------
+        DataContainer
+            Subsampled container preserving original observation order.
+        """
+        if max_obs is None or self.X.shape[0] == 0:
+            return self
+        by_cols = [by] if isinstance(by, str) else list(by)
+        if not by_cols:
+            raise ValueError("by must name at least one coordinate.")
+        for col in by_cols:
+            if col not in self.coords:
+                raise ValueError(f"Coordinate '{col}' not found in coords.")
+
+        if isinstance(max_obs, Mapping):
+            if not max_obs:
+                return self
+        else:
+            max_obs = int(max_obs)
+            if max_obs < 1:
+                raise ValueError("max_obs must be a positive integer.")
+
+        frame = pd.DataFrame(
+            {col: np.asarray(self.coords[col]).astype(str) for col in by_cols}
+        )
+        group_key: str | list[str] = by_cols[0] if len(by_cols) == 1 else by_cols
+        rows_by_cell = frame.groupby(group_key, sort=False).indices
+
+        keep = []
+        for key, rows in rows_by_cell.items():
+            key_tuple = key if isinstance(key, tuple) else (key,)
+            cap = (
+                max_obs.get(key_tuple[-1]) if isinstance(max_obs, Mapping) else max_obs
+            )
+            if cap is not None and len(rows) > cap:
+                tag = "|".join(str(part) for part in key_tuple)
+                seed = [random_state, zlib.crc32(tag.encode())]
+                rows = np.random.default_rng(seed).choice(rows, size=cap, replace=False)
+            keep.append(rows)
+        return self.isel(obs=np.sort(np.concatenate(keep)))
 
     def select(self, ignore_case: bool = False, **selections) -> "DataContainer":
         """

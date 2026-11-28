@@ -147,6 +147,7 @@ def run_fit(
     output_root: Path,
     overwrite: bool,
     *,
+    compute_fit_metrics: bool = True,
     errors: ErrorMode = "raise",
 ) -> dict[str, Any]:
     """Fit one reducer variant and return a fit-runs inventory record.
@@ -209,16 +210,11 @@ def run_fit(
         )
         embedding_container = reducer.fit_transform(container)
         embedding = np.asarray(embedding_container.X)
-        reducer.score(embedding_container, X=container)
-        score_metrics = dict(reducer.get_metrics())
-        metrics_payload = {
-            metric_name: (
-                None
-                if np.isnan(score_metrics.get(metric_name, np.nan))
-                else float(score_metrics.get(metric_name))
-            )
-            for metric_name in FIT_METRIC_COLUMNS
-        }
+        if compute_fit_metrics:
+            reducer.score(embedding_container, X=container)
+            metrics_payload = _metrics_payload_from_scores(dict(reducer.get_metrics()))
+        else:
+            metrics_payload = {}
 
         diagnostics = dict(reducer.get_summary().get("diagnostics") or {})
         try:
@@ -277,6 +273,7 @@ def _metrics_payload_from_scores(score_metrics: dict[str, Any]) -> dict[str, Any
 def run_fit_group(
     requests: list[dict[str, Any]],
     *,
+    compute_fit_metrics: bool | None = None,
     errors: ErrorMode = "raise",
 ) -> list[dict[str, Any]]:
     """Fit a group of requests sharing one analysis unit and reducer.
@@ -302,12 +299,26 @@ def run_fit_group(
     if not requests:
         return []
 
+    def _should_compute_metrics(request: dict[str, Any]) -> bool:
+        if compute_fit_metrics is not None:
+            return bool(compute_fit_metrics)
+        return bool(request.get("compute_fit_metrics", True))
+
     method = str(requests[0]["fit_payload"]["reducer"])
     # A nested reducer (PCA family, SVD) lets the sweep be synthesised from one
     # max-n fit; anything else (ICA, UMAP, t-SNE, …) must fit per dimension.
     nested = supports_nested_components(method)
     if len(requests) == 1 or not nested:
-        return [run_fit(**request, errors=errors) for request in requests]
+        return [
+            run_fit(
+                **{
+                    **request,
+                    "compute_fit_metrics": _should_compute_metrics(request),
+                },
+                errors=errors,
+            )
+            for request in requests
+        ]
 
     output_root = requests[0]["output_root"]
     requests = sorted(requests, key=lambda r: int(r["fit_payload"]["n_components"]))
@@ -379,10 +390,15 @@ def run_fit_group(
         try:
             embedding = full_embedding[:, :n_components]
             evr = None if full_evr is None else full_evr[:n_components]
-            score_payload = reducer.score(embedding, X=X, metrics=FIT_METRIC_COLUMNS)
-            metrics_payload = _metrics_payload_from_scores(
-                dict(score_payload["metrics"])
-            )
+            if _should_compute_metrics(request):
+                score_payload = reducer.score(
+                    embedding, X=X, metrics=FIT_METRIC_COLUMNS
+                )
+                metrics_payload = _metrics_payload_from_scores(
+                    dict(score_payload["metrics"])
+                )
+            else:
+                metrics_payload = {}
             synthesized_payload = {**fit_payload, **_evr_scalars(evr)}
             sweep[n_components] = {
                 "fit": synthesized_payload,
@@ -830,6 +846,7 @@ def build_fit_request(
     artifact_path_factory: Callable[[dict[str, Any], Path], Path] | None = None,
     container_signature: dict[str, Any] | None = None,
     reducer_params: dict[str, Any] | None = None,
+    compute_fit_metrics: bool = True,
 ) -> dict[str, Any]:
     """Build a request dictionary suitable for passing to :func:`run_fit`.
 
@@ -934,6 +951,7 @@ def build_fit_request(
         "out_path": Path(artifact_path),
         "output_root": output_root,
         "overwrite": bool(overwrite),
+        "compute_fit_metrics": bool(compute_fit_metrics),
     }
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -115,11 +115,23 @@ class ExperimentResult:
         --------
         ExperimentResult.save : Persist results to disk.
         """
+        raw = (
+            {
+                name: (
+                    {k: v for k, v in res.items() if k != "estimators"}
+                    if isinstance(res, dict)
+                    else res
+                )
+                for name, res in self.raw.items()
+            }
+            if serializable
+            else self.raw
+        )
         payload = {
             "schema_version": self.schema_version,
             "config": self.config,
             "meta": self.meta,
-            "results": self.raw,
+            "results": raw,
         }
         return make_serializable(payload) if serializable else payload
 
@@ -525,6 +537,55 @@ class ExperimentResult:
         if not frames:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True)
+
+    def predict(
+        self,
+        X: Any,
+        *,
+        model: str | None = None,
+        method: Literal["predict_proba", "decision_function", "predict"] = (
+            "predict_proba"
+        ),
+        aggregate: Literal["mean"] | None = "mean",
+    ) -> np.ndarray:
+        """
+        Score unseen observations with the retained outer-fold estimators.
+
+        Requires ``ExperimentConfig(return_estimator=True)``. Each outer fold's
+        fitted estimator evaluates *X* via *method*, and predictions are
+        averaged across folds when ``aggregate="mean"`` (or returned stacked as
+        ``(n_folds, n_samples, ...)`` when ``aggregate=None``).
+        """
+        if method not in ("predict_proba", "decision_function", "predict"):
+            raise ValueError(
+                "method must be 'predict_proba', 'decision_function', or 'predict'; "
+                f"got {method!r}."
+            )
+        if aggregate not in ("mean", None):
+            raise ValueError(f"aggregate must be 'mean' or None; got {aggregate!r}.")
+        if model is None:
+            models = [
+                m
+                for m, res in self.raw.items()
+                if isinstance(res, dict) and "error" not in res
+            ]
+            if len(models) != 1:
+                raise ValueError(
+                    f"Specify model= when the result holds {len(models)} "
+                    f"model(s): {models}."
+                )
+            model = models[0]
+        estimators = self.raw.get(model, {}).get("estimators")
+        if not estimators:
+            raise ValueError(
+                f"{model!r} has no retained estimators: run with "
+                "ExperimentConfig(return_estimator=True)."
+            )
+        X_arr = np.asarray(X.X) if hasattr(X, "X") else np.asarray(X)
+        stacked = np.stack(
+            [np.asarray(getattr(est, method)(X_arr)) for est in estimators], axis=0
+        )
+        return np.mean(stacked, axis=0) if aggregate == "mean" else stacked
 
     def get_embeddings(self, model: str) -> tuple[pd.DataFrame, np.ndarray]:
         """

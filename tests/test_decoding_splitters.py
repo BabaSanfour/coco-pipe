@@ -250,3 +250,34 @@ def test_cv_with_groups_more_coverage():
     # Mismatched explicit groups (covers 68-71)
     with pytest.raises(ValueError, match="Explicit groups length does not match X"):
         wrapper._get_effective_groups(np.zeros(4), groups=[1, 2])
+
+
+def test_predefined_splitter_respects_folds_and_train_only_rows():
+    cfg = CVConfig(strategy="predefined", fold_col="fold")
+    with pytest.raises(ValueError, match="requires test_fold"):
+        get_cv_splitter(cfg)
+
+    folds = np.array([-1, -1, 0, 0, 1, 1])
+    splitter = get_cv_splitter(cfg, test_fold=folds)
+    splits = list(splitter.split(np.zeros((6, 2))))
+    assert len(splits) == 2
+    assert splits[0][1].tolist() == [2, 3]
+    assert splits[1][1].tolist() == [4, 5]
+    # -1 rows appear in every training split and never in test splits
+    for train_idx, test_idx in splits:
+        assert {0, 1}.issubset(set(train_idx))
+        assert {0, 1}.isdisjoint(set(test_idx))
+
+    # Non-integer fold labels are factorized while preserving "-1" as train-only
+    str_splitter = get_cv_splitter(
+        cfg, test_fold=np.array(["-1", "fold_a", "fold_b", "fold_a"])
+    )
+    str_splits = list(str_splitter.split(np.zeros((4, 2))))
+    assert len(str_splits) == 2
+    assert str_splits[0][1].tolist() == [1, 3]
+    assert str_splits[1][1].tolist() == [2]
+
+    # Stratified splitter clamps n_splits when minority class is smaller
+    y_small = np.array([0, 0, 0, 1, 1, 1, 1, 1])
+    clamped = get_cv_splitter(CVConfig(strategy="stratified", n_splits=5), y=y_small)
+    assert clamped.n_splits == 3

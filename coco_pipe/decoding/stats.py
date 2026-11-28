@@ -20,10 +20,12 @@ if TYPE_CHECKING:
 
 import numpy as np
 import pandas as pd
-from scipy.stats import beta, binom, false_discovery_control, norm
+from scipy.stats import beta, binom, false_discovery_control, norm, rankdata
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 from coco_pipe.utils import _label_permuter
 
+from ._diagnostics import proba_columns, resolve_column
 from ._metrics import get_metric_spec
 from .configs import StatisticalAssessmentConfig
 
@@ -188,15 +190,13 @@ def aggregate_predictions_for_inference(
         unit_col = (
             custom_unit_column if unit_of_inference == "custom" else unit_of_inference
         )
-        if unit_col not in frame.columns:
-            normalized = {str(column).casefold(): column for column in frame.columns}
-            resolved = normalized.get(str(unit_col).casefold())
-            if resolved is None:
-                raise ValueError(
-                    f"Inference unit '{unit_col}' not found in result columns. "
-                    f"Available: {list(frame.columns)}"
-                )
-            unit_col = resolved
+        resolved = resolve_column(frame, str(unit_col), required=False)
+        if resolved is None:
+            raise ValueError(
+                f"Inference unit '{unit_col}' not found in result columns. "
+                f"Available: {list(frame.columns)}"
+            )
+        unit_col = resolved
         aggregation = custom_aggregation
 
     if unit_of_inference == "sample":
@@ -208,10 +208,7 @@ def aggregate_predictions_for_inference(
         raise ValueError("majority aggregation is only valid for classification.")
 
     group_cols = [unit_col, *temporal_cols]
-    proba_cols = sorted(
-        [col for col in frame.columns if col.startswith("y_proba_")],
-        key=lambda value: int(value.rsplit("_", 1)[-1]),
-    )
+    proba_cols = proba_columns(frame.columns)
 
     agg_dict = {"y_true": "first"}
     if task == "classification":
@@ -2164,3 +2161,86 @@ def apply_multiple_comparison_correction(
     df["Significant"] = reject
     df["CorrectionMethod"] = method
     return df
+
+
+def evaluate_binary_scores(
+    y: Sequence[Any],
+    scores: Sequence[float],
+    *,
+    n_permutations: int = 2000,
+    n_bootstrap: int = 1000,
+    random_state: int = 0,
+) -> dict[str, float]:
+    """Evaluate binary scores with permutation ROC-AUC p-value and bootstrap CI.
+
+    Parameters
+    ----------
+    y : sequence of int
+        Binary ground-truth labels (0 or 1).
+    scores : sequence of float
+        Continuous prediction scores (higher favors class 1).
+    n_permutations : int, default=2000
+        Number of label permutations for the one-sided ROC-AUC p-value.
+        Set to ``0`` to skip permutation testing (returns ``nan``).
+    n_bootstrap : int, default=1000
+        Number of bootstrap resamples for the 95% ROC-AUC confidence interval.
+    random_state : int, default=0
+        Random seed for permutations and bootstrap resampling.
+
+    Returns
+    -------
+    metrics : dict of str to float
+        Dictionary containing ``n_units``, ``positive_share``, ``auc``,
+        ``auc_ci_low``, ``auc_ci_high``, ``auc_p``, and
+        ``balanced_accuracy_median_split``.
+
+    Raises
+    ------
+    ValueError
+        If *y* and *scores* differ in length or *y* does not contain both
+        binary classes ``0`` and ``1``.
+    """
+    y_arr = np.asarray(y, dtype=int)
+    s_arr = np.asarray(scores, dtype=float)
+    if len(y_arr) != len(s_arr):
+        raise ValueError(
+            f"Length mismatch between y ({len(y_arr)}) and scores ({len(s_arr)})."
+        )
+    if set(np.unique(y_arr)) != {0, 1}:
+        raise ValueError("evaluate_binary_scores requires binary labels {0, 1}.")
+
+    rng = np.random.default_rng(random_state)
+    ranks = rankdata(s_arr)
+    n1 = int(y_arr.sum())
+    n0 = len(y_arr) - n1
+    denom = float(n1 * n0)
+    offset = n1 * (n1 + 1) / 2.0
+    auc = float((ranks[y_arr == 1].sum() - offset) / denom)
+    if n_permutations > 0:
+        null = np.fromiter(
+            (
+                (ranks[rng.permutation(y_arr) == 1].sum() - offset) / denom
+                for _ in range(n_permutations)
+            ),
+            dtype=float,
+            count=n_permutations,
+        )
+        auc_p = float((1 + (null >= auc).sum()) / (n_permutations + 1))
+    else:
+        auc_p = float("nan")
+    boots = []
+    for _ in range(n_bootstrap):
+        idx = rng.integers(0, len(y_arr), len(y_arr))
+        if len(np.unique(y_arr[idx])) == 2:
+            boots.append(roc_auc_score(y_arr[idx], s_arr[idx]))
+    return {
+        "n_units": len(y_arr),
+        "positive_share": float(y_arr.mean()),
+        "auc": auc,
+        "auc_ci_low": float(np.percentile(boots, 2.5)) if boots else float("nan"),
+        "auc_ci_high": float(np.percentile(boots, 97.5)) if boots else float("nan"),
+        "auc_p": auc_p,
+        "balanced_accuracy_median_split": float(
+            balanced_accuracy_score(y_arr, (s_arr > np.median(s_arr)).astype(int))
+        ),
+    }
