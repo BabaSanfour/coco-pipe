@@ -72,8 +72,11 @@ from .stats import (
     benjamini_hochberg,
     binomial_accuracy_test,
     correct_sweep_pvalues,
+    ensemble_predictions,
+    evaluate_binary_scores,
     paired_prediction_test,
     run_statistical_assessment,
+    stack_oof_predictions,
 )
 from .targets import prepare_target, safe_group_n_splits
 
@@ -114,6 +117,8 @@ __all__ = [
     "completed_for_config",
     "config_hash",
     "correct_sweep_pvalues",
+    "ensemble_predictions",
+    "evaluate_binary_scores",
     "execute_decoding_sweep",
     "execute_decoding_sweep_streaming",
     "get_capabilities",
@@ -140,6 +145,7 @@ __all__ = [
     # Stats Utilities
     "run_statistical_assessment",
     "safe_group_n_splits",
+    "stack_oof_predictions",
     "stamp_primary_metric",
     "write_run_status",
     "write_run_summary",

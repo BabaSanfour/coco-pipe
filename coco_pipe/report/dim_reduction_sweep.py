@@ -90,9 +90,17 @@ def _eval_merge_frame(
     ]
 
 
+def _has_values(frame: pd.DataFrame, column: str) -> bool:
+    return (
+        bool(column) and column in frame.columns and bool(frame[column].notna().any())
+    )
+
+
 def _score_sort_columns(frame: pd.DataFrame, selection_metric: str) -> list[str]:
     columns = [selection_metric, *EVAL_METRIC_COLUMNS, "trustworthiness", "continuity"]
-    return list(dict.fromkeys(column for column in columns if column in frame.columns))
+    return list(
+        dict.fromkeys(column for column in columns if _has_values(frame, column))
+    )
 
 
 def _sort_by_score(frame: pd.DataFrame, selection_metric: str) -> pd.DataFrame:
@@ -111,10 +119,10 @@ def _selection_or_fallback(
     selection_metric: str,
     fallback_metric: str,
 ) -> str:
-    if selection_metric in frame.columns:
+    if _has_values(frame, selection_metric):
         return selection_metric
     for metric in EVAL_METRIC_COLUMNS:
-        if metric in frame.columns:
+        if _has_values(frame, metric):
             return metric
     return fallback_metric
 
@@ -217,6 +225,10 @@ def add_reduction_best_run_cards(
     if success.empty:
         return
     sort_metric = _selection_or_fallback(success, selection_metric, fallback_metric)
+    if not _has_values(success, sort_metric) and not any(
+        _has_values(success, column) for column, _, _ in metrics
+    ):
+        return
     best_per_group = best_rows(
         success, [group_col], sort_metric, tie_breakers=tie_breakers
     )[0]
@@ -548,7 +560,24 @@ def build_reduction_condition_ranking_section(
     runs = pd.DataFrame(condition_runs)
     if runs.empty:
         return None
-    columns = [column for column in ranking_columns if column in runs.columns]
+    metric_candidates = (
+        selection_metric,
+        *EVAL_METRIC_COLUMNS,
+        "trustworthiness",
+        "continuity",
+        "shepard_correlation",
+    )
+    if not any(_has_values(runs, metric) for metric in metric_candidates):
+        return None
+    columns = [
+        column
+        for column in ranking_columns
+        if column in runs.columns
+        and (
+            column not in (*EVAL_METRIC_COLUMNS, "trustworthiness", "continuity")
+            or _has_values(runs, column)
+        )
+    ]
     resolved_sort = default_sort or _selection_or_fallback(
         runs, selection_metric, fallback_metric
     )
@@ -560,7 +589,11 @@ def build_reduction_condition_ranking_section(
             selector_columns=[
                 column for column in selector_columns if column in columns
             ],
-            default_sort={"column": resolved_sort, "direction": "desc"},
+            default_sort=(
+                {"column": resolved_sort, "direction": "desc"}
+                if resolved_sort in columns
+                else None
+            ),
             page_size=5,
         )
     )
@@ -1014,32 +1047,36 @@ def build_flat_condition_section(
         on="fit_id",
         how="left",
     )
-    ranking_sort = _selection_or_fallback(
-        ranking_df, ctx.selection_metric, SEPARATION_METRIC_KEY
-    )
-    section.add_element(
-        InteractiveTableElement(
-            ranking_df.loc[
-                :,
-                [
-                    col
-                    for col in [
-                        "reducer",
-                        "n_components",
-                        "eval_name",
-                        *EVAL_METRIC_COLUMNS,
-                        "trustworthiness",
-                        "continuity",
-                    ]
-                    if col in ranking_df.columns
-                ],
-            ].round(4),
-            title="Fit ranking",
-            selector_columns=["reducer", "eval_name"],
-            default_sort={"column": ranking_sort, "direction": "desc"},
-            page_size=5,
+    ranking_sort_cols = _score_sort_columns(ranking_df, ctx.selection_metric)
+    if ranking_sort_cols:
+        ranking_sort = _selection_or_fallback(
+            ranking_df, ctx.selection_metric, SEPARATION_METRIC_KEY
         )
-    )
+        ranking_cols = [
+            col
+            for col in [
+                "reducer",
+                "n_components",
+                "eval_name",
+                *ranking_sort_cols,
+            ]
+            if col in ranking_df.columns
+        ]
+        section.add_element(
+            InteractiveTableElement(
+                ranking_df.loc[:, ranking_cols].round(4),
+                title="Fit ranking",
+                selector_columns=[
+                    col for col in ("reducer", "eval_name") if col in ranking_cols
+                ],
+                default_sort=(
+                    {"column": ranking_sort, "direction": "desc"}
+                    if ranking_sort in ranking_cols
+                    else None
+                ),
+                page_size=5,
+            )
+        )
 
     reducer_tabs = {}
     for reducer_name in ctx.reducers:
@@ -1078,7 +1115,7 @@ def build_flat_condition_section(
         sweep_metric = _selection_or_fallback(
             sweep_df, ctx.selection_metric, SEPARATION_METRIC_KEY
         )
-        if not sweep_df.empty and sweep_metric in sweep_df.columns:
+        if not sweep_df.empty and _has_values(sweep_df, sweep_metric):
             sep_df = sweep_df.dropna(subset=[sweep_metric]).copy()
             sep_df["series"] = "separation: " + sep_df["eval_name"].astype(str)
             fig = plot_scatter(
@@ -1350,14 +1387,12 @@ def build_unit_summary(
         if column in unit_runs.columns and unit_runs[column].notna().any()
     ]
     sort_columns = _score_sort_columns(unit_runs, selection_metric)
-    ranked_units = (
-        unit_runs.sort_values(
-            sort_columns,
-            ascending=[False] * len(sort_columns),
-            na_position="last",
-        )
-        if sort_columns
-        else unit_runs
+    if not sort_columns:
+        return
+    ranked_units = unit_runs.sort_values(
+        sort_columns,
+        ascending=[False] * len(sort_columns),
+        na_position="last",
     )
     best_units = (
         ranked_units.groupby([*group_columns, unit_column], dropna=False).head(1).copy()
@@ -1972,34 +2007,35 @@ def build_pooled_section(
         return section
 
     if ctx.analysis_mode == "flat":
-        acc = AccordionElement("Show Hyperparameter Sweep Tables", open=False)
-        sweep_cols = ["reducer", "n_components"]
-        if "eval_name" in merged.columns:
-            sweep_cols.append("eval_name")
-        for metric in EVAL_METRIC_COLUMNS:
-            if metric in merged.columns:
-                sweep_cols.append(metric)
-        for gm in ["trustworthiness", "continuity"]:
-            if gm in merged.columns:
-                sweep_cols.append(gm)
-        sweep_cols = list(dict.fromkeys(sweep_cols))
-        acc.add_element(
-            InteractiveTableElement(
-                merged.loc[:, [c for c in sweep_cols if c in merged.columns]].round(4),
-                title="Pooled fit ranking",
-                selector_columns=["reducer", "eval_name"]
-                if "eval_name" in sweep_cols
-                else ["reducer"],
-                default_sort={
-                    "column": _selection_or_fallback(
-                        merged, ctx.selection_metric, SEPARATION_METRIC_KEY
-                    ),
-                    "direction": "desc",
-                },
-                page_size=5,
+        pooled_sort_cols = _score_sort_columns(merged, ctx.selection_metric)
+        if pooled_sort_cols:
+            acc = AccordionElement("Show Hyperparameter Sweep Tables", open=False)
+            sweep_cols = ["reducer", "n_components"]
+            if "eval_name" in merged.columns and merged["eval_name"].notna().any():
+                sweep_cols.append("eval_name")
+            sweep_cols.extend(pooled_sort_cols)
+            sweep_cols = list(dict.fromkeys(sweep_cols))
+            pooled_sort = _selection_or_fallback(
+                merged, ctx.selection_metric, SEPARATION_METRIC_KEY
             )
-        )
-        section.add_element(acc)
+            acc.add_element(
+                InteractiveTableElement(
+                    merged.loc[:, [c for c in sweep_cols if c in merged.columns]].round(
+                        4
+                    ),
+                    title="Pooled fit ranking",
+                    selector_columns=["reducer", "eval_name"]
+                    if "eval_name" in sweep_cols
+                    else ["reducer"],
+                    default_sort=(
+                        {"column": pooled_sort, "direction": "desc"}
+                        if pooled_sort in sweep_cols
+                        else None
+                    ),
+                    page_size=5,
+                )
+            )
+            section.add_element(acc)
 
         reducer_tabs = {}
         for reducer_name in ctx.reducers:

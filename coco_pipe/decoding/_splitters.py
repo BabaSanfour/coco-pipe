@@ -19,6 +19,7 @@ from sklearn.model_selection import (
     KFold,
     LeaveOneGroupOut,
     LeavePGroupsOut,
+    PredefinedSplit,
     StratifiedGroupKFold,
     StratifiedKFold,
     TimeSeriesSplit,
@@ -270,6 +271,7 @@ def resolve_effective_n_splits(
     config: CVConfig,
     y: Sequence[Any] | None = None,
     groups: Sequence[Any] | None = None,
+    test_fold: Sequence[Any] | None = None,
 ) -> int:
     """Number of folds :func:`get_cv_splitter` uses for these labels and groups.
 
@@ -277,6 +279,9 @@ def resolve_effective_n_splits(
     requested (``auto_reduce_n_splits``); every other strategy keeps it.
     """
     strat = config.strategy.lower()
+    if strat == "predefined" and test_fold is not None:
+        arr = np.asarray(test_fold)
+        return len({v for v in arr if v != -1 and str(v) != "-1"})
     if (
         getattr(config, "auto_reduce_n_splits", True)
         and groups is not None
@@ -298,6 +303,7 @@ def get_cv_splitter(
     y: Sequence[Any] | None = None,
     task: MetricTask | None = None,
     require_groups: bool = True,
+    test_fold: Sequence[Any] | None = None,
 ) -> BaseCrossValidator:
     """
     Create a scikit-learn cross-validator from ``CVConfig``.
@@ -356,8 +362,16 @@ def get_cv_splitter(
         )
 
     common_kwargs = {}
-    effective_n_splits = resolve_effective_n_splits(config, y=y, groups=groups)
-    if strat not in ["leave_one_group_out", "leave_p_out", "split", "timeseries"]:
+    effective_n_splits = resolve_effective_n_splits(
+        config, y=y, groups=groups, test_fold=test_fold
+    )
+    if strat not in [
+        "leave_one_group_out",
+        "leave_p_out",
+        "split",
+        "timeseries",
+        "predefined",
+    ]:
         common_kwargs["n_splits"] = effective_n_splits
 
     if strat in ["stratified", "kfold", "stratified_group_kfold", "split"]:
@@ -392,11 +406,23 @@ def get_cv_splitter(
             random_state=config.random_state,
             stratify=y if config.stratify and y is not None else config.stratify,
         )
+    elif strat == "predefined":
+        if test_fold is None:
+            raise ValueError("CV strategy 'predefined' requires test_fold.")
+        arr = np.asarray(test_fold)
+        if np.issubdtype(arr.dtype, np.integer):
+            fold_ids = arr.astype(int)
+        else:
+            train_only = (arr == -1) | (arr.astype(str) == "-1")
+            fold_ids = np.full(len(arr), -1, dtype=int)
+            if (~train_only).any():
+                fold_ids[~train_only] = pd.factorize(arr[~train_only], sort=True)[0]
+        splitter = PredefinedSplit(fold_ids)
     else:
         raise ValueError(f"Unknown CV strategy: {config.strategy}")
 
     # 3. Contextual Wrapping
-    if groups is not None:
+    if groups is not None and strat != "predefined":
         if strat not in GROUP_CV_STRATEGIES:
             import warnings
 

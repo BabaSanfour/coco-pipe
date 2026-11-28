@@ -5,6 +5,7 @@ This module holds small helpers that are not specific to one subpackage.
 """
 
 import datetime as dt
+import functools
 import hashlib
 import importlib.metadata
 import json
@@ -202,14 +203,11 @@ def get_package_version(package_name: str) -> str:
         return "Unknown"
 
 
-def get_environment_info(
-    cwd: str | os.PathLike[str] | None = None,
-    packages: Mapping[str, str] | None = None,
+def _collect_environment_info(
+    cwd: str | os.PathLike[str] | None,
+    packages: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Capture runtime provenance metadata for reports and experiment results."""
-    version_packages = packages or PACKAGE_VERSIONS
     return {
-        "timestamp_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "os_platform": platform.platform(),
         "python_version": platform.python_version(),
         "command": shlex.join(sys.argv),
@@ -217,9 +215,34 @@ def get_environment_info(
         "coco_pipe_version": get_package_version("coco-pipe"),
         "versions": {
             label: get_package_version(distribution)
-            for label, distribution in version_packages.items()
+            for label, distribution in packages.items()
         },
     }
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_default_environment_info() -> dict[str, Any]:
+    return _collect_environment_info(cwd=None, packages=PACKAGE_VERSIONS)
+
+
+def get_environment_info(
+    cwd: str | os.PathLike[str] | None = None,
+    packages: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Capture runtime provenance metadata for reports and experiment results."""
+    if cwd is None and packages is None:
+        base = _cached_default_environment_info()
+    else:
+        base = _collect_environment_info(cwd=cwd, packages=packages or PACKAGE_VERSIONS)
+    return {
+        "timestamp_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        **base,
+        "versions": dict(base["versions"]),
+    }
+
+
+get_environment_info.cache_clear = _cached_default_environment_info.cache_clear  # type: ignore[attr-defined]
+get_environment_info.cache_info = _cached_default_environment_info.cache_info  # type: ignore[attr-defined]
 
 
 def slug(value: object, *, max_len: int = 80) -> str:

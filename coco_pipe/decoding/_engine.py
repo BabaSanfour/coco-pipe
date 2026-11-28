@@ -17,7 +17,8 @@ from typing import Any
 import joblib
 import numpy as np
 from sklearn import config_context
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.decomposition import PCA
 from sklearn.feature_selection import (
     SelectKBest,
     f_classif,
@@ -89,6 +90,48 @@ def _release_foundation_memory(estimator: Any) -> None:
         return
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+class _SafePCA(BaseEstimator, TransformerMixin):
+    """Fold-local PCA that passes through when input width is already <= k."""
+
+    def __init__(
+        self,
+        n_components: int | float | None = None,
+        whiten: bool = False,
+        svd_solver: str = "auto",
+        random_state: int | None = None,
+    ):
+        self.n_components = n_components
+        self.whiten = whiten
+        self.svd_solver = svd_solver
+        self.random_state = random_state
+
+    def fit(self, X, y=None):
+        X_arr = np.asarray(X)
+        n_samples, n_features = X_arr.shape
+        if isinstance(self.n_components, int) and n_features <= self.n_components:
+            self.pca_ = None
+            self.n_features_in_ = n_features
+            return self
+        k = (
+            min(self.n_components, n_samples, n_features)
+            if isinstance(self.n_components, int)
+            else self.n_components
+        )
+        self.pca_ = PCA(
+            n_components=k,
+            whiten=self.whiten,
+            svd_solver=self.svd_solver,
+            random_state=self.random_state,
+        ).fit(X_arr)
+        self.n_features_in_ = n_features
+        return self
+
+    def transform(self, X):
+        if self.pca_ is None:
+            return np.asarray(X)
+        return self.pca_.transform(X)
 
 
 class _SafeSelectKBest(BaseEstimator):
@@ -191,6 +234,7 @@ def fit_and_score_fold(
     score_by: str | None = None,
     erasure_condition_column: str | None = None,
     keep_test_embeddings: bool = False,
+    return_estimator: bool = False,
 ) -> dict[str, Any]:
     """
     Execute a single Cross-Validation fold: Fit, Predict, and Score.
@@ -346,6 +390,17 @@ def fit_and_score_fold(
     captured_warnings.extend(warning_records_to_dict("fit", warning_records))
     prediction_estimator = getattr(estimator, "best_estimator_", estimator)
 
+    if not _needs_group_routing and test_groups is not None and spec.supports_groups:
+        with config_context(enable_metadata_routing=True):
+            try:
+                _needs_group_routing = bool(
+                    get_routing_for_object(prediction_estimator).consumes(
+                        "predict", ["groups"]
+                    )
+                )
+            except NotImplementedError:
+                _needs_group_routing = False
+
     # 2. Predict (Standard or Temporal)
     predict_start = time.perf_counter()
     with warnings.catch_warnings(record=True) as warning_records:
@@ -382,7 +437,9 @@ def fit_and_score_fold(
             warning_records_to_dict("predict_proba", warning_records)
         )
 
-    if "y_proba" not in fold_data and spec.supports_decision_function:
+    if (
+        "y_proba" not in fold_data or return_estimator
+    ) and spec.supports_decision_function:
         with warnings.catch_warnings(record=True) as warning_records:
             warnings.simplefilter("always")
             if _needs_group_routing:
@@ -469,10 +526,10 @@ def fit_and_score_fold(
     # tearing them down here keeps peak host/GPU memory bounded to one fold
     # instead of accumulating loaded backbones across the CV loop. Gated to the
     # foundation family so classical folds skip the gc/torch overhead entirely.
-    if spec.family == "foundation":
+    if spec.family == "foundation" and not return_estimator:
         _release_foundation_memory(estimator)
 
-    return {
+    out = {
         "test_idx": test_idx,
         "preds": fold_data,
         "scores": scores,
@@ -497,6 +554,9 @@ def fit_and_score_fold(
             "warnings": captured_warnings,
         },
     }
+    if return_estimator:
+        out["estimator"] = prediction_estimator
+    return out
 
 
 def fit_estimator(
@@ -893,8 +953,10 @@ def extract_metadata(
     if hasattr(estimator, "named_steps"):
         estimator = estimator.named_steps.get("clf", estimator)
 
-    # 3. Custom Artifacts (Structural Type Check via Protocol)
-    if isinstance(estimator, NeuralTrainable):
+    # 3. Custom Artifacts (Structural Type Check via Protocol or hook)
+    if isinstance(estimator, NeuralTrainable) or callable(
+        getattr(estimator, "get_artifact_metadata", None)
+    ):
         meta["artifacts"] = estimator.get_artifact_metadata()
 
     return meta

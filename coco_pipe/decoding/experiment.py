@@ -11,7 +11,7 @@ import itertools
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
@@ -24,6 +24,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
+from sklearn.compose import ColumnTransformer
 from sklearn.feature_selection import (
     SequentialFeatureSelector,
     f_classif,
@@ -37,6 +38,7 @@ from coco_pipe.utils import get_environment_info
 
 from ._constants import CLASSICAL_FAMILIES, GROUP_CV_STRATEGIES, RESULT_SCHEMA_VERSION
 from ._engine import (
+    _SafePCA,
     _SafeSelectKBest,
     fit_and_score_fold,
 )
@@ -72,6 +74,35 @@ def _merge_dict_grid(grid: dict[str, list], params: dict[str, Any]) -> dict[str,
             for combination in itertools.product(*choices.values())
         ]
     return merged
+
+
+def _build_prep_steps(
+    use_scaler: bool | str,
+    reducer_cfg: Any,
+    n_components: int | float | None,
+) -> list[tuple[str, BaseEstimator]]:
+    """Build fold-local scaler + optional PCA steps for a feature matrix or block."""
+    steps: list[tuple[str, BaseEstimator]] = []
+    if use_scaler:
+        if use_scaler == "subject":
+            from .scalers import SubjectStandardScaler
+
+            steps.append(("scaler", SubjectStandardScaler()))
+        else:
+            steps.append(("scaler", StandardScaler()))
+    if reducer_cfg is not None and reducer_cfg.method == "pca":
+        steps.append(
+            (
+                "reducer",
+                _SafePCA(
+                    n_components=n_components,
+                    whiten=reducer_cfg.whiten,
+                    svd_solver=reducer_cfg.svd_solver,
+                    random_state=reducer_cfg.random_state,
+                ),
+            )
+        )
+    return steps
 
 
 class Experiment:
@@ -201,7 +232,13 @@ class Experiment:
                         f"but model '{name}' provides neither."
                     )
 
-    def _prepare_estimator(self, model_name: str, model_config: Any) -> BaseEstimator:
+    def _prepare_estimator(
+        self,
+        model_name: str,
+        model_config: Any,
+        *,
+        feature_blocks: dict[str, list[int] | slice] | None = None,
+    ) -> BaseEstimator:
         """Orchestrate the creation of the full Estimator Pipeline."""
 
         full_est = self._instantiate_model(model_name, model_config)
@@ -240,36 +277,50 @@ class Experiment:
                 f"Model '{model_name}' uses {spec.input_kinds} data."
             )
 
-        if self.config.use_scaler and allow_prep:
-            if self.config.use_scaler == "subject":
-                from .scalers import SubjectStandardScaler
-
-                steps.append(("scaler", SubjectStandardScaler()))
-            else:
-                steps.append(("scaler", StandardScaler()))
-
-        if self.config.reducer.enabled and allow_prep:
-            if self.config.reducer.method == "pca":
-                from sklearn.decomposition import PCA
-
-                steps.append(
-                    (
-                        "reducer",
-                        PCA(
-                            n_components=self.config.reducer.n_components,
-                            whiten=self.config.reducer.whiten,
-                            svd_solver=self.config.reducer.svd_solver,
-                            random_state=self.config.reducer.random_state,
-                        ),
-                    )
-                )
-        elif (
-            self.config.reducer.enabled and not allow_prep and spec.family != "temporal"
-        ):
+        reducer_cfg = self.config.reducer
+        if reducer_cfg.enabled and not allow_prep and spec.family != "temporal":
             raise ValueError(
                 f"Fold-local reduction is only valid for classical 2D inputs. "
                 f"Model '{model_name}' uses {spec.input_kinds} data."
             )
+        if allow_prep and (self.config.use_scaler or reducer_cfg.enabled):
+            if feature_blocks is not None:
+                n_comp_cfg = reducer_cfg.n_components
+                transformers = []
+                for block_name, cols in feature_blocks.items():
+                    if isinstance(n_comp_cfg, dict):
+                        k = n_comp_cfg.get(block_name)
+                        block_reducer = (
+                            reducer_cfg
+                            if reducer_cfg.enabled and k is not None
+                            else None
+                        )
+                    else:
+                        k = n_comp_cfg
+                        block_reducer = reducer_cfg if reducer_cfg.enabled else None
+                    block_steps = _build_prep_steps(
+                        self.config.use_scaler, block_reducer, k
+                    )
+                    transformers.append(
+                        (
+                            block_name,
+                            Pipeline(block_steps) if block_steps else "passthrough",
+                            cols,
+                        )
+                    )
+                steps.append(("preprocess", ColumnTransformer(transformers)))
+            else:
+                if reducer_cfg.enabled and isinstance(reducer_cfg.n_components, dict):
+                    raise ValueError(
+                        "Per-block reducer.n_components dict requires feature_blocks."
+                    )
+                steps.extend(
+                    _build_prep_steps(
+                        self.config.use_scaler,
+                        reducer_cfg if reducer_cfg.enabled else None,
+                        reducer_cfg.n_components,
+                    )
+                )
 
         if self.config.feature_selection.enabled and allow_prep:
             fs_step = self._create_fs_step(full_est)
@@ -425,7 +476,7 @@ class Experiment:
         if spec.family in CLASSICAL_FAMILIES:
             est_cls = get_estimator_cls(spec.name)
             if hasattr(config, "params"):
-                params = config.params
+                params = dict(config.params)
             else:
                 params = config.model_dump(exclude={"method", "kind"})
             try:
@@ -455,10 +506,12 @@ class Experiment:
                     f"Failed to instantiate model '{model_name}': {e}"
                 ) from e
 
-        # Fallback for other registry-based estimators
-        method = _get_val(config, "method")
-        est_cls = get_estimator_cls(method)
-        params = config.model_dump(exclude={"method", "kind"})
+        # Fallback for other registry-based estimators (including custom neural/MIL)
+        est_cls = get_estimator_cls(spec.name)
+        if hasattr(config, "params") and isinstance(config.params, dict):
+            params = dict(config.params)
+        else:
+            params = config.model_dump(exclude={"method", "kind"})
 
         if "base_estimator" in params:
             params["base_estimator"] = self._prepare_estimator(
@@ -563,6 +616,9 @@ class Experiment:
         inferential_unit: str | None = None,
         time_axis: Sequence[Any] | None = None,
         sample_weight: np.ndarray | None = None,
+        feature_blocks: Sequence[Any]
+        | Mapping[str, Sequence[int] | slice]
+        | None = None,
     ) -> ExperimentResult:
         """
         Execute the complete decoding experiment pipeline.
@@ -621,6 +677,10 @@ class Experiment:
         """
         start_time = time.time()
         logger.info(f"Starting Experiment: Task={self.config.task}")
+        if hasattr(X, "X") and hasattr(X, "coords"):
+            if feature_blocks is None and "feature_block" in X.coords:
+                feature_blocks = X.coords["feature_block"]
+            X = X.X
         X, y = np.asarray(X), np.asarray(y)
         if len(X) == 0:
             raise ValueError("X is empty.")
@@ -654,6 +714,7 @@ class Experiment:
                 )
 
         self._feature_names = self._resolve_feature_names(X, feature_names)
+        resolved_blocks = self._resolve_feature_blocks(X, feature_blocks)
         self._sample_ids = self._resolve_sample_ids(len(X), sample_ids)
         if observation_level not in {"sample", "epoch"}:
             raise ValueError("observation_level must be 'sample' or 'epoch'.")
@@ -769,7 +830,9 @@ class Experiment:
                     is_fm = spec.family in {"foundation", "neural"}
                     model_n_jobs = 1 if is_fm else self.config.n_jobs
 
-                    est = self._prepare_estimator(name, cfg)
+                    est = self._prepare_estimator(
+                        name, cfg, feature_blocks=resolved_blocks
+                    )
                     self.results[name] = self._cross_validate(
                         est,
                         X,
@@ -852,8 +915,16 @@ class Experiment:
         sample_weight: np.ndarray | None = None,
     ) -> dict[str, Any]:
         """Perform parallel cross-validation for a single estimator."""
-        cv = get_cv_splitter(self.config.cv, groups=groups, y=y)
-        splits = list(cv.split(X, y, groups))
+        test_fold = None
+        if self.config.cv.strategy == "predefined":
+            fold_col = self.config.cv.fold_col or "fold"
+            test_fold = sample_metadata[fold_col].to_numpy()
+        cv = get_cv_splitter(self.config.cv, groups=groups, y=y, test_fold=test_fold)
+        splits = (
+            list(cv.split(X, y))
+            if self.config.cv.strategy == "predefined"
+            else list(cv.split(X, y, groups))
+        )
 
         for train_idx, test_idx in splits:
             _validate_fold_integrity(
@@ -868,9 +939,33 @@ class Experiment:
                 col: sample_metadata[col].values for col in sample_metadata.columns
             }
 
-        # 4. Execute Parallel CV
-        parallel = joblib.Parallel(n_jobs=n_jobs, verbose=self.config.verbose)
-        results = parallel(
+        fold_kwargs = {
+            "metrics": self.config.get_all_evaluation_metrics(),
+            "feature_selection_config": self.config.feature_selection,
+            "calibration_config": self.config.calibration,
+            "spec": spec,
+            "temporal_alignment_config": self.config.temporal_alignment,
+            "tuning_config": self.config.tuning,
+            "feature_names": self._feature_names,
+            "search_enabled": (
+                self.config.tuning.enabled
+                and self.config.grids is not None
+                and model_name in self.config.grids
+            ),
+            "force_serial": (n_jobs == 1),
+            "sample_weight": sample_weight,
+            "score_by": self.config.cv.score_by,
+            "erasure_condition_column": (
+                self.config.erasure.condition_column
+                if self.config.erasure.enabled
+                else None
+            ),
+            "keep_test_embeddings": self.config.keep_test_embeddings,
+            "return_estimator": self.config.return_estimator,
+        }
+
+        # 4. Execute CV (skip joblib wrapper when serial for low-latency in-memory runs)
+        tasks = (
             joblib.delayed(fit_and_score_fold)(
                 clone(est),
                 X,
@@ -880,36 +975,30 @@ class Experiment:
                 meta_dict,
                 train_idx,
                 test_idx,
-                metrics=self.config.get_all_evaluation_metrics(),
-                feature_selection_config=self.config.feature_selection,
-                calibration_config=self.config.calibration,
-                spec=spec,
-                temporal_alignment_config=self.config.temporal_alignment,
-                tuning_config=self.config.tuning,
-                feature_names=self._feature_names,
-                search_enabled=(
-                    self.config.tuning.enabled
-                    and self.config.grids is not None
-                    and model_name in self.config.grids
-                ),
-                force_serial=(n_jobs == 1),
-                sample_weight=sample_weight,
-                score_by=self.config.cv.score_by,
-                erasure_condition_column=(
-                    self.config.erasure.condition_column
-                    if self.config.erasure.enabled
-                    else None
-                ),
-                keep_test_embeddings=self.config.keep_test_embeddings,
+                **fold_kwargs,
             )
             for train_idx, test_idx in splits
         )
+        if n_jobs == 1:
+            results = [fn(*args, **kwargs) for fn, args, kwargs in tasks]
+        else:
+            results = joblib.Parallel(n_jobs=n_jobs, verbose=self.config.verbose)(tasks)
 
         fold_scores = defaultdict(list)
-        f_idx, f_preds, f_imps, f_meta, f_splits, f_diags = [], [], [], [], [], []
+        f_idx, f_preds, f_est, f_imps, f_meta, f_splits, f_diags = (
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
         for res in results:
             f_idx.append(res["test_idx"])
             f_preds.append(res["preds"])
+            if "estimator" in res:
+                f_est.append(res["estimator"])
             f_imps.append(res["importance"])
             f_meta.append(res.get("metadata", {}))
             f_splits.append(res["split"])
@@ -938,7 +1027,7 @@ class Experiment:
                 else [f"feature_{idx}" for idx in range(stack.shape[1])],
             }
 
-        return {
+        out = {
             "status": "success",
             "metrics": metrics,
             "predictions": f_preds,
@@ -948,6 +1037,9 @@ class Experiment:
             "splits": f_splits,
             "diagnostics": f_diags,
         }
+        if f_est:
+            out["estimators"] = f_est
+        return out
 
     @staticmethod
     def _resolve_sample_ids(n: int, ids: Sequence[Any] | None) -> np.ndarray:
@@ -1036,6 +1128,16 @@ class Experiment:
             if key not in meta.columns:
                 raise ValueError(f"group_key '{key}' not found in sample_metadata.")
             gv = meta[key].to_numpy()
+
+        if self.config.cv.strategy == "predefined":
+            fold_col = self.config.cv.fold_col or "fold"
+            if fold_col not in meta.columns:
+                if fold_col.capitalize() not in meta.columns:
+                    raise ValueError(
+                        f"fold_col '{fold_col}' not found in sample_metadata for "
+                        "strategy='predefined'."
+                    )
+                meta[fold_col] = meta[fold_col.capitalize()]
 
         score_by = self.config.cv.score_by
         if score_by is not None and score_by not in meta.columns:
@@ -1135,6 +1237,27 @@ class Experiment:
             if X.ndim < 2
             else [f"feature_{idx}" for idx in range(X.shape[1])]
         )
+
+    @staticmethod
+    def _resolve_feature_blocks(
+        X: np.ndarray,
+        feature_blocks: Sequence[Any] | Mapping[str, Sequence[int] | slice] | None,
+    ) -> dict[str, list[int] | slice] | None:
+        if feature_blocks is None:
+            return None
+        if X.ndim != 2:
+            raise ValueError("feature_blocks requires a 2D feature matrix X.")
+        if isinstance(feature_blocks, Mapping):
+            return {str(k): v for k, v in feature_blocks.items()}
+        labels = np.asarray(feature_blocks)
+        if len(labels) != X.shape[1]:
+            raise ValueError(
+                f"feature_blocks length mismatch: {len(labels)} vs {X.shape[1]}"
+            )
+        blocks: dict[str, list[int]] = {}
+        for idx, label in enumerate(labels):
+            blocks.setdefault(str(label), []).append(idx)
+        return blocks
 
 
 def _validate_fold_integrity(

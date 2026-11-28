@@ -878,6 +878,7 @@ class CVConfig(BaseModel):
         "timeseries",
         "split",
         "group_shuffle_split",
+        "predefined",
     ] = "stratified"
     n_splits: int = Field(5, ge=1)
     shuffle: bool = True
@@ -890,6 +891,13 @@ class CVConfig(BaseModel):
     )
     group_key: str | None = Field(
         None, description="sample_metadata column used by grouped CV strategies."
+    )
+    fold_col: str | None = Field(
+        None,
+        description=(
+            "sample_metadata column holding outer fold ids for strategy='predefined' "
+            "(defaults to 'fold'; -1 marks train-only rows)."
+        ),
     )
     score_by: str | None = Field(
         None,
@@ -976,11 +984,12 @@ class ReducerConfig(BaseModel):
 
     enabled: bool = False
     method: Literal["pca"] = "pca"
-    n_components: int | float | None = Field(
+    n_components: int | float | dict[str, int | float | None] | None = Field(
         None,
         description=(
             "PCA components. Integers select a fixed count; floats in (0, 1) "
-            "select the explained-variance fraction."
+            "select the explained-variance fraction; a mapping sets components "
+            "per feature block (None keeps a block unreduced)."
         ),
     )
     whiten: bool = False
@@ -991,10 +1000,18 @@ class ReducerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_n_components(self) -> ReducerConfig:
-        if isinstance(self.n_components, int) and self.n_components < 1:
-            raise ValueError("Integer n_components must be at least 1.")
-        if isinstance(self.n_components, float) and not 0 < self.n_components < 1:
-            raise ValueError("Float n_components must be in the open interval (0, 1).")
+        values = (
+            self.n_components.values()
+            if isinstance(self.n_components, dict)
+            else (self.n_components,)
+        )
+        for val in values:
+            if isinstance(val, int) and not isinstance(val, bool) and val < 1:
+                raise ValueError("Integer n_components must be at least 1.")
+            if isinstance(val, float) and not 0 < val < 1:
+                raise ValueError(
+                    "Float n_components must be in the open interval (0, 1)."
+                )
         return self
 
 
@@ -1390,6 +1407,13 @@ class ExperimentConfig(BaseModel):
             "the fitted estimator's transform, so each sample's comes from the "
             "one fold that did not train on it. Read them with "
             "ExperimentResult.get_embeddings. The estimator must have transform."
+        ),
+    )
+    return_estimator: bool = Field(
+        False,
+        description=(
+            "Retain each outer fold's fitted estimator (sklearn-style) in the "
+            "result so unseen observations can be scored via ExperimentResult.predict."
         ),
     )
     low_memory: bool = Field(
